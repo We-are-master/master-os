@@ -78,6 +78,27 @@ if (refs.length) {
 }
 const zd = env.ZENDESK_SUBDOMAIN ? `https://${env.ZENDESK_SUBDOMAIN}.zendesk.com/agent/tickets/` : null;
 
+/**
+ * A evidência da baixa, quando quem deu foi um robô: os scripts de payout
+ * (Checkatrade e Housekeep) gravam em audit_logs QUAL payout pagou qual job.
+ * Com ela, a coluna "via" diz a origem de verdade; sem ela, cai na inferência
+ * (intent do Stripe = Stripe; o resto = bank/manual).
+ */
+const evidencias = new Map();
+try {
+  const evs = await q(
+    `audit_logs?select=entity_ref,metadata,created_at&action=eq.payment_settled&created_at=gte.${desde.toISOString()}&limit=200`,
+  );
+  for (const e of evs) if (e.entity_ref && !evidencias.has(e.entity_ref)) evidencias.set(e.entity_ref, e.metadata ?? {});
+} catch { /* audit e enfeite do relatorio, nunca motivo de falha */ }
+
+const viaDe = (i) => {
+  const ev = evidencias.get(i.job_reference);
+  if (ev?.source === "checkatrade_payout") return `Checkatrade payout${ev.pago_em ? ` · ${ev.pago_em}` : ""}`;
+  if (ev?.source === "housekeep_payout") return `Housekeep payout${ev.payout_de ? ` · ${ev.payout_de}` : ""}`;
+  return i.stripe_payment_intent_id || i.stripe_paid_at ? "Stripe" : "bank / manual";
+};
+
 // ─── 3 · Inadimplência com idade (draft NUNCA entra) ────────────────────────
 const abertas = await q(
   `invoices?select=reference,client_name,job_reference,amount,amount_paid,status,due_date` +
@@ -104,7 +125,7 @@ L.push(`ZIA · ${hojeISO}`);
 L.push("");
 L.push(`RECEIVED (last ${HORAS}h): ${pagas.length} payment(s) · ${fmt(totalRecebido)}`);
 for (const i of pagas) {
-  const via = i.stripe_payment_intent_id || i.stripe_paid_at ? "Stripe" : "bank/manual";
+  const via = viaDe(i);
   const tk = ticketPorJob.get(i.job_reference);
   L.push(
     `  ${i.client_name ?? "?"} · ${fmt(i.amount_paid ?? i.amount)} · ${via}` +
@@ -127,7 +148,7 @@ console.log("\n" + texto + "\n");
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const F = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const linhaPagto = (i) => {
-  const via = i.stripe_payment_intent_id || i.stripe_paid_at ? "Stripe" : "bank / manual";
+  const via = viaDe(i);
   const tk = ticketPorJob.get(i.job_reference);
   return `<tr>
     <td style="padding:8px 10px 8px 0; ${F}; font-size:13px; color:#0A0A1F; border-bottom:1px solid #E4E4EC;"><strong>${esc(i.client_name ?? "?")}</strong></td>
