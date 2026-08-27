@@ -75,13 +75,17 @@ export function JobsMapView({
   jobs,
   dateYmd,
   onOpenJob,
+  onAssignJob,
 }: {
   /** Já filtrados pela página (aba, data, parceiro, busca): o mapa é a lista. */
   jobs: Job[];
   /** A data que o clique no parceiro roteia (dia único do filtro, ou hoje). */
   dateYmd: string;
   onOpenJob?: (job: Job) => void;
+  /** Abre o assign com o parceiro pré-escolhido (o modal decide preço e avisa). */
+  onAssignJob?: (job: Job, partnerId: string) => void;
 }) {
+  const [nearestFor, setNearestFor] = useState<Job | null>(null);
   const [partners, setPartners] = useState<PartnerPin[]>([]);
   const [dayRoute, setDayRoute] = useState<DayRouteData | null>(null);
   const [routeGeometry, setRouteGeometry] = useState<{
@@ -278,15 +282,20 @@ export function JobsMapView({
   const jobById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
 
   return (
-    <div className="flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-fx-line">
+    <div className="flex h-[calc(100vh-250px)] min-h-[480px] flex-col overflow-hidden rounded-xl border border-fx-line">
       <ScheduleLiveMap
         className="flex min-h-0 flex-1 flex-col"
+        regionPreset="london"
         points={partnerPoints}
         jobPoints={jobPoints}
         embeddedInCard
         onJobMarkerClick={(jobId) => {
           const j = jobById.get(jobId);
-          if (j && onOpenJob) onOpenJob(j);
+          if (!j) return;
+          // Job sem dono: a pergunta certa não é "o que é este job", é "quem
+          // está mais perto dele". O ranking responde; o job abre pelo botão.
+          if (j.status === "unassigned" || j.status === "auto_assigning") setNearestFor(j);
+          else if (onOpenJob) onOpenJob(j);
         }}
         onPartnerMarkerClick={(partnerId) => void loadDayRoute(partnerId)}
         routeGeometry={routeGeometry}
@@ -304,6 +313,21 @@ export function JobsMapView({
               <RefreshCw className="hidden" aria-hidden />
               {semCoordenada} job{semCoordenada === 1 ? "" : "s"} off-map
             </span>
+          ) : undefined
+        }
+        bottomRightOverlay={
+          nearestFor ? (
+            <NearestPartnersPanel
+              job={nearestFor}
+              partners={partners}
+              jobs={jobs}
+              onClose={() => setNearestFor(null)}
+              onOpenJob={onOpenJob}
+              onAssign={(partnerId) => {
+                if (onAssignJob) onAssignJob(nearestFor, partnerId);
+                setNearestFor(null);
+              }}
+            />
           ) : undefined
         }
         filterOverlay={
@@ -326,6 +350,124 @@ export function JobsMapView({
           ) : undefined
         }
       />
+    </div>
+  );
+}
+
+/** Distância em linha reta (haversine), em metros. Serve para RANQUEAR. */
+function distM(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371e3;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Quem está mais perto de um job sem dono — medido do jeito que importa.
+ *
+ * "Perto" aqui não é distância da casa: é o quanto a ROTA DO DIA do parceiro
+ * cresce se este job entrar nela (melhor ponto de inserção no caminho
+ * casa → paradas). Um parceiro a 8 milhas que já passa na porta ganha de um a
+ * 3 milhas que teria que desviar. Parceiro sem job no dia conta da casa.
+ *
+ * Haversine, não Matrix: isto é um RANKING, não uma promessa de minutos. Uma
+ * chamada de Matrix por parceiro a cada clique custaria caro e mudaria pouco a
+ * ordem; o número mostrado é "+X mi", explícito em ser distância.
+ */
+function NearestPartnersPanel({
+  job,
+  partners,
+  jobs,
+  onClose,
+  onOpenJob,
+  onAssign,
+}: {
+  job: Job;
+  partners: PartnerPin[];
+  jobs: Job[];
+  onClose: () => void;
+  onOpenJob?: (job: Job) => void;
+  onAssign: (partnerId: string) => void;
+}) {
+  const ranking = useMemo(() => {
+    const jLat = Number(job.latitude);
+    const jLng = Number(job.longitude);
+    if (!Number.isFinite(jLat) || !Number.isFinite(jLng)) return [];
+    const out: Array<{ p: PartnerPin; detourM: number; stops: number }> = [];
+    for (const p of partners) {
+      // A rota do dia dele: casa + paradas com coordenada, na ordem da lista.
+      const pts: Array<[number, number]> = [[p.latitude, p.longitude]];
+      const dele = jobs.filter(
+        (x) => x.partner_id === p.id && Number.isFinite(Number(x.latitude)) && Number.isFinite(Number(x.longitude)),
+      );
+      for (const x of dele) pts.push([Number(x.latitude), Number(x.longitude)]);
+      let detourM: number;
+      if (pts.length === 1) {
+        detourM = distM(p.latitude, p.longitude, jLat, jLng);
+      } else {
+        // Melhor inserção: min sobre as pernas de (a→job→b) − (a→b), mais a
+        // opção de pendurar no fim do dia.
+        detourM = Infinity;
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i]!;
+          const b = pts[i + 1] ?? null;
+          const custo = b
+            ? distM(a[0], a[1], jLat, jLng) + distM(jLat, jLng, b[0], b[1]) - distM(a[0], a[1], b[0], b[1])
+            : distM(a[0], a[1], jLat, jLng);
+          if (custo < detourM) detourM = custo;
+        }
+      }
+      out.push({ p, detourM, stops: dele.length });
+    }
+    return out.sort((a, b) => a.detourM - b.detourM).slice(0, 6);
+  }, [job, partners, jobs]);
+
+  return (
+    <div className="w-[280px] max-w-[80vw] space-y-2 rounded-lg border border-[#E4E4E8] bg-white/95 p-2.5 shadow-lg backdrop-blur">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9A2A00]">Nearest partners</p>
+          <p className="truncate text-[12px] font-semibold text-[#020040]">
+            {job.reference} · {job.title}
+          </p>
+        </div>
+        <button type="button" onClick={onClose} className="shrink-0 text-[10px] font-medium text-[#64748B] hover:text-[#020040]">
+          Clear ✕
+        </button>
+      </div>
+      {onOpenJob ? (
+        <button type="button" onClick={() => onOpenJob(job)} className="text-[10px] font-medium text-[#020040] hover:underline">
+          Open job details →
+        </button>
+      ) : null}
+      {ranking.length === 0 ? (
+        <p className="text-[11px] text-[#64748B]">No partner with a saved base address to measure from.</p>
+      ) : (
+        <div className="max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-0.5">
+          {ranking.map(({ p, detourM, stops }) => (
+            <div key={p.id} className="flex items-center gap-2 rounded-md border border-[#E4E4E8] bg-[#FAFAFB] px-2 py-1.5">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[11px] font-medium text-[#020040]">{p.name}</span>
+                <span className="block text-[10px] text-[#64748B]">
+                  +{(detourM / 1609).toFixed(1)} mi off route · {stops === 0 ? "free today" : `${stops} job${stops === 1 ? "" : "s"} today`}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => onAssign(p.id)}
+                className="shrink-0 rounded-md bg-[#020040] px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-[#0A0A5E]"
+              >
+                Assign
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] text-[#64748B]">Straight-line detour on today&apos;s route — a ranking, not an ETA.</p>
     </div>
   );
 }

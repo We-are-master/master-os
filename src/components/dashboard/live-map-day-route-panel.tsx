@@ -16,6 +16,8 @@ export type DayRouteStop = {
   longitude: number | null;
   scheduled_start_at: string | null;
   scheduled_end_at: string | null;
+  /** O que o parceiro ganha nesta parada — a API day-route já manda. */
+  partner_cost?: number | null;
 };
 
 export type DayRouteData = {
@@ -203,6 +205,33 @@ export function LiveMapDayRoutePanel({
               {route.totalSec > 0 ? `${formatDuration(route.totalSec)} · ${formatDistanceMiles(route.totalM)}` : "—"}
             </span>
           </div>
+
+          {(() => {
+            /**
+             * A conta do dia: earnings da rota e o £/h efetivo COM a estrada.
+             *
+             * É o número que decide se vale enfiar mais um job no dia: soma do
+             * que o parceiro ganha ÷ (horas de janela + horas de volante). Sem
+             * janela em alguma parada a divisão mentiria — aí só o earnings.
+             */
+            const earnings = route.stops.reduce((a, st) => a + Number(st.partner_cost ?? 0), 0);
+            if (earnings <= 0) return null;
+            const workSec = route.stops.reduce((a, st) => {
+              if (!st.scheduled_start_at || !st.scheduled_end_at) return NaN;
+              return a + Math.max(0, (new Date(st.scheduled_end_at).getTime() - new Date(st.scheduled_start_at).getTime()) / 1000);
+            }, 0);
+            const totalSec = workSec + route.totalSec;
+            const porHora = Number.isFinite(workSec) && totalSec > 0 ? earnings / (totalSec / 3600) : null;
+            return (
+              <div className="flex items-center justify-between rounded-md bg-[#12704F]/10 px-2 py-1.5 text-[11px]">
+                <span className="font-semibold text-[#12704F]">Route earnings</span>
+                <span className="font-mono tabular-nums text-[#12704F]">
+                  £{earnings.toFixed(2)}
+                  {porHora != null ? ` · ≈£${porHora.toFixed(0)}/h incl. driving` : ""}
+                </span>
+              </div>
+            );
+          })()}
           {route.openNearbyCount > 0 ? (
             <p className="text-[10.5px] text-[#9A2A00]">
               {route.openNearbyCount} open job{route.openNearbyCount === 1 ? "" : "s"} nearby on the map — click one to assign.
