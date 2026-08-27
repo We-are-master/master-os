@@ -32,7 +32,7 @@ import {
   ArrowRight, Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
-  Timer, Link2, Check,
+  Timer, ArrowUpRight, Phone, Copy, MapPin, Link2, Check,
 } from "lucide-react";
 import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
@@ -897,6 +897,9 @@ function JobsPageContent() {
   const [clientAccountMap, setClientAccountMap] = useState<Record<string, string>>({});
   const [clientAccountLogoByClientId, setClientAccountLogoByClientId] = useState<Record<string, string | null>>({});
   const [clientIdToSourceAccountId, setClientIdToSourceAccountId] = useState<Record<string, string | null>>({});
+  /** Telefone do cliente por client_id (clients.phone) — o hover da lista usa
+   *  pra ligar/copiar sem abrir o job. */
+  const [clientPhoneByClientId, setClientPhoneByClientId] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     if (!buFilter.selectedBuId) {
@@ -1085,6 +1088,10 @@ function JobsPageContent() {
       if (filterSort === "schedule_farthest") return sb.day.localeCompare(sa.day);
       const dayCmp = sa.day.localeCompare(sb.day);
       if (dayCmp !== 0) return dayCmp;
+      // Mesmo dia: janela de chegada mais cedo primeiro (sem horário vai pro fim).
+      const startA = a.scheduled_start_at ? new Date(a.scheduled_start_at).getTime() : Infinity;
+      const startB = b.scheduled_start_at ? new Date(b.scheduled_start_at).getTime() : Infinity;
+      if (startA !== startB) return startA - startB;
       return createdAt(b) - createdAt(a);
     };
 
@@ -1492,6 +1499,7 @@ function JobsPageContent() {
       setClientAccountMap({});
       setClientAccountLogoByClientId({});
       setClientIdToSourceAccountId({});
+      setClientPhoneByClientId({});
       return;
     }
     const supabase = getSupabase();
@@ -1500,7 +1508,7 @@ function JobsPageContent() {
       const [labels, logos, clientRowsRes] = await Promise.all([
         batchResolveLinkedAccountLabels(supabase, ids),
         batchResolveClientAccountLogoUrls(supabase, ids),
-        supabase.from("clients").select("id, source_account_id").in("id", ids).is("deleted_at", null),
+        supabase.from("clients").select("id, source_account_id, phone").in("id", ids).is("deleted_at", null),
       ]);
       if (cancelled) return;
       const next: Record<string, string> = {};
@@ -1514,11 +1522,14 @@ function JobsPageContent() {
       });
       setClientAccountLogoByClientId(nextLogo);
       const nextSrc: Record<string, string | null> = {};
+      const nextPhone: Record<string, string | null> = {};
       for (const row of clientRowsRes.data ?? []) {
-        const r = row as { id: string; source_account_id?: string | null };
+        const r = row as { id: string; source_account_id?: string | null; phone?: string | null };
         nextSrc[r.id] = r.source_account_id?.trim() || null;
+        nextPhone[r.id] = r.phone?.trim() || null;
       }
       setClientIdToSourceAccountId(nextSrc);
+      setClientPhoneByClientId(nextPhone);
     })();
     return () => { cancelled = true; };
   }, [data]);
@@ -2518,30 +2529,79 @@ function JobsPageContent() {
         const scopeText = item.scope?.trim();
         // O endereço na célula é cortado em duas linhas, então o hover é o
         // único lugar da lista onde ele aparece inteiro: mostra sempre, mesmo
-        // quando o job ainda não tem scope.
+        // quando o job ainda não tem scope. O card é clicável (26/08): abrir o
+        // job em nova aba sem perder a lista, e ligar/copiar o telefone do
+        // cliente na hora.
         const addressText = item.property_address?.trim();
+        const phoneText = item.client_id ? clientPhoneByClientId[item.client_id]?.trim() || null : null;
         return (
           <HoverPreview
             content={
-              scopeText || addressText ? (
+              scopeText || addressText || phoneText ? (
                 <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                    {item.reference}
-                  </p>
-                  {addressText ? (
-                    <p className="mt-1.5 whitespace-pre-line break-words text-xs font-medium leading-relaxed text-text-primary">
-                      {addressText}
-                    </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        {item.reference}
+                      </p>
+                      <p className="mt-0.5 truncate text-[13px] font-semibold text-text-primary">{item.client_name}</p>
+                    </div>
+                    <a
+                      href={`/jobs/${item.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                    >
+                      Open job
+                      <ArrowUpRight className="h-3 w-3" />
+                    </a>
+                  </div>
+
+                  {phoneText ? (
+                    <div className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-border-light bg-surface-hover px-2 py-1.5">
+                      <Phone className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                      <a
+                        href={`tel:${phoneText.replace(/[^+\d]/g, "")}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="min-w-0 flex-1 truncate text-xs font-medium tabular-nums text-text-primary transition-colors hover:text-primary"
+                      >
+                        {phoneText}
+                      </a>
+                      <button
+                        type="button"
+                        aria-label="Copy phone number"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void navigator.clipboard.writeText(phoneText);
+                          toast.success("Phone number copied");
+                        }}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-text-secondary transition-colors hover:bg-primary/10 hover:text-primary"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Copy
+                      </button>
+                    </div>
                   ) : null}
+
+                  {addressText ? (
+                    <div className="mt-2.5 flex items-start gap-1.5">
+                      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                      <p className="min-w-0 whitespace-pre-line break-words text-xs font-medium leading-relaxed text-text-primary">
+                        {addressText}
+                      </p>
+                    </div>
+                  ) : null}
+
                   {scopeText ? (
-                    <>
-                      <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                    <div className="mt-3 border-t border-border-light pt-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                         Scope of work
                       </p>
-                      <p className="mt-1.5 max-h-64 overflow-hidden whitespace-pre-line text-xs leading-relaxed text-text-primary">
+                      <p className="mt-1.5 max-h-56 overflow-y-auto overscroll-contain whitespace-pre-line pr-1 text-xs leading-relaxed text-text-secondary">
                         {scopeText}
                       </p>
-                    </>
+                    </div>
                   ) : null}
                 </div>
               ) : null

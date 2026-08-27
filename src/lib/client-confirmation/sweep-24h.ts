@@ -79,6 +79,23 @@ export function dentroDaJanelaDoLembrete(agora: Date): boolean {
   return h >= LEMBRETE_HORA_INICIO && h < LEMBRETE_HORA_FIM;
 }
 
+/**
+ * Assign de última hora já falou com o cliente (dono, 26/08): se a confirmação
+ * de booking saiu nas últimas 24 horas, ela mesma já disse a data e a janela de
+ * amanhã — o lembrete seria a SEGUNDA mensagem da mesma noite dizendo a mesma
+ * coisa. Confirmação mais antiga que 24h é outra história: aí o lembrete de
+ * véspera trabalha normalmente.
+ */
+export function confirmacaoRecente(
+  sentAt: string | null | undefined,
+  agora: Date,
+): boolean {
+  if (!sentAt) return false;
+  const t = new Date(sentAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return agora.getTime() - t < 24 * 60 * 60 * 1000;
+}
+
 /** `2026-08-21`, no fuso de Londres, a partir de um instante qualquer. */
 export function amanhaEmLondres(agora: Date): string {
   const amanha = new Date(agora.getTime() + 24 * 60 * 60 * 1000);
@@ -89,7 +106,7 @@ export function amanhaEmLondres(agora: Date): string {
 
 const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
-  "partner_id, partner_name, client_id, client_name, client_reminder_sent_at";
+  "partner_id, partner_name, client_id, client_name, client_reminder_sent_at, client_confirmation_sent_at";
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
@@ -143,6 +160,11 @@ export async function varrerLembretesDeVespera(
     // a confirmação de nascimento, e é o guarda mais importante daqui.
     if (!j.partner_id) {
       anota("pulado", "no partner assigned: nothing to promise for tomorrow");
+      continue;
+    }
+
+    if (confirmacaoRecente(j.client_confirmation_sent_at as string | null, agora)) {
+      anota("pulado", "booking confirmation went out in the last 24h: one message is enough");
       continue;
     }
 

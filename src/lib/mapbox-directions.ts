@@ -126,3 +126,72 @@ export async function getDrivingRouteMulti(points: Coord[]): Promise<DrivingRout
     return null;
   }
 }
+
+/**
+ * A ORDEM ótima de visita, via Matrix API + menor caminho em JS.
+ *
+ * A Optimization v1 devolve NotImplemented para roundtrip=false sem
+ * destination fixo (visto na prática, 25/08). A Matrix dá a tabela de
+ * durações em UMA chamada e, com até 8 paradas, o caminho mínimo por força
+ * bruta é instantâneo e determinístico. Partindo de `start` quando existir;
+ * caso contrário, o melhor ponto de partida entra na conta.
+ *
+ * Devolve os índices de `stops` na ordem de visita, ou null (caller mantém a
+ * ordem que já tinha).
+ */
+export async function getOptimizedStopOrder(
+  stops: Coord[],
+  opts?: { start?: Coord | null },
+): Promise<number[] | null> {
+  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  if (!token) return null;
+  const valid = stops.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+  if (valid.length < 2 || valid.length !== stops.length || stops.length > 8) return null;
+
+  // Casa a mais de ~50km do miolo das paradas é dado sujo (ex.: "Hope Farm"
+  // geocodado na outra ponta do país) — melhor otimizar sem ponto de partida
+  // do que partir de um lugar onde o parceiro não está.
+  let start = opts?.start ?? null;
+  if (start) {
+    const cLat = stops.reduce((a, p) => a + p.latitude, 0) / stops.length;
+    const cLng = stops.reduce((a, p) => a + p.longitude, 0) / stops.length;
+    const km =
+      Math.hypot(start.latitude - cLat, (start.longitude - cLng) * Math.cos((cLat * Math.PI) / 180)) * 111;
+    if (!Number.isFinite(km) || km > 50) start = null;
+  }
+
+  const coords = [...(start ? [start] : []), ...stops];
+  const path = coords.map((p) => `${p.longitude.toFixed(6)},${p.latitude.toFixed(6)}`).join(";");
+  try {
+    const res = await fetch(
+      `https://api.mapbox.com/directions-matrix/v1/mapbox/driving/${path}?annotations=duration&access_token=${encodeURIComponent(token)}`,
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { code?: string; durations?: number[][] };
+    const dur = json.durations;
+    if (json.code !== "Ok" || !dur) return null;
+
+    const offset = start ? 1 : 0;
+    const n = stops.length;
+    let melhor: number[] | null = null;
+    let melhorCusto = Infinity;
+    const permutar = (resto: number[], atual: number[], custo: number, pos: number | null) => {
+      if (custo >= melhorCusto) return;
+      if (resto.length === 0) {
+        melhorCusto = custo;
+        melhor = atual;
+        return;
+      }
+      for (const idx of resto) {
+        const de = pos == null ? (start ? 0 : null) : idx0(pos);
+        const perna = de == null ? 0 : dur[de]?.[idx0(idx)] ?? Infinity;
+        permutar(resto.filter((r) => r !== idx), [...atual, idx], custo + perna, idx);
+      }
+    };
+    const idx0 = (stopIdx: number) => stopIdx + offset;
+    permutar([...Array(n).keys()], [], 0, null);
+    return melhor;
+  } catch {
+    return null;
+  }
+}
