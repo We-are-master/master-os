@@ -172,6 +172,10 @@ export interface ScheduleLiveMapJobPoint {
   scheduleLine: string;
   /** Modo rota do parceiro: posição desta parada no dia (1, 2, 3…). */
   routeOrder?: number | null;
+  /** Primeiras linhas do scope, para o popup dizer O QUE é o job. */
+  scopePreview?: string | null;
+  /** "ETA 11:32" calculada da rota (fim da parada anterior + perna). */
+  etaLabel?: string | null;
 }
 
 interface ScheduleLiveMapProps {
@@ -191,10 +195,24 @@ interface ScheduleLiveMapProps {
   selectedJobIds?: ReadonlySet<string>;
   /** Fired when a job pin is clicked. Caller decides: toggle selection, open drawer, etc. */
   onJobMarkerClick?: (jobId: string) => void;
+  /** Fired on pin hover (null on leave) — e.g. draw a line to the nearest partner. */
+  onJobMarkerHover?: (jobId: string | null) => void;
   /** Fired when a partner pin is clicked — used by the page to compute the route to that partner's next job. */
   onPartnerMarkerClick?: (partnerId: string) => void;
   /** Optional driving route geometry to overlay (e.g. partner → next job). */
   routeGeometry?: { type: "LineString"; coordinates: [number, number][] } | null;
+  /**
+   * Rotas EXTRAS desenhadas juntas (uma por parceiro no modo mapa do Jobs).
+   * Cada uma leva a própria cor; `dashed` marca linha de intenção (job → o
+   * parceiro cogitado), não de rota real. Nenhuma mexe no enquadramento — quem
+   * enquadra é a `routeGeometry` principal, quando existe.
+   */
+  extraRoutes?: Array<{
+    id: string;
+    geometry: { type: "LineString"; coordinates: [number, number][] };
+    color: string;
+    dashed?: boolean;
+  }> | null;
   /** Filter controls panel — floated below the top-left toolbar on the map. */
   filterOverlay?: ReactNode;
   /** Live stats + legend panel — floated at the bottom-left corner of the map. */
@@ -274,8 +292,10 @@ export function ScheduleLiveMap({
   jobPoints,
   selectedJobIds,
   onJobMarkerClick,
+  onJobMarkerHover,
   onPartnerMarkerClick,
   routeGeometry,
+  extraRoutes,
   filterOverlay,
   bottomLeftOverlay,
   bottomRightOverlay,
@@ -893,6 +913,11 @@ export function ScheduleLiveMap({
     };
 
     const handleJobEnter = (e: MapLayerMouseEvent) => {
+      {
+        const f = e.features?.[0];
+        const hid = f?.properties?.id as string | undefined;
+        if (hid) onJobMarkerHover?.(hid);
+      }
       const feature = e.features?.[0];
       const id = feature?.properties?.id as string | undefined;
       if (!id) return;
@@ -914,12 +939,15 @@ export function ScheduleLiveMap({
             tradeLabel: job.tradeLabel,
             scheduleLine: job.scheduleLine,
             selected: selectedJobIds?.has(job.id) ?? false,
+            scopePreview: job.scopePreview,
+            etaLabel: job.etaLabel,
           }),
         )
         .addTo(map);
     };
 
     const handleJobLeave = () => {
+      onJobMarkerHover?.(null);
       map.getCanvas().style.cursor = "";
       jobPopupRef.current?.remove();
     };
@@ -957,7 +985,66 @@ export function ScheduleLiveMap({
       map.off("click", JOB_ICON_LAYER_ID, handleJobClick);
       map.off("click", PARTNER_CIRCLE_LAYER_ID, handlePartnerClick);
     };
-  }, [mapReady, partnerById, jobById, onJobMarkerClick, onPartnerMarkerClick, selectedJobIds]);
+  }, [mapReady, partnerById, jobById, onJobMarkerClick, onJobMarkerHover, onPartnerMarkerClick, selectedJobIds]);
+
+  /** Extra-routes overlay: N LineStrings de uma vez, cor por feature
+   *  (data-driven), sólidas e tracejadas em layers irmãs. Aditivo ao overlay
+   *  principal — o Live View, que não passa `extraRoutes`, não muda nada. */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const SOURCE_ID = "live-map-extra-routes";
+    const SOLID_ID = "live-map-extra-routes-solid";
+    const DASHED_ID = "live-map-extra-routes-dashed";
+    const emptyFc = { type: "FeatureCollection" as const, features: [] };
+    if (!map.getSource(SOURCE_ID)) {
+      map.addSource(SOURCE_ID, { type: "geojson", data: emptyFc });
+    }
+    const beforeLayer = map.getLayer(PARTNER_CIRCLE_LAYER_ID) ? PARTNER_CIRCLE_LAYER_ID : undefined;
+    if (!map.getLayer(SOLID_ID)) {
+      map.addLayer(
+        {
+          id: SOLID_ID,
+          type: "line",
+          source: SOURCE_ID,
+          filter: ["!=", ["get", "dashed"], true],
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-color": ["get", "color"], "line-width": 3.5, "line-opacity": 0.8 },
+        },
+        beforeLayer,
+      );
+    }
+    if (!map.getLayer(DASHED_ID)) {
+      map.addLayer(
+        {
+          id: DASHED_ID,
+          type: "line",
+          source: SOURCE_ID,
+          filter: ["==", ["get", "dashed"], true],
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": 2.5,
+            "line-opacity": 0.9,
+            "line-dasharray": [1.4, 1.6],
+          },
+        },
+        beforeLayer,
+      );
+    }
+    const source = map.getSource(SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData({
+      type: "FeatureCollection",
+      features: (extraRoutes ?? [])
+        .filter((r) => r.geometry.coordinates.length >= 2)
+        .map((r) => ({
+          type: "Feature" as const,
+          geometry: r.geometry,
+          properties: { color: r.color, dashed: r.dashed === true },
+        })),
+    });
+  }, [mapReady, extraRoutes]);
 
   /** Route overlay: a single LineString source + line layer that updates
    *  whenever `routeGeometry` changes. Mounted below partner pins so the pins
