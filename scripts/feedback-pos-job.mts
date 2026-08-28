@@ -24,9 +24,9 @@
  *      nota baixa.
  *
  * Sai pelo mesmo canal da confirmação (RESPONDIO_CONFIRMATION_CHANNEL_ID — o
- * 07 desde 28/08), template `feedback_request` submetido à Meta pelo painel.
- * Sem link de review no corpo: resposta na própria conversa cai no respond.io
- * onde o time já trabalha, e a Meta aprova utility sem briga.
+ * 07 desde 28/08), template `afterwork_feedback` (aprovado pela
+ * Meta em 28/08, uma variável: o nome). Sem link no corpo: a resposta cai na
+ * própria conversa do respond.io, onde o time já trabalha.
  */
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "./load-env-local.mjs";
@@ -37,7 +37,7 @@ loadEnvLocal();
 
 const ENVIAR = process.argv.includes("--enviar");
 const JANELA_HORAS = Number(process.env.FEEDBACK_WINDOW_HOURS ?? 72); // env só para ensaio/backfill
-const TEMPLATE = process.env.RESPONDIO_FEEDBACK_TEMPLATE?.trim() || "feedback_request";
+const TEMPLATE = process.env.RESPONDIO_FEEDBACK_TEMPLATE?.trim() || "afterwork_feedback";
 const IDIOMA = process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
 const CANAL = Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
 
@@ -118,7 +118,7 @@ for (const j of candidatos) {
   const servico = String(j.title ?? "").trim() || "job";
 
   if (!ENVIAR_AGORA) {
-    console.log(`· ${j.reference}: enviaria ${TEMPLATE} → ${primeiroNome} | ${servico} | ${decisao.telefone}`);
+    console.log(`· ${j.reference}: enviaria ${TEMPLATE} → ${primeiroNome} | ${decisao.telefone}`);
     continue;
   }
 
@@ -130,8 +130,10 @@ for (const j of candidatos) {
       {
         name: TEMPLATE,
         languageCode: IDIOMA,
+        // afterwork_feedback tem UMA variavel ({{1}} = nome). Mandar mais
+        // do que o corpo declara faz a Meta recusar o envio inteiro.
         components: [
-          { type: "body", parameters: [primeiroNome, servico].map((text) => ({ type: "text" as const, text })) },
+          { type: "body", parameters: [{ type: "text" as const, text: primeiroNome }] },
         ],
       },
       CANAL!,
