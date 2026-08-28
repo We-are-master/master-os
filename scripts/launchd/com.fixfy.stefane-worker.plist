@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Braco local do envio da Housekeep: a Vercel enfileira, este worker envia.
+
+  Instalar:
+    cp scripts/launchd/com.fixfy.stefane-worker.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.fixfy.stefane-worker.plist
+
+  Desligar:
+    launchctl unload ~/Library/LaunchAgents/com.fixfy.stefane-worker.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fixfy.stefane-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/victorsouza/master-os &amp;&amp; npx tsx scripts/stefane-worker.mts</string>
+  </array>
+  <!-- 2 minutos: o clique de producao promete "picks it up within 2 minutes".
+       Rodadas sobrepostas nao duplicam envio - a trava por job decide. -->
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/victorsouza/master-os/.logs/stefane-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/victorsouza/master-os/.logs/stefane-worker.log</string>
+</dict>
+</plist>
