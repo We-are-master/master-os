@@ -521,6 +521,26 @@ async function executarEnvio(
   const bloqueio = motivoNaoElegivel(job as never);
   if (bloqueio) return { estado: "nao_elegivel", motivo: bloqueio };
 
+  /**
+   * Na VERCEL ninguém envia: o Playwright não existe numa function serverless.
+   *
+   * O clique de produção (27/08, JOB-9519) tentava mesmo assim e explodia com
+   * "Cannot find module /var/task/.../browsers.json" — queimando tentativa
+   * atrás de tentativa num erro que nunca vai mudar. É o mesmo desenho do
+   * Express: o site diz o que fazer, quem tem o navegador faz. O worker do Mac
+   * (`scripts/stefane-worker.mts`, launchd) varre os elegíveis e envia daqui a
+   * pouco; devolver "enviando" é verdade, só que o remetente é outro processo.
+   *
+   * ANTES da trava, de propósito: enfileirar não é tentar, e não pode nem
+   * gastar tentativa nem deixar `started_at` armado para o worker esbarrar.
+   */
+  if (process.env.VERCEL) {
+    return {
+      estado: "enviando",
+      motivo: "queued for the office sender (the browser only runs there); it picks the job up within 2 minutes",
+    };
+  }
+
   const j = job as unknown as Record<string, unknown>;
 
   /**
