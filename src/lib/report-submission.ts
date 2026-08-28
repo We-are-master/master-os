@@ -177,9 +177,15 @@ export function buildReportPayload(input: {
  * Stefane sends Housekeep a start time and a finish time, read straight from
  * `partner_timer_*`. A report typed by hand has no running timer, so we derive
  * the window: explicit clock times when the office gave them, otherwise the
- * duration counted backwards from submission. A real timer already on the job
- * always wins — it is the only one measured rather than remembered.
+ * duration counted backwards from submission. A timer the app REALLY measured
+ * wins — but only a plausible one; see MIN_JANELA_MEDIDA_MS below.
  */
+/**
+ * Nenhum serviço dura menos que isto. Uma "janela medida" mais curta não mediu
+ * serviço nenhum: mediu dois toques na tela.
+ */
+export const MIN_JANELA_MEDIDA_MS = 10 * 60_000;
+
 export function deriveTimerWindow(input: {
   existingStartedAt?: string | null;
   existingEndedAt?: string | null;
@@ -193,24 +199,51 @@ export function deriveTimerWindow(input: {
    */
   preferExplicit?: boolean;
 }): { startedAt: string | null; endedAt: string } {
-  // Same precedence on both ends: measured beats remembered beats assumed —
-  // inverted when editing, where the typed correction is the point.
-  const endedAt = input.preferExplicit
-    ? input.explicitEndedAt ?? input.existingEndedAt ?? input.now
-    : input.existingEndedAt ?? input.explicitEndedAt ?? input.now;
+  /**
+   * "Medido vence lembrado" pressupõe que houve MEDIÇÃO — e 20 dos últimos 60
+   * jobs tinham timer de 4 a 49 SEGUNDOS, gravado à noite: o parceiro não usa
+   * o timer em campo, abre o app depois e dá dois toques só para destravar o
+   * envio. Esse "timer" vencia o horário digitado por quem sabia a hora certa,
+   * e o job ficava com start = finish, barrado na Housekeep para sempre
+   * (27/08, print do dono: "colocou horas diferentes e continua igual").
+   *
+   * Janela menor que MIN_JANELA_MEDIDA_MS rebaixa o timer a palpite: horário
+   * explícito e duração digitada passam na frente. Ele segue como último
+   * recurso — dado ruim visível ainda é melhor que coluna vazia, e o guarda de
+   * envio aponta exatamente o que corrigir.
+   */
+  const medidaMs =
+    input.existingStartedAt && input.existingEndedAt
+      ? new Date(input.existingEndedAt).getTime() - new Date(input.existingStartedAt).getTime()
+      : null;
+  const existingConfiavel = medidaMs == null || !Number.isFinite(medidaMs) || medidaMs >= MIN_JANELA_MEDIDA_MS;
+  const existingVence = existingConfiavel && !input.preferExplicit;
 
-  const first = input.preferExplicit ? input.explicitStartedAt : input.existingStartedAt;
-  const second = input.preferExplicit ? input.existingStartedAt : input.explicitStartedAt;
-  if (first) return { startedAt: first, endedAt };
-  if (second) return { startedAt: second, endedAt };
   const ms = input.durationMs ?? 0;
-  if (ms > 0) {
+
+  // O fim: medido confiável > digitado > duração ancorada na submissão >
+  // timer rebaixado como último recurso. Um fim de dois toques não pode
+  // ancorar a conta da duração — a submissão (now) é a âncora honesta.
+  const endedAt = existingVence
+    ? input.existingEndedAt ?? input.explicitEndedAt ?? input.now
+    : input.explicitEndedAt ?? (existingConfiavel ? input.existingEndedAt ?? input.now : ms > 0 ? input.now : input.existingEndedAt ?? input.now);
+
+  const first = existingVence ? input.existingStartedAt : input.explicitStartedAt;
+  const second = existingVence ? input.explicitStartedAt : input.existingStartedAt;
+  if (first) return { startedAt: first, endedAt };
+
+  // Timer rebaixado só entra DEPOIS da duração digitada: se o parceiro disse
+  // "3h", contar 3h para trás é melhor do que repetir os dois toques.
+  const derivarDaDuracao = (): { startedAt: string; endedAt: string } | null => {
+    if (ms <= 0) return null;
     const end = new Date(endedAt).getTime();
-    if (Number.isFinite(end)) {
-      return { startedAt: new Date(end - ms).toISOString(), endedAt };
-    }
+    return Number.isFinite(end) ? { startedAt: new Date(end - ms).toISOString(), endedAt } : null;
+  };
+  if (!existingConfiavel && second) {
+    return derivarDaDuracao() ?? { startedAt: second, endedAt };
   }
-  return { startedAt: null, endedAt };
+  if (second) return { startedAt: second, endedAt };
+  return derivarDaDuracao() ?? { startedAt: null, endedAt };
 }
 
 /**
