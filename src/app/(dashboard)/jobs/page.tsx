@@ -107,7 +107,7 @@ import { MarginValue } from "@/components/shared/margin-value";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
-import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases, proximaFaseDoJob } from "@/lib/job-phases";
 import {
   clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
@@ -261,6 +261,54 @@ function jobPassesJobsPageBuFilter(
   const accFromProperty = pid ? propertyIdToAccountId[pid] : undefined;
   const propertyInBu = Boolean(accFromProperty && buAccountIds.has(accFromProperty));
   return clientInBu || propertyInBu;
+}
+
+/**
+ * A seta da lista virou o botão de avançar fase (dono, 27/08).
+ *
+ * Ela já apontava para a direita e não fazia nada além de decorar a linha que
+ * o clique inteiro já abria. Agora ela é o atalho de quem está tocando o dia:
+ * `Scheduled → Start job` e `In progress → Job completed`, sem abrir o job.
+ *
+ * Quando o passo está bloqueado (parceiro faltando, data em branco) ela fica
+ * apagada e o motivo aparece no hover — e o clique ainda o repete no toast,
+ * porque quem clica com o mouse já parado não leu o title.
+ */
+function JobAdvanceArrow({
+  job,
+  saving,
+  onAdvance,
+}: {
+  job: Job;
+  saving: boolean;
+  onAdvance: (to: Job["status"]) => void;
+}) {
+  const proxima = proximaFaseDoJob(job);
+  if (!proxima) {
+    return <ArrowRight className="h-4 w-4 text-stone-300 inline-block" />;
+  }
+  if (saving) {
+    return <Loader2 className="h-4 w-4 animate-spin text-primary inline-block" />;
+  }
+  return (
+    <button
+      type="button"
+      title={proxima.bloqueio ?? `${proxima.label} →`}
+      aria-label={proxima.bloqueio ? `${proxima.label} (blocked)` : proxima.label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onAdvance(proxima.to);
+      }}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+        proxima.bloqueio
+          ? "text-stone-300 hover:bg-surface-hover"
+          : "text-stone-400 hover:bg-primary/10 hover:text-primary",
+      )}
+    >
+      <ArrowRight className="h-4 w-4" />
+    </button>
+  );
 }
 
 function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
@@ -869,6 +917,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Job cuja seta está avançando de fase agora (trava o clique duplo). */
+  const [advancingJobId, setAdvancingJobId] = useState<string | null>(null);
   /** Assign modal opened from the Partner column of the list. */
   const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string; initialPartnerId?: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -2868,7 +2918,14 @@ function JobsPageContent() {
             ) : null}
           </span>
         ) : (
-          <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
+          <JobAdvanceArrow
+            job={item}
+            saving={advancingJobId === item.id}
+            onAdvance={(to) => {
+              setAdvancingJobId(item.id);
+              void handleStatusChange(item, to).finally(() => setAdvancingJobId(null));
+            }}
+          />
         ),
     },
   ];

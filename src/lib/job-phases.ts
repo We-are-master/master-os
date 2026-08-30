@@ -599,3 +599,33 @@ export function shouldAutoAdvanceToFinalCheckAfterMerge(
   if (statusBefore === "final_check") return false;
   return true;
 }
+
+/**
+ * O passo que a SETA da lista de jobs executa, sem abrir o job.
+ *
+ * A fonte é `getJobStatusActions`, a mesma que desenha os botões dentro do
+ * job: a seta não inventa um caminho paralelo, ela repete o botão primário
+ * daquele status. Só vale para `scheduled`/`late` (Start job) e `in_progress`
+ * (Job completed), que são os dois passos que não pedem decisão nenhuma.
+ *
+ * Fora daí ela continua decorativa, de propósito: `final_check` abre a revisão
+ * final (relatório, fatura, self-bill) e `awaiting_payment` exige conferir o
+ * pagamento dos dois lados. Passo que precisa de tela não cabe num clique de
+ * lista — e é justamente onde um clique errado custa dinheiro.
+ *
+ * `bloqueio` é o motivo de `canAdvanceJob` ("Assign a partner before starting
+ * the job."), para a seta explicar por que não vai antes de alguém tentar.
+ */
+export function proximaFaseDoJob(
+  job: Job,
+): { to: Job["status"]; label: string; bloqueio: string | null } | null {
+  if (job.status !== "scheduled" && job.status !== "late" && job.status !== "in_progress") return null;
+  const primaria = getJobStatusActions(job).find((a) => a.primary && !a.special && !a.destructive);
+  if (!primaria) return null;
+  const check = canAdvanceJob(job, primaria.status);
+  return {
+    to: primaria.status,
+    label: primaria.label,
+    bloqueio: check.ok ? null : (check.message ?? "Cannot advance this job yet."),
+  };
+}

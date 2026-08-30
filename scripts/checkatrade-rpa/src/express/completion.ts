@@ -56,7 +56,6 @@ function ehFalhaDeInfra(err: unknown): boolean {
   return FALHA_DE_INFRA.test(err instanceof Error ? `${err.message}` : String(err));
 }
 
-
 type Controle = {
   tag: string;
   tipo: string;
@@ -297,7 +296,8 @@ async function concluir(page: Page, item: ItemDaFila): Promise<{ ok: boolean; mo
  *
  * As três tentativas existem para um job cuja causa pode mudar entre uma e
  * outra. Sem espaçamento elas não mudam nada: o JOB-9481 queimou as três em
- * cinco minutos contra uma tela que não ia mudar (26/08). Meia hora é curto o
+ * cinco minutos contra uma tela que não ia mudar (26/08), e agora que a fila é
+ * espiada a cada 10s seriam três em trinta segundos. Meia hora é curto o
  * bastante para o job ainda sair no mesmo dia e longo o bastante para a causa
  * (sessão, deploy deles, job ainda não aceito) ter chance de mudar.
  *
