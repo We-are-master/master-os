@@ -422,6 +422,36 @@ const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = [
   "custom",
 ];
 
+/**
+ * A JANELA escolhida à mão volta junto com o preset (dono, 27/08).
+ *
+ * O preset já era lembrado, mas as duas datas do Range nasciam sempre em
+ * "hoje": quem filtrava 24 Aug, abria um job e voltava, encontrava a lista de
+ * novo em hoje — o preset dizia "custom" e as datas diziam outra coisa. Guardar
+ * só metade da decisão é pior do que não guardar nada, porque a tela mente
+ * sobre o que está mostrando.
+ */
+const JOBS_SCHEDULE_CUSTOM_STORAGE_KEY = "master-os-jobs-schedule-custom-v1";
+
+const EH_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function readStoredJobsScheduleCustom(): { from: string; to: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cru = localStorage.getItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY);
+    if (!cru) return null;
+    const v = JSON.parse(cru) as { from?: unknown; to?: unknown };
+    const from = String(v.from ?? "");
+    const to = String(v.to ?? "");
+    // Data podre no storage não pode virar filtro: sem isto, um valor
+    // estragado devolveria uma lista vazia sem explicação nenhuma.
+    if (!EH_YMD.test(from) || !EH_YMD.test(to)) return null;
+    return { from, to };
+  } catch {
+    return null;
+  }
+}
+
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";
   try {
@@ -857,9 +887,22 @@ function JobsPageContent() {
     }
   }, []);
 
+  /**
+   * Restaura a escolha de data INTEIRA, e depois da hidratação.
+   *
+   * As duas metades voltam no mesmo efeito de propósito: preset sem janela
+   * mostrava "custom" com as datas de hoje, ou seja, a tela dizia uma coisa e
+   * filtrava outra. E ler localStorage no inicializador do estado divergiria
+   * do HTML do servidor, que não tem storage nenhum.
+   */
   useEffect(() => {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
+    const janela = readStoredJobsScheduleCustom();
+    if (janela) {
+      setCustomScheduleFrom(janela.from);
+      setCustomScheduleTo(janela.to);
+    }
   }, []);
 
   const [defaultJobsTab, setDefaultJobsTabState] = useState<JobsDefaultTabId>(() => readStoredJobsDefaultTab());
@@ -873,6 +916,14 @@ function JobsPageContent() {
   }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
+  /** Grava a janela escolhida à mão junto com o preset: a decisão é uma só. */
+  const guardarJanelaCustom = useCallback((from: string, to: string) => {
+    try {
+      localStorage.setItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY, JSON.stringify({ from, to }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const scheduleRange = useMemo(
     () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
@@ -3078,8 +3129,11 @@ function JobsPageContent() {
               onChange={(next: DateFilterValue) => {
                 setScheduleDatePreset(next.mode);
                 if (next.mode === "custom") {
-                  setCustomScheduleFrom(next.customFrom ?? customScheduleFrom);
-                  setCustomScheduleTo(next.customTo ?? customScheduleTo);
+                  const from = next.customFrom ?? customScheduleFrom;
+                  const to = next.customTo ?? customScheduleTo;
+                  setCustomScheduleFrom(from);
+                  setCustomScheduleTo(to);
+                  guardarJanelaCustom(from, to);
                 }
               }}
             />
