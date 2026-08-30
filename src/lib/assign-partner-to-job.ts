@@ -27,7 +27,44 @@ export type PartnerAssignInput = {
    * o que o job ja tinha.
    */
   rateBasis?: JobRateBasis;
+  /**
+   * Como o job passa a ser cobrado. Ausente = comportamento de sempre: job por
+   * hora fica intocado, job fixo recebe preco. Presente, MANDA — e por aqui que
+   * a tela converte fixo em hora e vice-versa.
+   */
+  rateType?: JobRateType;
+  /** Obrigatorio quando `rateType` e "hourly". */
+  hourly?: PartnerAssignHourly | null;
 };
+
+export type JobRateType = "fixed" | "hourly";
+
+export type PartnerAssignHourly = {
+  clientHourlyRate: number;
+  partnerHourlyRate: number;
+  billedHours: number;
+};
+
+/** Meia hora e o menor bloco que se cobra; abaixo disso nao existe visita. */
+export const MIN_BILLED_HOURS = 0.5;
+
+/** Totais de um job por hora. Puro, para a tela mostrar o mesmo que sera gravado. */
+export function hourlyTotals(input: PartnerAssignHourly): {
+  billedHours: number;
+  clientTotal: number;
+  partnerTotal: number;
+} {
+  const billedHours = Math.max(MIN_BILLED_HOURS, Number(input.billedHours) || 0);
+  const clientRate = Math.max(0, Number(input.clientHourlyRate) || 0);
+  const partnerRate = Math.max(0, Number(input.partnerHourlyRate) || 0);
+  return {
+    billedHours,
+    clientTotal: round2(clientRate * billedHours),
+    partnerTotal: round2(partnerRate * billedHours),
+  };
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export type JobRateBasis = NonNullable<Job["rate_basis"]>;
 
@@ -36,8 +73,6 @@ export const JOB_RATE_BASIS_OPTIONS: { id: JobRateBasis; label: string }[] = [
   { id: "daily", label: "Day rate" },
   { id: "half_day", label: "Half day" },
 ];
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Hourly jobs price from catalog rates — the board never overwrites those. */
 export function jobPricesHourly(job: Pick<Job, "job_type">): boolean {
@@ -52,15 +87,40 @@ export function buildPartnerAssignPatch(job: Job, input: PartnerAssignInput): Pa
     ...partnerAssignStatusPatch(job.status),
   };
 
-  // Hourly keeps its catalog-derived rates: assign the partner, touch no money.
-  if (jobPricesHourly(job)) {
-    return { ...base, ...deriveStoredJobFinancials({ ...job, ...base } as Job) };
-  }
-
   const partnerExtras = Math.max(0, Number(job.partner_extras_amount) || 0);
   const materials = Math.max(0, Number(job.materials_cost) || 0);
   const deposit = Math.max(0, Number(job.customer_deposit) || 0);
   const clientExtras = Math.max(0, Number(job.extras_amount) || 0);
+
+  /**
+   * Sem `rateType` o chamador nao opinou sobre cobranca, e vale o de sempre:
+   * job por hora mantem as taxas do catalogo e so ganha parceiro. Com
+   * `rateType`, quem manda e a tela — e por ai que fixo vira hora e hora vira
+   * fixo sem passar pela pagina do job.
+   */
+  const rateType: JobRateType = input.rateType ?? (jobPricesHourly(job) ? "hourly" : "fixed");
+
+  if (rateType === "hourly") {
+    // Sem taxas novas, nao ha o que reescrever: assina o parceiro e sai.
+    if (!input.hourly) {
+      return { ...base, ...deriveStoredJobFinancials({ ...job, ...base } as Job) };
+    }
+    const totais = hourlyTotals(input.hourly);
+    const patchHora: Partial<Job> = {
+      ...base,
+      job_type: "hourly",
+      // Por hora nao tem acordo de fixo para rotular: o email dele diz £/hr.
+      rate_basis: null,
+      hourly_client_rate: round2(Math.max(0, input.hourly.clientHourlyRate)),
+      hourly_partner_rate: round2(Math.max(0, input.hourly.partnerHourlyRate)),
+      billed_hours: totais.billedHours,
+      client_price: totais.clientTotal,
+      partner_cost: round2(totais.partnerTotal + partnerExtras),
+      partner_agreed_value: round2(totais.partnerTotal + partnerExtras + materials),
+      customer_final_payment: round2(Math.max(0, totais.clientTotal + clientExtras - deposit)),
+    };
+    return { ...patchHora, ...deriveStoredJobFinancials({ ...job, ...patchHora } as Job) };
+  }
 
   const clientPrice = round2(Math.max(0, input.clientPrice));
   // `partner_cost` is the full partner side (labour + extras already agreed),

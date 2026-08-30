@@ -10,9 +10,12 @@ import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 import {
   assignPartnerToJob,
+  hourlyTotals,
   jobPricesHourly,
   JOB_RATE_BASIS_OPTIONS,
+  MIN_BILLED_HOURS,
   type JobRateBasis,
+  type JobRateType,
 } from "@/lib/assign-partner-to-job";
 import { formatPartnerJobPriceDisplay } from "@/lib/job-pricing-resolver";
 import { listAssignablePartners, type AssignablePartner } from "@/services/partners";
@@ -49,6 +52,10 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
   const [partnerCost, setPartnerCost] = useState("");
   const [clientPrice, setClientPrice] = useState("");
   const [rateBasis, setRateBasis] = useState<JobRateBasis>("fixed");
+  const [rateType, setRateType] = useState<JobRateType>("fixed");
+  const [clientHourly, setClientHourly] = useState("");
+  const [partnerHourly, setPartnerHourly] = useState("");
+  const [hours, setHours] = useState("");
 
   useEffect(() => {
     if (!isOpen) return;
@@ -64,6 +71,11 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
       setPartnerCost(row && Number(row.partner_cost) > 0 ? String(Number(row.partner_cost)) : "");
       setClientPrice(row && Number(row.client_price) > 0 ? String(Number(row.client_price)) : "");
       setRateBasis((row?.rate_basis as JobRateBasis | null) ?? "fixed");
+      setRateType(row && jobPricesHourly(row) ? "hourly" : "fixed");
+      const num = (v: unknown) => (Number(v) > 0 ? String(Number(v)) : "");
+      setClientHourly(num(row?.hourly_client_rate));
+      setPartnerHourly(num(row?.hourly_partner_rate));
+      setHours(num(row?.billed_hours));
       setLoading(false);
     })();
     return () => {
@@ -86,9 +98,16 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
     );
   }, [partners, search]);
 
-  const hourly = job ? jobPricesHourly(job) : false;
-  const costValue = Math.max(0, Number(partnerCost) || 0);
-  const priceValue = Math.max(0, Number(clientPrice) || 0);
+  const porHora = rateType === "hourly";
+  const entradaHora = {
+    clientHourlyRate: Math.max(0, Number(clientHourly) || 0),
+    partnerHourlyRate: Math.max(0, Number(partnerHourly) || 0),
+    billedHours: Math.max(0, Number(hours) || 0),
+  };
+  // A MESMA conta que sera gravada, para o numero na tela nao ser um palpite.
+  const totaisHora = hourlyTotals(entradaHora);
+  const costValue = porHora ? totaisHora.partnerTotal : Math.max(0, Number(partnerCost) || 0);
+  const priceValue = porHora ? totaisHora.clientTotal : Math.max(0, Number(clientPrice) || 0);
   const marginPct = priceValue > 0 && costValue > 0 ? Math.round(((priceValue - costValue) / priceValue) * 100) : null;
   const selected = partners.find((p) => p.id === selectedId) ?? null;
   /**
@@ -96,15 +115,13 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
    * que se le aqui ser o que ele recebe. Sem isto o acordo so aparecia depois
    * de mandado.
    */
-  const linhaDoParceiro = job
-    ? formatPartnerJobPriceDisplay(
-        job.job_type ?? "fixed",
-        job.hourly_partner_rate,
-        hourly ? job.partner_cost : costValue,
-        null,
-        hourly ? null : rateBasis,
-      )
-    : "";
+  const linhaDoParceiro = formatPartnerJobPriceDisplay(
+    rateType,
+    entradaHora.partnerHourlyRate,
+    costValue,
+    null,
+    porHora ? null : rateBasis,
+  );
   // Zero is allowed: a return visit to finish paid work is worth nothing new.
   // Picking the partner is the whole decision here.
   const canConfirm = !!job && !!selected && !saving;
@@ -118,14 +135,12 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
         partnerName: selected.company_name?.trim() || selected.contact_name || "Partner",
         partnerCost: costValue,
         clientPrice: priceValue,
+        rateType,
         // Hourly nao tem acordo de fixo para rotular: o email dele ja diz £/hr.
-        rateBasis: hourly ? undefined : rateBasis,
+        rateBasis: porHora ? undefined : rateBasis,
+        hourly: porHora ? entradaHora : null,
       });
-      toast.success(
-        hourly
-          ? `${updated.partner_name} assigned`
-          : `${updated.partner_name} assigned · ${gbp(costValue)} partner cost`,
-      );
+      toast.success(`${updated.partner_name} assigned · ${gbp(costValue)} partner cost`);
       onAssigned?.(updated);
       onClose();
     } catch (e) {
@@ -185,63 +200,97 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
               </div>
             </div>
 
-            {hourly ? (
-              <p className="rounded-lg border border-border-light bg-surface-hover px-3 py-2.5 text-[12px] leading-snug text-text-secondary">
-                This job is priced hourly from the catalog. Assigning here keeps the rates as they are. Open the job to
-                change hours or rates.
-              </p>
-            ) : (
-              <div className="space-y-2 border-t border-border-light pt-3">
+            <div className="space-y-2 border-t border-border-light pt-3">
+              <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate &amp; cost</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Cliente à esquerda, parceiro à direita (padrão do dono, 24/08):
-                      lê na ordem do dinheiro — o que entra antes do que sai. */}
-                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
-                    <span>Client price £</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={clientPrice}
-                      onChange={(e) => setClientPrice(e.target.value)}
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-text-secondary">
-                    <span>Partner cost £</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={partnerCost}
-                      onChange={(e) => setPartnerCost(e.target.value)}
-                    />
-                  </label>
-                </div>
-                <p className="text-right text-sm font-semibold text-text-primary">
-                  Margin: {marginPct == null ? "—" : `${marginPct}%`}
-                </p>
-                {/* Day rate e Half day sao o MESMO fixed por baixo (mig 281):
-                    muda o rotulo que o parceiro le, nao o dinheiro. */}
-                <div className="flex flex-wrap gap-1 pt-1">
-                  {JOB_RATE_BASIS_OPTIONS.map((b) => (
+                {/* Fixo ou por hora se decide AQUI: antes esta tela recusava
+                    tocar em job por hora e mandava abrir a pagina do job. */}
+                <div className="flex gap-1">
+                  {([
+                    { id: "fixed", label: "Fixed" },
+                    { id: "hourly", label: "Hourly" },
+                  ] as const).map((t) => (
                     <button
-                      key={b.id}
+                      key={t.id}
                       type="button"
-                      onClick={() => setRateBasis(b.id)}
-                      aria-pressed={rateBasis === b.id}
+                      onClick={() => setRateType(t.id)}
+                      aria-pressed={rateType === t.id}
                       className={cn(
                         "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                        rateBasis === b.id
+                        rateType === t.id
                           ? "border-primary bg-primary/10 text-primary"
                           : "border-border-light text-text-secondary hover:bg-surface-hover",
                       )}
                     >
-                      {b.label}
+                      {t.label}
                     </button>
                   ))}
                 </div>
               </div>
-            )}
+
+              {porHora ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Cliente à esquerda, parceiro à direita: lê na ordem do
+                        dinheiro, o que entra antes do que sai. */}
+                    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>Client £/hr</span>
+                      <Input type="number" min={0} step="0.01" value={clientHourly} onChange={(e) => setClientHourly(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>Partner £/hr</span>
+                      <Input type="number" min={0} step="0.01" value={partnerHourly} onChange={(e) => setPartnerHourly(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>Hours</span>
+                      <Input type="number" min={MIN_BILLED_HOURS} step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-text-tertiary">
+                    {totaisHora.billedHours}h billed · client {gbp(priceValue)} · partner {gbp(costValue)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Cliente à esquerda, parceiro à direita (padrão do dono, 24/08):
+                        lê na ordem do dinheiro — o que entra antes do que sai. */}
+                    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>Client price £</span>
+                      <Input type="number" min={0} step="0.01" value={clientPrice} onChange={(e) => setClientPrice(e.target.value)} />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-text-secondary">
+                      <span>Partner cost £</span>
+                      <Input type="number" min={0} step="0.01" value={partnerCost} onChange={(e) => setPartnerCost(e.target.value)} />
+                    </label>
+                  </div>
+                  {/* Day rate e Half day sao o MESMO fixed por baixo (mig 281):
+                      muda o rotulo que o parceiro le, nao o dinheiro. */}
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {JOB_RATE_BASIS_OPTIONS.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setRateBasis(b.id)}
+                        aria-pressed={rateBasis === b.id}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                          rateBasis === b.id
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border-light text-text-secondary hover:bg-surface-hover",
+                        )}
+                      >
+                        {b.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <p className="text-right text-sm font-semibold text-text-primary">
+                Margin: {marginPct == null ? "—" : `${marginPct}%`}
+              </p>
+            </div>
 
             <p className="rounded-lg bg-surface-hover px-3 py-2 text-[12px] text-text-secondary">
               The partner will read{" "}
