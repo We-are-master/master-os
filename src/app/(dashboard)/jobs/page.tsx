@@ -156,6 +156,7 @@ import {
   jobCustomerBillableRevenueForCollections,
   jobMarginPercent,
   jobProfit,
+  sumJobsMoney,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
@@ -1348,21 +1349,55 @@ function JobsPageContent() {
   ]);
 
   /** Page totals — Job Amount, Cost, and Ticket margin footer. */
-  const jobsListFinancialTotals = useMemo(() => {
-    let revenue = 0;
-    let cost = 0;
-    for (const j of sortedDataForTable) {
-      revenue += jobBillableAmount(j);
-      cost += Number(j.partner_cost ?? 0);
-    }
-    const profit = Math.round((revenue - cost) * 100) / 100;
-    return {
-      revenue: Math.round(revenue * 100) / 100,
-      cost: Math.round(cost * 100) / 100,
-      profit,
-      marginPct: revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0,
-    };
-  }, [sortedDataForTable]);
+  const jobsListFinancialTotals = useMemo(() => sumJobsMoney(sortedDataForTable), [sortedDataForTable]);
+
+  /**
+   * O dinheiro dos jobs MARCADOS, na barra de seleção (dono, 27/08).
+   *
+   * Marcar linha a linha e não ver quanto aquilo soma obrigava a abrir cada
+   * job ou exportar para uma planilha só para responder "quanto entra e quanto
+   * sai nesta leva?". Mesma fórmula do rodapé das colunas, de propósito: um
+   * total que discorda da coluna que ele soma é pior do que total nenhum.
+   *
+   * Soma o que está na LISTA: seleção só se marca em linha visível, e somar um
+   * id que o filtro atual não mostra daria um número que ninguém consegue
+   * conferir na tela.
+   */
+  const selectedFinancialTotals = useMemo(() => {
+    if (selectedIds.size === 0) return null;
+    const marcados = sortedDataForTable.filter((j) => selectedIds.has(j.id));
+    return marcados.length > 0 ? sumJobsMoney(marcados) : null;
+  }, [selectedIds, sortedDataForTable]);
+
+  /**
+   * Cliente à ESQUERDA, parceiro à direita (padrão do dono): lê na ordem do
+   * dinheiro, o que entra antes do que sai.
+   */
+  const selectionSummaryNode = selectedFinancialTotals ? (
+    <div className="flex items-center gap-3 whitespace-nowrap text-xs tabular-nums">
+      <span className="text-text-secondary">
+        To receive{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.revenue)}
+        </strong>
+      </span>
+      <span className="h-3 w-px bg-border" />
+      <span className="text-text-secondary">
+        To pay{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.cost)}
+        </strong>
+      </span>
+      <span className="h-3 w-px bg-border" />
+      <span className="text-text-secondary">
+        Margin{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.profit)}
+        </strong>
+        <span className="ml-1 text-text-tertiary">({selectedFinancialTotals.marginPct}%)</span>
+      </span>
+    </div>
+  ) : null;
 
   const activeJobsTabFinancialTotals = useMemo(
     () =>
@@ -3375,6 +3410,7 @@ function JobsPageContent() {
               sortColumnKey={jobsListSortKey}
               sortDirection={jobsListSortDir}
               onSortChange={handleJobsListSortChange}
+              selectionSummary={selectionSummaryNode}
               bulkActions={
                 status === "closed" ? (
                   <div className="flex flex-wrap items-center gap-1.5">

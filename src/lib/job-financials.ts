@@ -186,3 +186,30 @@ export function customerCollectionsSatisfyBillable(job: Job, customerPayments: J
   const customerTotal = customerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
   return customerTotal + eps >= billable;
 }
+
+/**
+ * Soma o dinheiro de um conjunto de jobs: o que ENTRA, o que SAI, e a margem.
+ *
+ * Existe uma função só porque a lista de Jobs mostra esse total em dois
+ * lugares — o rodapé das colunas e a barra de seleção — e um total que
+ * discorda da coluna que ele soma é pior do que total nenhum. Enquanto eram
+ * dois laços copiados, "não podem discordar" era um comentário; agora é
+ * a mesma conta rodando duas vezes.
+ *
+ * `revenue` acompanha a coluna "Job Amount" (preço + extras) e `cost` a coluna
+ * "Cost" (custo do parceiro, sem material — material tem coluna própria).
+ */
+export function sumJobsMoney(
+  jobs: readonly Pick<Job, "client_price" | "extras_amount" | "partner_cost">[],
+): { revenue: number; cost: number; profit: number; marginPct: number } {
+  let revenue = 0;
+  let cost = 0;
+  for (const j of jobs) {
+    revenue += Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
+    cost += Number(j.partner_cost ?? 0);
+  }
+  const r = Math.round(revenue * 100) / 100;
+  const c = Math.round(cost * 100) / 100;
+  const profit = Math.round((r - c) * 100) / 100;
+  return { revenue: r, cost: c, profit, marginPct: r > 0 ? Math.round((profit / r) * 1000) / 10 : 0 };
+}

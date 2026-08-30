@@ -62,6 +62,8 @@ interface DataTableProps<T> {
   selectedIds?: Set<string>;
   onSelectionChange?: (ids: Set<string>) => void;
   bulkActions?: React.ReactNode;
+  /** Resumo da seleção (ex.: o dinheiro dos jobs marcados), ao lado do Clear. */
+  selectionSummary?: React.ReactNode;
   /** Applied to the inner `<table>` so wide tables scroll horizontally instead of crushing cells. */
   tableClassName?: string;
   /** Enables per-table column picker (saved in localStorage by key + scope). */
@@ -133,6 +135,7 @@ export function DataTable<T>({
   selectedIds,
   onSelectionChange,
   bulkActions,
+  selectionSummary,
   tableClassName,
   columnConfigKey,
   columnConfigScope,
@@ -309,9 +312,13 @@ export function DataTable<T>({
             <div className="flex items-center gap-1.5">
               {bulkActions}
             </div>
+            {selectionSummary ? <div className="ml-auto">{selectionSummary}</div> : null}
             <button
               onClick={() => onSelectionChange?.(new Set())}
-              className="ml-auto text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors"
+              className={cn(
+                "text-xs font-medium text-text-tertiary hover:text-text-secondary transition-colors",
+                selectionSummary ? "ml-4" : "ml-auto",
+              )}
             >
               Clear selection
             </button>
