@@ -107,7 +107,7 @@ import { MarginValue } from "@/components/shared/margin-value";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
-import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases, proximaFaseDoJob } from "@/lib/job-phases";
 import {
   clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
@@ -263,6 +263,54 @@ function jobPassesJobsPageBuFilter(
   return clientInBu || propertyInBu;
 }
 
+/**
+ * A seta da lista virou o botão de avançar fase (dono, 27/08).
+ *
+ * Ela já apontava para a direita e não fazia nada além de decorar a linha que
+ * o clique inteiro já abria. Agora ela é o atalho de quem está tocando o dia:
+ * `Scheduled → Start job` e `In progress → Job completed`, sem abrir o job.
+ *
+ * Quando o passo está bloqueado (parceiro faltando, data em branco) ela fica
+ * apagada e o motivo aparece no hover — e o clique ainda o repete no toast,
+ * porque quem clica com o mouse já parado não leu o title.
+ */
+function JobAdvanceArrow({
+  job,
+  saving,
+  onAdvance,
+}: {
+  job: Job;
+  saving: boolean;
+  onAdvance: (to: Job["status"]) => void;
+}) {
+  const proxima = proximaFaseDoJob(job);
+  if (!proxima) {
+    return <ArrowRight className="h-4 w-4 text-stone-300 inline-block" />;
+  }
+  if (saving) {
+    return <Loader2 className="h-4 w-4 animate-spin text-primary inline-block" />;
+  }
+  return (
+    <button
+      type="button"
+      title={proxima.bloqueio ?? `${proxima.label} →`}
+      aria-label={proxima.bloqueio ? `${proxima.label} (blocked)` : proxima.label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onAdvance(proxima.to);
+      }}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+        proxima.bloqueio
+          ? "text-stone-300 hover:bg-surface-hover"
+          : "text-stone-400 hover:bg-primary/10 hover:text-primary",
+      )}
+    >
+      <ArrowRight className="h-4 w-4" />
+    </button>
+  );
+}
+
 function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
   if (job.scheduled_start_at) {
     const dt = new Date(job.scheduled_start_at);
@@ -373,6 +421,36 @@ const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = [
   "next_month",
   "custom",
 ];
+
+/**
+ * A JANELA escolhida à mão volta junto com o preset (dono, 27/08).
+ *
+ * O preset já era lembrado, mas as duas datas do Range nasciam sempre em
+ * "hoje": quem filtrava 24 Aug, abria um job e voltava, encontrava a lista de
+ * novo em hoje — o preset dizia "custom" e as datas diziam outra coisa. Guardar
+ * só metade da decisão é pior do que não guardar nada, porque a tela mente
+ * sobre o que está mostrando.
+ */
+const JOBS_SCHEDULE_CUSTOM_STORAGE_KEY = "master-os-jobs-schedule-custom-v1";
+
+const EH_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function readStoredJobsScheduleCustom(): { from: string; to: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cru = localStorage.getItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY);
+    if (!cru) return null;
+    const v = JSON.parse(cru) as { from?: unknown; to?: unknown };
+    const from = String(v.from ?? "");
+    const to = String(v.to ?? "");
+    // Data podre no storage não pode virar filtro: sem isto, um valor
+    // estragado devolveria uma lista vazia sem explicação nenhuma.
+    if (!EH_YMD.test(from) || !EH_YMD.test(to)) return null;
+    return { from, to };
+  } catch {
+    return null;
+  }
+}
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";
@@ -809,9 +887,22 @@ function JobsPageContent() {
     }
   }, []);
 
+  /**
+   * Restaura a escolha de data INTEIRA, e depois da hidratação.
+   *
+   * As duas metades voltam no mesmo efeito de propósito: preset sem janela
+   * mostrava "custom" com as datas de hoje, ou seja, a tela dizia uma coisa e
+   * filtrava outra. E ler localStorage no inicializador do estado divergiria
+   * do HTML do servidor, que não tem storage nenhum.
+   */
   useEffect(() => {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
+    const janela = readStoredJobsScheduleCustom();
+    if (janela) {
+      setCustomScheduleFrom(janela.from);
+      setCustomScheduleTo(janela.to);
+    }
   }, []);
 
   const [defaultJobsTab, setDefaultJobsTabState] = useState<JobsDefaultTabId>(() => readStoredJobsDefaultTab());
@@ -825,6 +916,14 @@ function JobsPageContent() {
   }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
+  /** Grava a janela escolhida à mão junto com o preset: a decisão é uma só. */
+  const guardarJanelaCustom = useCallback((from: string, to: string) => {
+    try {
+      localStorage.setItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY, JSON.stringify({ from, to }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const scheduleRange = useMemo(
     () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
@@ -869,6 +968,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Job cuja seta está avançando de fase agora (trava o clique duplo). */
+  const [advancingJobId, setAdvancingJobId] = useState<string | null>(null);
   /** Assign modal opened from the Partner column of the list. */
   const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string; initialPartnerId?: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -2868,7 +2969,14 @@ function JobsPageContent() {
             ) : null}
           </span>
         ) : (
-          <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
+          <JobAdvanceArrow
+            job={item}
+            saving={advancingJobId === item.id}
+            onAdvance={(to) => {
+              setAdvancingJobId(item.id);
+              void handleStatusChange(item, to).finally(() => setAdvancingJobId(null));
+            }}
+          />
         ),
     },
   ];
@@ -3021,8 +3129,11 @@ function JobsPageContent() {
               onChange={(next: DateFilterValue) => {
                 setScheduleDatePreset(next.mode);
                 if (next.mode === "custom") {
-                  setCustomScheduleFrom(next.customFrom ?? customScheduleFrom);
-                  setCustomScheduleTo(next.customTo ?? customScheduleTo);
+                  const from = next.customFrom ?? customScheduleFrom;
+                  const to = next.customTo ?? customScheduleTo;
+                  setCustomScheduleFrom(from);
+                  setCustomScheduleTo(to);
+                  guardarJanelaCustom(from, to);
                 }
               }}
             />
