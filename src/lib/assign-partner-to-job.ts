@@ -20,7 +20,22 @@ export type PartnerAssignInput = {
   partnerCost: number;
   /** What the client pays for labour. Ignored on hourly jobs. */
   clientPrice: number;
+  /**
+   * O acordo por tras do preco fixo, do jeito que o parceiro le no email:
+   * "Day rate · £180" em vez de "Fixed · £180". Nao muda dinheiro nenhum —
+   * daily e half_day sao o mesmo `fixed` por baixo (mig 281). Ausente mantem
+   * o que o job ja tinha.
+   */
+  rateBasis?: JobRateBasis;
 };
+
+export type JobRateBasis = NonNullable<Job["rate_basis"]>;
+
+export const JOB_RATE_BASIS_OPTIONS: { id: JobRateBasis; label: string }[] = [
+  { id: "fixed", label: "Fixed price" },
+  { id: "daily", label: "Day rate" },
+  { id: "half_day", label: "Half day" },
+];
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -55,6 +70,9 @@ export function buildPartnerAssignPatch(job: Job, input: PartnerAssignInput): Pa
   const patch: Partial<Job> = {
     ...base,
     job_type: "fixed",
+    // So grava quando o chamador disse: tela que nao pergunta nao pode apagar
+    // o acordo que ja estava no job.
+    ...(input.rateBasis ? { rate_basis: input.rateBasis } : {}),
     client_price: clientPrice,
     partner_cost: partnerCost,
     partner_agreed_value: round2(partnerCost + materials),

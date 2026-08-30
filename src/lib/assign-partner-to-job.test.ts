@@ -111,3 +111,34 @@ test("retorno com zero nao apaga extras ja acordados", () => {
   assert.equal(patch.partner_cost, 40);
   assert.equal(patch.partner_agreed_value, 65);
 });
+
+/**
+ * O rótulo do acordo (mig 281). Day rate e Half day são o MESMO fixed por
+ * baixo: mudam só a linha que o parceiro lê no email, nunca o dinheiro.
+ */
+test("grava o acordo escolhido no assign", () => {
+  const patch = buildPartnerAssignPatch(baseJob, { ...INPUT, rateBasis: "daily" });
+  assert.equal(patch.rate_basis, "daily");
+  assert.equal(patch.partner_cost, 150, "o rótulo não pode mexer no dinheiro");
+  assert.equal(patch.client_price, 280);
+});
+
+test("half day tambem e fixed por baixo", () => {
+  const patch = buildPartnerAssignPatch(baseJob, { ...INPUT, rateBasis: "half_day" });
+  assert.equal(patch.rate_basis, "half_day");
+  assert.equal(patch.job_type, "fixed");
+});
+
+/** Tela que não pergunta não pode apagar o acordo que já estava no job. */
+test("sem rateBasis no input, o acordo do job fica como estava", () => {
+  const comAcordo = { ...baseJob, rate_basis: "daily" } as unknown as Job;
+  const patch = buildPartnerAssignPatch(comAcordo, INPUT);
+  assert.equal(patch.rate_basis, undefined, "não pode sobrescrever com null");
+});
+
+test("hourly nao ganha rotulo de fixo", () => {
+  const porHora = { ...baseJob, job_type: "hourly", hourly_partner_rate: 25 } as unknown as Job;
+  const patch = buildPartnerAssignPatch(porHora, INPUT);
+  assert.equal(patch.rate_basis, undefined);
+  assert.equal(patch.client_price, undefined, "hourly não mexe em preço no assign");
+});

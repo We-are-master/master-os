@@ -8,7 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
-import { assignPartnerToJob, jobPricesHourly } from "@/lib/assign-partner-to-job";
+import {
+  assignPartnerToJob,
+  jobPricesHourly,
+  JOB_RATE_BASIS_OPTIONS,
+  type JobRateBasis,
+} from "@/lib/assign-partner-to-job";
+import { formatPartnerJobPriceDisplay } from "@/lib/job-pricing-resolver";
 import { listAssignablePartners, type AssignablePartner } from "@/services/partners";
 import { getJob } from "@/services/jobs";
 import type { Job } from "@/types/database";
@@ -42,6 +48,7 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
   const [selectedId, setSelectedId] = useState("");
   const [partnerCost, setPartnerCost] = useState("");
   const [clientPrice, setClientPrice] = useState("");
+  const [rateBasis, setRateBasis] = useState<JobRateBasis>("fixed");
 
   useEffect(() => {
     if (!isOpen) return;
@@ -56,6 +63,7 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
       setSelectedId(row?.partner_id ?? (initialPartnerId?.trim() || ""));
       setPartnerCost(row && Number(row.partner_cost) > 0 ? String(Number(row.partner_cost)) : "");
       setClientPrice(row && Number(row.client_price) > 0 ? String(Number(row.client_price)) : "");
+      setRateBasis((row?.rate_basis as JobRateBasis | null) ?? "fixed");
       setLoading(false);
     })();
     return () => {
@@ -83,6 +91,20 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
   const priceValue = Math.max(0, Number(clientPrice) || 0);
   const marginPct = priceValue > 0 && costValue > 0 ? Math.round(((priceValue - costValue) / priceValue) * 100) : null;
   const selected = partners.find((p) => p.id === selectedId) ?? null;
+  /**
+   * A MESMA funcao que monta a linha do email e do portal do parceiro, para o
+   * que se le aqui ser o que ele recebe. Sem isto o acordo so aparecia depois
+   * de mandado.
+   */
+  const linhaDoParceiro = job
+    ? formatPartnerJobPriceDisplay(
+        job.job_type ?? "fixed",
+        job.hourly_partner_rate,
+        hourly ? job.partner_cost : costValue,
+        null,
+        hourly ? null : rateBasis,
+      )
+    : "";
   // Zero is allowed: a return visit to finish paid work is worth nothing new.
   // Picking the partner is the whole decision here.
   const canConfirm = !!job && !!selected && !saving;
@@ -96,6 +118,8 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
         partnerName: selected.company_name?.trim() || selected.contact_name || "Partner",
         partnerCost: costValue,
         clientPrice: priceValue,
+        // Hourly nao tem acordo de fixo para rotular: o email dele ja diz £/hr.
+        rateBasis: hourly ? undefined : rateBasis,
       });
       toast.success(
         hourly
@@ -196,8 +220,33 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
                 <p className="text-right text-sm font-semibold text-text-primary">
                   Margin: {marginPct == null ? "—" : `${marginPct}%`}
                 </p>
+                {/* Day rate e Half day sao o MESMO fixed por baixo (mig 281):
+                    muda o rotulo que o parceiro le, nao o dinheiro. */}
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {JOB_RATE_BASIS_OPTIONS.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => setRateBasis(b.id)}
+                      aria-pressed={rateBasis === b.id}
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                        rateBasis === b.id
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border-light text-text-secondary hover:bg-surface-hover",
+                      )}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
+
+            <p className="rounded-lg bg-surface-hover px-3 py-2 text-[12px] text-text-secondary">
+              The partner will read{" "}
+              <span className="font-semibold text-text-primary">{linhaDoParceiro}</span>
+            </p>
 
             <div className="flex items-center gap-2 pt-1">
               {/* Two ways out of an unassigned job: pick someone, or let the
