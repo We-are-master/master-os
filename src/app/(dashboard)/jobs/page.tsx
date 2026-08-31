@@ -160,6 +160,7 @@ import {
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
+import { buildJobShareText } from "@/lib/job-share-text";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -2704,16 +2705,33 @@ function JobsPageContent() {
                       </p>
                       <p className="mt-0.5 truncate text-[13px] font-semibold text-text-primary">{item.client_name}</p>
                     </div>
-                    <a
-                      href={`/jobs/${item.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                    >
-                      Open job
-                      <ArrowUpRight className="h-3 w-3" />
-                    </a>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {/* Copia o resumo do job no formato do WhatsApp (pay do
+                          parceiro + postcode, nunca preço do cliente nem rua):
+                          é a resposta pronta pro "e esse job?" (dono, 30/08). */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void navigator.clipboard.writeText(buildJobShareText(item));
+                          toast.success("Job info copied — paste it in WhatsApp");
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-border-light bg-card px-2 py-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Share
+                      </button>
+                      <a
+                        href={`/jobs/${item.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 rounded-md border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                      >
+                        Open job
+                        <ArrowUpRight className="h-3 w-3" />
+                      </a>
+                    </div>
                   </div>
 
                   {phoneText ? (
