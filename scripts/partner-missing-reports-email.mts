@@ -25,18 +25,16 @@ const SO_ESTE = process.argv.find((a) => a.startsWith("--parceiro="))?.split("="
 const MAX_ENVIOS_POR_RODADA = 30;
 const SENT_PATH = "scripts/.missing-reports-sent.json";
 
-const [{ createServiceClient }, { buildPartnerMissingReportsEmail }, { resolvePartnerTradePortalBaseUrl }, { createPartnerReportToken }, { appBaseUrl }] =
+const [{ createServiceClient }, { buildPartnerMissingReportsEmail }, { resolvePartnerTradePortalBaseUrl }, { buildPartnerJobReportUrl }] =
   await Promise.all([
     import("../src/lib/supabase/service"),
     import("../src/lib/emails/partner-missing-reports-email"),
     import("../src/lib/trade-auth"),
-    import("../src/lib/quote-response-token"),
-    import("../src/lib/app-base-url"),
+    import("../src/lib/partner-job-report-url"),
   ]);
 
 const supabase = createServiceClient();
 const portalUrl = resolvePartnerTradePortalBaseUrl();
-const base = appBaseUrl();
 
 /**
  * A janela é de LONDRES, não da máquina.
@@ -182,7 +180,18 @@ for (const p of parceiros ?? []) {
     partnerFirstName: ((p.contact_name as string | null)?.trim() || nome).split(" ")[0]!,
     onHoldDisplay: total > 0 ? libras(total) : null,
     portalUrl,
-    jobs: lista.map((j) => ({
+    /**
+     * O link do report vai como SHORT LINK, nunca como token cru (31/08).
+     *
+     * O token e um HMAC do QUOTE_RESPONSE_SECRET, e este script roda no Mac —
+     * que assina com um segredo DIFERENTE do da Vercel. Todo link com token
+     * cru enviado daqui chegou ao parceiro como "Invalid or expired link"
+     * (confirmado ao vivo: token local → 400 na producao). O /r/<slug>
+     * reassina o token NO CLIQUE, com o segredo de quem atende — e o mesmo
+     * conserto ja salvou o booked email pelo mesmo motivo (ver o comentario
+     * em src/app/r/[slug]/route.ts).
+     */
+    jobs: await Promise.all(lista.map(async (j) => ({
       reference: String(j.reference ?? ""),
       title: String(j.title ?? "Job"),
       address: String(j.property_address ?? ""),
@@ -190,10 +199,8 @@ for (const p of parceiros ?? []) {
       dateLabel: rotuloDeData(j.scheduled_date as string | null),
       daysWaiting: diasDesde(j.scheduled_date as string | null),
       payDisplay: Number(j.partner_cost ?? 0) > 0 ? libras(Number(j.partner_cost)) : null,
-      reportUrl: `${base}/job/report?token=${encodeURIComponent(
-        createPartnerReportToken(String(j.id), String(j.partner_id)),
-      )}`,
-    })),
+      reportUrl: await buildPartnerJobReportUrl(String(j.id), String(j.partner_id)),
+    }))),
   });
 
   if (!ENVIAR_AGORA) {
