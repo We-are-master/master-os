@@ -53,7 +53,8 @@ export function ArrivalSlotPicker({
       <div
         className={cn(
           "grid min-w-0 gap-1.5",
-          rowLayout ? "grid-cols-4" : compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4",
+          // 5 slots desde 30/08 (earlier morning entrou): as grades acompanham.
+          rowLayout ? "grid-cols-5" : compact ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-5",
         )}
       >
         {ARRIVAL_SLOTS.map((slot) => {

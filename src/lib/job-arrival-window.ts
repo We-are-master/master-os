@@ -16,13 +16,26 @@ export const ARRIVAL_WINDOW_OPTIONS = [
  * `arrival_window_mins` columns — picking a slot just sets both at once, so
  * the schema, partner app, calendar, and SLA all keep working unchanged.
  */
-export type ArrivalSlotId = "morning" | "early_afternoon" | "afternoon" | "evening";
+export type ArrivalSlotId = "earlier_morning" | "morning" | "early_afternoon" | "afternoon" | "evening";
 
 export const ARRIVAL_SLOTS: { id: ArrivalSlotId; label: string; from: string; mins: number }[] = [
+  // earlier_morning e o 12PM no early_afternoon: pedido do dono (30/08). O id
+  // `earlier_morning` ja era aceito pela API (ARRIVAL_SLOT_LOOKUP) e pelas
+  // macros do Zendesk (`arrival_earlier_morning`) — a UI que nao mostrava.
+  { id: "earlier_morning", label: "08AM–09AM", from: "08:00", mins: 60 },
   { id: "morning",         label: "09AM–12PM", from: "09:00", mins: 180 },
-  { id: "early_afternoon", label: "01PM–03PM", from: "13:00", mins: 120 },
+  { id: "early_afternoon", label: "12PM–03PM", from: "12:00", mins: 180 },
   { id: "afternoon",       label: "03PM–06PM", from: "15:00", mins: 180 },
   { id: "evening",         label: "06PM–08PM", from: "18:00", mins: 120 },
+];
+
+/**
+ * Grafia antiga do early_afternoon (13:00 + 120min, o "01PM–03PM"). Jobs
+ * gravados antes da mudanca continuam casando com o slot certo em vez de
+ * cair no vizinho mais proximo.
+ */
+const LEGACY_SLOT_VALUES: { id: ArrivalSlotId; from: string; mins: number }[] = [
+  { id: "early_afternoon", from: "13:00", mins: 120 },
 ];
 
 /** Map a stored (from, mins) pair back to a slot id — exact match only. */
@@ -30,7 +43,8 @@ export function matchArrivalSlot(from: string, mins: string | number): ArrivalSl
   const m = typeof mins === "string" ? Number(mins) : mins;
   if (!Number.isFinite(m)) return null;
   const slot = ARRIVAL_SLOTS.find((s) => s.from === from && s.mins === m);
-  return slot?.id ?? null;
+  if (slot) return slot.id;
+  return LEGACY_SLOT_VALUES.find((s) => s.from === from && s.mins === m)?.id ?? null;
 }
 
 /** Canonical (from, mins) for a fixed slot — use when hydrating slot UI from stored timestamps. */
