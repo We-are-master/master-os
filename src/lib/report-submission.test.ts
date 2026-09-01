@@ -143,6 +143,55 @@ describe("deriveTimerWindow", () => {
     assert.equal(w.startedAt, null);
     assert.equal(w.endedAt, now);
   });
+
+  // O caso dos dois toques (27/08/2026): 20 dos últimos 60 jobs tinham "timer"
+  // de 4-49 segundos, gravado à noite para destravar o envio. Esse timer NÃO
+  // mediu serviço e não pode vencer o horário de quem sabia a hora certa.
+  it("a seconds-long tap-tap timer loses to the typed clock times", () => {
+    const w = deriveTimerWindow({
+      existingStartedAt: "2026-08-13T21:06:52.000Z",
+      existingEndedAt: "2026-08-13T21:06:57.000Z",
+      explicitStartedAt: "2026-08-13T09:00:00.000Z",
+      explicitEndedAt: "2026-08-13T12:30:00.000Z",
+      now,
+    });
+    assert.equal(w.startedAt, "2026-08-13T09:00:00.000Z");
+    assert.equal(w.endedAt, "2026-08-13T12:30:00.000Z");
+  });
+
+  it("a seconds-long timer loses to a typed duration too", () => {
+    const w = deriveTimerWindow({
+      existingStartedAt: "2026-08-13T21:06:52.000Z",
+      existingEndedAt: "2026-08-13T21:06:57.000Z",
+      durationMs: 3 * 3_600_000,
+      now,
+    });
+    assert.equal(w.endedAt, now);
+    assert.equal(w.startedAt, "2026-08-13T13:00:00.000Z");
+  });
+
+  it("with nothing better, the tap-tap timer still fills the columns", () => {
+    const w = deriveTimerWindow({
+      existingStartedAt: "2026-08-13T21:06:52.000Z",
+      existingEndedAt: "2026-08-13T21:06:57.000Z",
+      now,
+    });
+    assert.equal(w.startedAt, "2026-08-13T21:06:52.000Z");
+    assert.equal(w.endedAt, "2026-08-13T21:06:57.000Z");
+  });
+
+  it("a real measured window still beats everything outside edit mode", () => {
+    const w = deriveTimerWindow({
+      existingStartedAt: "2026-08-13T08:00:00.000Z",
+      existingEndedAt: "2026-08-13T11:45:00.000Z",
+      explicitStartedAt: "2026-08-13T09:00:00.000Z",
+      explicitEndedAt: "2026-08-13T12:30:00.000Z",
+      durationMs: 3_600_000,
+      now,
+    });
+    assert.equal(w.startedAt, "2026-08-13T08:00:00.000Z");
+    assert.equal(w.endedAt, "2026-08-13T11:45:00.000Z");
+  });
 });
 
 describe("mergeReportPhotos (edit mode)", () => {

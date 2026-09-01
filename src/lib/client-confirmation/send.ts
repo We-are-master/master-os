@@ -21,8 +21,9 @@ import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 /**
  * Nome e canal do template vivem em env, e não em constante, porque template é
  * de painel: o nome é escolhido por quem submete à Meta, e o canal decide QUAL
- * marca o cliente vê no perfil (539660 é Fixfy, 544116 é Master Services).
- * Mandar pelo canal errado entrega a mensagem certa com o remetente errado.
+ * número e perfil o cliente vê. Desde 28/08/2026 os dois canais são Fixfy:
+ * 544116 (Whatsapp Business 07) é o ativo e 539660 (…20) é o antigo. Mandar
+ * pelo canal errado entrega a mensagem certa com o remetente errado.
  */
 /**
  * Lidos na hora da chamada, não no import.

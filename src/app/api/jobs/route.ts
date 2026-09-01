@@ -1278,7 +1278,7 @@ function num(v: unknown): number {
 const ARRIVAL_SLOT_LOOKUP: Record<string, { start: string; end: string }> = {
   earlier_morning:      { start: "08:00", end: "09:00" },
   morning:              { start: "09:00", end: "12:00" },
-  early_afternoon:      { start: "13:00", end: "15:00" },
+  early_afternoon:      { start: "12:00", end: "15:00" },
   // Zendesk uses `late_afternoon`; internal slot id is just `afternoon`.
   // Accept both spellings so either side stays valid.
   afternoon:            { start: "15:00", end: "18:00" },

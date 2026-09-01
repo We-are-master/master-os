@@ -280,7 +280,10 @@ async function despacharNovos(ids: string[]) {
       const res = await despacharUm(brief, d, firstName(brief.name) ?? "there", {
         template,
         languageCode: process.env.RESPONDIO_TEMPLATE_LANG ?? "en",
-        channelId: Number(process.env.RESPONDIO_CHANNEL_ID ?? 539660),
+        // 544116 = Whatsapp Business 07, o numero ativo desde 28/08/2026 (perfil
+        // Fixfy). O 539660 (…20) fica de reserva; trocar de numero e trocar
+        // este default OU o env RESPONDIO_CHANNEL_ID, que vence.
+        channelId: Number(process.env.RESPONDIO_CHANNEL_ID ?? 544116),
         agentUserId: Number(process.env.RESPONDIO_AGENT_USER_ID ?? 1174769),
       });
       console.log(`[contacts/ingest] despacho ${brief.name}: ${res.kind}`);
