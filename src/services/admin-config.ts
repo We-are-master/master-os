@@ -344,7 +344,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   },
 ];
 
-const DEFAULT_PERMISSIONS: PermissionsByRole = {
+export const DEFAULT_PERMISSIONS: PermissionsByRole = {
   admin: {
     dashboard: true,
     requests: true,
@@ -425,17 +425,23 @@ export async function setAdminConfig(
   if (error) throw new Error(error.message);
 }
 
-/** Persist per-user permission overrides to profiles.custom_permissions. Pass null to clear all overrides. */
+/** Persist per-user permission overrides to profiles.custom_permissions. Pass null to clear all overrides.
+ * Goes through the admin-gated API route (never straight to the table from the browser). */
 export async function saveUserPermissions(
   userId: string,
   overrides: UserPermissionOverride | null
 ): Promise<void> {
-  const supabase = getSupabase();
-  const { error } = await supabase
-    .from("profiles")
-    .update({ custom_permissions: overrides && Object.keys(overrides).length > 0 ? overrides : null })
-    .eq("id", userId);
-  if (error) throw new Error(error.message);
+  const res = await fetch(`/api/admin/team/user/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      custom_permissions: overrides && Object.keys(overrides).length > 0 ? overrides : null,
+    }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Failed to save permissions");
+  }
 }
 
 /**

@@ -41,12 +41,16 @@ export function useProfileLoader(): ProfileState {
       if (data && !error) {
         setProfile(data as Profile);
       } else {
+        // No profiles row (or the query failed): fail CLOSED. Synthesizing an
+        // admin here used to hand full UI access to any authenticated user
+        // without a profile — operator is the least-privileged real role.
         setProfile({
           id: user.id,
           email: user.email ?? "",
           full_name: user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "User",
-          role: "admin",
+          role: "operator",
           is_active: true,
+          custom_permissions: null,
           created_at: user.created_at,
           updated_at: user.created_at,
         });

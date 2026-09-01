@@ -29,25 +29,25 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Overview",
     items: [
-      { label: "Pulse", href: "/", icon: "grid-2x2" },
-      { label: "Live View", href: "/schedule", icon: "calendar" },
+      { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
+      { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
     ],
   },
   {
     label: "Operations",
     items: [
-      { label: "Leads", href: "/leads", icon: "user-circle" },
-      { label: "Quotes", href: "/quotes", icon: "file-text" },
-      { label: "Jobs", href: "/jobs", icon: "briefcase" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock" },
+      { label: "Leads", href: "/leads", icon: "user-circle", permission: "leads" },
+      { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
+      { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {
     label: "Network",
     items: [
-      { label: "Accounts", href: "/accounts", icon: "building" },
+      { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Clients", href: "/clients", icon: "user-circle", permission: "accounts" },
-      { label: "Partners", href: "/partners", icon: "users" },
+      { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
       { label: "Workforce", href: "/people", icon: "contact", permission: "team", adminOnly: true },
     ],
   },

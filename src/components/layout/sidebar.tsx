@@ -247,66 +247,6 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function markItemHrefsDeep(item: NavItem, sink: Set<string>): void {
-  sink.add(item.href);
-  item.children?.forEach((c) => markItemHrefsDeep(c, sink));
-}
-
-/**
- * Merge new items from the canonical NAVIGATION into the admin-filtered
- * list (including nested `children`).
- */
-function mergeNewNavItems(
-  filtered: typeof NAVIGATION,
-  canonical: typeof NAVIGATION,
-): typeof NAVIGATION {
-  const filteredHrefs = new Set<string>();
-  filtered.forEach((g) => g.items.forEach((i) => markItemHrefsDeep(i, filteredHrefs)));
-
-  const result = filtered.map((g) => ({
-    ...g,
-    items: g.items.map((item) => ({
-      ...item,
-      children: item.children?.length ? item.children.map((c) => ({ ...c })) : undefined,
-    })),
-  }));
-
-  const findGroup = (label: string) => result.find((g) => g.label === label);
-
-  for (const cGroup of canonical) {
-    let match = findGroup(cGroup.label);
-    if (!match) {
-      match = { label: cGroup.label, items: [] };
-      result.push(match);
-    }
-    for (const cItem of cGroup.items) {
-      const local = match!.items.find((i) => i.href === cItem.href);
-      if (!local) {
-        match!.items.push({
-          ...cItem,
-          children: cItem.children?.map((ch) => ({ ...ch })),
-        });
-        markItemHrefsDeep(cItem, filteredHrefs);
-        continue;
-      }
-
-      filteredHrefs.add(cItem.href);
-      if (cItem.children?.length) {
-        const kids = [...(local.children ?? [])];
-        for (const ch of cItem.children) {
-          if (!kids.some((k) => k.href === ch.href)) kids.push({ ...ch });
-          filteredHrefs.add(ch.href);
-        }
-        local.children = kids.length > 0 ? kids : undefined;
-      }
-    }
-  }
-
-  const order = new Map(canonical.map((g, i) => [g.label, i]));
-  result.sort((a, b) => (order.get(a.label) ?? 999) - (order.get(b.label) ?? 999));
-  return result;
-}
-
 function SidebarNavGroups({
   navGroups,
   collapsed,
@@ -385,11 +325,12 @@ function SidebarNavGroups({
 export function Sidebar() {
   const { collapsed, toggle, mobileOpen, closeMobile } = useSidebar();
   const adminConfig = useAdminConfigOptional();
+  // filteredNavigation already merges canonical items AND applies the
+  // permission filter (use-admin-config). Falling back to the full NAVIGATION
+  // is only for contexts rendered outside the provider — never as an escape
+  // hatch when the filter returns few items.
   const navGroups = useMemo(
-    () =>
-      adminConfig?.filteredNavigation?.length
-        ? mergeNewNavItems(adminConfig.filteredNavigation, NAVIGATION)
-        : NAVIGATION,
+    () => (adminConfig ? adminConfig.filteredNavigation : NAVIGATION),
     [adminConfig],
   );
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});

@@ -56,6 +56,9 @@ import {
   contractorInviteFiscalComplete,
   isUkWorkCountry,
 } from "@/lib/workforce-contractor-agreement";
+import { PermissionsPicker } from "@/components/people/permissions-picker";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
+import type { UserPermissionOverride } from "@/types/admin-config";
 
 function parsePayrollDocumentFiles(raw: unknown): Record<string, PayrollDocumentFileMeta> {
   if (!raw || typeof raw !== "object") return {};
@@ -124,6 +127,8 @@ export default function PeoplePage() {
   const [formAccessEmail, setFormAccessEmail] = useState("");
   const [formAccessRole, setFormAccessRole] = useState<"admin" | "manager" | "operator">("operator");
   const [formAccessPassword, setFormAccessPassword] = useState("");
+  const [formAccessOverrides, setFormAccessOverrides] = useState<UserPermissionOverride>({});
+  const adminConfig = useAdminConfigOptional();
   const [formContractorEntity, setFormContractorEntity] = useState<"individual" | "company">("individual");
   const [formContractorCountry, setFormContractorCountry] = useState("");
   const [formContractorTaxNumber, setFormContractorTaxNumber] = useState("");
@@ -151,6 +156,7 @@ export default function PeoplePage() {
     setFormAccessEmail("");
     setFormAccessPassword("");
     setFormAccessRole("operator");
+    setFormAccessOverrides({});
     setFormContractorEntity("individual");
     setFormContractorCountry("");
     setFormContractorTaxNumber("");
@@ -589,6 +595,10 @@ export default function PeoplePage() {
               role: accessRole,
               password: accessPassword,
               payroll_internal_cost_id: insertedId,
+              custom_permissions:
+                accessRole !== "admin" && Object.keys(formAccessOverrides).length > 0
+                  ? formAccessOverrides
+                  : undefined,
             }),
           });
           const body = (await res.json().catch(() => ({}))) as {
@@ -1115,7 +1125,12 @@ export default function PeoplePage() {
                 <Select
                   label="Role"
                   value={formAccessRole}
-                  onChange={(e) => setFormAccessRole(e.target.value as typeof formAccessRole)}
+                  onChange={(e) => {
+                    setFormAccessRole(e.target.value as typeof formAccessRole);
+                    // Overrides are a diff against the role defaults — a new
+                    // role makes the old diff meaningless.
+                    setFormAccessOverrides({});
+                  }}
                   options={[
                     { value: "admin", label: "Admin" },
                     { value: "manager", label: "Manager" },
@@ -1123,6 +1138,15 @@ export default function PeoplePage() {
                   ]}
                   className="min-w-0"
                 />
+                <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
+                  <p className="text-[11px] font-medium text-text-secondary mb-1.5">Access &amp; visibility</p>
+                  <PermissionsPicker
+                    role={formAccessRole}
+                    matrix={adminConfig?.permissions ?? null}
+                    value={formAccessOverrides}
+                    onChange={setFormAccessOverrides}
+                  />
+                </div>
                 <div>
                   <label className="block text-[11px] font-medium text-text-secondary mb-1">Temporary password</label>
                   <Input

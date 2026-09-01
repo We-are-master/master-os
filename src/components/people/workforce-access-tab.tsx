@@ -10,7 +10,17 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
 import type { InternalCost, Profile } from "@/types/database";
+import type { UserPermissionOverride } from "@/types/admin-config";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
+import { PermissionsPicker } from "./permissions-picker";
 import { workforceFieldClass, workforceSectionFormClass } from "./workforce-ui";
+
+function sameOverrides(a: UserPermissionOverride, b: UserPermissionOverride): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => a[k as keyof UserPermissionOverride] === b[k as keyof UserPermissionOverride]);
+}
 
 interface WorkforceAccessTabProps {
   person: InternalCost;
@@ -38,14 +48,19 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
 
+  const adminConfig = useAdminConfigOptional();
+
   // Create form
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "manager" | "operator">("operator");
   const [password, setPassword] = useState("");
+  const [createOverrides, setCreateOverrides] = useState<UserPermissionOverride>({});
   const [creating, setCreating] = useState(false);
 
   // Edit form
   const [editRole, setEditRole] = useState<"admin" | "manager" | "operator">("operator");
+  const [editOverrides, setEditOverrides] = useState<UserPermissionOverride>({});
+  const [savingPerms, setSavingPerms] = useState(false);
   const [savingRole, setSavingRole] = useState(false);
   const [savingActive, setSavingActive] = useState(false);
   const [resettingPw, setResettingPw] = useState(false);
@@ -81,6 +96,7 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
         const p = data as Profile;
         setEditRole(p.role);
         setEditEmail(p.email ?? "");
+        setEditOverrides((p.custom_permissions ?? {}) as UserPermissionOverride);
       }
     } finally {
       setLoading(false);
@@ -118,6 +134,8 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
           role,
           password,
           payroll_internal_cost_id: person.id,
+          custom_permissions:
+            role !== "admin" && Object.keys(createOverrides).length > 0 ? createOverrides : undefined,
         }),
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -190,6 +208,20 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
       }
     } finally {
       setSavingActive(false);
+    }
+  };
+
+  const handlePermissionsSave = async () => {
+    if (!profile) return;
+    setSavingPerms(true);
+    try {
+      const payload = Object.keys(editOverrides).length > 0 ? editOverrides : null;
+      if (await patchProfile({ custom_permissions: payload }, "Access updated")) {
+        await loadProfile();
+        await onSaved();
+      }
+    } finally {
+      setSavingPerms(false);
     }
   };
 
@@ -308,8 +340,20 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
             <Select
               label="Role"
               value={role}
-              onChange={(e) => setRole(e.target.value as typeof role)}
+              onChange={(e) => {
+                setRole(e.target.value as typeof role);
+                setCreateOverrides({});
+              }}
               options={ROLE_OPTIONS}
+            />
+          </div>
+          <div className="rounded-lg border border-border-light bg-surface-hover/30 p-2.5">
+            <p className="text-[11px] font-medium text-text-secondary mb-1.5">Access &amp; visibility</p>
+            <PermissionsPicker
+              role={role}
+              matrix={adminConfig?.permissions ?? null}
+              value={createOverrides}
+              onChange={setCreateOverrides}
             />
           </div>
           <div>
@@ -406,7 +450,17 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
         <Select
           label="Role"
           value={editRole}
-          onChange={(e) => setEditRole(e.target.value as typeof editRole)}
+          onChange={(e) => {
+            const next = e.target.value as typeof editRole;
+            setEditRole(next);
+            // Saving a role change clears stored overrides (they were a diff
+            // against the OLD role) — preview that same outcome here.
+            setEditOverrides(
+              next === profile.role
+                ? ((profile.custom_permissions ?? {}) as UserPermissionOverride)
+                : {},
+            );
+          }}
           options={ROLE_OPTIONS}
         />
         {editRole !== profile.role && (
@@ -414,6 +468,39 @@ export function WorkforceAccessTab({ person, onSaved }: WorkforceAccessTabProps)
             {savingRole ? "Saving..." : "Save role change"}
           </Button>
         )}
+      </div>
+
+      {/* Access & visibility */}
+      <div className={workforceSectionFormClass}>
+        <p className="text-xs font-semibold text-text-secondary flex items-center gap-1.5">
+          <Shield className="h-3.5 w-3.5" />
+          Access &amp; visibility
+        </p>
+        <PermissionsPicker
+          role={editRole}
+          matrix={adminConfig?.permissions ?? null}
+          value={editOverrides}
+          onChange={setEditOverrides}
+        />
+        {editRole === profile.role &&
+          editRole !== "admin" &&
+          !sameOverrides(editOverrides, (profile.custom_permissions ?? {}) as UserPermissionOverride) && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handlePermissionsSave} disabled={savingPerms}>
+                {savingPerms ? "Saving..." : "Save access changes"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setEditOverrides((profile.custom_permissions ?? {}) as UserPermissionOverride)
+                }
+                disabled={savingPerms}
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
       </div>
 
       {/* Reset password */}
