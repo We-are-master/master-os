@@ -13,6 +13,7 @@ export type DateFilterMode =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "last_week"
   | "next_week"
   | "month"
   | "qtd"
@@ -48,8 +49,10 @@ export const DATE_FILTER_MENU_OPTIONS: DateFilterQuickOption[] = [
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "tomorrow", label: "Tomorrow" },
+  { id: "last_week", label: "Last week" },
   { id: "week", label: "This week" },
   { id: "next_week", label: "Next week" },
+  { id: "last_month", label: "Last month" },
   { id: "month", label: "This month" },
   { id: "next_month", label: "Next month" },
 ];
@@ -61,7 +64,6 @@ export const DATE_FILTER_MENU_OPTIONS: DateFilterQuickOption[] = [
  */
 const DATE_FILTER_EXTRA_LABELS: DateFilterQuickOption[] = [
   { id: "qtd", label: "Quarter to date" },
-  { id: "last_month", label: "Last month" },
 ];
 
 export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | null {
@@ -93,6 +95,18 @@ export function resolveDateFilter(value: DateFilterValue): DateFilterBounds | nu
       const day = startOfToday.getDay() || 7;
       const s = new Date(startOfToday);
       s.setDate(s.getDate() - (day - 1));
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      e.setHours(23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "last_week": {
+      // Segunda a domingo da semana ANTERIOR. Mesma convenção do "This week"
+      // (ISO, começando na segunda): as três janelas de semana só servem para
+      // comparar entre si se as três recortarem o calendário igual.
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) - 7);
       const e = new Date(s);
       e.setDate(e.getDate() + 6);
       e.setHours(23, 59, 59, 999);
