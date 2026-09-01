@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { buildPartnerAssignPatch } from "./assign-partner-to-job";
+import { buildPartnerAssignPatch, hourlyTotals } from "./assign-partner-to-job";
 import type { Job } from "@/types/database";
 
 /** Job cru da coluna Unassigned: sem parceiro, sem extras, com depósito zerado. */
@@ -110,4 +110,91 @@ test("retorno com zero nao apaga extras ja acordados", () => {
   });
   assert.equal(patch.partner_cost, 40);
   assert.equal(patch.partner_agreed_value, 65);
+});
+
+/**
+ * O rótulo do acordo (mig 281). Day rate e Half day são o MESMO fixed por
+ * baixo: mudam só a linha que o parceiro lê no email, nunca o dinheiro.
+ */
+test("grava o acordo escolhido no assign", () => {
+  const patch = buildPartnerAssignPatch(baseJob, { ...INPUT, rateBasis: "daily" });
+  assert.equal(patch.rate_basis, "daily");
+  assert.equal(patch.partner_cost, 150, "o rótulo não pode mexer no dinheiro");
+  assert.equal(patch.client_price, 280);
+});
+
+test("half day tambem e fixed por baixo", () => {
+  const patch = buildPartnerAssignPatch(baseJob, { ...INPUT, rateBasis: "half_day" });
+  assert.equal(patch.rate_basis, "half_day");
+  assert.equal(patch.job_type, "fixed");
+});
+
+/** Tela que não pergunta não pode apagar o acordo que já estava no job. */
+test("sem rateBasis no input, o acordo do job fica como estava", () => {
+  const comAcordo = { ...baseJob, rate_basis: "daily" } as unknown as Job;
+  const patch = buildPartnerAssignPatch(comAcordo, INPUT);
+  assert.equal(patch.rate_basis, undefined, "não pode sobrescrever com null");
+});
+
+test("hourly nao ganha rotulo de fixo", () => {
+  const porHora = { ...baseJob, job_type: "hourly", hourly_partner_rate: 25 } as unknown as Job;
+  const patch = buildPartnerAssignPatch(porHora, INPUT);
+  assert.equal(patch.rate_basis, undefined);
+  assert.equal(patch.client_price, undefined, "hourly não mexe em preço no assign");
+});
+
+/* ── Trocar a forma de cobrar sem sair do modal ──────────────────────────── */
+
+const PORA_HORA = { clientHourlyRate: 40, partnerHourlyRate: 25, billedHours: 3 };
+
+test("fixo vira por hora e os totais saem das taxas", () => {
+  const patch = buildPartnerAssignPatch(baseJob, { ...INPUT, rateType: "hourly", hourly: PORA_HORA });
+  assert.equal(patch.job_type, "hourly");
+  assert.equal(patch.hourly_client_rate, 40);
+  assert.equal(patch.hourly_partner_rate, 25);
+  assert.equal(patch.billed_hours, 3);
+  assert.equal(patch.client_price, 120, "40 × 3");
+  assert.equal(patch.partner_cost, 75, "25 × 3");
+  assert.equal(patch.rate_basis, null, "por hora não carrega rótulo de fixo");
+});
+
+test("por hora vira fixo e as taxas antigas sao limpas", () => {
+  const porHora = {
+    ...baseJob, job_type: "hourly", hourly_client_rate: 40, hourly_partner_rate: 25, billed_hours: 3,
+  } as unknown as Job;
+  const patch = buildPartnerAssignPatch(porHora, { ...INPUT, rateType: "fixed" });
+  assert.equal(patch.job_type, "fixed");
+  assert.equal(patch.client_price, 280);
+  assert.equal(patch.partner_cost, 150);
+  assert.equal(patch.hourly_client_rate, null, "taxa velha não pode sobrar");
+  assert.equal(patch.hourly_partner_rate, null);
+  assert.equal(patch.billed_hours, null);
+});
+
+test("meia hora e o minimo cobravel", () => {
+  const patch = buildPartnerAssignPatch(baseJob, {
+    ...INPUT, rateType: "hourly", hourly: { ...PORA_HORA, billedHours: 0 },
+  });
+  assert.equal(patch.billed_hours, 0.5);
+  assert.equal(patch.client_price, 20, "40 × 0.5");
+});
+
+test("extras do parceiro sobrevivem a troca para hora", () => {
+  const comExtras = { ...baseJob, partner_extras_amount: 30 } as unknown as Job;
+  const patch = buildPartnerAssignPatch(comExtras, { ...INPUT, rateType: "hourly", hourly: PORA_HORA });
+  assert.equal(patch.partner_cost, 105, "75 de mão de obra + 30 de extras");
+});
+
+/** Sem rateType nada muda: as telas que não perguntam seguem como antes. */
+test("sem rateType, job por hora continua intocado", () => {
+  const porHora = { ...baseJob, job_type: "hourly", hourly_partner_rate: 25 } as unknown as Job;
+  const patch = buildPartnerAssignPatch(porHora, INPUT);
+  assert.equal(patch.client_price, undefined);
+  assert.equal(patch.job_type, undefined);
+});
+
+test("hourlyTotals e a conta que a tela mostra", () => {
+  assert.deepEqual(hourlyTotals({ clientHourlyRate: 33.33, partnerHourlyRate: 20, billedHours: 1.5 }), {
+    billedHours: 1.5, clientTotal: 50, partnerTotal: 30,
+  });
 });
