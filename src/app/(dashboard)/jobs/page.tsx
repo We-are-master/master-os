@@ -107,7 +107,7 @@ import { MarginValue } from "@/components/shared/margin-value";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
-import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases } from "@/lib/job-phases";
+import { canAdvanceJob, getPreviousJobStatus, JOB_ONSITE_PROGRESS_STATUSES, normalizeTotalPhases, proximaFaseDoJob } from "@/lib/job-phases";
 import {
   clearAutoAssignQueuePatch,
   effectiveJobStatusForDisplay,
@@ -156,9 +156,15 @@ import {
   jobCustomerBillableRevenueForCollections,
   jobMarginPercent,
   jobProfit,
+  sumJobsMoney,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
+import {
+  buildJobShareText,
+  buildJobsRouteMapsUrl,
+  buildJobsRouteShareText,
+} from "@/lib/job-share-text";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -261,6 +267,54 @@ function jobPassesJobsPageBuFilter(
   const accFromProperty = pid ? propertyIdToAccountId[pid] : undefined;
   const propertyInBu = Boolean(accFromProperty && buAccountIds.has(accFromProperty));
   return clientInBu || propertyInBu;
+}
+
+/**
+ * A seta da lista virou o botão de avançar fase (dono, 27/08).
+ *
+ * Ela já apontava para a direita e não fazia nada além de decorar a linha que
+ * o clique inteiro já abria. Agora ela é o atalho de quem está tocando o dia:
+ * `Scheduled → Start job` e `In progress → Job completed`, sem abrir o job.
+ *
+ * Quando o passo está bloqueado (parceiro faltando, data em branco) ela fica
+ * apagada e o motivo aparece no hover — e o clique ainda o repete no toast,
+ * porque quem clica com o mouse já parado não leu o title.
+ */
+function JobAdvanceArrow({
+  job,
+  saving,
+  onAdvance,
+}: {
+  job: Job;
+  saving: boolean;
+  onAdvance: (to: Job["status"]) => void;
+}) {
+  const proxima = proximaFaseDoJob(job);
+  if (!proxima) {
+    return <ArrowRight className="h-4 w-4 text-stone-300 inline-block" />;
+  }
+  if (saving) {
+    return <Loader2 className="h-4 w-4 animate-spin text-primary inline-block" />;
+  }
+  return (
+    <button
+      type="button"
+      title={proxima.bloqueio ?? `${proxima.label} →`}
+      aria-label={proxima.bloqueio ? `${proxima.label} (blocked)` : proxima.label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onAdvance(proxima.to);
+      }}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+        proxima.bloqueio
+          ? "text-stone-300 hover:bg-surface-hover"
+          : "text-stone-400 hover:bg-primary/10 hover:text-primary",
+      )}
+    >
+      <ArrowRight className="h-4 w-4" />
+    </button>
+  );
 }
 
 function jobScheduleStartYmdUk(job: Pick<Job, "scheduled_start_at" | "scheduled_date">): string | null {
@@ -373,6 +427,36 @@ const SCHEDULE_PRESET_IDS: readonly ScheduleDatePreset[] = [
   "next_month",
   "custom",
 ];
+
+/**
+ * A JANELA escolhida à mão volta junto com o preset (dono, 27/08).
+ *
+ * O preset já era lembrado, mas as duas datas do Range nasciam sempre em
+ * "hoje": quem filtrava 24 Aug, abria um job e voltava, encontrava a lista de
+ * novo em hoje — o preset dizia "custom" e as datas diziam outra coisa. Guardar
+ * só metade da decisão é pior do que não guardar nada, porque a tela mente
+ * sobre o que está mostrando.
+ */
+const JOBS_SCHEDULE_CUSTOM_STORAGE_KEY = "master-os-jobs-schedule-custom-v1";
+
+const EH_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function readStoredJobsScheduleCustom(): { from: string; to: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cru = localStorage.getItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY);
+    if (!cru) return null;
+    const v = JSON.parse(cru) as { from?: unknown; to?: unknown };
+    const from = String(v.from ?? "");
+    const to = String(v.to ?? "");
+    // Data podre no storage não pode virar filtro: sem isto, um valor
+    // estragado devolveria uma lista vazia sem explicação nenhuma.
+    if (!EH_YMD.test(from) || !EH_YMD.test(to)) return null;
+    return { from, to };
+  } catch {
+    return null;
+  }
+}
 
 function readStoredJobsSchedulePreset(): ScheduleDatePreset {
   if (typeof window === "undefined") return "all";
@@ -809,9 +893,22 @@ function JobsPageContent() {
     }
   }, []);
 
+  /**
+   * Restaura a escolha de data INTEIRA, e depois da hidratação.
+   *
+   * As duas metades voltam no mesmo efeito de propósito: preset sem janela
+   * mostrava "custom" com as datas de hoje, ou seja, a tela dizia uma coisa e
+   * filtrava outra. E ler localStorage no inicializador do estado divergiria
+   * do HTML do servidor, que não tem storage nenhum.
+   */
   useEffect(() => {
     const stored = readStoredJobsSchedulePreset();
     if (stored !== "all") setScheduleDatePresetState(stored);
+    const janela = readStoredJobsScheduleCustom();
+    if (janela) {
+      setCustomScheduleFrom(janela.from);
+      setCustomScheduleTo(janela.to);
+    }
   }, []);
 
   const [defaultJobsTab, setDefaultJobsTabState] = useState<JobsDefaultTabId>(() => readStoredJobsDefaultTab());
@@ -825,6 +922,14 @@ function JobsPageContent() {
   }, []);
   const [customScheduleFrom, setCustomScheduleFrom] = useState(() => ukTodayYmd(new Date()));
   const [customScheduleTo, setCustomScheduleTo] = useState(() => ukTodayYmd(new Date()));
+  /** Grava a janela escolhida à mão junto com o preset: a decisão é uma só. */
+  const guardarJanelaCustom = useCallback((from: string, to: string) => {
+    try {
+      localStorage.setItem(JOBS_SCHEDULE_CUSTOM_STORAGE_KEY, JSON.stringify({ from, to }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const scheduleRange = useMemo(
     () => getScheduleRangeYmd(scheduleDatePreset, customScheduleFrom, customScheduleTo),
@@ -869,6 +974,8 @@ function JobsPageContent() {
     { job: Job; toColumnId: string; blockedReason: string | null } | null
   >(null);
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
+  /** Job cuja seta está avançando de fase agora (trava o clique duplo). */
+  const [advancingJobId, setAdvancingJobId] = useState<string | null>(null);
   /** Assign modal opened from the Partner column of the list. */
   const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string; initialPartnerId?: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -1247,21 +1354,86 @@ function JobsPageContent() {
   ]);
 
   /** Page totals — Job Amount, Cost, and Ticket margin footer. */
-  const jobsListFinancialTotals = useMemo(() => {
-    let revenue = 0;
-    let cost = 0;
-    for (const j of sortedDataForTable) {
-      revenue += jobBillableAmount(j);
-      cost += Number(j.partner_cost ?? 0);
+  const jobsListFinancialTotals = useMemo(() => sumJobsMoney(sortedDataForTable), [sortedDataForTable]);
+
+  /**
+   * O dinheiro dos jobs MARCADOS, na barra de seleção (dono, 27/08).
+   *
+   * Marcar linha a linha e não ver quanto aquilo soma obrigava a abrir cada
+   * job ou exportar para uma planilha só para responder "quanto entra e quanto
+   * sai nesta leva?". Mesma fórmula do rodapé das colunas, de propósito: um
+   * total que discorda da coluna que ele soma é pior do que total nenhum.
+   *
+   * Soma o que está na LISTA: seleção só se marca em linha visível, e somar um
+   * id que o filtro atual não mostra daria um número que ninguém consegue
+   * conferir na tela.
+   */
+  const selectedFinancialTotals = useMemo(() => {
+    if (selectedIds.size === 0) return null;
+    const marcados = sortedDataForTable.filter((j) => selectedIds.has(j.id));
+    return marcados.length > 0 ? sumJobsMoney(marcados) : null;
+  }, [selectedIds, sortedDataForTable]);
+
+  /**
+   * Rota dos jobs MARCADOS (dono, 31/08): com 2+ selecionados, dois atalhos na
+   * barra de seleção — abrir a rota no Google Maps, e uma mensagem única de
+   * WhatsApp com rota + type of work + scope de cada parada. O texto segue as
+   * regras de job-share-text.ts: endereço completo só para job COM parceiro;
+   * sem parceiro, postcode. Dinheiro nunca entra na mensagem.
+   */
+  const selectedJobsForRoute = useMemo(
+    () => (selectedIds.size >= 2 ? sortedDataForTable.filter((j) => selectedIds.has(j.id)) : []),
+    [selectedIds, sortedDataForTable],
+  );
+
+  const handleOpenSelectedRoute = useCallback(() => {
+    const url = buildJobsRouteMapsUrl(selectedJobsForRoute, { precise: true });
+    if (!url) {
+      toast.error("Selected jobs have no usable addresses");
+      return;
     }
-    const profit = Math.round((revenue - cost) * 100) / 100;
-    return {
-      revenue: Math.round(revenue * 100) / 100,
-      cost: Math.round(cost * 100) / 100,
-      profit,
-      marginPct: revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0,
-    };
-  }, [sortedDataForTable]);
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, [selectedJobsForRoute]);
+
+  const handleCopySelectedRoute = useCallback(async () => {
+    const text = buildJobsRouteShareText(selectedJobsForRoute);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Route for ${selectedJobsForRoute.length} jobs copied`);
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  }, [selectedJobsForRoute]);
+
+  /**
+   * Cliente à ESQUERDA, parceiro à direita (padrão do dono): lê na ordem do
+   * dinheiro, o que entra antes do que sai.
+   */
+  const selectionSummaryNode = selectedFinancialTotals ? (
+    <div className="flex items-center gap-3 whitespace-nowrap text-xs tabular-nums">
+      <span className="text-text-secondary">
+        To receive{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.revenue)}
+        </strong>
+      </span>
+      <span className="h-3 w-px bg-border" />
+      <span className="text-text-secondary">
+        To pay{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.cost)}
+        </strong>
+      </span>
+      <span className="h-3 w-px bg-border" />
+      <span className="text-text-secondary">
+        Margin{" "}
+        <strong className="text-sm font-semibold text-text-primary">
+          {formatCurrency(selectedFinancialTotals.profit)}
+        </strong>
+        <span className="ml-1 text-text-tertiary">({selectedFinancialTotals.marginPct}%)</span>
+      </span>
+    </div>
+  ) : null;
 
   const activeJobsTabFinancialTotals = useMemo(
     () =>
@@ -2568,16 +2740,33 @@ function JobsPageContent() {
                       </p>
                       <p className="mt-0.5 truncate text-[13px] font-semibold text-text-primary">{item.client_name}</p>
                     </div>
-                    <a
-                      href={`/jobs/${item.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                    >
-                      Open job
-                      <ArrowUpRight className="h-3 w-3" />
-                    </a>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {/* Copia o resumo do job no formato do WhatsApp (pay do
+                          parceiro + postcode, nunca preço do cliente nem rua):
+                          é a resposta pronta pro "e esse job?" (dono, 30/08). */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void navigator.clipboard.writeText(buildJobShareText(item));
+                          toast.success("Job info copied — paste it in WhatsApp");
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md border border-border-light bg-card px-2 py-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Share
+                      </button>
+                      <a
+                        href={`/jobs/${item.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 rounded-md border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                      >
+                        Open job
+                        <ArrowUpRight className="h-3 w-3" />
+                      </a>
+                    </div>
                   </div>
 
                   {phoneText ? (
@@ -2868,7 +3057,14 @@ function JobsPageContent() {
             ) : null}
           </span>
         ) : (
-          <ArrowRight className="h-4 w-4 text-stone-300 hover:text-primary transition-colors inline-block" />
+          <JobAdvanceArrow
+            job={item}
+            saving={advancingJobId === item.id}
+            onAdvance={(to) => {
+              setAdvancingJobId(item.id);
+              void handleStatusChange(item, to).finally(() => setAdvancingJobId(null));
+            }}
+          />
         ),
     },
   ];
@@ -3021,8 +3217,11 @@ function JobsPageContent() {
               onChange={(next: DateFilterValue) => {
                 setScheduleDatePreset(next.mode);
                 if (next.mode === "custom") {
-                  setCustomScheduleFrom(next.customFrom ?? customScheduleFrom);
-                  setCustomScheduleTo(next.customTo ?? customScheduleTo);
+                  const from = next.customFrom ?? customScheduleFrom;
+                  const to = next.customTo ?? customScheduleTo;
+                  setCustomScheduleFrom(from);
+                  setCustomScheduleTo(to);
+                  guardarJanelaCustom(from, to);
                 }
               }}
             />
@@ -3264,6 +3463,7 @@ function JobsPageContent() {
               sortColumnKey={jobsListSortKey}
               sortDirection={jobsListSortDir}
               onSortChange={handleJobsListSortChange}
+              selectionSummary={selectionSummaryNode}
               bulkActions={
                 status === "closed" ? (
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -3281,6 +3481,13 @@ function JobsPageContent() {
                     <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
                     <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
+                    {selectedJobsForRoute.length >= 2 ? (
+                      <>
+                        <span className="h-4 w-px bg-border" />
+                        <BulkBtn label="Open route" onClick={handleOpenSelectedRoute} variant="default" />
+                        <BulkBtn label="Copy route" onClick={() => void handleCopySelectedRoute()} variant="success" />
+                      </>
+                    ) : null}
                   </div>
                 )
               }
