@@ -106,7 +106,8 @@ export function amanhaEmLondres(agora: Date): string {
 
 const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
-  "partner_id, partner_name, client_id, client_name, client_reminder_sent_at, client_confirmation_sent_at";
+  "partner_id, partner_name, client_id, client_name, property_address, " +
+  "client_reminder_sent_at, client_confirmation_sent_at";
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
@@ -205,10 +206,23 @@ export async function varrerLembretesDeVespera(
       continue;
     }
 
+    /**
+     * {{4}} do template `24hrsbooking_confirmation` (dono, 31/08): a linha
+     * "📍 endereço", para o cliente confirmar que vamos à porta certa. A Meta
+     * recusa parâmetro vazio ou com quebra de linha, então endereço ausente
+     * pula o job (e aparece na varredura) em vez de derrubar o envio inteiro.
+     */
+    const endereco = String(j.property_address ?? "").replace(/\s+/g, " ").trim();
+    if (!endereco) {
+      anota("pulado", "no property address on the job: template needs it to confirm the door");
+      continue;
+    }
+
     const parametros = [
       String(c.full_name ?? nomeCliente).trim().split(/\s+/)[0] || "there",
       data,
       janela,
+      endereco,
     ];
 
     if (!enviar) {
@@ -230,18 +244,40 @@ export async function varrerLembretesDeVespera(
     try {
       const id = phoneIdentifier(decisao.telefone);
       await respond.createOrUpdateContact(id, { firstName: parametros[0], phone: decisao.telefone });
-      await respond.sendTemplate(
-        id,
-        { name: template(), languageCode: idioma(), components: [
-          { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
-        ] },
-        canal()!,
-      );
+      const manda = (params: string[]) =>
+        respond!.sendTemplate(
+          id,
+          { name: template(), languageCode: idioma(), components: [
+            { type: "body", parameters: params.map((text) => ({ type: "text" as const, text })) },
+          ] },
+          canal()!,
+        );
+      let semEndereco = false;
+      try {
+        await manda(parametros);
+      } catch (err) {
+        /**
+         * Corrida de aprovação da Meta (31/08): a versão do template com o
+         * endereço ({{4}}) fica "pending" e a Meta continua servindo a
+         * aprovada de 3 variáveis — mandar 4 contra ela é rejeitado por
+         * contagem. SÓ quando o erro é claramente de template/parâmetro
+         * (rejeição ANTES de entregar) vale reenviar com 3; qualquer outro
+         * erro pode ser pós-entrega, e reenviar duplicaria a mensagem.
+         */
+        const msg = err instanceof Error ? err.message : "";
+        const erroDeTemplate = /param|template|132000|localizable|number of/i.test(msg);
+        if (!erroDeTemplate || parametros.length < 4) throw err;
+        await manda(parametros.slice(0, 3));
+        semEndereco = true;
+      }
       await supabase
         .from("jobs")
         .update({ client_reminder_sent_at: new Date().toISOString() })
         .eq("id", String(j.id));
-      anota("enviado", `${decisao.telefone} · ${janela}`);
+      anota(
+        "enviado",
+        `${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,
+      );
     } catch (err) {
       anota("falhou", err instanceof Error ? err.message.slice(0, 140) : "unknown error");
     }
