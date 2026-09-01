@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient } from "@/lib/supabase/server";
+import { sanitizePermissionOverrides } from "@/types/admin-config";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,7 @@ export async function PATCH(
     full_name?: string;
     new_password?: string;
     email?: string;
+    custom_permissions?: unknown;
   };
   try {
     body = await req.json();
@@ -64,6 +66,28 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
     updates.role = body.role;
+    // Overrides are a diff against the OLD role's defaults — meaningless (and
+    // dangerous: they resurrect on a future demotion) once the role changes.
+    // A role change clears them unless the caller sends a fresh set along.
+    if (!("custom_permissions" in body)) updates.custom_permissions = null;
+  }
+  if ("custom_permissions" in body) {
+    const cleaned = sanitizePermissionOverrides(body.custom_permissions);
+    if (cleaned === undefined) {
+      return NextResponse.json({ error: "Invalid custom_permissions" }, { status: 400 });
+    }
+    updates.custom_permissions = cleaned;
+  }
+  // Admin ignores overrides everywhere — never store them on an admin profile
+  // (matches create-user), so nothing lies dormant for a later demotion.
+  if ("custom_permissions" in updates && updates.custom_permissions !== null) {
+    const finalRole =
+      typeof updates.role === "string"
+        ? updates.role
+        : ((await admin.from("profiles").select("role").eq("id", id).maybeSingle()).data as {
+            role?: string;
+          } | null)?.role;
+    if (finalRole === "admin") updates.custom_permissions = null;
   }
   if (typeof body.is_active === "boolean") updates.is_active = body.is_active;
   if (typeof body.full_name === "string" && body.full_name.trim()) {

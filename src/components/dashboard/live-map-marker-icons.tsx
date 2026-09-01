@@ -450,6 +450,8 @@ export function buildLiveMapJobPopupHtml(job: {
   tradeLabel: string;
   scheduleLine: string;
   selected: boolean;
+  scopePreview?: string | null;
+  etaLabel?: string | null;
 }): string {
   const statusStyle = JOB_STATUS_STYLE[job.statusCategory];
   const statusChip = `<span style="display:inline-block;padding:2px 6px;border-radius:4px;background:${statusStyle.color}1A;color:${statusStyle.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px">${escapeHtml(
@@ -468,6 +470,12 @@ export function buildLiveMapJobPopupHtml(job: {
   const scheduleLine = job.scheduleLine
     ? `<div style="margin-top:6px;padding:4px 6px;background:#F5F5F7;border-radius:4px;color:#020040;font-size:11px;font-weight:500">🗓 ${escapeHtml(
         job.scheduleLine,
+      )}${job.etaLabel ? ` &nbsp;·&nbsp; 🚗 ${escapeHtml(job.etaLabel)}` : ""}</div>`
+    : "";
+  // O scope diz O QUE é o job — sem ele o popup só diz onde e quando.
+  const scopeBlock = job.scopePreview?.trim()
+    ? `<div style="margin-top:6px;padding:4px 6px;background:#FBFAF8;border:1px solid #EFECE6;border-radius:4px;color:#3A3A55;font-size:10.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(
+        job.scopePreview.trim(),
       )}</div>`
     : "";
   const selectedChip = job.selected
@@ -484,6 +492,7 @@ ${partnerLine}
 ${clientLine}
 <div style="margin-top:4px;color:#64748b;font-size:11px">📍 ${escapeHtml(job.propertyAddress)}</div>
 ${scheduleLine}
+${scopeBlock}
 ${selectedChip}
 </div>`;
 }

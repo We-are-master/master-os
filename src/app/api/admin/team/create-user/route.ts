@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth } from "@/lib/auth-api";
 import { createClient } from "@/lib/supabase/server";
 import { sendWorkforcePlatformLoginInvite } from "@/lib/workforce-welcome-email-send";
+import { sanitizePermissionOverrides } from "@/types/admin-config";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest) {
     role?: string;
     password?: string;
     payroll_internal_cost_id?: string;
+    custom_permissions?: unknown;
   };
   try {
     body = await req.json();
@@ -53,6 +55,10 @@ export async function POST(req: NextRequest) {
   const payrollId = body.payroll_internal_cost_id
     ? String(body.payroll_internal_cost_id).trim()
     : null;
+  // Per-user visibility overrides — only meaningful for non-admin roles
+  // (the permission engine ignores overrides for admins).
+  const customPermissions =
+    role === "admin" ? null : sanitizePermissionOverrides(body.custom_permissions) ?? null;
 
   if (!email || !full_name) {
     return NextResponse.json({ error: "Missing email or full_name" }, { status: 400 });
@@ -106,6 +112,7 @@ export async function POST(req: NextRequest) {
           role,
           is_active: true,
           must_change_password: true,
+          custom_permissions: customPermissions,
           created_at: now,
           updated_at: now,
         },

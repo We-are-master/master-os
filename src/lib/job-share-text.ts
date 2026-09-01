@@ -72,3 +72,104 @@ export function buildJobShareText(job: Job): string {
 
   return linhas.join("\n");
 }
+
+/* ------------------------------------------------------------------ */
+/* Rota de vários jobs (seleção em lote na lista de Jobs)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A REGRA DE ENDEREÇO INVERTE AQUI, DE PROPÓSITO: o resumo de um job
+ * (acima) é para parceiro SONDANDO, então só postcode. A rota em lote é o
+ * briefing do dia de quem já ACEITOU os jobs — endereço completo é devido.
+ * O guarda continua automático: job ainda SEM parceiro entra na mensagem
+ * (e no link do Maps compartilhado) só com o postcode.
+ *
+ * Dinheiro nunca entra na mensagem de rota: rota + type of work + scope.
+ */
+
+function jobHasPartner(job: Job): boolean {
+  const j = job as { partner_id?: string | null; partner_name?: string | null };
+  return Boolean(j.partner_id || (j.partner_name && j.partner_name.trim()));
+}
+
+/** Ordena paradas como se dirige: início agendado, depois data, depois referência. */
+export function sortJobsForRoute(jobs: Job[]): Job[] {
+  const key = (j: Job): string =>
+    `${String(j.scheduled_date ?? "9999-99-99").slice(0, 10)}T${String(j.scheduled_start_at ?? "z")}`;
+  return [...jobs].sort((a, b) => key(a).localeCompare(key(b)));
+}
+
+/**
+ * Ponto de uma parada para o Google Maps.
+ * `precise` = uso próprio (botão Route): melhor precisão sempre.
+ * Sem `precise` (mensagem compartilhada): precisão total só com parceiro no job.
+ */
+function jobRoutePoint(job: Job, precise: boolean): string | null {
+  if (precise || jobHasPartner(job)) {
+    // Number(null) === 0: um lat/lng nulo viraria "0,0" no meio do Atlântico.
+    const lat = job.latitude == null ? NaN : Number(job.latitude);
+    const lng = job.longitude == null ? NaN : Number(job.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    const addr = String(job.property_address ?? "").trim();
+    if (addr) return addr;
+  }
+  return postcodeFromAddress(job.property_address);
+}
+
+/** Link de direções do Google Maps com as paradas na ordem da rota. */
+export function buildJobsRouteMapsUrl(
+  jobs: Job[],
+  opts?: { precise?: boolean },
+): string | null {
+  const precise = opts?.precise === true;
+  const points = sortJobsForRoute(jobs)
+    .map((j) => jobRoutePoint(j, precise))
+    .filter((p): p is string => p != null);
+  if (points.length === 0) return null;
+
+  const destination = points[points.length - 1]!;
+  const waypoints = points.slice(0, -1);
+  const params = new URLSearchParams({ api: "1", travelmode: "driving", destination });
+  if (waypoints.length > 0) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+/** Uma mensagem de WhatsApp só: rota (link do Maps) + type of work + scope de cada parada. */
+export function buildJobsRouteShareText(jobs: Job[]): string {
+  const stops = sortJobsForRoute(jobs);
+  const dates = new Set(
+    stops.map((j) => String(j.scheduled_date ?? "").slice(0, 10)).filter(Boolean),
+  );
+  const sameDay = dates.size === 1 ? londonDateLabel([...dates][0]) : null;
+
+  const linhas: string[] = [];
+  linhas.push(`*Route · ${stops.length} stops${sameDay ? ` · ${sameDay}` : ""}*`);
+  const mapsUrl = buildJobsRouteMapsUrl(stops);
+  if (mapsUrl) linhas.push(`Open route: ${mapsUrl}`);
+
+  stops.forEach((job, i) => {
+    linhas.push("");
+    const tow = normalizeTypeOfWork(job.title ?? "") || job.title?.trim() || "Job";
+    linhas.push(`*${i + 1}) ${tow}*`);
+
+    const partes: string[] = [];
+    if (!sameDay) {
+      const d = londonDateLabel(job.scheduled_date);
+      if (d) partes.push(d);
+    }
+    const ini = londonTime(job.scheduled_start_at);
+    const fim = londonTime(job.scheduled_end_at);
+    if (ini) partes.push(`Arrival ${ini}${fim ? `–${fim}` : ""}`);
+    if (partes.length > 0) linhas.push(partes.join(" · "));
+
+    const endereco = jobHasPartner(job)
+      ? String(job.property_address ?? "").trim() || postcodeFromAddress(job.property_address)
+      : postcodeFromAddress(job.property_address);
+    if (endereco) linhas.push(endereco);
+
+    const scope = String(job.scope ?? "").trim();
+    if (scope) linhas.push(`Scope:\n${scope}`);
+  });
+
+  return linhas.join("\n");
+}

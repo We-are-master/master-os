@@ -284,7 +284,26 @@ async function ciclo(): Promise<void> {
       // jobs do dia seguinte (dono, 18/08) — não é booking nem pedido de
       // quote. Fica no Action Required pro humano; o Harvey nem gasta
       // classificador nele.
-      !/you have \d+ jobs? on /i.test(t.subject),
+      !/you have \d+ jobs? on /i.test(t.subject) &&
+      /**
+       * Conversa de WhatsApp encaminhada pro Zendesk NÃO é booking
+       * (dono, 30/08/2026). Booking chega como e-mail próprio, com o card.
+       *
+       * O assunto `[Housekeep] [WhatsApp] Fixfy` é uma THREAD, viva há
+       * semanas, onde o suporte deles fala com a gente. Em 30/08 o Sean
+       * escreveu "Hi team I've assigned a job for tomorrow morning 8:00 -
+       * 9:00 EOT N6 5QD" e o Harvey criou o JOB-9568 a partir disso.
+       *
+       * O que saiu não foi nem o job do recado: veio com OUTRO cliente
+       * (Aditya Satyabhusan), OUTRO postcode (E14 2DR, não N6 5QD) e £254,40
+       * do nada. Numa thread longa o classificador mistura mensagem velha com
+       * nova, e o resultado é um job que nunca existiu em endereço nenhum.
+       *
+       * Aviso de job por chat continua chegando e continua sendo lido por
+       * gente: ele fica no Action Required. O que não pode é virar job
+       * sozinho.
+       */
+      !/\[whatsapp\]/i.test(t.subject),
   );
   console.log(`[harvey] ${new Date().toISOString()} candidatos apos filtros: ${candidatos.length}`);
 

@@ -160,7 +160,11 @@ import {
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
-import { buildJobShareText } from "@/lib/job-share-text";
+import {
+  buildJobShareText,
+  buildJobsRouteMapsUrl,
+  buildJobsRouteShareText,
+} from "@/lib/job-share-text";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import type { CatalogService } from "@/types/database";
 import { ServiceCatalogSelect } from "@/components/ui/service-catalog-select";
@@ -1369,6 +1373,37 @@ function JobsPageContent() {
     const marcados = sortedDataForTable.filter((j) => selectedIds.has(j.id));
     return marcados.length > 0 ? sumJobsMoney(marcados) : null;
   }, [selectedIds, sortedDataForTable]);
+
+  /**
+   * Rota dos jobs MARCADOS (dono, 31/08): com 2+ selecionados, dois atalhos na
+   * barra de seleção — abrir a rota no Google Maps, e uma mensagem única de
+   * WhatsApp com rota + type of work + scope de cada parada. O texto segue as
+   * regras de job-share-text.ts: endereço completo só para job COM parceiro;
+   * sem parceiro, postcode. Dinheiro nunca entra na mensagem.
+   */
+  const selectedJobsForRoute = useMemo(
+    () => (selectedIds.size >= 2 ? sortedDataForTable.filter((j) => selectedIds.has(j.id)) : []),
+    [selectedIds, sortedDataForTable],
+  );
+
+  const handleOpenSelectedRoute = useCallback(() => {
+    const url = buildJobsRouteMapsUrl(selectedJobsForRoute, { precise: true });
+    if (!url) {
+      toast.error("Selected jobs have no usable addresses");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, [selectedJobsForRoute]);
+
+  const handleCopySelectedRoute = useCallback(async () => {
+    const text = buildJobsRouteShareText(selectedJobsForRoute);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Route for ${selectedJobsForRoute.length} jobs copied`);
+    } catch {
+      toast.error("Could not copy to clipboard");
+    }
+  }, [selectedJobsForRoute]);
 
   /**
    * Cliente à ESQUERDA, parceiro à direita (padrão do dono): lê na ordem do
@@ -3446,6 +3481,13 @@ function JobsPageContent() {
                     <BulkBtn label="Unassign" onClick={() => setBulkActionModal("unassign")} variant="default" />
                     <BulkBtn label="Cancel" onClick={openBulkCancel} variant="warning" />
                     <BulkBtn label="Archive" onClick={() => setBulkActionModal("archive")} variant="danger" />
+                    {selectedJobsForRoute.length >= 2 ? (
+                      <>
+                        <span className="h-4 w-px bg-border" />
+                        <BulkBtn label="Open route" onClick={handleOpenSelectedRoute} variant="default" />
+                        <BulkBtn label="Copy route" onClick={() => void handleCopySelectedRoute()} variant="success" />
+                      </>
+                    ) : null}
                   </div>
                 )
               }

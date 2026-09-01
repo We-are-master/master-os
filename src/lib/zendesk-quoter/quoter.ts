@@ -554,7 +554,7 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
           {
             role: "system",
             content:
-              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"contact":str|null,"property_address":str|null,"postcode":str|null,"date":"YYYY-MM-DD"|null,"visit_date_label":str|null,"arrival_window":"HH:MM - HH:MM"|null,"length":str|null,"price_gbp":num|null,"service_summary":str|null,"job":str|null,"property_type":str|null,"bedrooms":num|null,"bathrooms":num|null,"additional_rooms":num|null,"tasks":[str]|null}. "contact" is the customer\'s phone number as written on the page (the "Contact" line under customer details), digits and spaces exactly as shown, null if absent. "job" is the service name as the page writes it (e.g. "End-of-tenancy clean"); "visit_date_label" the date as written (e.g. "Thursday, 20 August 2026"); "length" the booked duration if shown; "tasks" the extra/additional tasks booked for the job (e.g. "Balcony cleaning") — NEVER workflow checklist steps like "Start job", "Before photos", "Finish job", "After photos".',
+              'You extract job details from a Housekeep partner job page text. ONLY values written explicitly on the page; anything absent is null. Reply strict JSON: {"client_name":str|null,"contact":str|null,"property_address":str|null,"postcode":str|null,"entrance":str|null,"date":"YYYY-MM-DD"|null,"visit_date_label":str|null,"arrival_window":"HH:MM - HH:MM"|null,"length":str|null,"price_gbp":num|null,"service_summary":str|null,"job":str|null,"property_type":str|null,"bedrooms":num|null,"bathrooms":num|null,"additional_rooms":num|null,"tasks":[str]|null,"additional_notes":str|null}. "contact" is the customer\'s phone number as written on the page (the "Contact" line under customer details), digits and spaces exactly as shown, null if absent. "entrance" is the "Entrance" line under customer details, copied WORD FOR WORD — it is how the tradesperson finds the door and must not be summarised. "additional_notes" is the "Additional notes" line under job details, also word for word — it carries what the customer already bought or already did. "job" is the service name as the page writes it (e.g. "End-of-tenancy clean"); "visit_date_label" the date as written (e.g. "Thursday, 20 August 2026"); "length" the booked duration if shown; "tasks" the extra/additional tasks booked for the job (e.g. "Balcony cleaning") — NEVER workflow checklist steps like "Start job", "Before photos", "Finish job", "After photos".',
           },
           { role: "user", content: texto.slice(0, 6000) },
         ],
@@ -568,16 +568,49 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
     // é ele que o dono quer ver inteiro no scope do job (18/08/2026).
     const linha = (rotulo: string, v: unknown): string | null =>
       v === null || v === undefined || v === "" ? null : `${rotulo}: ${Array.isArray(v) ? v.join(", ") : String(v)}`;
+    /**
+     * `Entrance` e `Additional notes` entram no scope a pedido do dono
+     * (30/08/2026), e são as duas linhas que decidem se a visita dá certo.
+     *
+     * Entrance é como se acha a porta, e o card da Jahzia (JOB-9562) mostra
+     * por quê: "we live in the flat above the bar 'Small Beer'… the door has a
+     * letterbox with a red rose". Sem isso o parceiro chega no número certo e
+     * fica na calçada olhando para um bar.
+     *
+     * Additional notes é o que muda o trabalho antes de começar: no mesmo job
+     * o cliente escreve "I already have the materials and 2 rows have been
+     * done. The room is 3m squared". Quem sai de casa sem ler isso leva
+     * material a mais e orça o dobro do que tem para fazer.
+     *
+     * A regra do scope (dono, 30/08/2026): **tudo do "Job details" que
+     * descreve O TRABALHO, e nada que já seja campo do job.**
+     *
+     * Ficaram de fora três linhas, e as três pelo mesmo motivo: o card do job
+     * no OS já as mostra, em campo próprio, com formato da casa.
+     *
+     *   Job                  → vira `title`/`service_type` pelo `tituloCanonico`.
+     *                          O nome cru da Housekeep ("Carpenter | Flooring |
+     *                          Installation") é vocabulário deles, e repetir no
+     *                          scope ensina o parceiro a chamar o serviço por um
+     *                          nome que a casa não usa.
+     *   Visit date           → `scheduled_date`.
+     *   Booked arrival time  → a janela de chegada do job.
+     *
+     * Scope que repete campo é scope que ninguém lê até o fim, e o que importa
+     * (Entrance, Additional notes) fica soterrado no meio da repetição.
+     *
+     * `j.job` continua sendo EXTRAÍDO: ele alimenta o `jobNome`, que é a
+     * entrada do `tituloCanonico`. Tirar da extração tiraria o título.
+     */
     const detalhes = [
-      linha("Job", j.job),
-      linha("Visit date", j.visit_date_label ?? j.date),
-      linha("Booked arrival time", j.arrival_window),
+      linha("Entrance", j.entrance),
       linha("Length", j.length),
       linha("Property type", j.property_type),
       linha("Bedrooms", j.bedrooms),
       linha("Bathrooms", j.bathrooms),
       linha("Additional rooms", j.additional_rooms),
       linha("Tasks", j.tasks),
+      linha("Additional notes", j.additional_notes),
     ].filter(Boolean) as string[];
 
     return {

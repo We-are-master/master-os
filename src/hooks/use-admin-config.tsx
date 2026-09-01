@@ -2,9 +2,10 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import type { NavGroup, NavItem } from "@/lib/constants";
-import { ADMIN_ONLY_NAV_HREFS } from "@/lib/constants";
+import { ADMIN_ONLY_NAV_HREFS, NAVIGATION } from "@/lib/constants";
+import { mergeNewNavItems } from "@/lib/nav-merge";
 import type { PermissionKey, PermissionsByRole, RoleKey, UserPermissionOverride } from "@/types/admin-config";
-import { getAdminConfig, setAdminConfig as saveAdminConfig } from "@/services/admin-config";
+import { getAdminConfig, setAdminConfig as saveAdminConfig, DEFAULT_PERMISSIONS } from "@/services/admin-config";
 import { useProfile } from "@/hooks/use-profile";
 
 type AdminConfigState = {
@@ -26,7 +27,15 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
   const [navigation, setNavigationState] = useState<NavGroup[]>([]);
   const [permissions, setPermissionsState] = useState<PermissionsByRole>({} as PermissionsByRole);
   const [loading, setLoading] = useState(true);
-  const { profile } = useProfile();
+  const { profile, loading: profileLoading } = useProfile();
+
+  // Before admin_config loads (or after a failed refresh) the matrix is {} —
+  // filtering against it would drop EVERY item with a permission. The code
+  // defaults are the honest stand-in until the stored matrix arrives.
+  const effectivePermissions = useMemo(
+    () => (Object.keys(permissions).length > 0 ? permissions : DEFAULT_PERMISSIONS),
+    [permissions],
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -73,24 +82,30 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
       // Admin role always has full access — overrides cannot remove it
       if (profile.role === "admin") return true;
       const role = profile.role as RoleKey;
-      const rolePerms = permissions[role];
-      if (!rolePerms) return false;
-      // User-level override takes priority over role default
+      // User-level override takes priority over role default — checked FIRST,
+      // same order as itemAllowed below and resolvePermission on the server.
       const overrides = profile.custom_permissions as UserPermissionOverride | null | undefined;
       if (overrides && (permission as PermissionKey) in overrides) {
         return overrides[permission as PermissionKey] === true;
       }
+      const rolePerms = effectivePermissions[role];
+      if (!rolePerms) return false;
       return (rolePerms as Record<string, boolean>)[permission] === true;
     },
-    [profile, permissions]
+    [profile, effectivePermissions]
   );
 
   const filteredNavigation = useMemo((): NavGroup[] => {
-    if (!profile || navigation.length === 0) return navigation;
+    // Merge canonical items FIRST, filter AFTER — merging after the filter
+    // used to re-inject everything the filter removed (fail-open sidebar).
+    const merged = mergeNewNavItems(navigation, NAVIGATION);
+    // While the profile is still loading, render nothing rather than flashing
+    // the full nav at a user who is about to be filtered (fail closed).
+    if (!profile) return profileLoading ? [] : merged;
     // Admin sees everything
-    if (profile.role === "admin") return navigation;
+    if (profile.role === "admin") return merged;
     const role = profile.role as RoleKey;
-    const rolePerms = permissions[role];
+    const rolePerms = effectivePermissions[role];
     const overrides = profile.custom_permissions as UserPermissionOverride | null | undefined;
 
     function itemAllowed(perm?: string): boolean {
@@ -124,13 +139,13 @@ export function AdminConfigProvider({ children }: { children: React.ReactNode })
       return out;
     }
 
-    return navigation
+    return merged
       .map((group) => ({
         ...group,
         items: filterNestedItems(group.items),
       }))
       .filter((group) => group.items.length > 0);
-  }, [navigation, permissions, profile]);
+  }, [navigation, effectivePermissions, profile, profileLoading]);
 
   const value: AdminConfigState = {
     navigation,

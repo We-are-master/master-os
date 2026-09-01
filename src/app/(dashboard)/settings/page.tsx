@@ -47,6 +47,7 @@ const settingsAdminTabs = [
   { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
+  { id: "team", label: "Users Access" },
   { id: "system", label: "System" },
 ] as const;
 
