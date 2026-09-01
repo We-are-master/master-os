@@ -13,6 +13,7 @@ export type BeaconDateMode =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "last_week"
   | "next_week"
   | "month"
   | "qtd"
@@ -226,6 +227,14 @@ export function getBeaconScheduleYmdRange(filters: BeaconFilters): { from: strin
       e.setDate(e.getDate() + 6);
       return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
     }
+    case "last_week": {
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) - 7);
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      return { from: localCalendarYmd(s), to: localCalendarYmd(e) };
+    }
     case "next_week": {
       const day = startOfToday.getDay() || 7;
       const s = new Date(startOfToday);
@@ -289,6 +298,15 @@ export function getDateRangeForMode(filters: BeaconFilters): { fromIso: string; 
       const day = startOfToday.getDay() || 7; // Mon=1..Sun=7
       const s = new Date(startOfToday);
       s.setDate(s.getDate() - (day - 1));
+      const e = new Date(s);
+      e.setDate(e.getDate() + 6);
+      e.setHours(23, 59, 59, 999);
+      return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    }
+    case "last_week": {
+      const day = startOfToday.getDay() || 7;
+      const s = new Date(startOfToday);
+      s.setDate(s.getDate() - (day - 1) - 7);
       const e = new Date(s);
       e.setDate(e.getDate() + 6);
       e.setHours(23, 59, 59, 999);

@@ -33,6 +33,7 @@ const SUPPORTED_SHARED_MODES = new Set<BeaconDateMode>([
   "yesterday",
   "tomorrow",
   "week",
+  "last_week",
   "next_week",
   "month",
   "qtd",

@@ -6,6 +6,7 @@ export type ScheduleDatePreset =
   | "yesterday"
   | "tomorrow"
   | "week"
+  | "last_week"
   | "next_week"
   | "month"
   | "qtd"
@@ -75,6 +76,12 @@ export function getScheduleRangeYmd(
   }
   if (preset === "week") {
     return { from: startOfWeekMondayYmd(anchor), to: endOfWeekSundayYmd(anchor) };
+  }
+  if (preset === "last_week") {
+    // Mesma semana ISO do "week" (segunda a domingo), sete dias atrás: as três
+    // janelas de semana só comparam entre si se recortarem o calendário igual.
+    const lastMonday = addDaysYmd(startOfWeekMondayYmd(anchor), -7);
+    return { from: lastMonday, to: addDaysYmd(lastMonday, 6) };
   }
   if (preset === "next_week") {
     const nextMonday = addDaysYmd(startOfWeekMondayYmd(anchor), 7);
