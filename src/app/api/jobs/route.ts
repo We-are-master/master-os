@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { limparScope } from "@/lib/scope-limpo";
+import { nomeProprio } from "@/lib/nome-proprio";
 import { isValidUUID } from "@/lib/auth-api";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import {
@@ -273,7 +274,18 @@ export async function POST(req: NextRequest) {
   const date            = str(body.date);
   const arrivalTime     = str(body.arrival_time);
   const title           = str(body.title);
-  let clientName        = str(body.client_name);
+  /**
+   * O nome do cliente entra com a inicial de cada parte em maiúscula.
+   *
+   * Aqui, e não em cada agente, pela mesma razão do `limparScope` logo abaixo:
+   * é por esta rota que Ruben, Harvey, Alex, Nina e a criação manual passam.
+   * Regra espalhada por agente é regra que o próximo agente esquece.
+   *
+   * Corrigir ANTES da busca do cliente é de propósito: o nome normalizado é o
+   * que procura a pessoa e o que fica gravado, então "jahzia delpeche" e
+   * "Jahzia Delpeche" param de ser dois clientes diferentes.
+   */
+  let clientName        = nomeProprio(str(body.client_name));
   // Free-text contact fields tolerate the placeholders a Zendesk macro emits
   // when the corresponding ticket field is left blank ("", "0", "A", "n/a"…).
   // We normalise to null so the OS row stays clean and the email lookup
@@ -655,7 +667,10 @@ export async function POST(req: NextRequest) {
         accountCompanyName: accountCompanyName || null,
       });
       clientId = resolved.clientId;
-      resolvedClientFullName = resolved.clientFullName;
+      // O cadastro antigo também passa pela regra: cliente gravado como
+      // "noel kennedy" meses atrás não pode reintroduzir o nome torto num job
+      // novo só porque a busca o encontrou.
+      resolvedClientFullName = nomeProprio(resolved.clientFullName) || resolved.clientFullName;
     } catch (e) {
       const message = e instanceof Error ? e.message : "Client lookup failed.";
       console.error("[api/jobs] client resolve failed:", message);

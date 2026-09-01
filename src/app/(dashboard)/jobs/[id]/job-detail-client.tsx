@@ -3821,24 +3821,72 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   Math.max(0, amount + Number(baseJob.extras_amount ?? 0) - Number(baseJob.customer_deposit ?? 0)) * 100,
                 ) / 100,
             }
-          : { partner_cost: amount };
+          : {
+              partner_cost: amount,
+              /**
+               * `partner_agreed_value` TAMBÉM, senão o número digitado não sai
+               * do lugar na tela.
+               *
+               * Quem manda no que o parceiro recebe é o `partnerPaymentCap`, e
+               * ele lê `partner_agreed_value` quando ela tem valor, caindo em
+               * `partner_cost` só quando ela é zero. Esta modal escrevia só o
+               * `partner_cost`: no JOB-9562 o dono digitou £135, o banco
+               * gravou £135 em `partner_cost` e a tela seguiu mostrando os £45
+               * do `partner_agreed_value` que a cobrança horária tinha posto
+               * ali. Ele salvou de novo, e de novo, achando que era lentidão.
+               *
+               * Não é só tela: o self-bill lê o mesmo campo, então o parceiro
+               * seria pago £45 por um trabalho que a casa acordou em £135.
+               *
+               * O formulário do Setup já fazia isto, com este comentário ao
+               * lado: "o self-bill lê esta, então um valor velho pagou o valor
+               * errado". A modal ficou para trás. Mesma fórmula nos dois, para
+               * salvar por um caminho ou pelo outro dar no mesmo.
+               */
+              partner_agreed_value:
+                Math.round((amount + Number(baseJob.materials_cost ?? 0)) * 100) / 100,
+            };
       const updated = await handleJobUpdate(baseJob.id, patch, { silent: true });
       if (!updated) return baseJob;
-      await logFieldChanges(
-        "job",
-        baseJob.id,
-        baseJob.reference,
-        baseJob as unknown as Record<string, unknown>,
-        patch as Record<string, unknown>,
-        profile?.id,
-        profile?.full_name,
-      );
-      await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-      await syncSelfBillAfterJobChange(updated);
-      try {
-        await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
-      } catch {
-        /* non-blocking */
+
+      /**
+       * O valor já está gravado. O resto é RASTRO, e não pode segurar a tela.
+       *
+       * Estas quatro chamadas eram esperadas uma por uma, e cada uma fala
+       * direto com o banco do navegador. O banco é remoto (Railway) e uma
+       * consulta simples custa de 240ms a 740ms medidos daqui; a fila inteira,
+       * somada ao `refreshJobFinance` do chamador, dava perto de um minuto de
+       * roda girando. O dono viu "£45" na tela com £135 já salvo no banco e
+       * concluiu, com razão, que não tinha ido.
+       *
+       * Nenhuma delas muda o que o painel de finanças mostra: o painel lê a
+       * linha do JOB, que o `handleJobUpdate` acima já escreveu. Elas ajustam
+       * o que vive ao lado (log de auditoria, valor da fatura ligada, self-bill
+       * do parceiro, flags de pagamento).
+       *
+       * Então vão em PARALELO e SEM espera. Falha não some: cada uma avisa por
+       * toast, porque fatura que não acompanhou o job é problema de dinheiro e
+       * não pode virar silêncio.
+       */
+      const aoLado: Array<[string, Promise<unknown>]> = [
+        ["audit log", logFieldChanges(
+          "job",
+          baseJob.id,
+          baseJob.reference,
+          baseJob as unknown as Record<string, unknown>,
+          patch as Record<string, unknown>,
+          profile?.id,
+          profile?.full_name,
+        )],
+        ["linked invoice", bumpLinkedInvoiceAmountsToJobSchedule(updated)],
+        ["partner self-bill", syncSelfBillAfterJobChange(updated)],
+        ["payment flags", reconcileJobCustomerPaymentFlags(getSupabase(), updated.id)],
+      ];
+      for (const [nome, p] of aoLado) {
+        void p.catch((e) => {
+          console.error(`[finance] ${nome} não acompanhou a alteração:`, e);
+          toast.error(`Saved, but the ${nome} did not follow. Check it.`);
+        });
       }
       return updated;
     },
@@ -6594,11 +6642,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         );
       }
       setJob(current);
-      await refreshJobFinance();
       setFinanceHubBaseDraft(null);
       setFinanceHubExtraDrafts({});
       setFinanceHubOpen(false);
       toast.success("Finances updated");
+      /**
+       * A recarga do financeiro vem DEPOIS de fechar a modal, e sem espera.
+       *
+       * `setJob(current)` já colocou o valor novo na tela: o painel lê a linha
+       * do job. Segurar a modal aberta por mais uma leitura completa do
+       * financeiro era pedir ao dono que olhasse a roda girar para ver um
+       * número que ele acabou de digitar.
+       */
+      void refreshJobFinance().catch((e) => console.error("[finance] refresh falhou:", e));
     } catch {
       toast.error("Could not save the finances");
     } finally {
