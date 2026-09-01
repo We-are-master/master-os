@@ -1291,6 +1291,9 @@ function num(v: unknown): number {
  * without needing the partner-app dependency tree.
  */
 const ARRIVAL_SLOT_LOOKUP: Record<string, { start: string; end: string }> = {
+  // Hora marcada: fim IGUAL ao inicio. Nao e janela de zero minutos por
+  // descuido, e a ausencia de janela — o parceiro chega as 09:00.
+  nine_sharp:           { start: "09:00", end: "09:00" },
   earlier_morning:      { start: "08:00", end: "09:00" },
   morning:              { start: "09:00", end: "12:00" },
   early_afternoon:      { start: "12:00", end: "15:00" },
@@ -1299,6 +1302,8 @@ const ARRIVAL_SLOT_LOOKUP: Record<string, { start: string; end: string }> = {
   afternoon:            { start: "15:00", end: "18:00" },
   late_afternoon:       { start: "15:00", end: "18:00" },
   evening:              { start: "18:00", end: "20:00" },
+  // O expediente inteiro, para diaria e limpeza grande.
+  all_day:              { start: "09:00", end: "18:00" },
 };
 
 /**
