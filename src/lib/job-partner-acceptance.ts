@@ -590,13 +590,17 @@ export async function sendBookedSideConvReply(args: {
        * que ninguém vai executar é uma promessa que a gente ainda não pode
        * cumprir, e um morador avisado é pior ainda.
        *
-       * Acrescenta, não move. Os dois envios já são idempotentes — a conta
-       * reivindica `job_creation_notice_sent_at` com um update atômico em
-       * `.is(null)`, e o cliente pula quando `client_confirmation_sent_at` já
-       * tem data. Então job que nasce COM parceiro dispara na criação, job que
-       * ganha parceiro depois dispara aqui, e nenhum dos dois dispara duas
-       * vezes. Mover o gatilho, em vez de somar, arriscaria o contrário: o
-       * silêncio nos casos que hoje funcionam.
+       * Os dois envios são idempotentes — a conta reivindica
+       * `job_creation_notice_sent_at` com um update atômico em `.is(null)`, e o
+       * cliente pula quando `client_confirmation_sent_at` já tem data. Então
+       * job que passa por mais de uma porta de atribuição não dispara duas
+       * vezes.
+       *
+       * Toda porta que atribui parceiro dispara aqui: esta, a
+       * `notify-partner-zendesk`, e a rota fixa em `POST /api/jobs`. Nenhuma
+       * dispara na criação — o job nasce sem parceiro, e confirmar agendamento
+       * a um morador antes de existir quem bata na porta dele é prometer o que
+       * ainda não se pode cumprir.
        *
        * Sem `await`: o parceiro já foi avisado, que é o que trava a operação.
        * Uma falha de email da conta não pode desfazer a aceitação do job.
