@@ -13,8 +13,11 @@
  *
  *   1. Pago nas últimas 72h. O corte importa MUITO na primeira rodada: sem
  *      ele, o histórico inteiro de jobs pagos receberia o pedido de uma vez.
- *   2. Uma vez por job, para sempre — a trava mora em audit_logs
- *      (action=feedback_requested), que de quebra aparece na timeline do card.
+ *   2. Uma vez por job, para sempre — a trava é `jobs.feedback_requested_at`
+ *      (mig 284). Morava em `audit_logs`, onde o CHECK da tabela recusava a
+ *      action e o erro era engolido: a trava nunca gravou uma linha sequer, e
+ *      a mesma cliente recebeu o pedido em dias seguidos. A escrita agora é
+ *      conferida e o script para se ela falhar.
  *   3. A política da conta manda (mig 259): conta com WhatsApp de cliente
  *      desligado (Fantastic) não recebe pedido de feedback também — o cliente
  *      final é da conta, não nosso.
@@ -27,6 +30,18 @@
  * 07 desde 28/08), template `afterwork_feedback` (aprovado pela
  * Meta em 28/08, uma variável: o nome). Sem link no corpo: a resposta cai na
  * própria conversa do respond.io, onde o time já trabalha.
+ *
+ * ── ATENÇÃO: o template ainda é o texto errado para este momento ─────────
+ *
+ * `afterwork_feedback` diz "Before we close the job, could you please confirm
+ * that everything has been completed to your satisfaction?" — texto de
+ * aprovação PRÉ-fechamento, que é do `aprovacao-final-check.mts`. Sair daqui,
+ * depois de PAGO, pergunta se pode fechar um job que já fechou.
+ *
+ * Consertar a trava faz a mensagem sair uma vez em vez de três; não a torna a
+ * mensagem certa. Este sweep só deve voltar ao launchd quando tiver template
+ * próprio ("como foi?"), aprovado na Meta. Até lá fica desagendado de
+ * propósito — o `.plist` continua no disco.
  */
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "./load-env-local.mjs";
@@ -67,9 +82,10 @@ const desde = new Date(Date.now() - JANELA_HORAS * 3600e3).toISOString();
 
 const { data: jobs, error } = await supabase
   .from("jobs")
-  .select("id, reference, title, client_id, client_name, paid_at, payment_status, status")
+  .select("id, reference, title, client_id, client_name, paid_at, payment_status, status, feedback_requested_at")
   .eq("payment_status", "paid")
   .gte("paid_at", desde)
+  .is("feedback_requested_at", null)
   .is("deleted_at", null)
   .limit(100);
 if (error) throw new Error(error.message);
@@ -78,20 +94,10 @@ const candidatos = jobs ?? [];
 console.log(`[feedback] ${new Date().toISOString().slice(0, 16)} · ${candidatos.length} job(s) pagos nas últimas ${JANELA_HORAS}h · modo ${ENVIAR_AGORA ? "ENVIO" : "ENSAIO"}`);
 if (!candidatos.length) process.exit(0);
 
-// A trava: quem já recebeu, nunca mais.
-const { data: jaPedidos } = await supabase
-  .from("audit_logs")
-  .select("entity_id")
-  .eq("action", "feedback_requested")
-  .in("entity_id", candidatos.map((j) => j.id));
-const pedidos = new Set((jaPedidos ?? []).map((a) => a.entity_id));
-
 const respond = ENVIAR_AGORA ? createRespondIoClient() : null;
 let ok = 0, pulados = 0, falhas = 0;
 
 for (const j of candidatos) {
-  if (pedidos.has(j.id)) { pulados++; continue; }
-
   const { data: cliente } = j.client_id
     ? await supabase.from("clients").select("full_name, phone, source_account_id").eq("id", j.client_id).maybeSingle()
     : { data: null };
@@ -115,7 +121,6 @@ for (const j of candidatos) {
 
   const primeiroNome =
     String((cliente as { full_name?: string | null } | null)?.full_name ?? j.client_name ?? "").trim().split(/\s+/)[0] || "there";
-  const servico = String(j.title ?? "").trim() || "job";
 
   if (!ENVIAR_AGORA) {
     console.log(`· ${j.reference}: enviaria ${TEMPLATE} → ${primeiroNome} | ${decisao.telefone}`);
@@ -125,7 +130,7 @@ for (const j of candidatos) {
   try {
     const id = phoneIdentifier(decisao.telefone);
     await respond!.createOrUpdateContact(id, { firstName: primeiroNome, phone: decisao.telefone });
-    const { messageId } = await respond!.sendTemplate(
+    await respond!.sendTemplate(
       id,
       {
         name: TEMPLATE,
@@ -138,14 +143,25 @@ for (const j of candidatos) {
       },
       CANAL!,
     );
-    // A trava grava ANTES de qualquer conferência de entrega: pedido de
-    // feedback repetido irrita mais do que um perdido — na dúvida, não repete.
-    await supabase.from("audit_logs").insert({
-      entity_type: "job", entity_id: j.id, entity_ref: j.reference,
-      action: "feedback_requested", user_name: "Fixfy OS",
-      new_value: decisao.telefone,
-      metadata: { template: TEMPLATE, canal: CANAL, message_id: messageId ?? null, servico },
-    });
+    /**
+     * A trava grava ANTES de qualquer conferência de entrega: pedido de
+     * feedback repetido irrita mais do que um perdido — na dúvida, não repete.
+     *
+     * E o retorno É CONFERIDO. A versão anterior gravava em `audit_logs` com
+     * `action = "feedback_requested"`, valor que o CHECK da tabela recusa, e
+     * ignorava o erro: a trava nunca existiu, e a mesma cliente recebeu o
+     * pedido em dias seguidos. Escrita que serve de trava tem que falhar alto.
+     */
+    const { error: travaErr } = await supabase
+      .from("jobs")
+      .update({ feedback_requested_at: new Date().toISOString() })
+      .eq("id", j.id);
+    if (travaErr) {
+      throw new Error(
+        `trava não gravou para ${j.reference} (${travaErr.message}). ` +
+          `A mensagem JÁ SAIU: grave à mão antes de rodar de novo, senão repete.`,
+      );
+    }
     ok++;
     console.log(`✓ ${j.reference}: feedback pedido a ${primeiroNome} (${decisao.telefone})`);
   } catch (err) {
