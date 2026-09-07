@@ -57,6 +57,19 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   clientPhone?: string | null;
   propertyAddress: string;
   scope: string;
+  /**
+   * As fotos do trabalho, embutidas no email (dono, 03/09/2026).
+   *
+   * O parceiro que recebe este email é o que vai à porta, e até aqui ele saía
+   * de casa tendo lido o scope e visto nada. A foto muda o que ele leva na
+   * van: um "flooring installation" com foto de duas fileiras já assentadas é
+   * outro serviço do que o texto sozinho sugere.
+   *
+   * URL pública do bucket `quote-invite-images`, e tem que ser pública: o
+   * email abre no telefone dele, sem sessão nossa, e link assinado expira
+   * antes de ele chegar no job.
+   */
+  photoUrls?: string[] | null;
   /** Either "Hourly" or "Fixed" — drives the price-pill copy. */
   jobType: "hourly" | "fixed";
   /** £ display value (e.g. "£45.00/hr" or "£280.00"). */
@@ -177,6 +190,40 @@ function partnerJobEmailNotesHtmlBlock(notes: string): string {
       </td></tr>`;
 }
 
+/**
+ * As fotos do trabalho dentro do email de job confirmado.
+ *
+ * Miniaturas em fileira, e não uma coluna de fotos grandes (dono,
+ * 03/09/2026). Três fotos a 520px empurravam o botão de relatório para uns
+ * 1200px abaixo da dobra, e num email que o parceiro abre no celular a caminho
+ * do job isso significa rolar até o fim para achar a única coisa que ele
+ * precisa tocar.
+ *
+ * A miniatura serve para RECONHECER — "é aquela cozinha" — e não para
+ * inspecionar. Quem quer inspecionar abre o anexo, que vem em tamanho cheio no
+ * mesmo email e é o que ele salva no telefone.
+ *
+ * Tabela e não flex de propósito: é o único layout de fileira que o Outlook
+ * respeita, e metade dos parceiros lê email lá.
+ */
+function fotosDoJobHtml(photoUrls: readonly string[]): string {
+  if (photoUrls.length === 0) return "";
+  const celulas = photoUrls
+    .slice(0, 4)
+    .map(
+      (u, i) =>
+        `<td width="150" valign="top" style="padding:0 8px 0 0;"><img src="${escapeHtml(u)}" alt="Site photo ${i + 1} of ${photoUrls.length}" width="150" style="display:block; width:150px; max-width:150px; height:auto; border-radius:6px; border:1px solid #E4E4EC;" /></td>`,
+    )
+    .join("");
+  const sobra = photoUrls.length > 4 ? ` (+${photoUrls.length - 4} more attached)` : "";
+  return `
+      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
+        <p style="margin:0 0 4px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#6B6B85;">Site photos</p>
+        <p style="margin:0 0 10px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; line-height:18px; color:#6B6B85;">Attached to this email in full size${sobra}.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${celulas}</tr></table>
+      </td></tr>`;
+}
+
 export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationData): {
   subject: string;
   html: string;
@@ -211,6 +258,8 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
 
   const partnerNotes = data.partnerNotes?.trim() || "";
   const notesBlock = partnerNotes ? partnerJobEmailNotesHtmlBlock(partnerNotes) : "";
+  const fotos = (data.photoUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0);
+  const fotosBlock = fotosDoJobHtml(fotos);
   const reportDeadlineNote = escapeHtml(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE);
 
   // Quem já ganhou o job precisa conseguir avisar que está chegando. Clicável
@@ -298,6 +347,8 @@ ${partnerEmailLogoHeaderRow()}
           </td></tr>
         </table>
       </td></tr>
+
+      ${fotosBlock}
 
       ${notesBlock}
 

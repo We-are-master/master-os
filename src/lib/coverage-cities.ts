@@ -59,11 +59,40 @@ export function defaultLondonIncludedPostcodes(): string[] {
   return [...(coverageCityById(COVERAGE_CITY_LONDON_ID)?.outwardCodes ?? [])];
 }
 
+/**
+ * O outward code (a metade da frente do postcode: `EC1V`, `E17`, `SW19`).
+ *
+ * ─── Por que não é mais "corta os três últimos" ──────────────────────────
+ *
+ * Era `s.length > 3 ? s.slice(0, s.length - 3) : s`, que assume que TODA
+ * entrada é um postcode completo. A lista de cobertura do parceiro não é: ela
+ * guarda outward code já pronto. Então `EC1V` (4 caracteres) virava `E`, e
+ * `DA10` virava `D`.
+ *
+ * O estrago era silencioso e grande. Medido em 07/09/2026: três parceiros
+ * ativos tinham 98 códigos de quatro caracteres cada, e todos colapsavam em
+ * letras soltas — D, I, K, N, R, S. Como a comparação é por prefixo, `D`
+ * casava com Derby, Durham, Doncaster e Dorset. A cobertura que eles
+ * configuraram não valia nada, e os mesmos cinco parceiros apareciam em toda
+ * quote independentemente da área.
+ *
+ * Agora a forma decide, não o comprimento: se o que veio termina em inward
+ * code (dígito + duas letras), tira o inward; senão já é outward e fica como
+ * está. `EC1V 2NX` → `EC1V`; `EC1V` → `EC1V`; `E17` → `E17`.
+ */
+const OUTWARD = /^[A-Z]{1,2}[0-9][A-Z0-9]?$/;
+const POSTCODE_COMPLETO = /^([A-Z]{1,2}[0-9][A-Z0-9]?)([0-9][A-Z]{2})$/;
+
 export function normalizeOutwardCode(raw: string | null | undefined): string {
   const s = String(raw ?? "")
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "");
   if (!s) return "";
-  return s.length > 3 ? s.slice(0, s.length - 3) : s;
+  const completo = POSTCODE_COMPLETO.exec(s);
+  if (completo) return completo[1]!;
+  if (OUTWARD.test(s)) return s;
+  // Lixo que não é nem outward nem postcode não vira cobertura nenhuma: um
+  // código inválido virando prefixo curto é exatamente o defeito de cima.
+  return "";
 }

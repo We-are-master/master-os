@@ -367,6 +367,46 @@ async function ciclo(): Promise<void> {
       }
     }
     /**
+     * CERTIFICADO PRONTO vem antes de tudo que fala com modelo.
+     *
+     * Parceiro de certificado manda o PDF por e-mail e some. O documento é o
+     * trabalho inteiro entregue, e ficava numa nota dizendo "não soube qual job
+     * é" — os tickets 50069 e 50072 estavam assim há dois dias (07/09/2026).
+     *
+     * O casamento é pelo ENDEREÇO, que vem no corpo e no nome do arquivo, e
+     * não custa nem um token: sai antes do classificador de propósito.
+     *
+     * Arquiva no relatório e para. Não submete, não muda status, não aprova.
+     */
+    if (!triados.has(t.id)) {
+      try {
+        const { guardarCertificadoPorTicketId } = await import("../../src/lib/zendesk-quoter/certificado-anexado");
+        const rc = await guardarCertificadoPorTicketId(t.id);
+        if (rc.acao === "guardado") {
+          await postarNotaInterna(t.id, rc.nota);
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          console.log(`[harvey] 📄 certificado do #${t.id} arquivado em ${rc.reference} (${rc.como})`);
+          continue;
+        }
+        if (rc.acao === "ja_tinha") {
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          console.log(`[harvey] · #${t.id}: ${rc.reference} já tinha certificado`);
+          continue;
+        }
+        if (rc.acao === "nota" && notasTriagem < MAX_NOTAS_TRIAGEM_POR_CICLO) {
+          await postarNotaInterna(t.id, rc.nota);
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          notasTriagem++;
+          console.log(`[harvey] ✎ #${t.id}: PDF de certificado sem job certo — nota pro humano`);
+          continue;
+        }
+        // "nada": não tem PDF. Segue o fluxo normal.
+      } catch (err) {
+        console.error(`[harvey] certificado falhou no ${t.id}: ${err}`);
+      }
+    }
+
+    /**
      * PARCEIRO confirmando agendamento vem ANTES do classificador.
      *
      * O e-mail deles diz "your booking is confirmed", e o classificador lia
