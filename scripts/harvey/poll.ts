@@ -367,6 +367,96 @@ async function ciclo(): Promise<void> {
       }
     }
     /**
+     * CERTIFICADO PRONTO vem antes de tudo que fala com modelo.
+     *
+     * Parceiro de certificado manda o PDF por e-mail e some. O documento é o
+     * trabalho inteiro entregue, e ficava numa nota dizendo "não soube qual job
+     * é" — os tickets 50069 e 50072 estavam assim há dois dias (07/09/2026).
+     *
+     * O casamento é pelo ENDEREÇO, que vem no corpo e no nome do arquivo, e
+     * não custa nem um token: sai antes do classificador de propósito.
+     *
+     * Arquiva no relatório e para. Não submete, não muda status, não aprova.
+     */
+    if (!triados.has(t.id)) {
+      try {
+        const { guardarCertificadoPorTicketId } = await import("../../src/lib/zendesk-quoter/certificado-anexado");
+        const rc = await guardarCertificadoPorTicketId(t.id);
+        if (rc.acao === "guardado") {
+          await postarNotaInterna(t.id, rc.nota);
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          console.log(`[harvey] 📄 certificado do #${t.id} arquivado em ${rc.reference} (${rc.como})`);
+          continue;
+        }
+        if (rc.acao === "ja_tinha") {
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          console.log(`[harvey] · #${t.id}: ${rc.reference} já tinha certificado`);
+          continue;
+        }
+        if (rc.acao === "nota" && notasTriagem < MAX_NOTAS_TRIAGEM_POR_CICLO) {
+          await postarNotaInterna(t.id, rc.nota);
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          notasTriagem++;
+          console.log(`[harvey] ✎ #${t.id}: PDF de certificado sem job certo — nota pro humano`);
+          continue;
+        }
+        // "nada": não tem PDF. Segue o fluxo normal.
+      } catch (err) {
+        console.error(`[harvey] certificado falhou no ${t.id}: ${err}`);
+      }
+    }
+
+    /**
+     * REMARCAÇÃO vem antes do classificador de booking, e é o ponto todo.
+     *
+     * O e-mail de remarcação tem cliente, endereço e data — os três campos que
+     * o extrator de booking procura — então sem esta guarda o Harvey tenta
+     * criar um job NOVO em cima de um que ele já tem.
+     */
+    if (tri.classe === "remarcacao") {
+      /**
+       * Já tratado = segue tratado. Não volta para o classificador.
+       *
+       * A guarda era `&& !triados.has(t.id)`, e isso desfazia o passo inteiro
+       * no ciclo seguinte: o ticket entra em `triados` quando a remarcação é
+       * resolvida, aí a condição fica falsa, o passo é PULADO e o ticket
+       * escorre para o classificador de booking — que é exatamente de onde a
+       * gente estava tentando tirá-lo.
+       *
+       * Aconteceu ao vivo: o #50154 foi resolvido às 19:09 de 07/09/2026 e a
+       * partir das 19:14 o log passou a dizer, de 5 em 5 minutos,
+       * `#50154 "[Housekeep] Reschedule Carpenter: E1 3AQ" parece BOOKING`.
+       * Não criou job duplicado porque faltou dado, o que é sorte, não desenho.
+       */
+      if (triados.has(t.id)) continue;
+      try {
+        const { tratarRemarcacao, mensagemMaisNova } = await import("../../src/lib/zendesk-quoter/remarcacao");
+        const { lerTicketCompleto } = await import("../../src/lib/zendesk-quoter/quoter");
+        const lido = await lerTicketCompleto(t.id);
+        const rr = await tratarRemarcacao(
+          { id: t.id, subject: lido.subject, texto: await mensagemMaisNova(t.id), html: "" },
+          apiKey,
+        );
+        if (rr.acao !== "nada") {
+          await postarNotaInterna(t.id, rr.nota);
+          try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu */ }
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          if (rr.acao === "aplicada") {
+            console.log(`[harvey] 📅 ${rr.reference} remarcado: ${rr.de} → ${rr.para} (${rr.como})`);
+          } else if (rr.acao === "ja_estava") {
+            console.log(`[harvey] · #${t.id}: ${rr.reference} já estava na data nova`);
+          } else {
+            console.log(`[harvey] ✎ #${t.id}: remarcação sem job certo — nota pro humano`);
+          }
+          continue;
+        }
+        // "nada": o modelo discordou da triagem. Segue o fluxo antigo.
+      } catch (err) {
+        console.error(`[harvey] remarcacao falhou no ${t.id}: ${err}`);
+      }
+    }
+
+    /**
      * PARCEIRO confirmando agendamento vem ANTES do classificador.
      *
      * O e-mail deles diz "your booking is confirmed", e o classificador lia

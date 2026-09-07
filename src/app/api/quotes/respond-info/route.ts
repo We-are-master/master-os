@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
     const { data: quoteRow, error: quoteError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type, request_id",
+        "id, reference, title, client_name, property_address, scope, total_value, deposit_required, start_date_option_1, start_date_option_2, status, service_type, request_id, images",
       )
       .eq("id", quoteId)
       .single();
@@ -250,9 +250,21 @@ export async function GET(req: NextRequest) {
    * Request só linkava o arquivo cru — clicava e abria UMA foto, sem galeria.
    * Mesma origem que o email usa: as imagens do service_request da quote.
    */
-  let photoUrls: string[] = [];
+  /**
+   * As fotos da PRÓPRIA quote primeiro, e só depois as do request.
+   *
+   * Mesma correção que o e-mail de convite já tinha recebido, no outro lado do
+   * mesmo par: quote que nasce de um ticket do Zendesk não tem `request_id`,
+   * então esta busca voltava vazia e a galeria da página de bid ficava sem
+   * nada — mesmo com as fotos gravadas em `quotes.images`. O parceiro recebia
+   * o e-mail com as fotos e clicava num "#photos" que não existia.
+   *
+   * Visto no QT-2026-1139 (07/09/2026), com as duas fotos do ticket 50156 já
+   * no bucket.
+   */
+  let photoUrls: string[] = normalizeJsonImageArray((quote as { images?: unknown }).images);
   const requestId = (quote as { request_id?: string | null }).request_id;
-  if (requestId) {
+  if (photoUrls.length === 0 && requestId) {
     const { data: sr } = await supabase
       .from("service_requests")
       .select("images")

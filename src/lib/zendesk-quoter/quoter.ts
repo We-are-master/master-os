@@ -16,10 +16,14 @@
  * na nota — pergunta pro humano fazer, nunca chute.
  */
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
+import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
 import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
+import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
+import { guardarFotosDoTicket } from "./guardar-fotos";
+import { postcodesNoTexto } from "./achar-job";
 import { soOqueENovo } from "./sem-citacao";
 
 const MAX_IMAGENS = 6;
@@ -84,6 +88,8 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
   const partes: string[] = [];
   const partesNovas: string[] = [];
   const linksHousekeep: string[] = [];
+  /** Fotos que vieram como link no corpo, não como anexo. */
+  const linksDeFoto: string[] = [];
   const anexosDeImagem: Array<{ file_name: string; content_url: string; content_type: string; size: number }> = [];
   let totalAnexos = 0;
 
@@ -103,18 +109,41 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
       const url = m[1]!.replace(/&amp;/g, "&");
       if (podeSerCard(url) && !linksHousekeep.includes(url)) linksHousekeep.push(url);
     }
+    /**
+     * Foto que chega como LINK no corpo, não como anexo do nosso Zendesk.
+     *
+     * A Housekeep encaminha o e-mail do cliente pelo helpdesk DELA, e as fotos
+     * viram links `housekeep.zendesk.com/attachments/token/…?name=foto.jpeg`.
+     * Para o nosso Zendesk o ticket tem ZERO anexos — foi o #50156, que na tela
+     * mostra "Attachment(s)" com dois JPEGs e chegava aqui sem imagem nenhuma,
+     * então a quote nascia sem foto e o parceiro recebia convite às cegas.
+     *
+     * O host é de terceiro, então estes URLs são buscados SEM o nosso header de
+     * autorização (ver abaixo). Mandar o token do nosso Zendesk para o domínio
+     * de outra empresa seria vazar credencial.
+     */
+    for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]+)"/g)) {
+      const url = m[1]!.replace(/&amp;/g, "&");
+      if (!/\.(jpe?g|png|heic|webp)(\?|$)|[?&]name=[^&]*\.(jpe?g|png|heic|webp)/i.test(url)) continue;
+      if (!linksDeFoto.includes(url)) linksDeFoto.push(url);
+    }
     for (const a of c.attachments ?? []) {
       totalAnexos++;
-      if (a.content_type?.startsWith("image/") && a.size <= MAX_BYTES_IMAGEM) {
-        anexosDeImagem.push(a);
-      }
+      /**
+       * O logo da assinatura sai AQUI, antes do teto de seis.
+       *
+       * Filtrar depois seria pior: `slice(-6)` pega os ÚLTIMOS anexos, e os
+       * últimos de um e-mail de empresa são justamente o rodapé. O modelo
+       * recebia seis logos e nenhuma foto do serviço.
+       */
+      if (a.size <= MAX_BYTES_IMAGEM) anexosDeImagem.push(a);
     }
   }
 
   // As imagens do Zendesk podem exigir auth (anexo privado): baixa com token
   // e entrega em data URL — o modelo recebe os bytes, não um link que expira.
   const imagens: TicketLido["imagens"] = [];
-  for (const a of anexosDeImagem.slice(-MAX_IMAGENS)) {
+  for (const a of fotosDeVerdade(anexosDeImagem).slice(-MAX_IMAGENS)) {
     const iRes = await fetch(a.content_url, { headers, redirect: "follow" });
     if (!iRes.ok) continue;
     const buf = Buffer.from(await iRes.arrayBuffer());
@@ -122,6 +151,30 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
       filename: a.file_name,
       dataUrl: `data:${a.content_type};base64,${buf.toString("base64")}`,
     });
+  }
+
+  /**
+   * Os links do corpo, baixados SEM o nosso header.
+   *
+   * `headers` carrega o token do nosso Zendesk e estes URLs são de outro
+   * domínio. `redirect: "follow"` é obrigatório: o Zendesk deles responde 302
+   * para o storage, e sem seguir o redirect o download volta com 0 byte.
+   */
+  for (const url of linksDeFoto) {
+    if (imagens.length >= MAX_IMAGENS) break;
+    try {
+      const res = await fetch(url, { redirect: "follow" });
+      if (!res.ok) continue;
+      const tipo = res.headers.get("content-type") ?? "";
+      if (!tipo.startsWith("image/")) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > MAX_BYTES_IMAGEM || buf.byteLength < MIN_BYTES_FOTO) continue;
+      totalAnexos++;
+      const nome = decodeURIComponent(url.match(/[?&]name=([^&]+)/)?.[1] ?? "").trim() || "photo.jpg";
+      imagens.push({ filename: nome, dataUrl: `data:${tipo};base64,${buf.toString("base64")}` });
+    } catch {
+      /* link morto ou expirado não pode derrubar a leitura do ticket */
+    }
   }
 
   const requester = (cJson.users ?? []).find((u) => u.id === tJson.ticket.requester_id);
@@ -145,6 +198,16 @@ export type PedidoConsolidado = {
   scopeOfWork: string;
   facts: string[];
   missingInfo: string[];
+  /**
+   * Onde é o trabalho, como o e-mail escreveu.
+   *
+   * Sem isto a quote nascia com `property_address: null` — 24 das 47 que ele
+   * criou até 07/09/2026. E endereço nulo não é só um campo em branco: o
+   * convite ao parceiro é recusado antes de sair (`property_address still
+   * empty`), porque é do postcode que sai o casamento por área.
+   */
+  propertyAddress: string | null;
+  postcode: string | null;
 };
 
 /**
@@ -187,7 +250,10 @@ Rules:
 - facts: bullet facts that support the quote (from text or photos).
 - missing_info: what a surveyor would still need to ask before committing a price. Be strict — B2B quotes cannot be wrong.
 
-JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missing_info":["..."]}`,
+- property_address: the address of the property the work is at, exactly as written in the thread (street, flat, town). null if the thread never states it.
+- postcode: the UK postcode of that property if written anywhere (subject, body, signature of the request). null otherwise.
+
+JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missing_info":["..."],"property_address":str|null,"postcode":str|null}`,
         },
         { role: "user", content: conteudoUsuario },
       ],
@@ -199,13 +265,27 @@ JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missin
   const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const bruto = corpo.choices?.[0]?.message?.content;
   if (!bruto) throw new Error("OpenAI returned an empty consolidation");
-  const json = JSON.parse(bruto) as { quote_request?: string; scope_of_work?: string; facts?: string[]; missing_info?: string[] };
+  const json = JSON.parse(bruto) as {
+    quote_request?: string; scope_of_work?: string; facts?: string[]; missing_info?: string[];
+    property_address?: string | null; postcode?: string | null;
+  };
   if (!json.quote_request?.trim()) throw new Error("consolidation produced no quote_request");
+  /**
+   * O postcode do TEXTO ganha do que o modelo escreveu.
+   *
+   * A regex acha o que está escrito; o modelo às vezes normaliza, corta o
+   * espaço ou repete o do rodapé do e-mail. Quando os dois existem e batem,
+   * tanto faz; quando divergem, o texto é a prova.
+   */
+  const doTexto = postcodesNoTexto(`${ticket.subject}\n${ticket.thread}`);
+  const pc = (json.postcode ?? "").replace(/\s+/g, "").toUpperCase();
   return {
     quoteRequest: json.quote_request.trim(),
     scopeOfWork: (json.scope_of_work ?? json.quote_request).trim(),
     facts: json.facts ?? [],
     missingInfo: json.missing_info ?? [],
+    propertyAddress: json.property_address?.trim() || null,
+    postcode: (doTexto.includes(pc) ? pc : doTexto[0]) ?? (pc || null),
   };
 }
 
@@ -281,6 +361,8 @@ export async function garantirQuoteNoOs(
   ticket: TicketLido,
   pedido: PedidoConsolidado,
   resultado: ResultadoPriceCheck,
+  /** A organização dona do pedido. Obrigatória: quote sem dono não nasce. */
+  organizacaoId: string,
 ): Promise<{ quoteId: string; reference: string; jaExistia: boolean } | null> {
   const supabase = createServiceClient();
   const ticketRef = String(ticket.id);
@@ -317,6 +399,16 @@ export async function garantirQuoteNoOs(
     if (clientRow) clientId = (clientRow as { id: string }).id;
   }
 
+  /**
+   * As fotos do ticket, guardadas antes de a quote nascer.
+   *
+   * Antes da linha existir, de propósito: `images` é coluna do insert, e um
+   * segundo UPDATE só para as fotos deixaria a quote visível por um instante
+   * sem elas — e o convite ao parceiro sai do broadcast na hora em que ela
+   * aparece em `bidding`.
+   */
+  const fotos = await guardarFotosDoTicket(ticket.id, ticket.imagens, supabase);
+
   const { data: refData, error: refErr } = await supabase.rpc("next_quote_ref");
   if (refErr || !refData) {
     console.error("[quoter] next_quote_ref falhou:", refErr);
@@ -324,7 +416,22 @@ export async function garantirQuoteNoOs(
   }
 
   const total = resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
-  const autoFlow = process.env.AUTO_ASSIGN_ALL_JOBS === "1";
+  /**
+   * Quote que vai ser transmitida nasce em `bidding`, e não em `draft`.
+   *
+   * O portal do parceiro lista "Available Quotes" a partir de `bidding` +
+   * `quote_type: partner`. Uma quote em `draft` pode receber o e-mail de
+   * convite e mesmo assim não aparecer na tela dele — que é meio caminho, e
+   * meio caminho aqui quer dizer o parceiro clicar no e-mail e não achar nada
+   * no app.
+   *
+   * O interruptor é o MESMO que manda o convite (`HARVEY_QUOTE_INVITES`), e não
+   * o `AUTO_ASSIGN_ALL_JOBS`, que é sobre JOB e não sobre orçamento. Um estado
+   * que promete transmissão sem transmitir, ou o contrário, é pior que os dois
+   * desligados juntos.
+   */
+  const vaiTransmitir = process.env.HARVEY_QUOTE_INVITES === "1";
+  const autoFlow = process.env.AUTO_ASSIGN_ALL_JOBS === "1" || vaiTransmitir;
   const { data: inserted, error: insertErr } = await supabase
     .from("quotes")
     .insert({
@@ -333,17 +440,26 @@ export async function garantirQuoteNoOs(
       client_id: clientId,
       client_name: clientName,
       client_email: email,
-      property_address: null,
+      /**
+       * Sem a rua, o postcode serve de endereço.
+       *
+       * Não é preguiça: o convite ao parceiro casa por ÁREA, e área é o
+       * postcode. Um e-mail que só diz "W1U 8BL" (o 50001 é assim) dá para
+       * convidar hoje; deixar o campo nulo não dá, porque o disparo recusa
+       * antes de sair. A rua o escritório completa quando o cliente responder.
+       */
+      property_address: pedido.propertyAddress ?? pedido.postcode,
+      postcode: pedido.postcode,
       service_type: serviceType,
       catalog_service_id: catalogServiceId,
-      status: autoFlow && catalogServiceId ? "bidding" : "draft",
+      status: vaiTransmitir || (autoFlow && catalogServiceId) ? "bidding" : "draft",
       total_value: total,
       cost: arredonda2(resultado.quote.materialsCost),
       sell_price: total,
       margin_percent: 0,
       partner_cost: 0,
       partner_quotes_count: 0,
-      quote_type: autoFlow && catalogServiceId ? "partner" : "internal",
+      quote_type: vaiTransmitir || (autoFlow && catalogServiceId) ? "partner" : "internal",
       deposit_percent: 0,
       deposit_required: 0,
       scope: pedido.scopeOfWork || pedido.quoteRequest,
@@ -351,6 +467,11 @@ export async function garantirQuoteNoOs(
       customer_deposit_paid: false,
       external_source: "zendesk",
       external_ref: ticketRef,
+      // De quem é o pedido, decidido pelo domínio de quem escreveu. Sem isto a
+      // quote nascia órfã e ninguém sabia a quem facturar.
+      source_account_id: organizacaoId,
+      // O que o parceiro vai ver na galeria do bid e no e-mail de convite.
+      images: fotos,
     })
     .select("id, reference")
     .single();
@@ -372,16 +493,53 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
   const pedido = await consolidarPedido(ticket, apiKey);
   const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.scopeOfWork);
 
+  /**
+   * O portão da organização vale para a quote também (dono, 03/09/2026).
+   *
+   * A LEITURA continua acontecendo em qualquer ticket, e o rascunho continua
+   * saindo: ele é nota interna, ninguém de fora vê, e é ele que ensina. O que
+   * o portão barra é a ESCRITA — a linha em `quotes`, que é um registro da
+   * casa e não pode nascer sem dono.
+   *
+   * Por isso a ordem é esta e não a de sair mais cedo: quando ele não
+   * reconhece, o escritório ainda ganha o preço já calculado na nota, e a
+   * única coisa que falta é alguém dizer de quem é.
+   */
+  const org = await organizacaoDoTicket(ticket);
+
   let quoteRef: string | null = null;
-  if (postar) {
-    const criada = await garantirQuoteNoOs(ticket, pedido, resultado).catch((e) => {
+  if (postar && org.ok) {
+    const criada = await garantirQuoteNoOs(ticket, pedido, resultado, org.id).catch((e) => {
       console.error("[quoter] garantirQuoteNoOs:", e);
       return null;
     });
     quoteRef = criada?.reference ?? null;
   }
 
-  const nota = montarNotaInterna(ticket, pedido, resultado, quoteRef);
+  /**
+   * O convite aos parceiros: a máquina existe inteira, faltava o gatilho.
+   *
+   * `dispatchQuoteBidInvites` já casa parceiro por trade + postcode + opt-in,
+   * manda push, manda e-mail com as fotos e abre a página de bid. Ela só nunca
+   * foi chamada a partir da quote do Harvey — só do botão da tela de Quotes.
+   *
+   * Nasce em ENSAIO (dono, 07/09/2026: "quero testar isso"). Sem
+   * `HARVEY_QUOTE_INVITES=1` ele calcula QUEM convidaria e escreve na nota, e
+   * não manda nada. Convite é e-mail e push para gente de fora: o portão fica
+   * fechado até você ver a lista e concordar com ela.
+   */
+  const convite = quoteRef && org.ok
+    ? await calcularOuMandarConvites(ticket, pedido, resultado, quoteRef).catch((e) => {
+        console.error("[quoter] convites:", e);
+        return null;
+      })
+    : null;
+
+  const nota = [
+    montarNotaInterna(ticket, pedido, resultado, quoteRef),
+    ...(convite ? ["", "──────────", convite] : []),
+    ...(org.ok ? [] : ["", "──────────", org.nota]),
+  ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado, quoteRef };
 }
@@ -477,21 +635,6 @@ JSON: {"is_confirmed_booking":bool,"client_name":str|null,"property_address":str
   };
 }
 
-/** Conta B2B pelo nome citado no ticket (ou pelo assunto "[Housekeep]"). */
-async function acharConta(pistas: Array<string | null>): Promise<{ id: string; nome: string } | null> {
-  const supabase = createServiceClient();
-  const { data } = await supabase.from("accounts").select("id, company_name").is("deleted_at", null);
-  const contas = (data ?? []) as Array<{ id: string; company_name: string }>;
-  for (const pista of pistas) {
-    if (!pista) continue;
-    const p = pista.toLowerCase();
-    const hit = contas.find(
-      (c) => p.includes(c.company_name.toLowerCase()) || c.company_name.toLowerCase().includes(p),
-    );
-    if (hit) return { id: hit.id, nome: hit.company_name };
-  }
-  return null;
-}
 
 /**
  * O card da Housekeep ("Link" no e-mail deles) abre SEM login — página
@@ -847,14 +990,29 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     ex.missing = [];
   }
 
-  // O palpite "housekeep" só vale com link deles no ticket — senão um booking
-  // da Homyze sem empresa citada cairia na conta errada.
-  const conta = await acharConta([ex.company, ticket.subject, ticket.linksHousekeep.length > 0 ? "housekeep" : null]);
+  /**
+   * De quem é este ticket: o DOMÍNIO de quem escreveu, e mais nada.
+   *
+   * Até 03/09/2026 isto era o `acharConta`, que procurava o nome da empresa
+   * dentro do assunto e do corpo. Funciona para plataforma, que assina tudo, e
+   * falha para gente: os pedidos reais da Kvadrat em agosto foram "Couple of
+   * lights to replace", "Door handle + Painter" e "Cupboard fix", e nenhum
+   * deles diz Kvadrat. Todos vieram de `mase@kvadrat.org`.
+   *
+   * O portão é mais duro do que era, e de propósito (dono, 03/09/2026): sem
+   * organização reconhecida o job NÃO nasce, nem com nome, endereço e data
+   * completos. Texto pode mentir; domínio está no cadastro.
+   */
+  const org = await organizacaoDoTicket(ticket);
+  if (!org.ok) {
+    if (postar) await postarNotaInterna(ticketId, org.nota);
+    return { status: "faltando", nota: org.nota };
+  }
+  const conta = { id: org.id, nome: org.nome };
   const faltas = [...ex.missing];
   if (!ex.clientName) faltas.push("client name");
   if (!ex.propertyAddress) faltas.push("property address");
   if (!ex.date) faltas.push("booked date");
-  if (!conta) faltas.push("which B2B account this belongs to");
 
   if (faltas.length > 0) {
     const nota = [
@@ -888,6 +1046,10 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
     ? janelaCrua
     : janelaCrua.match(/\d{1,2}:\d{2}/)?.[0] ?? "09:00";
 
+  // As fotos que vieram no ticket, gravadas antes do POST para o job já nascer
+  // com elas no card em vez de ganhá-las num segundo passo que pode falhar.
+  const fotos = await guardarFotosDoTicket(ticketId, ticket.imagens);
+
   const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
@@ -914,6 +1076,8 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       // Só card confirmado. Cair para "qualquer link da plataforma" é como o
       // JOB-9493 saiu apontando para a home deles.
       report_link: ex.cardUrl ?? undefined,
+      // O strip de fotos do card do job, e o que o parceiro vê no portal.
+      images: fotos.length > 0 ? fotos : undefined,
       /**
        * Booking sem card no e-mail nasce INCOMPLETO, e isso fica escrito no
        * job em vez de virar surpresa: o e-mail da Express não traz link do
@@ -951,4 +1115,141 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
   return { status: "criado", reference: corpo.reference ?? "?", nota };
+}
+
+/**
+ * Quem seria convidado a orçar, e se o convite sai de verdade.
+ *
+ * Devolve o bloco pronto para a nota interna. Em ensaio a lista é o produto:
+ * é ela que diz se o casamento por trade e área está certo antes de qualquer
+ * parceiro receber alguma coisa.
+ */
+async function calcularOuMandarConvites(
+  ticket: TicketLido,
+  pedido: PedidoConsolidado,
+  resultado: ResultadoPriceCheck,
+  quoteRef: string,
+): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data: q } = await supabase
+    .from("quotes")
+    .select("id, reference, title, service_type, catalog_service_id, property_address, scope")
+    .eq("reference", quoteRef)
+    .maybeSingle();
+  if (!q) return null;
+  const quote = q as {
+    id: string; reference: string; title: string | null; service_type: string | null;
+    catalog_service_id: string | null; property_address: string | null; scope: string | null;
+  };
+
+  if (!quote.property_address) {
+    return [
+      "── Partner invitations ──",
+      "NOT sent: this quote has no property address, and partner matching needs the postcode.",
+      "Add the address on the quote and use Notify partners on the Quotes screen.",
+    ].join("\n");
+  }
+  const serviceType = quote.service_type?.trim() ?? "";
+  if (!serviceType && !quote.catalog_service_id) {
+    return ["── Partner invitations ──", "NOT sent: no type of work on the quote to match partners by."].join("\n");
+  }
+
+  /** Os trades que as linhas do orçamento citam, do que pesa mais para o menos. */
+  const porTrade = new Map<string, number>();
+  for (const sv of resultado.quote.services) {
+    const t = (sv.trade ?? "").trim();
+    if (t) porTrade.set(t, (porTrade.get(t) ?? 0) + (Number(sv.lineTotal) || 0));
+  }
+  const tradesDaQuote = [...porTrade.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+
+  const armado = process.env.HARVEY_QUOTE_INVITES === "1";
+
+  if (!armado) {
+    // Mesma função de casamento do envio real: a lista do ensaio é a lista.
+    const { matchPartnerIdsForWork } = await import("@/lib/partner-work-matching");
+    const { extractUkPostcode } = await import("@/lib/uk-postcode");
+    const pc = extractUkPostcode(quote.property_address) ?? quote.property_address;
+    const { ids, usado } = await parceirosParaAQuote(supabase, {
+      serviceType,
+      catalogServiceId: quote.catalog_service_id,
+      postcode: pc,
+      trades: tradesDaQuote,
+    });
+    if (ids.length === 0) {
+      return [
+        "── Partner invitations (DRY RUN) ──",
+        `No partner covers this work in ${pc}. Tried: ${[serviceType, ...tradesDaQuote, "General Maintenance"].filter(Boolean).join(", ")}.`,
+      ].join("\n");
+    }
+    const viaFallback = usado.toLowerCase() !== serviceType.toLowerCase();
+    const { data: ps } = await supabase.from("partners").select("company_name, contact_name").in("id", ids);
+    const nomes = (ps ?? []).map((x: { company_name?: string | null; contact_name?: string | null }) =>
+      `- ${x.company_name?.trim() || x.contact_name?.trim() || "partner"}`,
+    );
+    return [
+      "── Partner invitations (DRY RUN — nothing sent) ──",
+      `${ids.length} partner(s) match ${viaFallback ? `${usado} (nobody covers ${serviceType} here)` : usado} at ${quote.property_address}:`,
+      ...nomes,
+      "",
+      "Set HARVEY_QUOTE_INVITES=1 to let me send these, or use Notify partners on the Quotes screen.",
+    ].join("\n");
+  }
+
+  const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
+  const r = await dispatchQuoteBidInvites(supabase, {
+    quoteId: quote.id,
+    quoteReference: quote.reference,
+    title: quote.title?.trim() || serviceType || "Quote",
+    serviceType,
+    catalogServiceId: quote.catalog_service_id,
+    propertyAddress: quote.property_address,
+    scope: quote.scope,
+    startIso: null,
+    invitedBy: null,
+  });
+  return [
+    "── Partner invitations ──",
+    `Sent to ${r.partnerIds.length} partner(s): ${r.emailsSent} email(s), ${r.pushSent} push.`,
+    "They bid on the public link; the office picks the winner.",
+  ].join("\n");
+}
+
+/**
+ * Quem convidar, tentando mais de um trade antes de desistir.
+ *
+ * O trade da quote sai da primeira linha que casou no pricebook, e nem sempre
+ * é o trade de quem vai à casa: o ticket 50156 é "Ceiling painting" e o
+ * pricebook devolveu duas linhas de reboco antes da pintura. Se o convite
+ * parasse no primeiro trade, ele não alcançaria ninguém — zero parceiros são
+ * plasterer, cinco são painter, no mesmo postcode.
+ *
+ * Então tenta, em ordem: o trade da quote, os outros trades que as linhas do
+ * orçamento citam, e por último General Maintenance. Quote que não alcança
+ * ninguém é o pior resultado possível — o cliente espera preço e não chega
+ * nada — e nenhuma dessas tentativas convida quem não faz o serviço: quem
+ * responde é sempre parceiro cadastrado naquele trade e naquela área.
+ */
+async function parceirosParaAQuote(
+  supabase: ReturnType<typeof createServiceClient>,
+  args: { serviceType: string; catalogServiceId: string | null; postcode: string; trades: string[] },
+): Promise<{ ids: string[]; usado: string }> {
+  const { matchPartnerIdsForWork } = await import("@/lib/partner-work-matching");
+  const tentativas = [
+    ...(args.serviceType ? [args.serviceType] : []),
+    ...args.trades,
+    "General Maintenance",
+  ].filter((t, i, a) => t && a.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i);
+
+  for (const trade of tentativas) {
+    const ids = await matchPartnerIdsForWork(supabase, {
+      serviceType: trade,
+      // O id do catálogo só vale para o trade da própria quote; nas tentativas
+      // seguintes ele apontaria para o serviço errado.
+      catalogServiceId: trade === args.serviceType ? args.catalogServiceId : null,
+      postcode: args.postcode,
+      kind: "lead",
+    });
+    if (ids.length > 0) return { ids, usado: trade };
+  }
+  return { ids: [], usado: args.serviceType };
 }

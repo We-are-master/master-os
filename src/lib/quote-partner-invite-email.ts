@@ -34,7 +34,7 @@ export async function sendQuotePartnerInviteEmails(
 
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
-    .select("id, reference, title, client_name, service_type, property_address, request_id, scope, external_source, external_ref")
+    .select("id, reference, title, client_name, service_type, property_address, request_id, scope, external_source, external_ref, images")
     .eq("id", params.quoteId)
     .single();
   if (qErr || !quote) {
@@ -51,15 +51,29 @@ export async function sendQuotePartnerInviteEmails(
   let photoUrls: string[] = [];
   let requestDescription = "";
   const quoteScope = typeof quote.scope === "string" ? quote.scope.trim() : "";
+  /**
+   * As fotos da PRÓPRIA quote primeiro, e só depois as do request.
+   *
+   * Até 03/09/2026 só existia o caminho do request, e por muito tempo isso
+   * bastou: toda quote nascia de um pedido do site. A quote do Harvey nasce de
+   * um e-mail e não tem `request_id`, então o convite saía sem foto nenhuma
+   * mesmo com as fotos do ticket já gravadas em `quotes.images` — o parceiro
+   * era convidado a orçar um trabalho que ele não podia ver.
+   */
+  photoUrls = normalizeJsonImageArray((quote as { images?: unknown }).images)
+    .map((u) => normalizeEmailAssetUrl(u))
+    .filter((u): u is string => u != null);
   if (quote.request_id) {
     const { data: sr } = await supabase
       .from("service_requests")
       .select("images, description")
       .eq("id", quote.request_id)
       .maybeSingle();
-    photoUrls = normalizeJsonImageArray(sr?.images)
-      .map((u) => normalizeEmailAssetUrl(u))
-      .filter((u): u is string => u != null);
+    if (photoUrls.length === 0) {
+      photoUrls = normalizeJsonImageArray(sr?.images)
+        .map((u) => normalizeEmailAssetUrl(u))
+        .filter((u): u is string => u != null);
+    }
     requestDescription = typeof sr?.description === "string" ? sr.description : "";
   }
 

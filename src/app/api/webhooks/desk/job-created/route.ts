@@ -5,6 +5,7 @@ import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { resolveDeskWebhookClientEmail } from "@/lib/desk-webhook-client-email";
 import { createSideConversation, setTicketJobReference } from "@/lib/zendesk";
+import { fotosParaEmailDoJob } from "@/lib/emails/fotos-anexadas";
 import {
   buildPartnerJobConfirmationEmail,
 } from "@/lib/emails/partner-job-confirmation";
@@ -380,6 +381,21 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
 
   const reportUrl = await buildPartnerJobReportUrl(params.jobId, params.partnerId);
 
+  /**
+   * As fotos do job, embutidas no e-mail e anexadas.
+   *
+   * Uma consulta a mais, e vale: este é o e-mail que manda o parceiro à porta,
+   * e sair de casa sem ver o serviço é o que a foto conserta. Lida aqui e não
+   * recebida em `params` porque quem chama monta o job em vários passos e o
+   * `images` pode ter chegado depois.
+   */
+  const { data: jobFotos } = await supabase
+    .from("jobs")
+    .select("images")
+    .eq("id", params.jobId)
+    .maybeSingle();
+  const fotos = await fotosParaEmailDoJob((jobFotos as { images?: unknown } | null)?.images);
+
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName,
     jobReference: params.jobReference,
@@ -392,6 +408,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     priceDisplay,
     partnerNotes,
     reportUrl,
+    photoUrls: fotos.urls,
   });
 
   await createSideConversation({
@@ -402,5 +419,6 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     subject:  email.subject,
     htmlBody: email.html,
     bodyText: email.text,
+    attachmentIds: fotos.tokensZendesk,
   });
 }

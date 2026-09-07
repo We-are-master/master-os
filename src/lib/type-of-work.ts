@@ -147,17 +147,38 @@ const TYPE_OF_WORK_ALIASES: Record<string, string> = {
  * Legacy DB values and free text may still say “handyman”; they are merged into {@link GENERAL_MAINTENANCE_LABEL}
  * without dropping the rest of the phrase (e.g. title suffixes).
  */
+/**
+ * Nome de type of work NUNCA começa em minúscula (ordem do dono, 07/09/2026).
+ *
+ * A página de bid mostrava `painter` em caixa baixa porque o pricebook devolve
+ * o trade assim e esta função só consultava a tabela de apelidos — a lista
+ * canônica, que tem "Painter" escrito certo, ficava de fora.
+ *
+ * É a PRIMEIRA letra, não cada palavra. Título livre que o escritório escreveu
+ * ("Bathroom refit") continua como foi escrito da segunda palavra em diante;
+ * quem manda na grafia de trade conhecido é a lista canônica, logo acima.
+ */
+function primeiraMaiuscula(texto: string): string {
+  if (!texto) return texto;
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
 export function normalizeTypeOfWork(value?: string | null): string {
   const raw = (value ?? "").trim();
   if (!raw) return "";
   const lower = raw.toLowerCase();
   const alias = TYPE_OF_WORK_ALIASES[lower];
   if (alias) return alias;
+
+  // A lista canônica manda na grafia. "painter" e "PAINTER" viram "Painter".
+  const canonico = CANONICAL_TYPE_OF_WORK_NAMES.find((n) => n.toLowerCase() === lower);
+  if (canonico) return canonico;
+
   const replaced = raw
     .replace(/\bhandyman\b/gi, GENERAL_MAINTENANCE_LABEL)
     .replace(/\s{2,}/g, " ")
     .trim();
-  return replaced;
+  return primeiraMaiuscula(replaced);
 }
 
 export function mergeTypeOfWorkOptions(values: Array<string | null | undefined>): string[] {

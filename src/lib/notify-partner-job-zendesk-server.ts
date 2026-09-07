@@ -25,6 +25,7 @@ import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
+import { fotosParaEmailDoJob } from "@/lib/emails/fotos-anexadas";
 import {
   buildPartnerJobConfirmationEmail,
   buildPartnerJobStatusUpdateEmail,
@@ -102,6 +103,8 @@ export async function notifyPartnerJobZendesk(
     scheduled_finish_date: string | null;
     catalog_service_id: string | null;
     scope: string | null;
+    /** URLs públicas das fotos do trabalho (bucket quote-invite-images). */
+    images: unknown;
     partner_id: string | null;
     external_source: string | null;
     external_ref: string | null;
@@ -202,6 +205,23 @@ export async function notifyPartnerJobZendesk(
     clientPhone = (cliente?.phone as string | null) ?? null;
   }
 
+  /**
+   * As fotos do job, só nos e-mails que mandam o parceiro à porta.
+   *
+   * `assigned` e `booked` são os dois em que ele vai executar e precisa ver o
+   * serviço. Cancelamento, on-hold e conclusão não ganham anexo: são avisos, e
+   * pendurar 5 MB de foto num "job cancelado" é custo sem uso.
+   *
+   * O convite (`confirmation_request`) fica de fora por outro motivo — lá o
+   * job ainda não é de ninguém e o e-mail sai para vários parceiros de uma
+   * vez; quem tem galeria naquele momento é o convite de orçamento.
+   */
+  const fotosDoJob =
+    kind === "assigned" || kind === "booked"
+      ? await fotosParaEmailDoJob(job.images)
+      : { urls: [], tokensZendesk: [], anexosResend: [] };
+  const fotosUrls = fotosDoJob.urls;
+
   // ─── Email build ──────────────────────────────────────────────────
   let email: { subject: string; html: string; text: string };
   if (kind === "assigned") {
@@ -218,6 +238,7 @@ export async function notifyPartnerJobZendesk(
       priceDisplay,
       partnerNotes,
       reportUrl,
+      photoUrls: fotosUrls,
     });
   } else if (kind === "rescheduled") {
     email = buildJobRescheduledEmail({
@@ -341,6 +362,14 @@ export async function notifyPartnerJobZendesk(
   ]);
   const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
 
+  /**
+   * Os tokens de anexo, calculados uma vez para os três caminhos abaixo.
+   *
+   * Subir a mesma foto duas vezes no Zendesk custaria duas chamadas e daria
+   * dois anexos idênticos se algum dia dois caminhos rodassem juntos.
+   */
+  const anexosZendesk = fotosDoJob.tokensZendesk;
+
   // ─── Zendesk side conversation (only if we have the ticket) ──────
   let zendeskResult: {
     ok: boolean;
@@ -374,6 +403,7 @@ export async function notifyPartnerJobZendesk(
         toUserId: partner.zendesk_user_id ?? undefined,
         htmlBody: email.html,
         bodyText: email.text,
+        attachmentIds: anexosZendesk,
       });
       zendeskResult = { ok: r.ok, side_conversation_id: job.zendesk_side_conversation_id, error: r.error };
     } else {
@@ -385,6 +415,7 @@ export async function notifyPartnerJobZendesk(
         subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
+        attachmentIds: anexosZendesk,
       });
       zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
       if (r.ok && r.id) {
@@ -419,6 +450,7 @@ export async function notifyPartnerJobZendesk(
         subject: email.subject,
         html: email.html,
         text: email.text,
+        ...(fotosDoJob.anexosResend.length > 0 ? { attachments: fotosDoJob.anexosResend } : {}),
       });
       if (sendErr) throw new Error(sendErr.message ?? "send failed");
       zendeskResult = { ok: true, skipped: "no_ticket_sent_via_resend" };

@@ -6,6 +6,7 @@ import {
   resolvePartnerHourlyForJob,
 } from "@/lib/job-pricing-resolver";
 import { createSideConversation } from "@/lib/zendesk";
+import { fotosParaEmailDoJob } from "@/lib/emails/fotos-anexadas";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
 import type { CatalogService, PartnerServicePrice } from "@/types/database";
@@ -545,6 +546,10 @@ export async function sendBookedSideConvReply(args: {
     jobType: isHourly ? "hourly" : "fixed",
   });
 
+  // As fotos do trabalho vão embutidas E anexadas: o parceiro que acabou de
+  // aceitar é o que vai à porta.
+  const fotos = await fotosParaEmailDoJob((job as { images?: unknown }).images);
+
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName,
     jobReference: job.reference,
@@ -557,6 +562,7 @@ export async function sendBookedSideConvReply(args: {
     priceDisplay,
     partnerNotes,
     reportUrl,
+    photoUrls: fotos.urls,
   });
 
   const persistSuccess = async (sideConvId: string | null) => {
@@ -579,6 +585,7 @@ export async function sendBookedSideConvReply(args: {
       subject: email.subject,
       htmlBody: email.html,
       bodyText: email.text,
+      attachmentIds: fotos.tokensZendesk,
     });
     if (created.ok && created.id) {
       await persistSuccess(created.id);

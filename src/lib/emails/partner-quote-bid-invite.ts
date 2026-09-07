@@ -80,26 +80,44 @@ function buildPhotoSection(photoUrls: string[], bidUrl: string): string {
     </td></tr>`;
   }
   /**
-   * Clicar numa foto abre a GALERIA da página de bid (#photos), não o arquivo
-   * cru no storage. O link direto abria uma foto pelada numa aba sem próxima
-   * nem voltar — a reclamação dos parceiros (27/08). A imagem continua
-   * embutida no email; o clique é que muda de destino.
+   * MINIATURA no e-mail, galeria inteira no portal (ordem do dono, 07/09/2026).
+   *
+   * Antes era uma pilha de fotos de 520px: o convite virava uma rolagem longa
+   * antes de o parceiro chegar no botão de dar preço. Agora é a mesma fileira
+   * de miniaturas do e-mail de job — quatro no máximo, 150px — e o clique abre
+   * a galeria da página de bid, que é onde tudo mora.
+   *
+   * Clicar NÃO abre o arquivo cru no storage: isso abria uma foto pelada numa
+   * aba sem próxima nem voltar, que foi a reclamação dos parceiros em 27/08.
    */
   const galeria = escapeHtmlAttr(`${bidUrl}#photos`);
-  const imgs = photoUrls
+  const MOSTRA = 3;
+  const celulas = photoUrls
+    .slice(0, MOSTRA)
     .map((u, i) => {
       const href = escapeHtmlAttr(u);
-      const n = i + 1;
-      return `<a href="${galeria}" target="_blank" style="text-decoration:none;">
-<img src="${href}" alt="Site photo ${n} — tap to open the gallery" width="520" style="display:block; max-width:100%; height:auto; border-radius:8px; border:1px solid #E8E8EE; margin-bottom:16px;" /></a>`;
+      return `<td width="150" valign="top" style="padding:0 8px 0 0;"><a href="${galeria}" target="_blank" style="text-decoration:none;"><img src="${href}" alt="Site photo ${i + 1} of ${photoUrls.length} — tap to expand" width="150" style="display:block; width:150px; max-width:150px; height:auto; border-radius:6px; border:1px solid #E8E8EE;" /></a></td>`;
     })
     .join("");
+  /**
+   * O "View more" fecha a fileira e leva ao portal.
+   *
+   * Três miniaturas é o teto no e-mail: mais que isso e o convite vira rolagem
+   * antes de o parceiro chegar no botão de dar preço. O resto das fotos não
+   * some — mora na galeria da página de bid, que é onde ele vai dar o lance de
+   * qualquer jeito.
+   */
+  const restantes = photoUrls.length - MOSTRA;
+  const rotulo = restantes > 0 ? `View more (+${restantes})` : "View more";
+  const botao = `<td width="150" valign="middle" style="padding:0;"><a href="${galeria}" target="_blank" style="display:block; width:150px; box-sizing:border-box; text-align:center; padding:14px 8px; border:1px solid #E8E8EE; border-radius:6px; background:#F7F7FB; color:#ED4B00; font-size:13px; font-weight:600; text-decoration:none;">${rotulo}</a></td>`;
   return `<tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
     <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
-    <p style="margin:0 0 12px 0; font-size:12px; color:#6B6B85;"><a href="${galeria}" style="color:#ED4B00; font-weight:600;">Tap any photo to open the gallery</a> — swipe through all ${photoUrls.length}.</p>
-    ${imgs}
+    <p style="margin:0 0 10px 0; font-size:12px; color:#6B6B85;">Tap a photo to expand — all ${photoUrls.length} open in the partner portal.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${celulas}${botao}</tr></table>
   </td></tr>`;
 }
+
+
 
 function buildStoreBlock(ios?: string | null, android?: string | null): string {
   const links: string[] = [];

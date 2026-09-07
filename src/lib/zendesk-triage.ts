@@ -39,6 +39,8 @@ export type ClasseDeTicket =
   | "confirmacao_de_parceiro"
   /** Plataforma cancelou um job que já era nosso. */
   | "cancelamento"
+  /** A plataforma mudou a data ou a janela de um job que já é nosso. */
+  | "remarcacao"
   /** Oferta aberta do Checkatrade, ainda não é nossa. Quem disputa é o RPA. */
   | "oferta_de_lead"
   /** Perguntam se atendemos a região, o serviço, ou se temos data. */
@@ -73,6 +75,7 @@ export const ACAO_POR_CLASSE: Readonly<Record<ClasseDeTicket, AcaoDaClasse>> = {
   pedido_de_quote: "age",
   confirmacao_de_parceiro: "age",
   cancelamento: "age",
+  remarcacao: "age",
   // O RPA (Ruben) é quem disputa oferta no board do Checkatrade. Se o Harvey
   // criasse job a partir do e-mail, os dois criariam o mesmo job.
   oferta_de_lead: "nota",
@@ -91,6 +94,7 @@ export const ROTULO_DA_CLASSE: Readonly<Record<ClasseDeTicket, string>> = {
   pedido_de_quote: "pedido de quote",
   confirmacao_de_parceiro: "confirmação de parceiro",
   cancelamento: "cancelamento",
+  remarcacao: "remarcação",
   oferta_de_lead: "oferta de lead",
   disponibilidade: "pergunta de disponibilidade",
   financeiro: "financeiro",
@@ -131,6 +135,23 @@ const REGRAS: ReadonlyArray<{ re: RegExp; classe: ClasseDeTicket; motivo: string
   // confundir com "Job Scheduled" e "booked in", que já são job nosso.
   { re: /£\s?[\d,.]+\s+job offer in\b/i, classe: "oferta_de_lead", motivo: "oferta aberta do Checkatrade, com preço e postcode no assunto" },
   { re: /new .* opportunity just [\d.]+ miles away/i, classe: "oferta_de_lead", motivo: "oferta aberta por proximidade" },
+  /**
+   * Remarcação vem ANTES de job_de_plataforma, e isso não é ordem por acaso.
+   *
+   * O e-mail de remarcação traz cliente, endereço e uma data nova — os três
+   * campos que o extrator de booking procura. Sem esta linha o Harvey lê
+   * "[Housekeep] Reschedule Carpenter: E1 3AQ" como job NOVO e tenta criar um
+   * duplicado do job que ele já tem (visto ao vivo no ticket 50154, 07/09/2026).
+   *
+   * Os cinco formatos que a Housekeep já usou têm a palavra em comum e o
+   * postcode no assunto:
+   *   "[Housekeep] Reschedule Carpenter: E1 3AQ"
+   *   "[Housekeep] Reschedule — E10 7AL on 17/08/2026"
+   *   "[Housekeep] Reschedule Job: RM7 0FJ"
+   *   "Reschedule for SE4 2DT - Handyman Job"
+   *   "Reschedule for Install Digital Sink Faucet ... in EC1V 0AA"
+   */
+  { re: /\breschedul(e|ed|ing)\b/i, classe: "remarcacao", motivo: "a plataforma mudou a data ou a janela de um job nosso" },
   { re: /^\s*job booked\b/i, classe: "job_de_plataforma", motivo: "a Housekeep confirma job agendado para nós" },
   { re: /^\s*job scheduled:/i, classe: "job_de_plataforma", motivo: "a plataforma agendou um job nosso" },
   { re: /you.{0,3}re booked in for/i, classe: "job_de_plataforma", motivo: "o Checkatrade confirma que o job é nosso" },

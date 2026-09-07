@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
+  createPartnerBidToken,
   createPartnerJobAcceptToken,
   createPartnerOnHoldToken,
   createPartnerReportToken,
@@ -30,9 +31,29 @@ export const runtime = "nodejs";
  * Devolve null quando o `entity_ref` não é de parceiro: aí o alvo segue intacto.
  */
 function tokenFresco(entityRef: string | null | undefined): string | null {
-  const m = /^job:([0-9a-f-]{36}):partner:([0-9a-f-]{36}):(accept|report|on_hold)$/i.exec(
-    (entityRef ?? "").trim(),
-  );
+  const ref = (entityRef ?? "").trim();
+
+  /**
+   * O convite de ORÇAMENTO também precisa ser reassinado.
+   *
+   * Ele grava `quote:<id>:partner:<id>`, sem o sufixo de propósito que os
+   * links de job usam, e a regex antiga só reconhecia `job:…`. Resultado: o
+   * link caía no alvo gravado, com o token assinado pelo Mac, e o parceiro
+   * abria "Invalid or expired link" no app.getfixfy.com — que é exatamente o
+   * defeito que esta função existe para consertar, num caso que ela não
+   * cobria. Visto ao vivo no QT-2026-1140 em 07/09/2026.
+   */
+  const bid = /^quote:([0-9a-f-]{36}):partner:([0-9a-f-]{36})$/i.exec(ref);
+  if (bid) {
+    try {
+      return createPartnerBidToken(bid[1]!, bid[2]!);
+    } catch (err) {
+      console.error("[short-link] não consegui reassinar o token de bid:", err);
+      return null;
+    }
+  }
+
+  const m = /^job:([0-9a-f-]{36}):partner:([0-9a-f-]{36}):(accept|report|on_hold)$/i.exec(ref);
   if (!m) return null;
   const [, jobId, partnerId, proposito] = m;
   try {

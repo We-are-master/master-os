@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { limparScope } from "@/lib/scope-limpo";
 import { nomeProprio } from "@/lib/nome-proprio";
+import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isValidUUID } from "@/lib/auth-api";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import {
@@ -326,6 +327,19 @@ export async function POST(req: NextRequest) {
   const createZendeskTicketIn = body.create_zendesk_ticket === true;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
+  /**
+   * As fotos do trabalho, vindas de quem viu o pedido primeiro.
+   *
+   * Entram por aqui porque é por aqui que TODO agente cria job — o mesmo
+   * motivo do `limparScope` e do `nomeProprio` logo acima. O Harvey baixa os
+   * anexos do ticket, o Ruben lê o card do Express: os dois têm foto na mão e
+   * até 03/09/2026 nenhum dos dois tinha onde pôr, então a foto morria e o
+   * parceiro chegava sem ver o serviço.
+   *
+   * `coerce` + `cap` são os mesmos guardas que a conversão de quote usa, para
+   * o formato da coluna não depender de quem escreveu nela.
+   */
+  const imagesIn        = capJobImagesArray(coerceJobImagesArray(body.images));
   const internalNotesIn = nullish(body.internal_notes);
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
@@ -859,6 +873,7 @@ export async function POST(req: NextRequest) {
     job_type:           rateType,
     finance_status:     "unpaid",
     scope:              description,
+    images:             imagesIn,
   };
   if (rateType === "hourly") {
     jobRow.hourly_client_rate  = hourlyClientRate;

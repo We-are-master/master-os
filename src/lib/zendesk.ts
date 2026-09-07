@@ -757,6 +757,13 @@ export interface SideConversationParams {
    * partners.zendesk_user_id).
    */
   toUserId?: string | null;
+  /**
+   * Tokens de upload do Zendesk (`uploadAttachment`) a anexar na mensagem.
+   *
+   * A side conversation é o canal de email do parceiro, então é aqui que o
+   * anexo tem que entrar — não no comentário do ticket, que é do cliente.
+   */
+  attachmentIds?: string[];
   /** Subject line for the side conversation. */
   subject: string;
   /** HTML body (set `bodyText` to a plaintext fallback if you have one). */
@@ -809,6 +816,7 @@ export async function createSideConversation(
       body: params.bodyText ?? stripHtml(params.htmlBody),
       html_body: params.htmlBody,
       to: [recipient],
+      ...(params.attachmentIds?.length ? { attachment_ids: params.attachmentIds } : {}),
     },
   };
 
@@ -847,6 +855,8 @@ export async function replyToSideConversation(params: {
   sideConversationId: string;
   htmlBody: string;
   bodyText?: string;
+  /** Tokens de upload do Zendesk a anexar na resposta. */
+  attachmentIds?: string[];
   /** Recipient email. Zendesk requires `to` on email side-conversation replies
    *  ("Invalid parameter: to is required"), so pass the partner's email. */
   toEmail?: string;
@@ -874,6 +884,7 @@ export async function replyToSideConversation(params: {
     }
     message.to = [recipient];
   }
+  if (params.attachmentIds?.length) message.attachment_ids = params.attachmentIds;
   const body = { message };
 
   try {
