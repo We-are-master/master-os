@@ -17,6 +17,40 @@ export interface QuoteBid {
  * Mean `bid_amount` per quote for bids still in play (`submitted`).
  * Used on list views; pair with Realtime on `quote_bids` for live updates.
  */
+/**
+ * Média E contagem dos bids recebidos, por quote, numa consulta só.
+ *
+ * A contagem é o que diz se alguém respondeu. `quotes.partner_quotes_count`
+ * não serve para isso: ele conta quantos parceiros foram CONVIDADOS, e uma
+ * quote com cinco convites e zero respostas é exatamente o caso que a gente
+ * precisa enxergar de longe.
+ */
+export async function getSubmittedBidStatsByQuoteIds(
+  quoteIds: string[],
+): Promise<Record<string, { avg: number; count: number }>> {
+  const ids = quoteIds.filter(Boolean);
+  if (ids.length === 0) return {};
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("quote_bids")
+    .select("quote_id, bid_amount")
+    .in("quote_id", ids)
+    .eq("status", "submitted");
+  if (error) throw error;
+  const sums = new Map<string, { sum: number; n: number }>();
+  for (const row of data ?? []) {
+    const rec = row as { quote_id: string; bid_amount: number };
+    const qid = String(rec.quote_id);
+    const cur = sums.get(qid) ?? { sum: 0, n: 0 };
+    cur.sum += Number(rec.bid_amount) || 0;
+    cur.n += 1;
+    sums.set(qid, cur);
+  }
+  const out: Record<string, { avg: number; count: number }> = {};
+  for (const [qid, { sum, n }] of sums) out[qid] = { avg: n > 0 ? sum / n : 0, count: n };
+  return out;
+}
+
 export async function getSubmittedBidAveragesByQuoteIds(
   quoteIds: string[],
 ): Promise<Record<string, number>> {

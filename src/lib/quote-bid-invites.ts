@@ -71,8 +71,6 @@ export async function dispatchQuoteBidInvites(
     return { partnerIds: [], pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
   }
 
-  await supabase.from("quotes").update({ partner_quotes_count: partnerIds.length }).eq("id", params.quoteId);
-
   const tradeLabel = serviceType || params.title.trim() || "Quote";
   const pushSent = await sendPushToPartners(supabase, partnerIds, {
     title: "New quote — bid invitation",
@@ -91,6 +89,24 @@ export async function dispatchQuoteBidInvites(
     partnerIds,
     invitedBy: params.invitedBy ?? null,
   });
+
+  /**
+   * Quantos parceiros a quote TEM, não quantos entraram nesta chamada.
+   *
+   * Era `partner_quotes_count: partnerIds.length`, gravado antes dos convites.
+   * Convidar mais alguém depois não somava: substituía. A QT-2026-1139 tinha
+   * seis parceiros convidados e a coluna dizia "1", porque a última chamada
+   * levou um só. Contar as linhas de convite depois de gravá-las dá o número
+   * certo em qualquer ordem de chamadas.
+   */
+  const { count } = await supabase
+    .from("quote_partner_invitations")
+    .select("id", { count: "exact", head: true })
+    .eq("quote_id", params.quoteId);
+  await supabase
+    .from("quotes")
+    .update({ partner_quotes_count: count ?? partnerIds.length })
+    .eq("id", params.quoteId);
 
   return {
     partnerIds,
