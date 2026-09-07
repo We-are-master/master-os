@@ -413,7 +413,22 @@ async function ciclo(): Promise<void> {
      * o extrator de booking procura — então sem esta guarda o Harvey tenta
      * criar um job NOVO em cima de um que ele já tem.
      */
-    if (tri.classe === "remarcacao" && !triados.has(t.id)) {
+    if (tri.classe === "remarcacao") {
+      /**
+       * Já tratado = segue tratado. Não volta para o classificador.
+       *
+       * A guarda era `&& !triados.has(t.id)`, e isso desfazia o passo inteiro
+       * no ciclo seguinte: o ticket entra em `triados` quando a remarcação é
+       * resolvida, aí a condição fica falsa, o passo é PULADO e o ticket
+       * escorre para o classificador de booking — que é exatamente de onde a
+       * gente estava tentando tirá-lo.
+       *
+       * Aconteceu ao vivo: o #50154 foi resolvido às 19:09 de 07/09/2026 e a
+       * partir das 19:14 o log passou a dizer, de 5 em 5 minutos,
+       * `#50154 "[Housekeep] Reschedule Carpenter: E1 3AQ" parece BOOKING`.
+       * Não criou job duplicado porque faltou dado, o que é sorte, não desenho.
+       */
+      if (triados.has(t.id)) continue;
       try {
         const { tratarRemarcacao, mensagemMaisNova } = await import("../../src/lib/zendesk-quoter/remarcacao");
         const { lerTicketCompleto } = await import("../../src/lib/zendesk-quoter/quoter");
