@@ -407,6 +407,41 @@ async function ciclo(): Promise<void> {
     }
 
     /**
+     * REMARCAÇÃO vem antes do classificador de booking, e é o ponto todo.
+     *
+     * O e-mail de remarcação tem cliente, endereço e data — os três campos que
+     * o extrator de booking procura — então sem esta guarda o Harvey tenta
+     * criar um job NOVO em cima de um que ele já tem.
+     */
+    if (tri.classe === "remarcacao" && !triados.has(t.id)) {
+      try {
+        const { tratarRemarcacao, mensagemMaisNova } = await import("../../src/lib/zendesk-quoter/remarcacao");
+        const { lerTicketCompleto } = await import("../../src/lib/zendesk-quoter/quoter");
+        const lido = await lerTicketCompleto(t.id);
+        const rr = await tratarRemarcacao(
+          { id: t.id, subject: lido.subject, texto: await mensagemMaisNova(t.id), html: "" },
+          apiKey,
+        );
+        if (rr.acao !== "nada") {
+          await postarNotaInterna(t.id, rr.nota);
+          try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu */ }
+          triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          if (rr.acao === "aplicada") {
+            console.log(`[harvey] 📅 ${rr.reference} remarcado: ${rr.de} → ${rr.para} (${rr.como})`);
+          } else if (rr.acao === "ja_estava") {
+            console.log(`[harvey] · #${t.id}: ${rr.reference} já estava na data nova`);
+          } else {
+            console.log(`[harvey] ✎ #${t.id}: remarcação sem job certo — nota pro humano`);
+          }
+          continue;
+        }
+        // "nada": o modelo discordou da triagem. Segue o fluxo antigo.
+      } catch (err) {
+        console.error(`[harvey] remarcacao falhou no ${t.id}: ${err}`);
+      }
+    }
+
+    /**
      * PARCEIRO confirmando agendamento vem ANTES do classificador.
      *
      * O e-mail deles diz "your booking is confirmed", e o classificador lia
