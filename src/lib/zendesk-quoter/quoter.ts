@@ -21,7 +21,7 @@ import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
-import { fotosDeVerdade } from "./foto-de-verdade";
+import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
 import { postcodesNoTexto } from "./achar-job";
 import { soOqueENovo } from "./sem-citacao";
@@ -88,6 +88,8 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
   const partes: string[] = [];
   const partesNovas: string[] = [];
   const linksHousekeep: string[] = [];
+  /** Fotos que vieram como link no corpo, não como anexo. */
+  const linksDeFoto: string[] = [];
   const anexosDeImagem: Array<{ file_name: string; content_url: string; content_type: string; size: number }> = [];
   let totalAnexos = 0;
 
@@ -106,6 +108,24 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]*housekeep\.com[^"]*)"/g)) {
       const url = m[1]!.replace(/&amp;/g, "&");
       if (podeSerCard(url) && !linksHousekeep.includes(url)) linksHousekeep.push(url);
+    }
+    /**
+     * Foto que chega como LINK no corpo, não como anexo do nosso Zendesk.
+     *
+     * A Housekeep encaminha o e-mail do cliente pelo helpdesk DELA, e as fotos
+     * viram links `housekeep.zendesk.com/attachments/token/…?name=foto.jpeg`.
+     * Para o nosso Zendesk o ticket tem ZERO anexos — foi o #50156, que na tela
+     * mostra "Attachment(s)" com dois JPEGs e chegava aqui sem imagem nenhuma,
+     * então a quote nascia sem foto e o parceiro recebia convite às cegas.
+     *
+     * O host é de terceiro, então estes URLs são buscados SEM o nosso header de
+     * autorização (ver abaixo). Mandar o token do nosso Zendesk para o domínio
+     * de outra empresa seria vazar credencial.
+     */
+    for (const m of (c.html_body ?? "").matchAll(/href="(https?:\/\/[^"]+)"/g)) {
+      const url = m[1]!.replace(/&amp;/g, "&");
+      if (!/\.(jpe?g|png|heic|webp)(\?|$)|[?&]name=[^&]*\.(jpe?g|png|heic|webp)/i.test(url)) continue;
+      if (!linksDeFoto.includes(url)) linksDeFoto.push(url);
     }
     for (const a of c.attachments ?? []) {
       totalAnexos++;
@@ -131,6 +151,30 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
       filename: a.file_name,
       dataUrl: `data:${a.content_type};base64,${buf.toString("base64")}`,
     });
+  }
+
+  /**
+   * Os links do corpo, baixados SEM o nosso header.
+   *
+   * `headers` carrega o token do nosso Zendesk e estes URLs são de outro
+   * domínio. `redirect: "follow"` é obrigatório: o Zendesk deles responde 302
+   * para o storage, e sem seguir o redirect o download volta com 0 byte.
+   */
+  for (const url of linksDeFoto) {
+    if (imagens.length >= MAX_IMAGENS) break;
+    try {
+      const res = await fetch(url, { redirect: "follow" });
+      if (!res.ok) continue;
+      const tipo = res.headers.get("content-type") ?? "";
+      if (!tipo.startsWith("image/")) continue;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > MAX_BYTES_IMAGEM || buf.byteLength < MIN_BYTES_FOTO) continue;
+      totalAnexos++;
+      const nome = decodeURIComponent(url.match(/[?&]name=([^&]+)/)?.[1] ?? "").trim() || "photo.jpg";
+      imagens.push({ filename: nome, dataUrl: `data:${tipo};base64,${buf.toString("base64")}` });
+    } catch {
+      /* link morto ou expirado não pode derrubar a leitura do ticket */
+    }
   }
 
   const requester = (cJson.users ?? []).find((u) => u.id === tJson.ticket.requester_id);
