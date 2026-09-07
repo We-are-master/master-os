@@ -229,11 +229,27 @@ export async function dispatchJobCreatedZendesk(args: {
             orgId = sync.ok ? (sync.organizationId ?? null) : null;
           }
         }
+        /**
+         * `entityId` é o CLIENTE, nunca a conta.
+         *
+         * Era `clientAccountId || String(job.id)`, e o `external_id` do usuário
+         * Zendesk é montado a partir dele: `fixfy:account-contact:<entityId>`.
+         * Com o id da conta, todo cliente da mesma organização recebia o MESMO
+         * external_id — e o `create_or_update` do Zendesk casa por external_id
+         * antes do e-mail. Resultado: um único end-user acumulando o e-mail de
+         * cada cliente como identidade nova, com o nome sobrescrito pelo último.
+         *
+         * Em 07/09/2026 esse usuário tinha 22 e-mails de clientes diferentes da
+         * Checkatrade e se chamava "Sarah Rudd", com o e-mail do Alun como
+         * primário. Toda resposta pública nesses tickets ia para o Alun.
+         *
+         * O `send-pdf` das quotes sempre fez certo: client_id primeiro.
+         */
         const set = await setTicketRequester({
           ticketId,
           email:          clientEmail,
           name:           clientName || null,
-          entityId:       clientAccountId || String(job.id),
+          entityId:       jobClientId || String(job.id),
           organizationId: orgId ?? undefined,
         });
         if (!set.ok) {
