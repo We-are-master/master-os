@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     partner_id: string | null;
     external_source: string | null;
     external_ref: string | null;
-    on_hold_submission: { notes?: string | null; photos?: string[] } | null;
+    on_hold_submission: { notes?: string | null; photos?: string[]; available_dates?: string[] } | null;
   };
 
   if (job.partner_id !== partnerId) {
@@ -153,9 +153,21 @@ export async function POST(req: NextRequest) {
   // ─── Persist on the job (append photos to any prior submission) ────
   const now = new Date().toISOString();
   const priorPhotos = Array.isArray(job.on_hold_submission?.photos) ? job.on_hold_submission!.photos! : [];
+  /**
+   * As datas de retorno sobrevivem a esta gravação.
+   *
+   * Este formulário (o do link do e-mail) ainda não pergunta data, e o objeto é
+   * reescrito inteiro. Sem carregar o valor anterior, um parceiro que mandasse
+   * as datas pelo portal e depois anexasse uma foto por aqui apagaria as datas
+   * sem ninguém perceber — e é justamente delas que o Harvey depende.
+   */
+  const priorDates = Array.isArray(job.on_hold_submission?.available_dates)
+    ? job.on_hold_submission!.available_dates!
+    : [];
   const submission = {
     notes,
     photos: [...priorPhotos, ...newPaths],
+    ...(priorDates.length ? { available_dates: priorDates } : {}),
     partner_id: partnerId,
     submitted_at: now,
   };
