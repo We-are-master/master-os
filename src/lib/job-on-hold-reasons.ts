@@ -29,6 +29,29 @@ export function jobOnHoldReasonLabel(
   return CANONICAL_BY_ID.get(id as JobOnHoldReasonId) ?? id;
 }
 
+/**
+ * O job está em espera POR RECLAMAÇÃO?
+ *
+ * Três provas, porque as linhas antigas não são uniformes. O preset é a prova
+ * boa e é o que o caminho novo grava. Mas o JOB-9261 até o 9264 (04/06/2026)
+ * entraram só com o texto "Complaint" em `on_hold_reason`, sem preset e sem
+ * descrição — e o JOB-8945 gravou "Complaint — Client Complaint". Ler só o
+ * preset deixaria esses de fora, que são justamente os quatro que terminaram
+ * cancelados sem ninguém olhar.
+ *
+ * Fica aqui, puro, porque a tela, o filtro e qualquer regra futura de retenção
+ * de pagamento precisam responder isto do mesmo jeito.
+ */
+export function jobOnHoldPorReclamacao(job: {
+  on_hold_reason_preset_id?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_complaint_description?: string | null;
+}): boolean {
+  if (job.on_hold_reason_preset_id === "complaint") return true;
+  if (job.on_hold_complaint_description?.trim()) return true;
+  return /\bcomplaint\b/i.test(job.on_hold_reason ?? "");
+}
+
 export function resolveJobOnHoldReasonIdFromLabel(label: string): string | null {
   const key = label.trim().toLowerCase();
   if (!key) return null;

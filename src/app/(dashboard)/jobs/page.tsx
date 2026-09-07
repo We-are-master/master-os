@@ -116,7 +116,7 @@ import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, isJobOnHoldComplaint, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -1164,8 +1164,21 @@ function JobsPageContent() {
     };
   }, []);
 
+  /**
+   * "Só reclamações" dentro de Action Required.
+   *
+   * Não virou aba: as sete de cima foram enxugadas de propósito, e reclamação é
+   * um recorte de on hold, não um estágio do job. Como chip ele só aparece
+   * quando existe reclamação para ver, e some sozinho ao trocar de aba.
+   */
+  const [soReclamacao, setSoReclamacao] = useState(false);
+  useEffect(() => {
+    if (status !== "action_required") setSoReclamacao(false);
+  }, [status]);
+
   const filteredData = useMemo(() => {
     return data.filter((j) => {
+      if (soReclamacao && !isJobOnHoldComplaint(j)) return false;
       if (filterPartner === "__none__") {
         if (j.partner_id || j.partner_name) return false;
       } else if (filterPartner !== "all") {
@@ -1195,7 +1208,11 @@ function JobsPageContent() {
     buAccountIds,
     propertyIdToAccountId,
     clientIdToSourceAccountId,
+    soReclamacao,
   ]);
+
+  /** Quantas reclamações existem para ver, antes do próprio chip filtrar. */
+  const reclamacoesCount = useMemo(() => data.filter((j) => isJobOnHoldComplaint(j)).length, [data]);
 
   /** Default sorting for Jobs Management (kanban / filter bar): nearest schedule first. */
   const scheduleSortedData = useMemo(() => {
@@ -3320,6 +3337,23 @@ function JobsPageContent() {
             />
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {status === "action_required" && reclamacoesCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSoReclamacao((v) => !v)}
+                  aria-pressed={soReclamacao}
+                  title={soReclamacao ? "Showing complaints only" : "Show only jobs on hold from a complaint"}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                    soReclamacao
+                      ? "border-red-500/60 bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200"
+                      : "border-border bg-card text-text-secondary hover:border-red-400/50 hover:text-red-700"
+                  }`}
+                >
+                  <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                  Complaint
+                  <span className="tabular-nums opacity-70">{reclamacoesCount}</span>
+                </button>
+              ) : null}
               <div className="flex items-center bg-surface-tertiary rounded-lg p-0.5">
                 {(
                   [

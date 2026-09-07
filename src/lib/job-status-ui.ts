@@ -1,5 +1,6 @@
 import type { BadgeVariant } from "@/components/ui/badge";
 import type { JobStatus } from "@/types/database";
+import { jobOnHoldPorReclamacao } from "./job-on-hold-reasons";
 
 /**
  * Single source of truth for job status badge colours across Jobs, Schedule, Job detail, Partners.
@@ -68,17 +69,32 @@ export function jobPartnerListKind(job: {
   return "unassigned";
 }
 
+/**
+ * Reclamação não se prova só pelo preset.
+ *
+ * A checagem era `on_hold_reason_preset_id === "complaint"`, e isso deixava de
+ * fora as linhas antigas: o JOB-8945 e os JOB-9261 a 9264 (04/06/2026) entraram
+ * com "Complaint" apenas no texto de `on_hold_reason`, sem preset. Justamente os
+ * que ninguém olhou, e que terminaram todos cancelados.
+ *
+ * A regra de "isto é reclamação" mora em `jobOnHoldPorReclamacao`, com os três
+ * caminhos e teste. Aqui fica só a parte de tela: o job tem que estar EM espera.
+ */
 export function isJobOnHoldComplaint(job: {
   status?: string | null;
   on_hold_reason_preset_id?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_complaint_description?: string | null;
 }): boolean {
-  return job.status === "on_hold" && (job.on_hold_reason_preset_id ?? "").trim() === "complaint";
+  return job.status === "on_hold" && jobOnHoldPorReclamacao(job);
 }
 
 /** Display badge for on-hold jobs — Complaint (red) vs On Hold (amber). */
 export function jobOnHoldDisplayBadge(job: {
   status?: string | null;
   on_hold_reason_preset_id?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_complaint_description?: string | null;
 }): { label: string; variant: BadgeVariant; dot: true } | null {
   if (job.status !== "on_hold") return null;
   if (isJobOnHoldComplaint(job)) {
@@ -91,6 +107,8 @@ export function jobOnHoldDisplayBadge(job: {
 export function jobStatusDisplayBadge(job: {
   status?: string | null;
   on_hold_reason_preset_id?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_complaint_description?: string | null;
 }): { label: string; variant: BadgeVariant; dot?: boolean } {
   const onHold = jobOnHoldDisplayBadge(job);
   if (onHold) return onHold;
