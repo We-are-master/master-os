@@ -85,7 +85,7 @@ import { useBuFilter } from "@/hooks/use-bu-filter";
 import { isPartnerEligibleForWork } from "@/lib/partner-status";
 import {
   getBidsByQuoteId,
-  getSubmittedBidAveragesByQuoteIds,
+  getSubmittedBidStatsByQuoteIds,
   selectBidForProposal,
   type QuoteBid,
 } from "@/services/quote-bids";
@@ -488,6 +488,35 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
   rejected: { variant: "danger", dot: true },
   converted_to_job: { variant: "success", dot: true },
 };
+
+/**
+ * Verde = algum parceiro já respondeu. Vermelho = ninguém respondeu ainda.
+ *
+ * Só aparece em quote de bidding com parceiro, porque é a única em que
+ * "ninguém respondeu" quer dizer alguma coisa: quote interna não tem a quem
+ * esperar. O convite sair não é resposta, então o número que conta é o de bids
+ * recebidos, nunca `partner_quotes_count`.
+ */
+function PontoDeBid({ recebidos, convidados }: { recebidos: number; convidados: number }) {
+  const temResposta = recebidos > 0;
+  const titulo = temResposta
+    ? `${recebidos} of ${Math.max(convidados, recebidos)} invited partner(s) have bid`
+    : convidados > 0
+      ? `No bids yet — ${convidados} partner(s) invited`
+      : "No bids yet";
+  return (
+    <span
+      title={titulo}
+      aria-label={titulo}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${temResposta ? "bg-emerald-500" : "bg-red-500"}`}
+    />
+  );
+}
+
+/** A quote está esperando resposta de parceiro? Só aí o ponto tem sentido. */
+function esperandoBid(q: Quote): boolean {
+  return (q.status === "bidding" || q.status === "in_survey") && q.quote_type === "partner";
+}
 
 /** Active pipeline: quotes actively moving through the sales funnel (bids out / with customer / awaiting deposit). Includes legacy `in_survey`. */
 const PIPELINE_STATUS_IN = ["bidding", "in_survey", "awaiting_customer", "awaiting_payment"] as const;
@@ -931,28 +960,49 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   ]);
 
   const [avgBidByQuoteId, setAvgBidByQuoteId] = useState<Record<string, number>>({});
+  /**
+   * Quantos parceiros JÁ RESPONDERAM cada quote em bidding.
+   *
+   * Vem da mesma consulta da média, e é o que pinta o ponto verde/vermelho no
+   * card e na lista. Sem isto, uma quote com cinco convites e zero respostas
+   * parece igual a uma com cinco respostas até alguém abrir o drawer.
+   */
+  const [bidCountByQuoteId, setBidCountByQuoteId] = useState<Record<string, number>>({});
   const dataIdsKey = useMemo(() => data.map((q) => q.id).sort().join(","), [data]);
 
   const refreshListBidAverages = useCallback(async () => {
     const ids = quotesListDataRef.current.map((q) => q.id);
     if (ids.length === 0) {
       setAvgBidByQuoteId({});
+      setBidCountByQuoteId({});
       return;
     }
     try {
-      setAvgBidByQuoteId(await getSubmittedBidAveragesByQuoteIds(ids));
+      const stats = await getSubmittedBidStatsByQuoteIds(ids);
+      const medias: Record<string, number> = {};
+      const contagens: Record<string, number> = {};
+      for (const [qid, v] of Object.entries(stats)) {
+        medias[qid] = v.avg;
+        contagens[qid] = v.count;
+      }
+      setAvgBidByQuoteId(medias);
+      setBidCountByQuoteId(contagens);
     } catch {
       /* table still usable */
     }
   }, []);
 
   useEffect(() => {
-    if (status !== "bidding") {
+    // O kanban mostra a coluna Bidding em qualquer aba, então lá as contagens
+    // também precisam existir — senão o ponto nasceria vermelho por falta de
+    // dado, que é pior que não ter ponto nenhum.
+    if (status !== "bidding" && viewMode !== "kanban") {
       setAvgBidByQuoteId({});
+      setBidCountByQuoteId({});
       return;
     }
     void refreshListBidAverages();
-  }, [dataIdsKey, status, refreshListBidAverages]);
+  }, [dataIdsKey, status, viewMode, refreshListBidAverages]);
 
   const [listSortKey, setListSortKey] = useState<string | null>(null);
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("asc");
@@ -2307,7 +2357,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         sortable: true,
         sortOptions: QUOTE_SORT_REFERENCE,
         render: (item) => (
-          <div>
+          <div className="flex items-center gap-1.5">
+            {esperandoBid(item) ? (
+              <PontoDeBid
+                recebidos={bidCountByQuoteId[item.id] ?? 0}
+                convidados={Number(item.partner_quotes_count) || 0}
+              />
+            ) : null}
             <p className="text-[13px] font-semibold text-text-primary">{item.reference}</p>
           </div>
         ),
@@ -2785,7 +2841,15 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   onCardDrop={handleKanbanDrop}
                   renderCard={(q) => (
                     <div className="p-3 rounded-xl border border-border bg-card shadow-sm hover:border-primary/30 transition-colors">
-                      <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
+                      <div className="flex items-center gap-1.5">
+                        {esperandoBid(q) ? (
+                          <PontoDeBid
+                            recebidos={bidCountByQuoteId[q.id] ?? 0}
+                            convidados={Number(q.partner_quotes_count) || 0}
+                          />
+                        ) : null}
+                        <p className="text-sm font-semibold text-text-primary truncate">{q.reference}</p>
+                      </div>
                       <p className="text-xs text-text-tertiary truncate">{quoteListSubtitlePostcode(q)}</p>
                       {q.source_account_name?.trim() ? (
                         <p className="text-[10px] text-text-tertiary truncate">{q.source_account_name}</p>
