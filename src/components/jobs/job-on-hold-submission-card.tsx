@@ -16,6 +16,15 @@ interface Submission {
   submittedAt: string | null;
   partnerName: string | null;
   photos: Photo[];
+  /** Dias em que o parceiro disse que pode voltar. É o que se oferece ao cliente. */
+  availableDates?: string[];
+}
+
+/** "2026-09-15" vira "Mon 15 Sep". Sem hora: o parceiro deu o DIA, não a janela. */
+function formatarDia(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return ymd;
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
 }
 
 function formatWhen(iso: string | null): string | null {
@@ -77,6 +86,27 @@ export function JobOnHoldSubmissionCard({ jobId }: { jobId: string }) {
         <div>
           <p className="text-xs font-medium text-text-secondary mb-1">Solution</p>
           <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">{submission.notes}</p>
+        </div>
+      )}
+
+      {(submission.availableDates?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+            Can return on
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {submission.availableDates!.map((d) => (
+              <span
+                key={d}
+                className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+              >
+                {formatarDia(d)}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-text-tertiary">
+            These are the days to offer the customer. Two of them, within the next 5.
+          </p>
         </div>
       )}
 

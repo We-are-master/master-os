@@ -11,6 +11,8 @@ const SIGNED_TTL = 60 * 60;
 interface OnHoldSubmission {
   notes?: string | null;
   photos?: string[];
+  /** Datas em que o parceiro disse que pode voltar (YYYY-MM-DD). */
+  available_dates?: string[];
   partner_id?: string | null;
   submitted_at?: string | null;
 }
@@ -40,7 +42,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const submission = (job as { on_hold_submission: OnHoldSubmission | null } | null)?.on_hold_submission ?? null;
-  if (!submission || (!submission.notes && !(submission.photos?.length))) {
+  const temDatas = Array.isArray(submission?.available_dates) && submission!.available_dates!.length > 0;
+  if (!submission || (!submission.notes && !(submission.photos?.length) && !temDatas)) {
     return NextResponse.json({ submission: null });
   }
 
@@ -70,6 +73,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       submittedAt: submission.submitted_at ?? (job as { on_hold_submission_at: string | null }).on_hold_submission_at ?? null,
       partnerName,
       photos: signedPhotos,
+      availableDates: Array.isArray(submission.available_dates) ? submission.available_dates : [],
     },
   });
 }
