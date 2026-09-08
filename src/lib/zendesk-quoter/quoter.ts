@@ -19,6 +19,7 @@ import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista
 import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
 import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { acharJobDoTicket } from "./achar-job";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
@@ -837,6 +838,49 @@ async function acharParceiroNoTexto(
   return null;
 }
 
+/**
+ * Carimba a confirmacao e fecha o ticket. Uma funcao so para os dois caminhos
+ * (matcher canonico e a busca por nome), senao eles divergem no que escrevem.
+ */
+async function carimbarConfirmacao(
+  ticketId: number,
+  headers: Record<string, string>,
+  parceiro: { id: string; nome: string },
+  job: { id: string; reference: string; client_name?: string | null; scheduled_date?: string | null; partner_confirmed_at?: string | null },
+  postar: boolean,
+  supabase: ReturnType<typeof createServiceClient>,
+): Promise<ResultadoConfirmacao> {
+  // Dry-run nao escreve NADA, nem no OS: `postar=false` e para conferir o
+  // casamento antes de soltar o agente, e um "teste" que carimba o job no
+  // banco nao e teste.
+  if (postar && !job.partner_confirmed_at) {
+    await supabase
+      .from("jobs")
+      .update({ partner_confirmed_at: new Date().toISOString() })
+      .eq("id", job.id);
+  }
+
+  if (postar) {
+    // Nota interna E solved na MESMA chamada: dois PUTs deixavam o ticket
+    // aberto quando o segundo falhava, e um ticket confirmado que continua na
+    // fila e ruido que ninguem sabe de onde veio.
+    await fetch(`${baseUrl()}/tickets/${ticketId}.json`, {
+      method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        ticket: {
+          status: "solved",
+          comment: {
+            public: false,
+            body: `🤖 HARVEY — ${parceiro.nome} confirmou o agendamento de ${job.reference} (${job.client_name}${job.scheduled_date ? `, ${job.scheduled_date}` : ""}). Marquei o parceiro como confirmado no OS e fechei este ticket.`,
+          },
+        },
+      }),
+    });
+  }
+  return { status: "confirmado", reference: job.reference, parceiro: parceiro.nome };
+}
+
 export async function confirmarBookingDeParceiro(
   ticketId: number,
   postar: boolean,
@@ -844,13 +888,41 @@ export async function confirmarBookingDeParceiro(
   const headers = { Authorization: authHeader() };
   const tRes = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers });
   if (!tRes.ok) return { status: "nao_e_parceiro" };
-  const { ticket } = (await tRes.json()) as { ticket: { subject: string; description?: string } };
+  const { ticket } = (await tRes.json()) as {
+    ticket: { subject: string; description?: string; html_description?: string };
+  };
   const texto = `${ticket.subject ?? ""} ${ticket.description ?? ""}`;
 
   const parceiro = await acharParceiroNoTexto(texto);
   if (!parceiro) return { status: "nao_e_parceiro" };
 
   const supabase = createServiceClient();
+
+  /**
+   * O MATCHER CANONICO PRIMEIRO (08/09/2026).
+   *
+   * Este caminho tinha busca propria, e ela so casava pelo NOME do cliente
+   * dentro de uma lista de status abertos. No ticket #50216 isso produziu duas
+   * notas contraditorias do Harvey no mesmo ticket: o caminho do certificado
+   * achou o JOB-9582 pelo postcode WC1X9RD, e este aqui disse "nao soube qual
+   * job e" — porque o job estava em `final_check` (fora da whitelist) e porque
+   * o e-mail do parceiro traz o ENDERECO, nao o nome do morador.
+   *
+   * A regra da casa e uma so: postcode/endereco prova, nome e o ultimo degrau.
+   * `partnerId` estreita o pool para os jobs deste parceiro, e era degrau morto
+   * porque nenhum chamador o preenchia.
+   *
+   * A busca antiga fica como rede: ela sabe desempatar por data escrita por
+   * extenso ("21st August"), que o canonico so faz com uma data ja normalizada.
+   */
+  const canonico = await acharJobDoTicket(
+    { texto, html: ticket.html_description ?? null, partnerId: parceiro.id },
+    "recente",
+  );
+  if (canonico.job) {
+    return await carimbarConfirmacao(ticketId, headers, parceiro, canonico.job, postar, supabase);
+  }
+
   const { data: jobs } = await supabase
     .from("jobs")
     .select("id, reference, client_name, scheduled_date, partner_confirmed_at")
@@ -907,36 +979,7 @@ export async function confirmarBookingDeParceiro(
     return { status: "sem_job", parceiro: parceiro.nome, nota };
   }
 
-  const job = candidatos[0]!;
-  // Dry-run não escreve NADA, nem no OS: `postar=false` é para conferir o
-  // casamento antes de soltar o agente, e um "teste" que carimba o job no
-  // banco não é teste.
-  if (postar && !job.partner_confirmed_at) {
-    await supabase
-      .from("jobs")
-      .update({ partner_confirmed_at: new Date().toISOString() })
-      .eq("id", job.id);
-  }
-
-  if (postar) {
-    // Nota interna E solved na MESMA chamada: dois PUTs deixavam o ticket
-    // aberto quando o segundo falhava, e um ticket confirmado que continua na
-    // fila é ruído que ninguém sabe de onde veio.
-    await fetch(`${baseUrl()}/tickets/${ticketId}.json`, {
-      method: "PUT",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({
-        ticket: {
-          status: "solved",
-          comment: {
-            public: false,
-            body: `🤖 HARVEY — ${parceiro.nome} confirmou o agendamento de ${job.reference} (${job.client_name}${job.scheduled_date ? `, ${job.scheduled_date}` : ""}). Marquei o parceiro como confirmado no OS e fechei este ticket.`,
-          },
-        },
-      }),
-    });
-  }
-  return { status: "confirmado", reference: job.reference, parceiro: parceiro.nome };
+  return await carimbarConfirmacao(ticketId, headers, parceiro, candidatos[0]!, postar, supabase);
 }
 
 export async function subirJobBooked(ticketId: number, postar: boolean): Promise<ResultadoBooking> {

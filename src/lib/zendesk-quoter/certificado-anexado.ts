@@ -164,6 +164,24 @@ export async function guardarCertificadoDoTicket(
           inspection_summary: `Certificate received by email from the partner (ticket #${ticket.id}).`,
         },
       }),
+      /**
+       * O parceiro ENTREGOU o laudo, e a coluna quer dizer exatamente isso.
+       * Quem guarda "subiu para a plataforma do cliente" e
+       * `external_report_submitted_at`, nao este booleano.
+       *
+       * Sem esta linha o job ficava contraditorio: envelope com
+       * `submitted_at` e PDF dentro, e a coluna dizendo que o parceiro nao
+       * mandou nada. Com isso `motivoNaoElegivel` respondia "the partner has
+       * not sent the final report yet", o botao do card apagava e o job sumia
+       * das duas filas de robo. Aconteceu com 3 jobs da LandLord Certificate
+       * (9579, 9582, 9583), todos resolvidos na mao.
+       *
+       * NAO destrava robo nenhum: a fila do Express exige tambem
+       * `report_1_approved`, que so gente escreve (o portao que nasceu do
+       * JOB-9406). Este modulo continua sem tocar em aprovacao e sem mexer
+       * em status.
+       */
+      final_report_submitted: true,
       updated_at: agora,
     })
     .eq("id", job.id);

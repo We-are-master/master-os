@@ -465,8 +465,20 @@ async function ciclo(): Promise<void> {
      * VAI EXECUTAR não é pedido de serviço: fecha o ciclo do job que já
      * existe. Nem gasta chamada de modelo.
      */
+    /**
+     * Ticket que o CERTIFICADO ja tratou nao passa por aqui (08/09/2026).
+     *
+     * O bloco do certificado grava em `triados` e da `continue`, mas o filtro
+     * de candidatos olha `vistos` — entao no ciclo seguinte o ticket voltava,
+     * pulava o certificado por `!triados.has()` e escorria ate aqui. Resultado
+     * no #50216: duas notas do Harvey com cinco minutos de diferenca (um ciclo
+     * do launchd), uma dizendo "certificate filed on JOB-9582" e a outra
+     * dizendo "nao soube qual job e".
+     */
     try {
-      const conf = await confirmarBookingDeParceiro(t.id, true);
+      const conf = triados.has(t.id)
+        ? ({ status: "ja_triado" } as const)
+        : await confirmarBookingDeParceiro(t.id, true);
       if (conf.status === "confirmado") {
         vistos.add(t.id); gravarVistos(vistos);
         console.log(`[harvey] ✔ ${conf.parceiro} confirmou ${conf.reference} a partir do #${t.id} — ticket solved`);
