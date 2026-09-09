@@ -17,6 +17,7 @@
  * quote para não repetir. Quem clica enviar é gente, por enquanto.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
@@ -33,8 +34,6 @@ const MAX_POR_CICLO = 5;
  * rotas de cron que soltaram 52 convites reais em 20/08.
  */
 const IDADE_MAXIMA_DIAS = 14;
-/** A marca de "já rascunhei", no banco para sobreviver a troca de máquina. */
-const MARCA = "bid_draft_posted";
 
 export type ResultadoDaVarredura = {
   armado: boolean;
@@ -65,11 +64,10 @@ export async function varrerLancesParaRascunho(
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase
     .from("quotes")
-    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, automation_status")
+    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, partner_id")
     .eq("status", "bidding")
     .eq("external_source", "zendesk")
     .not("external_ref", "is", null)
-    .is("automation_status", null)
     .is("deleted_at", null)
     .gte("created_at", desde)
     .order("created_at", { ascending: true })
@@ -129,13 +127,36 @@ export async function varrerLancesParaRascunho(
       r.detalhes.push(`${q.reference}: nota falhou, nao marco — ${String(err)}`);
       continue;
     }
-    // Marca só DEPOIS da nota sair: se marcasse antes e a nota falhasse, a
-    // quote ficaria calada para sempre.
+    /**
+     * Grava DEPOIS da nota sair: se gravasse antes e a nota falhasse, a quote
+     * mudaria de estado sem que ninguém tivesse o texto para enviar.
+     *
+     * Gravar o número é o ponto todo. Enquanto o Harvey só punha a nota, o OS
+     * e o cliente podiam divergir: a QT-2026-1139 está gravada com £633,33 e o
+     * cliente recebeu £520, digitado à mão às 00:09 de 08/09/2026. Com o preço
+     * na quote, o botão de enviar manda o que o sistema tem.
+     *
+     * O que ele NÃO faz continua igual: não envia. `quote_ready` quer dizer
+     * pronto para uma pessoa olhar e clicar.
+     */
     const { error: upErr } = await supabase
       .from("quotes")
-      .update({ automation_status: MARCA, updated_at: new Date().toISOString() })
+      .update({
+        status: "quote_ready",
+        partner_id: escolha.melhor.partner_id,
+        partner_name: escolha.melhor.partner_name,
+        partner_cost: escolha.melhor.valor,
+        margin_percent: escolha.margem,
+        total_value: escolha.precoAoCliente,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", q.id);
-    if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a marca falhou — ${upErr.message}`);
+    if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a quote não mudou — ${upErr.message}`);
+    else {
+      void syncQuoteZendeskStatus(q.id, supabase).catch((err: unknown) =>
+        console.error("[lances] sync do status no Zendesk falhou:", err),
+      );
+    }
     r.rascunhados++;
     r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolha.precoAoCliente)}`);
   }

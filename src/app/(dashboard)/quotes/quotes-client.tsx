@@ -169,7 +169,7 @@ function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>)
   }
 }
 
-const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment", "rejected", "converted_to_job"] as const;
+const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment", "rejected", "converted_to_job"] as const;
 
 /**
  * Label for proposal line 1: type of work only.
@@ -473,6 +473,7 @@ const statusLabels: Record<string, string> = {
   draft: "New",
   in_survey: "Bidding",
   bidding: "Bidding",
+  quote_ready: "Quote Ready",
   awaiting_customer: "Approval",
   awaiting_payment: "Payment",
   rejected: "Rejected",
@@ -483,6 +484,7 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
   draft: { variant: "default", dot: true },
   in_survey: { variant: "info", dot: true },
   bidding: { variant: "warning", dot: true },
+  quote_ready: { variant: "success", dot: true },
   awaiting_customer: { variant: "primary", dot: true },
   awaiting_payment: { variant: "warning", dot: true },
   rejected: { variant: "danger", dot: true },
@@ -519,7 +521,7 @@ function esperandoBid(q: Quote): boolean {
 }
 
 /** Active pipeline: quotes actively moving through the sales funnel (bids out / with customer / awaiting deposit). Includes legacy `in_survey`. */
-const PIPELINE_STATUS_IN = ["bidding", "in_survey", "awaiting_customer", "awaiting_payment"] as const;
+const PIPELINE_STATUS_IN = ["bidding", "in_survey", "quote_ready", "awaiting_customer", "awaiting_payment"] as const;
 
 async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>> {
   const { status, ...rest } = params;
@@ -559,6 +561,9 @@ const QUOTE_STATUS_SORT_ORDER: Record<string, number> = {
   draft: 0,
   in_survey: 2,
   bidding: 2,
+  // Entre bidding e Approval. Decimal de propósito: renumerar os outros
+  // desalinharia esta lista das colunas do funil, que dependem da mesma ordem.
+  quote_ready: 2.5,
   awaiting_customer: 3,
   awaiting_payment: 4,
   rejected: -1,
@@ -704,6 +709,12 @@ function getStageGuidance(status: string): {
         headline: "Bids or your own figures",
         detail:
           "Based on market conditions, our AI selects the best quote based on price, availability and region. You can still manually choose any other bid at any time.",
+      };
+    case "quote_ready":
+      return {
+        headline: "Priced and waiting on us",
+        detail:
+          "Bids are in and the price is calculated. The draft is on the ticket thread. Read it, adjust if needed, then Send to move this to Approval.",
       };
     case "awaiting_customer":
       return {
@@ -1109,11 +1120,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         },
       ];
     }
-    const ids = ["draft", "bidding", "awaiting_customer", "awaiting_payment"];
+    const ids = ["draft", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
       title: id === "draft" ? "New" : (statusLabels[id] ?? id),
-      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
+      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : id === "quote_ready" ? "bg-emerald-500" : "bg-primary",
       items: filteredQuotes.filter((q) => {
         if (id === "bidding") return q.status === "bidding" || q.status === "in_survey";
         if (id === "draft") return isQuoteListNew(q);

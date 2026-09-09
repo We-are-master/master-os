@@ -11,8 +11,18 @@
 
 // ─── Quote lifecycle ─────────────────────────────────────────────────────────
 
-/** 🟠 Ready to Quote — ticket has all info; quote is being prepared. Initial state after "Move to Quote" macro. */
-export const ZD_STATUS_READY_TO_QUOTE = 5688507034015;
+/**
+ * 🟢 Quote Ready — os lances chegaram, o preço está calculado e o rascunho está
+ * na thread. Ninguém enviou ao cliente ainda.
+ *
+ * Era "🟠 Ready to Quote" (pedido chegou, ninguém cotou) e foi renomeado em
+ * 09/09/2026 a pedido do dono, com ZERO tickets naquele estado. O id é o mesmo;
+ * o que mudou foi o significado, que passou do começo do funil para o fim.
+ *
+ * Entra no Action Required junto com Final Checks: quote pronta e não enviada é
+ * trabalho parado esperando gente.
+ */
+export const ZD_STATUS_QUOTE_READY = 5688507034015;
 
 /** 🟤 Bidding — partners are being asked for prices. */
 export const ZD_STATUS_BIDDING = 5688282472223;
@@ -90,7 +100,7 @@ export const ZENDESK_STATUS_JOB_ON_HOLD = ZD_STATUS_ON_HOLD;
 export type ZendeskBaseStatus = "open" | "pending" | "hold" | "solved" | "closed";
 
 const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
-  [ZD_STATUS_READY_TO_QUOTE]:    "open",
+  [ZD_STATUS_QUOTE_READY]:       "open",
   [ZD_STATUS_BIDDING]:           "open",
   [ZD_STATUS_AWAITING_APPROVAL]: "open",
   [ZD_STATUS_UNASSIGNED]:        "open",

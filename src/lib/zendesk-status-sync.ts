@@ -30,7 +30,7 @@ import {
   ZD_STATUS_IN_PROGRESS,
   ZD_STATUS_LOST,
   ZD_STATUS_ON_HOLD,
-  ZD_STATUS_READY_TO_QUOTE,
+  ZD_STATUS_QUOTE_READY,
   ZD_STATUS_SCHEDULED,
   ZD_STATUS_UNASSIGNED,
   ZD_STATUS_AUTO_ASSIGNING,
@@ -48,10 +48,20 @@ import type { JobStatus, QuoteStatus } from "@/types/database";
 export function quoteStatusToZendesk(status: QuoteStatus): number | null {
   switch (status) {
     case "draft":
-      return ZD_STATUS_READY_TO_QUOTE;
+      /**
+       * Draft não fala com o ticket.
+       *
+       * Ele apontava para o que hoje é "Quote Ready", e depois do rename isso
+       * seria uma mentira: draft é trabalho começando, não preço pronto.
+       * Rascunho é interno, e o ticket fica no estado em que estava até haver
+       * algo de verdade para dizer.
+       */
+      return null;
     case "in_survey":
     case "bidding":
       return ZD_STATUS_BIDDING;
+    case "quote_ready":
+      return ZD_STATUS_QUOTE_READY;
     case "awaiting_customer":
     case "awaiting_payment":
       return ZD_STATUS_AWAITING_APPROVAL;

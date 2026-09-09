@@ -70,7 +70,7 @@ export interface CatalogService {
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type LeadStatus = "new" | "interested";
 export type LeadUrgency = "low" | "medium" | "high" | "urgent";
-export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
+export type QuoteStatus = "draft" | "in_survey" | "bidding" | "quote_ready" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
 export type JobStatus =
   | "unassigned"
   | "auto_assigning"
@@ -712,10 +712,16 @@ export interface Job {
   on_hold_snapshot_scheduled_start_at?: string | null;
   on_hold_snapshot_scheduled_end_at?: string | null;
   on_hold_snapshot_scheduled_finish_date?: string | null;
-  /** Partner's on-hold resolution reply (notes + photo paths) submitted from the email link. */
+  /** Partner's on-hold resolution reply (notes + photo paths + return dates). */
   on_hold_submission?: {
     notes?: string | null;
     photos?: string[];
+    /**
+     * Datas em que o parceiro disse que pode voltar (YYYY-MM-DD, ordenadas).
+     * É o dado que o Harvey usa para oferecer o retorno ao cliente; sem ele
+     * não há o que oferecer. Escrito pelo portal e pelo link do e-mail.
+     */
+    available_dates?: string[];
     partner_id?: string | null;
     submitted_at?: string | null;
   } | null;
