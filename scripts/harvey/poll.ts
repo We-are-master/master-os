@@ -465,8 +465,20 @@ async function ciclo(): Promise<void> {
      * VAI EXECUTAR não é pedido de serviço: fecha o ciclo do job que já
      * existe. Nem gasta chamada de modelo.
      */
+    /**
+     * Ticket que o CERTIFICADO ja tratou nao passa por aqui (08/09/2026).
+     *
+     * O bloco do certificado grava em `triados` e da `continue`, mas o filtro
+     * de candidatos olha `vistos` — entao no ciclo seguinte o ticket voltava,
+     * pulava o certificado por `!triados.has()` e escorria ate aqui. Resultado
+     * no #50216: duas notas do Harvey com cinco minutos de diferenca (um ciclo
+     * do launchd), uma dizendo "certificate filed on JOB-9582" e a outra
+     * dizendo "nao soube qual job e".
+     */
     try {
-      const conf = await confirmarBookingDeParceiro(t.id, true);
+      const conf = triados.has(t.id)
+        ? ({ status: "ja_triado" } as const)
+        : await confirmarBookingDeParceiro(t.id, true);
       if (conf.status === "confirmado") {
         vistos.add(t.id); gravarVistos(vistos);
         console.log(`[harvey] ✔ ${conf.parceiro} confirmou ${conf.reference} a partir do #${t.id} — ticket solved`);
@@ -575,6 +587,24 @@ async function ciclo(): Promise<void> {
     }
   } catch (err) {
     console.error(`[harvey] vigia de ofertas morreu: ${err}`);
+  }
+
+  // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
+  // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
+  try {
+    const { varrerLancesParaRascunho } = await import("../../src/lib/quote-lances-sweep");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna: postar } = await import("../../src/lib/zendesk-quoter/quoter");
+    const rl = await varrerLancesParaRascunho(createServiceClient(), postar);
+    if (rl.analisados > 0) {
+      console.log(
+        `[harvey] lances (${rl.armado ? "ARMADO" : "ensaio"}): ${rl.analisados} quote(s), ` +
+          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance`,
+      );
+      for (const d of rl.detalhes) console.log(`[harvey]   ${d}`);
+    }
+  } catch (err) {
+    console.error(`[harvey] vigia de lances morreu: ${err}`);
   }
 
   // Vigia de cancelamentos em TODO ciclo (dono, 19/08): o aviso chega, cai em
