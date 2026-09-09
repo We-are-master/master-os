@@ -40,7 +40,7 @@ import {
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail,
   Loader2, Trash2, Briefcase, Users, SlidersHorizontal, Save,
-  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain,
+  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain, FileCheck,
   Wallet, Percent, PoundSterling, ImagePlus, X, Pencil, UserPlus,
   MailCheck,
   Link as LinkIcon,
@@ -1397,6 +1397,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return [
       { id: "draft", label: "New", count: quoteFunnelCounts.draft },
       { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
+      { id: "quote_ready", label: "Quote Ready", count: statusCounts.quote_ready ?? 0 },
       { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
       { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
       { id: "closed", label: "Closed", count: closed },
@@ -3249,23 +3250,26 @@ function PartnerBidMiniDash({
   );
 }
 
-/** Quote funnel — New → Bids → Approval → Payment (`in_survey` treats as Bidding step). */
+/** Quote funnel — New → Bids → Quote Ready → Approval → Payment (`in_survey` treats as Bidding step). */
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "New", short: "New", icon: ClipboardList },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
+  { id: "quote_ready", label: "Quote Ready", short: "Ready", icon: FileCheck },
   { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
   { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
 
-/** Segment progress — New → Bids → Approval → Payment. */
+/** Segment progress — New → Bids → Quote Ready → Approval → Payment. */
 function QuoteDrawerProgress({ status }: { status: string }) {
   const legacyMap: Record<string, number> = {
     draft: 0,
     in_survey: 1,
     bidding: 1,
-    awaiting_customer: 2,
-    awaiting_payment: 3,
+    quote_ready: 2,
+    awaiting_customer: 3,
+    awaiting_payment: 4,
     rejected: -1,
+    // Fora da régua de propósito: 5 é o caso "Win", tratado antes do desenho.
     converted_to_job: 5,
   };
   const current = legacyMap[status] ?? 0;
