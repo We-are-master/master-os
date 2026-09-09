@@ -101,7 +101,8 @@ export default function PublicReportForm({
   const onPhotosChange = (slot: string, files: FileList | null) => {
     if (!files) return;
     const novos = Array.from(files);
-    const teto = tetoDoSlot.get(slot);
+    // A chave chega como "start:kitchen"; o teto é do cômodo, não da metade.
+    const teto = tetoDoSlot.get(slot.includes(":") ? slot.slice(slot.indexOf(":") + 1) : slot);
     setPhotos((prev) => {
       const atuais = prev[slot] ?? [];
       // O teto bloqueia NA ENTRADA: aceitar tudo e cortar no envio é como o
@@ -269,10 +270,20 @@ export default function PublicReportForm({
     );
   };
 
-  const renderPhotoSlot = (slot: ReportPhotoSlot) => {
+  /**
+   * A metade entra na chave, e é o conserto do bug de foto duplicada.
+   *
+   * No template de limpeza os mesmos cômodos existem no antes e no depois. Com
+   * o estado guardado só por `slot.key`, "Kitchen" do antes e "Kitchen" do
+   * depois eram a MESMA entrada: a foto aparecia nas duas seções na tela, ia
+   * uma vez só no envio, e o servidor gravava a mesma lista nos dois
+   * relatórios. Agora cada metade tem a sua chave.
+   */
+  const renderPhotoSlot = (metade: "start" | "final") => (slot: ReportPhotoSlot) => {
     // Bloco condicional: o de dano prévio só nasce depois do "Yes".
     if (!isFieldVisible(slot, data)) return null;
-    const files = photos[slot.key] ?? [];
+    const chave = `${metade}:${slot.key}`;
+    const files = photos[chave] ?? [];
     const accept = slot.accept ?? "image/*";
 
     if (slot.prominent) {
@@ -310,12 +321,12 @@ export default function PublicReportForm({
               accept={accept}
               multiple
               className="sr-only"
-              onChange={(e) => onPhotosChange(slot.key, e.target.files)}
+              onChange={(e) => onPhotosChange(chave, e.target.files)}
             />
           </label>
           {files.length > 0 ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {files.map((f, i) => renderPhotoThumb(slot.key, f, i))}
+              {files.map((f, i) => renderPhotoThumb(chave, f, i))}
             </div>
           ) : null}
         </div>
@@ -371,7 +382,7 @@ export default function PublicReportForm({
               accept={accept}
               multiple
               className="sr-only"
-              onChange={(e) => onPhotosChange(slot.key, e.target.files)}
+              onChange={(e) => onPhotosChange(chave, e.target.files)}
             />
           </label>
         </div>
@@ -380,7 +391,7 @@ export default function PublicReportForm({
         ) : null}
         {files.length > 0 ? (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {files.map((f, i) => renderPhotoThumb(slot.key, f, i))}
+            {files.map((f, i) => renderPhotoThumb(chave, f, i))}
           </div>
         ) : (
           <p className="text-[11px]" style={{ color: FIXFY_MUTED }}>No photos added</p>
@@ -557,7 +568,7 @@ export default function PublicReportForm({
                 <div className="space-y-4">{spec.start.map(renderField)}</div>
                 {photoSlots.start.length > 0 ? (
                   <div className="space-y-3 border-t pt-4" style={{ borderColor: FIXFY_BORDER }}>
-                    {photoSlots.start.map(renderPhotoSlot)}
+                    {photoSlots.start.map(renderPhotoSlot("start"))}
                   </div>
                 ) : null}
               </>,
@@ -568,7 +579,7 @@ export default function PublicReportForm({
           sections.final,
           <>
             {certificateUploadFirst ? (
-              <div className="space-y-4">{photoSlots.final.map(renderPhotoSlot)}</div>
+              <div className="space-y-4">{photoSlots.final.map(renderPhotoSlot("final"))}</div>
             ) : null}
             <div className="space-y-4">{spec.final.map(renderField)}</div>
             <div
@@ -602,7 +613,7 @@ export default function PublicReportForm({
             </div>
             {!certificateUploadFirst && photoSlots.final.length > 0 ? (
               <div className="space-y-3 border-t pt-4" style={{ borderColor: FIXFY_BORDER }}>
-                {photoSlots.final.map(renderPhotoSlot)}
+                {photoSlots.final.map(renderPhotoSlot("final"))}
               </div>
             ) : null}
           </>,

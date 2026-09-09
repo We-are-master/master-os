@@ -3841,7 +3841,7 @@ function QuoteDetailDrawer({
           notes: bidPayloadTrimmedString(li.notes as unknown),
         }),
       );
-      const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"];
+      const padStatuses = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
         const firstLine = proposalFirstLineLabel(q);
         if (rows.length === 0) {
@@ -4206,7 +4206,7 @@ function QuoteDetailDrawer({
   const showProposalStatStrip =
     !routingDraft &&
     tab === "overview" &&
-    ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status);
+    ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status);
 
   const saveRoutingJobDetails = useCallback(async (): Promise<boolean> => {
     const title = normalizeTypeOfWork(routingTitleDraft).trim();
@@ -4495,7 +4495,7 @@ function QuoteDetailDrawer({
     setLineItems((prev) => {
       if (
         prev.length <= 1 &&
-        ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status)
+        ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status)
       ) {
         toast.info("Keep at least the labour line.");
         return prev;
@@ -4975,7 +4975,7 @@ function QuoteDetailDrawer({
     ) : (tab === "overview" || tab === "bids") && !routingDraft ? (
       <div className="space-y-3.5">
         {quote.request_id &&
-        !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
+        !["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
           <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-fx-line bg-fx-paper px-3 py-2.5 dark:bg-surface-secondary/30">
             <input
               type="checkbox"
@@ -5690,7 +5690,7 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
+              {["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
                 <div className="space-y-4 border-b border-fx-line px-7 py-5">
                   {quote.status === "awaiting_customer" && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
@@ -5957,7 +5957,7 @@ function QuoteDetailDrawer({
                             <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
                             {lineItems.length > 1 &&
                               (idx >= 1 ||
-                                !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(
+                                !["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(
                                   quote.status,
                                 )) && (
                               <button
@@ -7157,7 +7157,7 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
     }
     return proposalFieldsReadyForQuote(quote);
   }
-  if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
+  if ((quote.status === "bidding" || quote.status === "quote_ready") && nextStatus === "awaiting_customer") {
     if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
     return proposalFieldsReadyForQuote(quote);
   }
@@ -7176,7 +7176,7 @@ function quoteCustomerHasReceivedProposal(quote: Quote, emailedInSession: boolea
 function effectiveDrawerQuoteStatus(quote: Quote, emailedInSession: boolean): Quote["status"] {
   if (
     quoteCustomerHasReceivedProposal(quote, emailedInSession) &&
-    (quote.status === "bidding" || quote.status === "draft" || quote.status === "in_survey")
+    (quote.status === "bidding" || quote.status === "quote_ready" || quote.status === "draft" || quote.status === "in_survey")
   ) {
     return "awaiting_customer";
   }

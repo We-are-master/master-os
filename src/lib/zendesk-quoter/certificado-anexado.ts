@@ -48,8 +48,41 @@ export type ResultadoCertificado =
   | { acao: "nota"; nota: string }
   | { acao: "nada" };
 
+/**
+ * Nem todo PDF do parceiro de certificado É o certificado.
+ *
+ * A regra era "é PDF, logo é certificado", e em 08/09/2026 isso arquivou a
+ * fatura #2394 da Landlord Certification como se fosse o laudo do JOB-9618. O
+ * e-mail era de confirmação de agendamento, com a cobrança anexa, e foi parar
+ * no `final_report` pronto para ser submetido ao cliente.
+ *
+ * Não dá para exigir a palavra "certificate" no nome: os certificados de
+ * verdade chegam nomeados pelo ENDEREÇO, sem a palavra em lugar nenhum.
+ *   31 Ardleigh Road London E17 5BU (K88078).pdf
+ *   Flat 52 Basildon Court 28 Devonshire Street London W1G 6PR (K88061).pdf
+ *
+ * Então a regra é ao contrário: recusa o que se ANUNCIA como outra coisa. Vale
+ * para o nome do arquivo e para o assunto, porque a fatura às vezes vem com
+ * nome genérico e o assunto é que entrega ("Invoice Attached").
+ */
+const PALAVRA_DE_COBRANCA =
+  /\b(invoice|receipt|quotation|quote|estimate|statement|remittance|credit\s*note|purchase\s*order|proforma)\b/i;
+
+/** Confirmação de agendamento não traz laudo: o trabalho ainda nem foi feito. */
+const ASSUNTO_DE_AGENDAMENTO = /\bbooking\b.{0,40}\bconfirm(ed|ation)?\b/i;
+
+export function ehDocumentoDoCertificado(
+  nomeArquivo: string,
+  assunto: string,
+): { arquivar: boolean; motivo?: "cobranca_no_nome" | "cobranca_no_assunto" | "agendamento" } {
+  if (PALAVRA_DE_COBRANCA.test(nomeArquivo)) return { arquivar: false, motivo: "cobranca_no_nome" };
+  if (PALAVRA_DE_COBRANCA.test(assunto)) return { arquivar: false, motivo: "cobranca_no_assunto" };
+  if (ASSUNTO_DE_AGENDAMENTO.test(assunto)) return { arquivar: false, motivo: "agendamento" };
+  return { arquivar: true };
+}
+
 /** PDF é o formato do certificado. Foto de parede não entra aqui. */
-const ehCertificado = (a: AnexoDoTicket): boolean =>
+const ehPdf = (a: AnexoDoTicket): boolean =>
   (a.content_type === "application/pdf" || /\.pdf$/i.test(a.file_name)) && a.size > 0 && a.size <= MAX_BYTES;
 
 /**
@@ -73,7 +106,9 @@ export async function guardarCertificadoDoTicket(
   authHeader: string,
   client?: SupabaseClient,
 ): Promise<ResultadoCertificado> {
-  const pdfs = ticket.anexos.filter(ehCertificado);
+  const pdfs = ticket.anexos
+    .filter(ehPdf)
+    .filter((a) => ehDocumentoDoCertificado(a.file_name, ticket.subject ?? "").arquivar);
   if (pdfs.length === 0) return { acao: "nada" };
 
   const supabase = client ?? createServiceClient();
@@ -164,6 +199,24 @@ export async function guardarCertificadoDoTicket(
           inspection_summary: `Certificate received by email from the partner (ticket #${ticket.id}).`,
         },
       }),
+      /**
+       * O parceiro ENTREGOU o laudo, e a coluna quer dizer exatamente isso.
+       * Quem guarda "subiu para a plataforma do cliente" e
+       * `external_report_submitted_at`, nao este booleano.
+       *
+       * Sem esta linha o job ficava contraditorio: envelope com
+       * `submitted_at` e PDF dentro, e a coluna dizendo que o parceiro nao
+       * mandou nada. Com isso `motivoNaoElegivel` respondia "the partner has
+       * not sent the final report yet", o botao do card apagava e o job sumia
+       * das duas filas de robo. Aconteceu com 3 jobs da LandLord Certificate
+       * (9579, 9582, 9583), todos resolvidos na mao.
+       *
+       * NAO destrava robo nenhum: a fila do Express exige tambem
+       * `report_1_approved`, que so gente escreve (o portao que nasceu do
+       * JOB-9406). Este modulo continua sem tocar em aprovacao e sem mexer
+       * em status.
+       */
+      final_report_submitted: true,
       updated_at: agora,
     })
     .eq("id", job.id);

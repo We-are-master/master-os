@@ -117,6 +117,38 @@ export function parseReportPhotoEntries(form: FormData): Record<string, File[]> 
 }
 
 /**
+ * As fotos de UMA metade do formulário, com o nome do slot limpo.
+ *
+ * No template de limpeza os mesmos cômodos existem no antes e no depois
+ * (`kitchen` é slot válido para `start` E para `final`). O formulário mandava
+ * `photos[kitchen][]` nas duas metades, o FormData junta as duas listas sob a
+ * mesma chave, e o servidor então gravava a lista inteira nos DOIS relatórios.
+ * Era assim que a foto do antes aparecia duplicada no depois.
+ *
+ * Agora o formulário manda `photos[start:kitchen][]` e `photos[final:kitchen][]`.
+ * Chave SEM prefixo continua valendo para as duas metades, de propósito: é o
+ * que o formulário do escritório envia e o que os links já na mão dos parceiros
+ * continuam enviando até recarregarem a página.
+ */
+export function fotosDaMetade(
+  entries: Record<string, File[]>,
+  kind: "start" | "final",
+): Record<string, File[]> {
+  const meu = `${kind}:`;
+  const alheio = kind === "start" ? "final:" : "start:";
+  const out: Record<string, File[]> = {};
+  for (const [chave, files] of Object.entries(entries)) {
+    if (chave.startsWith(meu)) {
+      const slot = chave.slice(meu.length);
+      out[slot] = [...(out[slot] ?? []), ...files];
+    } else if (!chave.startsWith(alheio)) {
+      out[chave] = [...(out[chave] ?? []), ...files];
+    }
+  }
+  return out;
+}
+
+/**
  * A forma que as fotos TERÃO depois de salvas, sem salvar nada: os uploads
  * novos viram placeholders e passam pelo MESMO funil do persist (slots
  * permitidos + merge com o que já existe). É o que o portão da submissão
@@ -130,13 +162,14 @@ export function plannedPhotoShape(
   existing: unknown,
 ): string[] | Record<string, string[]> {
   const allowed = slotsForKind(template, kind);
+  const daMetade = fotosDaMetade(photoEntries, kind);
   let fresh: string[] | Record<string, string[]>;
   if (allowed === null) {
     const flatSlot = kind === "start" ? "before" : "after";
-    fresh = (photoEntries[flatSlot] ?? []).map(() => "pending");
+    fresh = (daMetade[flatSlot] ?? []).map(() => "pending");
   } else {
     const mapa: Record<string, string[]> = {};
-    for (const [slot, files] of Object.entries(photoEntries)) {
+    for (const [slot, files] of Object.entries(daMetade)) {
       if (!allowed.has(slot)) continue;
       mapa[slot] = files.map(() => "pending");
     }
@@ -462,16 +495,17 @@ async function uploadSlotPhotos(
   failures: { count: number },
 ): Promise<string[] | Record<string, string[]>> {
   const allowed = slotsForKind(template, kind);
+  const daMetade = fotosDaMetade(photoEntries, kind);
 
   if (allowed === null) {
     const flatSlot = kind === "start" ? "before" : "after";
-    return uploadFlat(supabase, jobId, kind, photoEntries[flatSlot] ?? [], failures);
+    return uploadFlat(supabase, jobId, kind, daMetade[flatSlot] ?? [], failures);
   }
 
   // Slots are independent (separate keys in the result object, separate
   // storage paths) — was sequential, one slot's photos fully uploaded
   // before the next slot started.
-  const entries = Object.entries(photoEntries).filter(([slot]) => allowed.has(slot));
+  const entries = Object.entries(daMetade).filter(([slot]) => allowed.has(slot));
   const uploaded = await Promise.all(
     entries.map(async ([slot, files]) => [slot, await uploadFlat(supabase, jobId, `${kind}-${slot}`, files, failures)] as const),
   );

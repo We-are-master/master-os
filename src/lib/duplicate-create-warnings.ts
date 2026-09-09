@@ -259,7 +259,7 @@ export async function findDuplicateQuotes(input: {
     .select("reference, title, property_address, status, client_email, start_date_option_1, start_date_option_2")
     .is("deleted_at", null)
     .ilike("client_email", email)
-    .in("status", ["draft", "in_survey", "bidding", "awaiting_customer"])
+    .in("status", ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer"])
     .limit(40);
   if (error) return [];
 

@@ -92,7 +92,7 @@ export function snapshotToPromptBlock(s: OpsSnapshot): string {
 
 /** Quote pipeline detail for Manager / Operator Fixfy Brain. */
 export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<string> {
-  const statuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
+  const statuses = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"] as const;
   const countResults = await Promise.all(
     statuses.map((st) => admin.from("quotes").select("id", { count: "exact", head: true }).eq("status", st)),
   );
@@ -121,7 +121,7 @@ export async function fetchQuotesPipelineBlock(admin: SupabaseClient): Promise<s
   const { data: hot } = await admin
     .from("quotes")
     .select("reference, title, client_name, total_value, status, margin_percent")
-    .in("status", ["awaiting_customer", "bidding", "in_survey", "draft"])
+    .in("status", ["awaiting_customer", "quote_ready", "bidding", "in_survey", "draft"])
     .order("updated_at", { ascending: false })
     .limit(12);
 

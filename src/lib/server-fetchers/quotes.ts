@@ -17,7 +17,7 @@ import type { Quote } from "@/types/database";
 import type { ListResult } from "@/services/base";
 
 /** Must match `PIPELINE_STATUS_IN` in `listQuotesForPage` (quotes-client). */
-const PIPELINE_STATUS = ["bidding", "in_survey", "awaiting_customer", "awaiting_payment"] as const;
+const PIPELINE_STATUS = ["bidding", "in_survey", "quote_ready", "awaiting_customer", "awaiting_payment"] as const;
 
 interface FetchQuotesOptions {
   status?: string;
