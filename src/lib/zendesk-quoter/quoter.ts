@@ -20,7 +20,7 @@ import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
 import { updateTicket } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
 import { acharJobDoTicket } from "./achar-job";
-import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
@@ -784,17 +784,29 @@ export type ResultadoBooking =
 
 /**
  * Título de job NUNCA inventado (dono, 19/08/2026: "só os que já tem de type
- * of work"): o chip no OS é o título e só pode vir da lista canônica. O nome
- * específico do serviço (ex. "End-of-tenancy clean") vive no scope.
+ * of work"): o chip no OS é o título e só pode vir da lista canônica.
+ *
+ * Aqui morava uma escada de seis linhas escrita à mão que contradizia a tabela
+ * canônica logo ao lado: mandava todo EPC para General Maintenance de propósito
+ * e colapsava End of Tenancy, Deep Clean e After Builders num "Cleaning" que
+ * está DESATIVADO no catálogo. Custou 83 "General Maintenance" e 27 "Cleaning"
+ * em 155 jobs desde 20/08/2026, com o serviço certo escrito no próprio scope.
+ *
+ * Quem sabe o nome dos serviços é o `type-of-work.ts`, e agora é ele quem
+ * responde. `General Maintenance` continua sendo o último caso, que é o que ele
+ * significa: carpinteiro, encanador e handyman (dono, 09/09/2026).
  */
-function tituloCanonico(nomeServico: string | null): string {
-  const nome = (nomeServico ?? "").toLowerCase();
-  if (/eicr|electrical installation/.test(nome)) return "Electrical Safety Report";
-  if (/gas safety|cp12/.test(nome)) return "Gas Safety Certificate";
-  if (/epc|energy performance/.test(nome)) return "General Maintenance";
-  if (/clean/.test(nome)) return "Cleaning";
-  if (/paint/.test(nome)) return "Painter";
-  return "General Maintenance";
+function tituloCanonico(...partes: Array<string | null | undefined>): string {
+  /**
+   * Procura em TUDO que temos, não no primeiro campo preenchido.
+   *
+   * O JOB-9609 nasceu "General Maintenance" com "Electrical Installation
+   * Condition Report - Safety Checks - EICR" escrito no scope: o `jobNome`
+   * dizia "Freestanding Washer Install", ganhava do `??` e a resposta certa,
+   * que estava duas linhas abaixo, nunca era lida.
+   */
+  const achado = acharTypeOfWorkNoTexto(partes.filter(Boolean).join(" \n "));
+  return achado ?? GENERAL_MAINTENANCE_LABEL;
 }
 
 /**
@@ -1094,6 +1106,12 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   const fotos = await guardarFotosDoTicket(ticketId, ticket.imagens);
 
   const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
+  /**
+   * O título sai de TODO o texto do ticket, não do primeiro campo preenchido.
+   * O nome do serviço costuma estar no scope, não no resumo.
+   */
+  const tituloDoJob = tituloCanonico(ex.jobNome, ex.serviceSummary, ex.detalhesJob, ticket.subject);
+
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
@@ -1110,8 +1128,8 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       client_phone: ex.contato ?? undefined,
       property_address: ex.propertyAddress,
       postcode: ex.postcode ?? undefined,
-      title: tituloCanonico(ex.jobNome ?? ex.serviceSummary ?? ticket.subject),
-      service_type: tituloCanonico(ex.jobNome ?? ex.serviceSummary ?? ticket.subject),
+      title: tituloDoJob,
+      service_type: tituloDoJob,
       // → jobs.scope: o bloco Job details INTEIRO do card (dono, 18/08).
       description: [ex.serviceSummary, ex.detalhesJob].filter(Boolean).join("\n\n") || undefined,
       client_price: ex.priceGbp ?? undefined,
