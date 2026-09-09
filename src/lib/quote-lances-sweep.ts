@@ -19,6 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
 import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
+import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -106,7 +107,7 @@ export async function varrerLancesParaRascunho(
 
     const { data: lancesBrutos } = await supabase
       .from("quote_bids")
-      .select("id, partner_id, partner_name, bid_amount, status, created_at")
+      .select("id, partner_id, partner_name, bid_amount, status, created_at, notes")
       .eq("quote_id", q.id);
     const escolha = escolherMelhorLance((lancesBrutos ?? []) as unknown as Lance[], { margem: MARGEM_PADRAO });
     if (!escolha) {
@@ -115,7 +116,26 @@ export async function varrerLancesParaRascunho(
     }
 
     const seguro = quoteParaParceiro(q, { scope: q.scope, nomesProibidos });
-    const nota = montarNota(q, escolha, seguro.typeOfWork);
+
+    /**
+     * O corpo do e-mail sai do LANCE, não de um preço nosso: o parceiro separa
+     * labour de materials e a soma bate com o lance. Cada metade sobe pela
+     * margem sozinha, e o total é a soma das linhas escritas.
+     */
+    const paga = lerPayloadDoLance((escolha.melhor as { notes?: string | null }).notes);
+    const traducao = await scopeEmInglesUk(
+      { escopoDaQuote: q.scope, labour: paga.labourDescription, materials: paga.materialsDescription },
+      process.env.OPENAI_API_KEY?.trim(),
+    );
+    // Sem separação, a mão de obra leva o lance inteiro e material fica zerado.
+    const labourCost = paga.labourCost > 0 ? paga.labourCost : escolha.melhor.valor - paga.materialsCost;
+    const email = montarEmailDaQuote({
+      scope: traducao.scope,
+      labourCost,
+      materialsCost: paga.materialsCost,
+      margem: escolha.margem,
+    });
+    const nota = montarNota(q, escolha, email?.corpo ?? null, traducao.traduzido ? null : traducao.motivo ?? "não traduzido");
 
     if (!armado) {
       r.detalhes.push(
@@ -148,7 +168,8 @@ export async function varrerLancesParaRascunho(
 function montarNota(
   q: { reference: string; title: string | null },
   e: NonNullable<ReturnType<typeof escolherMelhorLance>>,
-  tipoDeTrabalho: string,
+  corpoDoEmail: string | null,
+  avisoDeTraducao: string | null,
 ): string {
   const leque = e.ordenados
     .map((l, i) => `  ${i === 0 ? "→" : " "} ${libras(l.valor)}  ${l.partner_name?.trim() || "partner"}`)
@@ -165,15 +186,12 @@ function montarNota(
     "",
     `All bids (${e.ordenados.length}), cheapest first:`,
     leque + descartados,
+    ...(avisoDeTraducao
+      ? ["", `⚠️ Scope NOT translated (${avisoDeTraducao}). Read it before sending: it may be in the partner's own language.`]
+      : []),
     "",
     "── Ready to send to the customer (copy from here) ──",
-    "Hi Team,",
-    "",
-    `Please see our price for ${tipoDeTrabalho}:`,
-    "",
-    `Total: ${libras(e.precoAoCliente)}`,
-    "",
-    "Let us know if you'd like us to go ahead and we'll book it in.",
+    corpoDoEmail ?? "(no bid breakdown, cannot build the email)",
     "",
     "── To apply in the OS ──",
     `Quotes → ${q.reference} → pick the ${libras(e.melhor.valor)} bid, margin ${e.margem}%.`,
