@@ -18,11 +18,28 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
+import { addTicketTags } from "@/lib/zendesk";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
+/**
+ * Até quando ele insiste antes de desistir e chamar gente.
+ *
+ * Fechada a janela sem nenhum lance, ele NÃO desiste: continua olhando a cada
+ * ciclo por mais 24 horas, porque parceiro responde tarde e um lance que chega
+ * às 19h de sexta ainda vale. Passado o prazo sem nada, o silêncio vira nota
+ * interna: 26h caladas é resposta, e alguém precisa decidir o que fazer.
+ *
+ * O dono pediu "de 30 em 30 minutos". O ciclo do Harvey é de 5, e olhar mais
+ * vezes só acha o lance mais cedo — a conta que importa é o prazo, não o passo.
+ */
+export const PRAZO_SEM_LANCE_HORAS = JANELA_HORAS + 24;
+/** Marca de "já avisei que ninguém cotou", no banco para não repetir a nota. */
+const AVISEI_SEM_LANCE = "no_bids_reported";
+/** Tag no ticket para o silêncio aparecer no Action Required. */
+export const TAG_SEM_LANCE = "harvey_no_bids";
 /** Teto por ciclo: sem ele a primeira rodada despeja o backlog inteiro. */
 const MAX_POR_CICLO = 5;
 /**
@@ -40,6 +57,8 @@ export type ResultadoDaVarredura = {
   analisados: number;
   rascunhados: number;
   semLance: number;
+  /** Quotes que passaram das 26h sem um lance e viraram nota interna. */
+  silenciosas: number;
   janelaAberta: number;
   detalhes: string[];
 };
@@ -58,13 +77,13 @@ export async function varrerLancesParaRascunho(
 ): Promise<ResultadoDaVarredura> {
   const armado = process.env.HARVEY_RASCUNHO_LANCE === "1";
   const r: ResultadoDaVarredura = {
-    armado, analisados: 0, rascunhados: 0, semLance: 0, janelaAberta: 0, detalhes: [],
+    armado, analisados: 0, rascunhados: 0, semLance: 0, silenciosas: 0, janelaAberta: 0, detalhes: [],
   };
 
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase
     .from("quotes")
-    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, partner_id")
+    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, partner_id, automation_status")
     .eq("status", "bidding")
     .eq("external_source", "zendesk")
     .not("external_ref", "is", null)
@@ -108,6 +127,47 @@ export async function varrerLancesParaRascunho(
     const escolha = escolherMelhorLance((lancesBrutos ?? []) as unknown as Lance[], { margem: MARGEM_PADRAO });
     if (!escolha) {
       r.semLance++;
+      /**
+       * Ninguém cotou. Ele segue olhando até o prazo, e só então chama gente.
+       *
+       * Sem este ramo a quote ficava em `bidding` para sempre, calada: o
+       * escritório não tinha como saber a diferença entre "os parceiros ainda
+       * vão responder" e "não vem lance nenhum". As duas coisas eram um número
+       * parado na tela.
+       */
+      const horas = horasDesde(primeiro.invited_at);
+      if (horas < PRAZO_SEM_LANCE_HORAS) continue;
+      if ((bruta.automation_status as string | null) === AVISEI_SEM_LANCE) continue;
+
+      const convidados = (await supabase
+        .from("quote_partner_invitations")
+        .select("partner_id", { count: "exact", head: true })
+        .eq("quote_id", q.id)).count ?? 0;
+      const nota = [
+        `🤖 HARVEY — nobody bid on ${q.reference}`,
+        "",
+        `${convidados} partner(s) invited, first invite ${Math.round(horas)}h ago. No valid bid came back.`,
+        "",
+        "This needs a person: widen the trade or postcode, call a partner, or tell the customer we cannot cover it.",
+      ].join("\n");
+
+      if (!armado) {
+        r.detalhes.push(`[ensaio] ${q.reference}: ${Math.round(horas)}h sem lance de ${convidados} convidado(s)`);
+        continue;
+      }
+      try {
+        await postarNotaInterna(Number(q.external_ref), nota);
+        await addTicketTags(q.external_ref, [TAG_SEM_LANCE]);
+      } catch (err) {
+        r.detalhes.push(`${q.reference}: aviso de silêncio falhou, não marco — ${String(err)}`);
+        continue;
+      }
+      await supabase
+        .from("quotes")
+        .update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() })
+        .eq("id", q.id);
+      r.silenciosas++;
+      r.detalhes.push(`${q.reference}: ${Math.round(horas)}h sem lance — nota pro humano`);
       continue;
     }
 
