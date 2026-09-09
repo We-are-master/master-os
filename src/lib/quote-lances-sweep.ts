@@ -18,7 +18,6 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
-import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
 /** O leilão fecha 2h depois do primeiro convite. */
@@ -81,7 +80,6 @@ export async function varrerLancesParaRascunho(
   }
   if ((quotes ?? []).length === 0) return r;
 
-  const nomesProibidos = await nomesDeContas(supabase);
 
   for (const bruta of (quotes ?? []) as Array<Record<string, unknown>>) {
     if (r.rascunhados >= MAX_POR_CICLO) break;
@@ -115,27 +113,7 @@ export async function varrerLancesParaRascunho(
       continue;
     }
 
-    const seguro = quoteParaParceiro(q, { scope: q.scope, nomesProibidos });
-
-    /**
-     * O corpo do e-mail sai do LANCE, não de um preço nosso: o parceiro separa
-     * labour de materials e a soma bate com o lance. Cada metade sobe pela
-     * margem sozinha, e o total é a soma das linhas escritas.
-     */
-    const paga = lerPayloadDoLance((escolha.melhor as { notes?: string | null }).notes);
-    const traducao = await scopeEmInglesUk(
-      { escopoDaQuote: q.scope, labour: paga.labourDescription, materials: paga.materialsDescription },
-      process.env.OPENAI_API_KEY?.trim(),
-    );
-    // Sem separação, a mão de obra leva o lance inteiro e material fica zerado.
-    const labourCost = paga.labourCost > 0 ? paga.labourCost : escolha.melhor.valor - paga.materialsCost;
-    const email = montarEmailDaQuote({
-      scope: traducao.scope,
-      labourCost,
-      materialsCost: paga.materialsCost,
-      margem: escolha.margem,
-    });
-    const nota = montarNota(q, escolha, email?.corpo ?? null, traducao.traduzido ? null : traducao.motivo ?? "não traduzido");
+    const nota = await rascunhoDaQuote(q, escolha);
 
     if (!armado) {
       r.detalhes.push(
@@ -163,6 +141,39 @@ export async function varrerLancesParaRascunho(
   }
 
   return r;
+}
+
+/**
+ * O rascunho inteiro de UMA quote, do lance ao texto pronto.
+ *
+ * Fica exportado e separado do laço porque duas coisas precisam dele e não
+ * podem divergir: a varredura, que posta sozinha, e a simulação, que mostra ao
+ * dono o que sairia. Se o montador morasse dentro do laço, a tela e a
+ * realidade se afastariam no primeiro ajuste.
+ */
+export async function rascunhoDaQuote(
+  q: { reference: string; title: string | null; scope: string | null },
+  escolha: NonNullable<ReturnType<typeof escolherMelhorLance>>,
+): Promise<string> {
+  /**
+   * O corpo do e-mail sai do LANCE, não de um preço nosso: o parceiro separa
+   * labour de materials e a soma bate com o lance. Cada metade sobe pela
+   * margem sozinha, e o total é a soma das linhas escritas.
+   */
+  const paga = lerPayloadDoLance((escolha.melhor as { notes?: string | null }).notes);
+  const traducao = await scopeEmInglesUk(
+    { escopoDaQuote: q.scope, labour: paga.labourDescription, materials: paga.materialsDescription },
+    process.env.OPENAI_API_KEY?.trim(),
+  );
+  // Sem separação, a mão de obra leva o lance inteiro e material fica zerado.
+  const labourCost = paga.labourCost > 0 ? paga.labourCost : escolha.melhor.valor - paga.materialsCost;
+  const email = montarEmailDaQuote({
+    scope: traducao.scope,
+    labourCost,
+    materialsCost: paga.materialsCost,
+    margem: escolha.margem,
+  });
+  return montarNota(q, escolha, email?.corpo ?? null, traducao.traduzido ? null : (traducao.motivo ?? "não traduzido"));
 }
 
 function montarNota(

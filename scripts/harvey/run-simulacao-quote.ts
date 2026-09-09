@@ -21,6 +21,8 @@ for (const arquivo of [".env.local", ".env"]) {
 }
 
 const TICKET = Number(process.argv[2] ?? 50156);
+/** Só com --postar a nota sai de verdade. Sem a flag, nada é escrito. */
+const POSTAR = process.argv.includes("--postar");
 const L = (s = "") => console.log(s);
 const etapa = (n: number, t: string) => L(`\n${"─".repeat(72)}\n${n}. ${t}\n${"─".repeat(72)}`);
 const ok = (s: string) => L(`  ✔ ${s}`);
@@ -115,7 +117,7 @@ async function main() {
   etapa(7, "LEILÃO — 2h do primeiro convite, depois o melhor lance");
   const { data: convites } = await sb.from("quote_partner_invitations").select("invited_at").eq("quote_id", quote.id).order("invited_at").limit(1);
   const primeiro = (convites ?? [])[0] as { invited_at?: string } | undefined;
-  const { data: lances } = await sb.from("quote_bids").select("id, partner_id, partner_name, bid_amount, status, created_at").eq("quote_id", quote.id);
+  const { data: lances } = await sb.from("quote_bids").select("id, partner_id, partner_name, bid_amount, status, created_at, notes").eq("quote_id", quote.id);
   if (primeiro?.invited_at) {
     const h = (Date.now() - new Date(primeiro.invited_at).getTime()) / 36e5;
     ok(`primeiro convite ${h.toFixed(1)}h atrás → janela ${h >= 2 ? "FECHADA" : "ABERTA, ele espera"}`);
@@ -129,8 +131,24 @@ async function main() {
     if (quote.total_value) L(`      (o OS já gravou ${libras(Number(quote.total_value))} — ${Number(quote.total_value) === e.precoAoCliente ? "MESMO número" : "DIVERGE"})`);
   }
 
-  // 8 ── O QUE FALTA
-  etapa(8, "O QUE AINDA É MÃO HUMANA");
+  // 8 ── O RASCUNHO
+  etapa(8, "O RASCUNHO — a nota interna no ticket que recebeu o pedido");
+  if (!e) nao("sem lance válido, não há rascunho");
+  else {
+    const { rascunhoDaQuote } = await import("../../src/lib/quote-lances-sweep");
+    const nota = await rascunhoDaQuote(quote, e);
+    L(nota.split("\n").map((l) => `  │ ${l}`).join("\n"));
+    if (POSTAR) {
+      const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+      await postarNotaInterna(TICKET, nota);
+      ok(`POSTADO como comentário INTERNO no #${TICKET}`);
+    } else {
+      mao(`nada postado. Use --postar para escrever no #${TICKET}`);
+    }
+  }
+
+  // 9 ── O QUE FALTA
+  etapa(9, "O QUE AINDA É MÃO HUMANA");
   mao("clicar enviar no rascunho (por desenho seu, até validar)");
   mao("aplicar o lance na quote no OS (Harvey não escreve na quote)");
   if (!creditoOk) mao("recarregar o crédito da OpenAI: sem ele a etapa 4 não roda");
