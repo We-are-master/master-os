@@ -13,6 +13,11 @@ interface OnHoldSubmission {
   photos?: string[];
   /** Datas em que o parceiro disse que pode voltar (YYYY-MM-DD). */
   available_dates?: string[];
+  /** A escolha do parceiro: voltar lá ou dar desconto. */
+  remedy?: "revisit" | "discount" | null;
+  /** As duas janelas, quando ele vai voltar. */
+  offers?: Array<{ data: string; slot: "morning" | "afternoon" }>;
+  discount_gbp?: number | null;
   partner_id?: string | null;
   submitted_at?: string | null;
 }
@@ -43,7 +48,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
   const submission = (job as { on_hold_submission: OnHoldSubmission | null } | null)?.on_hold_submission ?? null;
   const temDatas = Array.isArray(submission?.available_dates) && submission!.available_dates!.length > 0;
-  if (!submission || (!submission.notes && !(submission.photos?.length) && !temDatas)) {
+  if (!submission || (!submission.notes && !(submission.photos?.length) && !temDatas && !submission.remedy)) {
     return NextResponse.json({ submission: null });
   }
 
@@ -74,6 +79,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       partnerName,
       photos: signedPhotos,
       availableDates: Array.isArray(submission.available_dates) ? submission.available_dates : [],
+      remedy: submission.remedy ?? null,
+      offers: Array.isArray(submission.offers) ? submission.offers : [],
+      discountGbp: typeof submission.discount_gbp === "number" ? submission.discount_gbp : null,
     },
   });
 }

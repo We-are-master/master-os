@@ -241,6 +241,7 @@ import { JobReportV2Card, JobReportV2DownloadButton, JobReportPhotosZipButton } 
 import { ReportHealthCard } from "@/components/jobs/report-health-card";
 import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submission-card";
+import { jobOnHoldPorReclamacao } from "@/lib/job-on-hold-reasons";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { FillReportModal } from "@/components/jobs/fill-report-modal";
 import { StefaneReportButton } from "@/components/job-card/StefaneReportButton";
@@ -1267,6 +1268,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [fillReportOpen, setFillReportOpen] = useState(false);
   /** Layout-only: job detail tabs and accordions (money actions use drawer modal). */
   const [detailTab, setDetailTab] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
+  /**
+   * A aba Complaint existe enquanto houver reclamação NO HISTÓRICO, não só
+   * enquanto o job está parado: retomado o trabalho, o que foi reclamado e o
+   * que o parceiro ofereceu continuam sendo a explicação do que aconteceu ali.
+   */
+  const temReclamacao = job ? jobOnHoldPorReclamacao(job) : false;
   /** One-shot: when a job lands in `final_check`, open the Reports tab by default (only on first paint for this job). */
   const detailTabInitialisedForJobRef = useRef<string | null>(null);
   const [clientEditAccordionOpen, setClientEditAccordionOpen] = useState(false);
@@ -3164,18 +3171,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [isAdmin, detailTab]);
 
+  /** Sem reclamação não há aba 6; se o estado ficou nela, volta pro começo. */
   useEffect(() => {
-    if (detailTab === 6) {
+    if (detailTab === 6 && !temReclamacao) {
       setDetailTab(0);
     }
-  }, [detailTab]);
+  }, [detailTab, temReclamacao]);
 
   /** Jobs in Final checks default to the Reports tab (office usually opens the card to review reports). */
   useEffect(() => {
     if (!job?.id) return;
     if (detailTabInitialisedForJobRef.current === job.id) return;
     detailTabInitialisedForJobRef.current = job.id;
-    if (job.status === "final_check") setDetailTab(3);
+    /**
+     * Job parado por reclamação abre NA reclamação.
+     * É a única coisa que importa naquele card enquanto ele estiver em hold, e
+     * o escritório não deveria ter que procurar a aba para descobrir o que
+     * aconteceu.
+     */
+    if (jobOnHoldPorReclamacao(job)) setDetailTab(6);
+    else if (job.status === "final_check") setDetailTab(3);
   }, [job?.id, job?.status]);
 
   useEffect(() => {
@@ -8053,10 +8068,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    { label: "Site Photos", index: 1 as const },
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     { label: "Notes", index: 4 as const },
+                    ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
                     ...(isAdmin ? [{ label: "Setup", index: 5 as const }] : []),
                   ] as const
                 ).map((tab) => (
@@ -8076,84 +8091,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 ))}
               </div>
               <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
-              {detailTab === 1 ? (
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
-                  {job ? (
-                    <p className="text-[11px] text-text-tertiary tabular-nums">
-                      {coerceJobImagesArray(job.images).length}/{JOB_SITE_PHOTOS_MAX}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2 items-start">
-                  {job && coerceJobImagesArray(job.images).map((url, i) => (
-                    <div key={`${url}-${i}`} className="relative shrink-0 group">
-                      <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-lg overflow-hidden border border-border-light ring-1 ring-black/5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={url} alt="" className="h-16 w-16 object-cover sm:h-[4.5rem] sm:w-[4.5rem]" />
-                      </a>
-                      <button
-                        type="button"
-                        className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-card border border-border text-xs text-text-tertiary hover:text-red-600 hover:border-red-200"
-                        title="Remove photo"
-                        onClick={async () => {
-                          if (!job) return;
-                          const next = coerceJobImagesArray(job.images).filter((_, j) => j !== i);
-                          await handleJobUpdate(job.id, { images: next }, { silent: true });
-                        }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {job && coerceJobImagesArray(job.images).length < JOB_SITE_PHOTOS_MAX ? (
-                  <label className="inline-flex items-center justify-center h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem] rounded-lg border border-dashed border-border bg-surface-hover/50 cursor-pointer hover:border-primary/40 transition-colors">
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      multiple
-                      className="hidden"
-                      disabled={sitePhotoUploading || !job}
-                      onChange={async (e) => {
-                        const files = e.target.files ? Array.from(e.target.files) : [];
-                        if (!files.length || !job) return;
-                        const current = coerceJobImagesArray(job.images);
-                        const room = JOB_SITE_PHOTOS_MAX - current.length;
-                        if (room <= 0) {
-                          toast.error(`Maximum ${JOB_SITE_PHOTOS_MAX} photos per job.`);
-                          e.target.value = "";
-                          return;
-                        }
-                        const take = files.slice(0, room);
-                        if (files.length > take.length) {
-                          toast.message(`Only ${take.length} photo(s) added (limit ${JOB_SITE_PHOTOS_MAX} per job).`);
-                        }
-                        setSitePhotoUploading(true);
-                        try {
-                          const urls = await uploadQuoteInviteImages(take, `job/${job.id}`);
-                          const next = [...current, ...urls];
-                          await handleJobUpdate(job.id, { images: next }, { silent: true });
-                          toast.success(take.length === 1 ? "Photo added" : `${take.length} photos added`);
-                        } catch (err) {
-                          toast.error(getErrorMessage(err, "Upload failed"));
-                        } finally {
-                          setSitePhotoUploading(false);
-                          e.target.value = "";
-                        }
-                      }}
-                    />
-                    {sitePhotoUploading ? (
-                      <span className="text-[10px] text-text-tertiary">…</span>
-                    ) : (
-                      <ImagePlus className="h-5 w-5 text-text-tertiary" aria-hidden />
-                    )}
-                  </label>
-                  ) : null}
-                </div>
-              </div>
-              ) : null}
-
               {detailTab === 0 ? (
               <div className="space-y-3">
               <div className="space-y-1.5 border-t border-border pt-2">
@@ -8263,6 +8200,90 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </div>
                   </>
                 )}
+              </div>
+
+              {/*
+                As fotos do local moram AQUI, logo abaixo do escopo, e não numa
+                aba própria (dono, 09/09/2026). Escopo e foto são a mesma
+                pergunta — "o que é este trabalho" — e separá-las em duas abas
+                obrigava a ir e voltar para responder uma coisa só.
+              */}
+              <div className="space-y-1.5 pt-2 border-t border-border">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-xs font-medium text-text-secondary">Site reference photos</p>
+                  {job ? (
+                    <p className="text-[11px] text-text-tertiary tabular-nums">
+                      {coerceJobImagesArray(job.images).length}/{JOB_SITE_PHOTOS_MAX}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2 items-start">
+                  {job && coerceJobImagesArray(job.images).map((url, i) => (
+                    <div key={`${url}-${i}`} className="relative shrink-0 group">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-lg overflow-hidden border border-border-light ring-1 ring-black/5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={url} alt="" className="h-16 w-16 object-cover sm:h-[4.5rem] sm:w-[4.5rem]" />
+                      </a>
+                      <button
+                        type="button"
+                        className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-card border border-border text-xs text-text-tertiary hover:text-red-600 hover:border-red-200"
+                        title="Remove photo"
+                        onClick={async () => {
+                          if (!job) return;
+                          const next = coerceJobImagesArray(job.images).filter((_, j) => j !== i);
+                          await handleJobUpdate(job.id, { images: next }, { silent: true });
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {job && coerceJobImagesArray(job.images).length < JOB_SITE_PHOTOS_MAX ? (
+                  <label className="inline-flex items-center justify-center h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem] rounded-lg border border-dashed border-border bg-surface-hover/50 cursor-pointer hover:border-primary/40 transition-colors">
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      multiple
+                      className="hidden"
+                      disabled={sitePhotoUploading || !job}
+                      onChange={async (e) => {
+                        const files = e.target.files ? Array.from(e.target.files) : [];
+                        if (!files.length || !job) return;
+                        const current = coerceJobImagesArray(job.images);
+                        const room = JOB_SITE_PHOTOS_MAX - current.length;
+                        if (room <= 0) {
+                          toast.error(`Maximum ${JOB_SITE_PHOTOS_MAX} photos per job.`);
+                          e.target.value = "";
+                          return;
+                        }
+                        const take = files.slice(0, room);
+                        if (files.length > take.length) {
+                          toast.message(`Only ${take.length} photo(s) added (limit ${JOB_SITE_PHOTOS_MAX} per job).`);
+                        }
+                        setSitePhotoUploading(true);
+                        try {
+                          const urls = await uploadQuoteInviteImages(take, `job/${job.id}`);
+                          const next = [...current, ...urls];
+                          await handleJobUpdate(job.id, { images: next }, { silent: true });
+                          toast.success(take.length === 1 ? "Photo added" : `${take.length} photos added`);
+                        } catch (err) {
+                          toast.error(getErrorMessage(err, "Upload failed"));
+                        } finally {
+                          setSitePhotoUploading(false);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                    {sitePhotoUploading ? (
+                      <span className="text-[10px] text-text-tertiary">…</span>
+                    ) : (
+                      <ImagePlus className="h-5 w-5 text-text-tertiary" aria-hidden />
+                    )}
+                  </label>
+                  ) : null}
+                </div>
+              </div>
               </div>
 
               <div className="space-y-1.5 pt-2 border-t border-border">
@@ -8657,6 +8678,45 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               </div>
             </div>
+            ) : null}
+
+            {/*
+              A aba da reclamação: o que o cliente disse, e o que o parceiro
+              respondeu, um embaixo do outro. Antes essas duas metades moravam
+              em lugares diferentes — a queixa num campo do topo, a resposta
+              perdida na aba Reports entre relatórios e fotos — e ninguém
+              conseguia ler a história de uma vez.
+            */}
+            {detailTab === 6 && job ? (
+              <div className="space-y-4 p-4">
+                <div className="rounded-xl border border-red-300/60 bg-red-50/50 p-4 space-y-2 dark:border-red-500/30 dark:bg-red-500/5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-text-primary">What the customer reported</h3>
+                    {job.on_hold_at ? (
+                      <span className="ml-auto text-xs text-text-tertiary">
+                        On hold since {new Date(job.on_hold_at).toLocaleDateString("en-GB", {
+                          day: "2-digit", month: "short", year: "numeric",
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
+                    {job.on_hold_complaint_description?.trim() ||
+                      job.on_hold_reason?.trim() ||
+                      "No description was recorded."}
+                  </p>
+                </div>
+
+                {/* A resposta do parceiro, ou o silêncio dele, que também é informação. */}
+                <JobOnHoldSubmissionCard jobId={job.id} />
+
+                {job.status === "on_hold" && !job.on_hold_submission_at ? (
+                  <div className="rounded-xl border border-border-light bg-surface p-4 text-sm text-text-secondary">
+                    Waiting on the partner. They answer from the partner portal, where the job sits
+                    under <span className="font-medium text-text-primary">Action required</span>.
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             {isAdmin && detailTab === 5 ? (
