@@ -389,9 +389,8 @@ async function dispatchJobTerminalNotice(args: {
   return { ok: true, posted: true };
 }
 
-export function dispatchJobCompletedZendesk(jobId: string, client?: SupabaseClient) {
-  return dispatchJobTerminalNotice({ jobId, status: "completed", client });
-}
+// `dispatchJobCompletedZendesk` saiu em 10/09/2026: job concluído não manda
+// aviso público. Ver o comentário no `sync-status`.
 
 export function dispatchJobCancelledZendesk(jobId: string, client?: SupabaseClient) {
   return dispatchJobTerminalNotice({ jobId, status: "cancelled", client });
