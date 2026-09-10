@@ -16,7 +16,25 @@ interface Submission {
   submittedAt: string | null;
   partnerName: string | null;
   photos: Photo[];
+  /** Dias em que o parceiro disse que pode voltar. É o que se oferece ao cliente. */
+  availableDates?: string[];
+  /** O que ele escolheu. `null` nas respostas antigas, de antes da escolha existir. */
+  remedy?: "revisit" | "discount" | null;
+  offers?: Array<{ data: string; slot: "morning" | "afternoon" }>;
+  discountGbp?: number | null;
 }
+
+/** "2026-09-15" vira "Mon 15 Sep". Sem hora: o parceiro deu o DIA, não a janela. */
+function formatarDia(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return ymd;
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+}
+
+const ROTULO_DO_SLOT: Record<string, string> = {
+  morning: "Morning · 8am–1pm",
+  afternoon: "Afternoon · 1pm–6pm",
+};
 
 function formatWhen(iso: string | null): string | null {
   if (!iso) return null;
@@ -73,10 +91,71 @@ export function JobOnHoldSubmissionCard({ jobId }: { jobId: string }) {
         {when && <span className="ml-auto text-xs text-text-tertiary">{when}</span>}
       </div>
 
+      {/*
+        A escolha primeiro, porque é ela que decide o que o escritório faz a
+        seguir: marcar a volta, ou abater a fatura. O texto do parceiro explica,
+        mas não decide.
+      */}
+      {submission.remedy === "discount" ? (
+        <div className="rounded-lg border border-border bg-surface p-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">Chose</p>
+          <p className="text-sm font-semibold text-text-primary">
+            Discount instead of a revisit
+            {typeof submission.discountGbp === "number" ? (
+              <span className="ml-2 tabular-nums text-amber-700 dark:text-amber-400">
+                £{submission.discountGbp.toFixed(2)}
+              </span>
+            ) : null}
+          </p>
+        </div>
+      ) : null}
+
+      {submission.remedy === "revisit" ? (
+        <div className="rounded-lg border border-border bg-surface p-3 space-y-2">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
+            Chose to go back · offer one of these
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {(submission.offers ?? []).map((o) => (
+              <span
+                key={`${o.data}-${o.slot}`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-hover px-2.5 py-1 text-xs text-text-primary"
+              >
+                <span className="font-medium tabular-nums">{formatarDia(o.data)}</span>
+                <span className="text-text-tertiary">{ROTULO_DO_SLOT[o.slot] ?? o.slot}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {submission.notes && (
         <div>
-          <p className="text-xs font-medium text-text-secondary mb-1">Solution</p>
+          <p className="text-xs font-medium text-text-secondary mb-1">
+            {submission.remedy ? "What happened" : "Solution"}
+          </p>
           <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">{submission.notes}</p>
+        </div>
+      )}
+
+      {!submission.remedy && (submission.availableDates?.length ?? 0) > 0 && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+            Can return on
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {submission.availableDates!.map((d) => (
+              <span
+                key={d}
+                className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+              >
+                {formatarDia(d)}
+              </span>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-text-tertiary">
+            These are the days to offer the customer. Two of them, within the next 5.
+          </p>
         </div>
       )}
 

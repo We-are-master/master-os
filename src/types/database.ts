@@ -70,7 +70,7 @@ export interface CatalogService {
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type LeadStatus = "new" | "interested";
 export type LeadUrgency = "low" | "medium" | "high" | "urgent";
-export type QuoteStatus = "draft" | "in_survey" | "bidding" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
+export type QuoteStatus = "draft" | "in_survey" | "bidding" | "quote_ready" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
 export type JobStatus =
   | "unassigned"
   | "auto_assigning"

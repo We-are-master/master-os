@@ -40,7 +40,7 @@ import {
   Send, CheckCircle2, RotateCcw, RefreshCw, XCircle,
   Mail,
   Loader2, Trash2, Briefcase, Users, SlidersHorizontal, Save,
-  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain,
+  ClipboardList, MapPin, Gavel, UserRound, Building2, Sparkles, ChevronDown, ChevronUp, Brain, FileCheck,
   Wallet, Percent, PoundSterling, ImagePlus, X, Pencil, UserPlus,
   MailCheck,
   Link as LinkIcon,
@@ -169,7 +169,7 @@ function trackUiPerf(metric: string, ms: number, meta?: Record<string, unknown>)
   }
 }
 
-const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment", "rejected", "converted_to_job"] as const;
+const QUOTE_STATUSES = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment", "rejected", "converted_to_job"] as const;
 
 /**
  * Label for proposal line 1: type of work only.
@@ -473,6 +473,7 @@ const statusLabels: Record<string, string> = {
   draft: "New",
   in_survey: "Bidding",
   bidding: "Bidding",
+  quote_ready: "Quote Ready",
   awaiting_customer: "Approval",
   awaiting_payment: "Payment",
   rejected: "Rejected",
@@ -483,6 +484,7 @@ const statusConfig: Record<string, { variant: "default" | "primary" | "success" 
   draft: { variant: "default", dot: true },
   in_survey: { variant: "info", dot: true },
   bidding: { variant: "warning", dot: true },
+  quote_ready: { variant: "success", dot: true },
   awaiting_customer: { variant: "primary", dot: true },
   awaiting_payment: { variant: "warning", dot: true },
   rejected: { variant: "danger", dot: true },
@@ -519,7 +521,7 @@ function esperandoBid(q: Quote): boolean {
 }
 
 /** Active pipeline: quotes actively moving through the sales funnel (bids out / with customer / awaiting deposit). Includes legacy `in_survey`. */
-const PIPELINE_STATUS_IN = ["bidding", "in_survey", "awaiting_customer", "awaiting_payment"] as const;
+const PIPELINE_STATUS_IN = ["bidding", "in_survey", "quote_ready", "awaiting_customer", "awaiting_payment"] as const;
 
 async function listQuotesForPage(params: ListParams): Promise<ListResult<Quote>> {
   const { status, ...rest } = params;
@@ -559,6 +561,9 @@ const QUOTE_STATUS_SORT_ORDER: Record<string, number> = {
   draft: 0,
   in_survey: 2,
   bidding: 2,
+  // Entre bidding e Approval. Decimal de propósito: renumerar os outros
+  // desalinharia esta lista das colunas do funil, que dependem da mesma ordem.
+  quote_ready: 2.5,
   awaiting_customer: 3,
   awaiting_payment: 4,
   rejected: -1,
@@ -704,6 +709,12 @@ function getStageGuidance(status: string): {
         headline: "Bids or your own figures",
         detail:
           "Based on market conditions, our AI selects the best quote based on price, availability and region. You can still manually choose any other bid at any time.",
+      };
+    case "quote_ready":
+      return {
+        headline: "Priced and waiting on us",
+        detail:
+          "Bids are in and the price is calculated. The draft is on the ticket thread. Read it, adjust if needed, then Send to move this to Approval.",
       };
     case "awaiting_customer":
       return {
@@ -1109,11 +1120,11 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         },
       ];
     }
-    const ids = ["draft", "bidding", "awaiting_customer", "awaiting_payment"];
+    const ids = ["draft", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
       title: id === "draft" ? "New" : (statusLabels[id] ?? id),
-      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : "bg-primary",
+      color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : id === "quote_ready" ? "bg-emerald-500" : "bg-primary",
       items: filteredQuotes.filter((q) => {
         if (id === "bidding") return q.status === "bidding" || q.status === "in_survey";
         if (id === "draft") return isQuoteListNew(q);
@@ -1386,6 +1397,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return [
       { id: "draft", label: "New", count: quoteFunnelCounts.draft },
       { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
+      { id: "quote_ready", label: "Quote Ready", count: statusCounts.quote_ready ?? 0 },
       { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
       { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
       { id: "closed", label: "Closed", count: closed },
@@ -3238,23 +3250,26 @@ function PartnerBidMiniDash({
   );
 }
 
-/** Quote funnel — New → Bids → Approval → Payment (`in_survey` treats as Bidding step). */
+/** Quote funnel — New → Bids → Quote Ready → Approval → Payment (`in_survey` treats as Bidding step). */
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "New", short: "New", icon: ClipboardList },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
+  { id: "quote_ready", label: "Quote Ready", short: "Ready", icon: FileCheck },
   { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
   { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
 
-/** Segment progress — New → Bids → Approval → Payment. */
+/** Segment progress — New → Bids → Quote Ready → Approval → Payment. */
 function QuoteDrawerProgress({ status }: { status: string }) {
   const legacyMap: Record<string, number> = {
     draft: 0,
     in_survey: 1,
     bidding: 1,
-    awaiting_customer: 2,
-    awaiting_payment: 3,
+    quote_ready: 2,
+    awaiting_customer: 3,
+    awaiting_payment: 4,
     rejected: -1,
+    // Fora da régua de propósito: 5 é o caso "Win", tratado antes do desenho.
     converted_to_job: 5,
   };
   const current = legacyMap[status] ?? 0;
@@ -3826,7 +3841,7 @@ function QuoteDetailDrawer({
           notes: bidPayloadTrimmedString(li.notes as unknown),
         }),
       );
-      const padStatuses = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"];
+      const padStatuses = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"];
       if (rows.length < 2 && padStatuses.includes(q.status)) {
         const firstLine = proposalFirstLineLabel(q);
         if (rows.length === 0) {
@@ -4191,7 +4206,7 @@ function QuoteDetailDrawer({
   const showProposalStatStrip =
     !routingDraft &&
     tab === "overview" &&
-    ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status);
+    ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status);
 
   const saveRoutingJobDetails = useCallback(async (): Promise<boolean> => {
     const title = normalizeTypeOfWork(routingTitleDraft).trim();
@@ -4480,7 +4495,7 @@ function QuoteDetailDrawer({
     setLineItems((prev) => {
       if (
         prev.length <= 1 &&
-        ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status)
+        ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status)
       ) {
         toast.info("Keep at least the labour line.");
         return prev;
@@ -4960,7 +4975,7 @@ function QuoteDetailDrawer({
     ) : (tab === "overview" || tab === "bids") && !routingDraft ? (
       <div className="space-y-3.5">
         {quote.request_id &&
-        !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
+        !["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status) ? (
           <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-fx-line bg-fx-paper px-3 py-2.5 dark:bg-surface-secondary/30">
             <input
               type="checkbox"
@@ -5675,7 +5690,7 @@ function QuoteDetailDrawer({
                 </div>
               )}
 
-              {["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
+              {["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(quote.status) && !routingDraft && (
                 <div className="space-y-4 border-b border-fx-line px-7 py-5">
                   {quote.status === "awaiting_customer" && (
                     <div className="flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-2 dark:border-amber-800/50 dark:bg-amber-950/25">
@@ -5942,7 +5957,7 @@ function QuoteDetailDrawer({
                             <span className="text-xs font-semibold text-text-primary tabular-nums">{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</span>
                             {lineItems.length > 1 &&
                               (idx >= 1 ||
-                                !["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"].includes(
+                                !["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"].includes(
                                   quote.status,
                                 )) && (
                               <button
@@ -7142,7 +7157,7 @@ function canAdvanceQuote(quote: Quote, nextStatus: string): { ok: boolean; messa
     }
     return proposalFieldsReadyForQuote(quote);
   }
-  if (quote.status === "bidding" && nextStatus === "awaiting_customer") {
+  if ((quote.status === "bidding" || quote.status === "quote_ready") && nextStatus === "awaiting_customer") {
     if (Number(quote.total_value) <= 0) return { ok: false, message: "Set total value before sending to customer (Step 4: Margin & PDF)." };
     return proposalFieldsReadyForQuote(quote);
   }
@@ -7161,7 +7176,7 @@ function quoteCustomerHasReceivedProposal(quote: Quote, emailedInSession: boolea
 function effectiveDrawerQuoteStatus(quote: Quote, emailedInSession: boolean): Quote["status"] {
   if (
     quoteCustomerHasReceivedProposal(quote, emailedInSession) &&
-    (quote.status === "bidding" || quote.status === "draft" || quote.status === "in_survey")
+    (quote.status === "bidding" || quote.status === "quote_ready" || quote.status === "draft" || quote.status === "in_survey")
   ) {
     return "awaiting_customer";
   }

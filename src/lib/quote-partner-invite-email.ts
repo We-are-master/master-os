@@ -7,7 +7,7 @@ import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
-import { resolveQuoteTypeOfWorkLabel } from "@/lib/quote-type-of-work-label";
+import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
 import { createSideConversation } from "@/lib/zendesk";
 
 export interface SendQuotePartnerInviteEmailsParams {
@@ -77,9 +77,21 @@ export async function sendQuotePartnerInviteEmails(
     requestDescription = typeof sr?.description === "string" ? sr.description : "";
   }
 
-  const invitationScope = quoteScope || requestDescription.trim();
-  const typeOfWork = resolveQuoteTypeOfWorkLabel(quote);
-  const clientName = typeof quote.client_name === "string" ? quote.client_name.trim() : "";
+  /**
+   * O convite passa pelo filtro do parceiro antes de virar e-mail.
+   *
+   * Sem ele saíam o nome da conta no campo Client ("Housekeep", "Yosheeta
+   * (Housekeep Support)") e o carimbo do assunto no Type of Work
+   * ("[Housekeep] Quote Request – Wallpapering Feature Wall"). A QT-2026-1139
+   * chegou assim a seis parceiros em 07/09/2026.
+   */
+  const seguro = quoteParaParceiro(quote, {
+    scope: quoteScope || requestDescription.trim(),
+    nomesProibidos: await nomesDeContas(supabase),
+  });
+  const invitationScope = seguro.scope;
+  const typeOfWork = seguro.typeOfWork;
+  const clientName = seguro.clientName;
 
   const { data: partners } = await supabase
     .from("partners")
@@ -132,7 +144,7 @@ export async function sendQuotePartnerInviteEmails(
       partnerFirstName: partnerEmailGreetingName(p),
       quoteReference: quote.reference,
       typeOfWork,
-      clientName: clientName || "—",
+      clientName,
       propertyAddress: quote.property_address ?? "",
       scope: invitationScope,
       photoUrls,

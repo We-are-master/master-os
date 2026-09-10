@@ -21,7 +21,7 @@ type Kpis = {
 };
 
 const ACTIVE_STATUSES = ["in_progress", "late", "final_check"] as const;
-const QUOTE_PENDING_STATUSES = ["draft", "in_survey", "bidding", "awaiting_customer", "awaiting_payment"] as const;
+const QUOTE_PENDING_STATUSES = ["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"] as const;
 
 const initial: Kpis = {
   liveNow: 0,

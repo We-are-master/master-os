@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
 import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import {
@@ -273,13 +274,29 @@ export async function GET(req: NextRequest) {
     photoUrls = normalizeJsonImageArray((sr as { images?: unknown } | null)?.images);
   }
 
+  /**
+   * Esta rota serve as DUAS pontas: o cliente que responde a proposta e o
+   * parceiro que dá o lance no mesmo `quoteId`. Só a ponta do parceiro é
+   * filtrada. O cliente perderia o próprio nome se a limpeza fosse geral, e é
+   * dele o nome que está ali.
+   *
+   * `partner_report` entra junto: é o parceiro de novo, na página de relatório.
+   */
+  const paraParceiro = tokenKind !== "customer";
+  const seguro = paraParceiro
+    ? quoteParaParceiro(quote, {
+        scope: quote.scope ?? null,
+        nomesProibidos: await nomesDeContas(supabase),
+      })
+    : null;
+
   const responseBody = {
     reference: quote.reference,
-    title: quote.title,
-    clientName: quote.client_name,
+    title: seguro ? seguro.typeOfWork : quote.title,
+    clientName: seguro ? seguro.clientName : quote.client_name,
     propertyAddress: quote.property_address ?? null,
-    scope: quote.scope ?? null,
-    serviceType: quote.service_type ?? null,
+    scope: seguro ? seguro.scope : (quote.scope ?? null),
+    serviceType: seguro ? seguro.typeOfWork : (quote.service_type ?? null),
     totalValue: Number(quote.total_value) || 0,
     depositRequired: Number(quote.deposit_required) || 0,
     startDateOption1: fmtDate(quote.start_date_option_1 ?? undefined),

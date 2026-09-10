@@ -589,6 +589,24 @@ async function ciclo(): Promise<void> {
     console.error(`[harvey] vigia de ofertas morreu: ${err}`);
   }
 
+  // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
+  // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
+  try {
+    const { varrerLancesParaRascunho } = await import("../../src/lib/quote-lances-sweep");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna: postar } = await import("../../src/lib/zendesk-quoter/quoter");
+    const rl = await varrerLancesParaRascunho(createServiceClient(), postar);
+    if (rl.analisados > 0) {
+      console.log(
+        `[harvey] lances (${rl.armado ? "ARMADO" : "ensaio"}): ${rl.analisados} quote(s), ` +
+          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s)`,
+      );
+      for (const d of rl.detalhes) console.log(`[harvey]   ${d}`);
+    }
+  } catch (err) {
+    console.error(`[harvey] vigia de lances morreu: ${err}`);
+  }
+
   // Vigia de cancelamentos em TODO ciclo (dono, 19/08): o aviso chega, cai em
   // auto-solved e ninguém vê — o Harvey vê, cancela no OS com match
   // inequívoco (e-mail ao parceiro pela engine oficial) ou reabre o ticket

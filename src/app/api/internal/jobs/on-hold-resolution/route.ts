@@ -8,6 +8,7 @@ import {
   normalizarDatasDeRetorno,
   hojeEmLondres,
 } from "@/lib/job-on-hold-datas-de-retorno";
+import { lerResolucao, notaDaResolucao, type Resolucao } from "@/lib/job-on-hold-resolucao";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -70,16 +71,39 @@ export async function POST(req: NextRequest) {
   if (!isValidUUID(jobId) || !isValidUUID(partnerId)) {
     return NextResponse.json({ ok: false, error: "jobId and partnerId must be UUIDs." }, { status: 400 });
   }
-  if (!notes) {
+  // A trava de nota vale só para o formato antigo: no novo, quem cobra os
+  // campos é o `lerResolucao`, e ele devolve TODOS de uma vez em vez de o
+  // parceiro descobrir um por vez, no celular, a caminho de outro job.
+  if (!notes && typeof (body as Record<string, unknown>).remedy !== "string") {
     return NextResponse.json({ ok: false, error: "Tell us what happened before sending." }, { status: 400 });
   }
 
-  const { datas, recusadas } = normalizarDatasDeRetorno(body.availableDates, hojeEmLondres());
+  /**
+   * Formato novo: ESCOLHA (voltar ou desconto) mais duas janelas.
+   *
+   * O antigo (texto livre + datas soltas) continua aceito porque o portal
+   * deploya separado do OS: se este subir primeiro, o parceiro que já estava
+   * com o formulário aberto ainda consegue mandar. Sem `remedy` no corpo, é o
+   * caminho velho.
+   */
+  const hoje = hojeEmLondres();
+  const temEscolha = typeof (body as Record<string, unknown>).remedy === "string";
+  let resolucao: Resolucao | null = null;
+  if (temEscolha) {
+    const v = lerResolucao(body, hoje);
+    if (!v.ok) {
+      return NextResponse.json({ ok: false, error: v.erros.join(" "), errors: v.erros }, { status: 400 });
+    }
+    resolucao = v.resolucao;
+  }
+  const { datas, recusadas } = resolucao
+    ? { datas: resolucao.ofertas.map((o) => o.data), recusadas: [] as Array<{ valor: string; motivo: string }> }
+    : normalizarDatasDeRetorno(body.availableDates, hoje);
 
   const supabase = createServiceClient();
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
-    .select("id, reference, status, partner_id, external_source, external_ref, on_hold_submission")
+    .select("id, reference, status, partner_id, external_source, external_ref, on_hold_submission, property_address")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -117,7 +141,11 @@ export async function POST(req: NextRequest) {
   const submission = {
     notes,
     photos: priorPhotos,
+    // `available_dates` continua existindo: é o que o card do OS já lê hoje.
     available_dates: datas,
+    remedy: resolucao?.remedio ?? null,
+    offers: resolucao?.ofertas ?? [],
+    discount_gbp: resolucao?.descontoGbp ?? null,
     partner_id: partnerId,
     submitted_at: now,
   };
@@ -130,15 +158,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Could not save. Please try again." }, { status: 500 });
   }
 
+  const { data: parceiroRow } = await supabase
+    .from("partners").select("company_name, contact_name").eq("id", partnerId).maybeSingle();
+  const nomeDoParceiro =
+    (parceiroRow as { company_name?: string | null; contact_name?: string | null } | null)?.company_name?.trim() ||
+    (parceiroRow as { contact_name?: string | null } | null)?.contact_name?.trim() ||
+    null;
+
   const ticketId = job.external_source === "zendesk" ? job.external_ref : null;
   if (ticketId && isZendeskConfigured()) {
-    const linhaDatas = datas.length
-      ? `<p><strong>Can return on:</strong> ${datas.map(escapeHtml).join(" · ")}</p>`
-      : `<p><em>No return dates given.</em></p>`;
-    const html =
-      `<p><strong>🔧 Partner submitted an on-hold resolution</strong> (job ${escapeHtml(job.reference)}, from the partner portal)</p>` +
-      `<p style="white-space:pre-wrap;">${escapeHtml(notes)}</p>` +
-      linhaDatas;
+    /**
+     * Com a escolha, a nota já sai com o texto pronto para o cliente. É o mesmo
+     * desenho do preço: a máquina redige, uma pessoa lê e manda. Reclamação é a
+     * conversa mais cara que a gente tem para o Harvey mandar sozinho.
+     */
+    const html = resolucao
+      ? `<pre style="white-space:pre-wrap;font-family:inherit;margin:0;">${escapeHtml(
+          notaDaResolucao(resolucao, {
+            referencia: job.reference,
+            endereco: (jobRow as { property_address?: string | null }).property_address ?? null,
+            parceiro: nomeDoParceiro,
+          }),
+        )}</pre>`
+      : `<p><strong>🔧 Partner submitted an on-hold resolution</strong> (job ${escapeHtml(job.reference)}, from the partner portal)</p>` +
+        `<p style="white-space:pre-wrap;">${escapeHtml(notes)}</p>` +
+        (datas.length
+          ? `<p><strong>Can return on:</strong> ${datas.map(escapeHtml).join(" · ")}</p>`
+          : `<p><em>No return dates given.</em></p>`);
     try {
       await updateTicket({ ticketId, htmlBody: html, publicComment: false });
     } catch (err) {

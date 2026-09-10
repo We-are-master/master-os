@@ -70,6 +70,24 @@ export function marginPercent(sell: number, pay: number): number | null {
   return Math.round(((s - p) / s) * 10000) / 100;
 }
 
+/**
+ * O caminho de volta: quanto cobrar do cliente para uma margem alvo.
+ *
+ * Margem aqui é sobre o PREÇO DE VENDA, não sobre o custo, que é o mesmo que a
+ * `marginPercent` logo acima mede. £380 a 40% dá £633,33 (380 / 0,60), não
+ * £532 (380 × 1,40). A QT-2026-1139 e mais nove quotes no banco já estão
+ * gravadas nessa conta; errar o lado inverte £100 numa quote pequena.
+ *
+ * Devolve `null` quando não dá para responder: custo inválido, ou margem fora
+ * de [0, 100). Margem 100 seria divisão por zero, isto é, preço infinito.
+ */
+export function sellFromMargin(pay: number, marginPct: number): number | null {
+  const p = finiteNonNeg(pay);
+  if (!(p > 0)) return null;
+  if (!Number.isFinite(marginPct) || marginPct < 0 || marginPct >= 100) return null;
+  return Math.round((p / (1 - marginPct / 100)) * 100) / 100;
+}
+
 export function buildSellDelta(floor: number, rate: number): PricingDelta {
   const f = finiteNonNeg(floor);
   const r = finiteNonNeg(rate);

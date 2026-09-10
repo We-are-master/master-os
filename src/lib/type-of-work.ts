@@ -132,6 +132,7 @@ const TYPE_OF_WORK_ALIASES: Record<string, string> = {
   "gas safety check (cp12)": "Gas Safety Check",
   "(ams) asbestos management survey": "Asbestos Management Survey",
   "asbestos management survey": "Asbestos Management Survey",
+  "asbestos survey": "Asbestos Management Survey",
   "(lra) legionella risk assessment": "Legionella Risk Assessment",
   "legionella risk assessment": "Legionella Risk Assessment",
   "(fdi) fire door inspection": "Fire Door Inspection",
@@ -229,4 +230,93 @@ export function catalogServiceIdForTypeOfWorkLabel(
 /** @deprecated Prefer {@link typeOfWorkLabelsFromCatalog} with rows from `listCatalogServicesForPicker`. */
 export function withTypeOfWorkFallback(current?: string | null): string[] {
   return typeOfWorkLabelsFromCatalog([], current);
+}
+
+/**
+ * Ofícios: quem faz o trabalho. Perdem para o serviço quando os dois aparecem.
+ *
+ * O JOB-9636 chegou com "Electrician | EPC assessment": tem os dois escritos, e
+ * o que foi comprado é o EPC. Ninguém contrata "um eletricista", contrata um
+ * certificado e um eletricista vai lá. Por isso a disputa não é por qual
+ * palavra é mais longa — "electrician" tem 11 letras e "epc" tem 3.
+ *
+ * `Cleaning` entra aqui de propósito: está desativado no catálogo desde que o
+ * dono separou os tipos, então nunca pode ganhar de "End of Tenancy Clean".
+ */
+const OFICIOS = new Set<string>([
+  "Painter", "Plumber", "Electrician", "Builder", "Carpenter", "Gardener",
+  GENERAL_MAINTENANCE_LABEL, "Cleaning",
+]);
+
+/**
+ * O ofício escrito de outro jeito: "Ceiling painting" não contém "painter".
+ * Só entra em jogo quando nenhum serviço específico apareceu.
+ */
+const RAIZES_DE_OFICIO: Array<[RegExp, string]> = [
+  [/\bpaint(er|ing|ed|work)?\b/i, "Painter"],
+  [/\bplumb(er|ing)?\b/i, "Plumber"],
+  [/\belectrician\b/i, "Electrician"],
+  [/\bcarpent(er|ry)\b/i, "Carpenter"],
+  [/\bgarden(er|ing)?\b/i, "Gardener"],
+  [/\bbuilder\b/i, "Builder"],
+  [/\bhandy ?man\b/i, GENERAL_MAINTENANCE_LABEL],
+];
+
+function contemAgulha(texto: string, agulha: string): boolean {
+  const esc = agulha.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, "i").test(texto);
+}
+
+/**
+ * O type of work escondido dentro de um texto solto.
+ *
+ * Diferente do `normalizeTypeOfWork`, que consulta a tabela por chave exata:
+ * aqui o nome do serviço vem no meio de uma frase que o modelo resumiu, ou no
+ * assunto do e-mail da plataforma. "Job: End of Tenancy Cleaning." não é chave
+ * de nada, mas carrega a resposta.
+ *
+ * Duas camadas, nesta ordem, e a ordem é o ponto:
+ *
+ *   1. SERVIÇO — certificado, limpeza nomeada, qualquer SKU com nome próprio.
+ *      Entre dois, ganha o mais específico (agulha mais longa): "end of
+ *      tenancy cleaning" ganha de "cleaning".
+ *   2. OFÍCIO — só quando nenhum serviço apareceu.
+ *
+ * Devolve `null` quando não dá para cravar. Quem chama decide o que fazer com
+ * isso; inventar aqui seria a mesma coisa que a escada antiga fazia ao mandar
+ * todo EPC para General Maintenance.
+ */
+export function acharTypeOfWorkNoTexto(texto?: string | null): string | null {
+  /**
+   * Hífen vira espaço antes de procurar.
+   *
+   * A Housekeep escreve "End-of-tenancy clean" e a agulha é "end of tenancy
+   * clean": sem esta linha os dois nunca se encontram, e o JOB-9537, o 9569 e o
+   * 9498 caíam em General Maintenance com a resposta escrita no scope.
+   */
+  const t = (texto ?? "")
+    .toLowerCase()
+    .replace(/[-\u2010-\u2015_/\\|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return null;
+
+  const agulhas = new Map<string, string>();
+  for (const [apelido, canonico] of Object.entries(TYPE_OF_WORK_ALIASES)) {
+    agulhas.set(apelido, canonico);
+    agulhas.set(canonico.toLowerCase(), canonico);
+  }
+  for (const nome of CANONICAL_TYPE_OF_WORK_NAMES) agulhas.set(nome.toLowerCase(), nome);
+
+  let melhor: { canonico: string; tamanho: number } | null = null;
+  for (const [agulha, canonico] of agulhas) {
+    if (OFICIOS.has(canonico)) continue;
+    if (agulha.length < 3) continue;
+    if (!contemAgulha(t, agulha)) continue;
+    if (!melhor || agulha.length > melhor.tamanho) melhor = { canonico, tamanho: agulha.length };
+  }
+  if (melhor) return melhor.canonico;
+
+  for (const [raiz, nome] of RAIZES_DE_OFICIO) if (raiz.test(t)) return nome;
+  return null;
 }
