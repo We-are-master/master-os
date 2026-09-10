@@ -31,7 +31,11 @@ RUN npm ci --omit=dev
 
 COPY . .
 
-# O mesmo ritmo do launchd que ele tinha no Mac: um ciclo, cinco minutos, outro.
+# A cadência é variável e não número aqui dentro, seguindo o padrão do
+# checkatrade-bot: mudar o ritmo não deve exigir build. Padrão de 300s, que é o
+# mesmo do launchd que ele tinha no Mac.
+#
 # `|| true` porque um ciclo que morre não pode levar o worker com ele.
+ENV POLL_INTERVAL=300
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "while true; do npm run harvey || true; sleep 300; done"]
+CMD ["sh", "-c", "while true; do npm run harvey || true; sleep \"${POLL_INTERVAL:-300}\"; done"]
