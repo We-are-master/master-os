@@ -18,6 +18,7 @@
  * do Reino Unido.
  */
 import { sellFromMargin } from "@/lib/catalog-pricing-floor-ceiling";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 export type EntradaDoEmail = {
   /** Como o trabalho vai ser executado, já em inglês do Reino Unido. */
@@ -97,7 +98,7 @@ export async function scopeEmInglesUk(
   if (!apiKey) return { scope: cru, traduzido: false, motivo: "sem OPENAI_API_KEY" };
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

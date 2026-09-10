@@ -42,18 +42,31 @@ const JANELA_DIAS = 3;
 const TAG = "ai_quote_draft";
 const TAG_JOB = "ai_job_created";
 const MAX_JOBS_POR_CICLO = 2;
-const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
-const CANCEL_SEEN_PATH = join(process.cwd(), "scripts/harvey/.cancel-seen.json");
+/**
+ * Onde o Harvey guarda o que já viu.
+ *
+ * Era sempre dentro do repo, e isso o prende à máquina: em container, cada
+ * deploy nasce com o diretório limpo e ele reposta nota em ticket que já
+ * tratou — a mesma nota duplicada que o #50216 levou por outro motivo em
+ * 08/09/2026, agora multiplicada por todo ticket da janela.
+ *
+ * `HARVEY_STATE_DIR` aponta para um disco que sobrevive ao deploy. Sem a
+ * variável, nada muda: continua no repo, que é onde ele sempre esteve.
+ */
+const STATE_DIR = process.env.HARVEY_STATE_DIR?.trim() || join(process.cwd(), "scripts/harvey");
+
+const SEEN_PATH = join(STATE_DIR, ".seen.json");
+const CANCEL_SEEN_PATH = join(STATE_DIR, ".cancel-seen.json");
 /**
  * Quem já foi triado. Arquivo SEPARADO do `.seen.json` de propósito: `.seen`
  * quer dizer "acabou, não olhe mais", e ticket triado continua candidato — ele
  * pode virar pedido de quote num comentário de amanhã. Este arquivo só evita
  * repetir a NOTA de triagem no mesmo ticket a cada 5 minutos.
  */
-const TRIAGEM_SEEN_PATH = join(process.cwd(), "scripts/harvey/.triagem-seen.json");
+const TRIAGEM_SEEN_PATH = join(STATE_DIR, ".triagem-seen.json");
 /** Teto de notas de triagem por ciclo: sem ele, a primeira rodada despeja o backlog inteiro na fila. */
 const MAX_NOTAS_TRIAGEM_POR_CICLO = 5;
-const RECON_PATH = join(process.cwd(), "scripts/harvey/.reconciliado.json");
+const RECON_PATH = join(STATE_DIR, ".reconciliado.json");
 /** A view "Customer Support::🛠️ Jobs" — a fila oficial de jobs no Zendesk. */
 const VIEW_JOBS = "5687884937759";
 
@@ -105,7 +118,7 @@ async function buscarCandidatos(): Promise<TicketDaBusca[]> {
  * fatura, confirmação de agendamento ou reclamação.
  */
 async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<{ quote: boolean; booking: boolean }> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await (await import("../../src/lib/openai-com-retry")).chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

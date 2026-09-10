@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { isOpenAIConfigured } from "@/lib/openai-client";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  const res = await fetch(OPENAI_URL, {
+  const res = await chamarOpenAI(OPENAI_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

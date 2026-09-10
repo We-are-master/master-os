@@ -26,6 +26,7 @@ import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
 import { postcodesNoTexto } from "./achar-job";
 import { soOqueENovo } from "./sem-citacao";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const MAX_IMAGENS = 6;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
@@ -232,7 +233,7 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
     })),
   ];
 
-  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -590,7 +591,7 @@ export type ExtracaoBooking = {
 };
 
 export async function extrairBooking(ticket: TicketLido, apiKey: string): Promise<ExtracaoBooking> {
-  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -687,7 +688,7 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
     const texto = (await page.evaluate("document.body.innerText")) as string;
     if (!texto || texto.trim().length < 40) return {};
 
-    const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+    const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

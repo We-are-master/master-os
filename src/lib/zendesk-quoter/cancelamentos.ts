@@ -32,6 +32,7 @@ import { statusChangeOfficeTimerPatch } from "@/lib/office-job-timer";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { postarNotaInterna } from "./quoter";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const TAG_VIGIA = "ai_cancel_watch";
 const MAX_POR_CICLO = 3;
@@ -92,7 +93,7 @@ type Aviso = {
 };
 
 async function classificarAviso(subject: string, texto: string, apiKey: string): Promise<Aviso> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

@@ -1,3 +1,4 @@
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -17,7 +18,7 @@ export async function openaiChat(messages: ChatMessage[], options?: { maxTokens?
 
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
-  const res = await fetch(OPENAI_URL, {
+  const res = await chamarOpenAI(OPENAI_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
