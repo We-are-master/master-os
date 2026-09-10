@@ -7,7 +7,7 @@
  *
  *   - Job created from accepted quote → public reply on main ticket +
  *     partner side conversation ("Job confirmed").
- *   - Job completed                   → short public reply ("Job done").
+ *   - Job awaiting payment (final check done) → short public reply ("Job done").
  *   - Job cancelled                   → short public reply ("Job cancelled").
  *   - Quote rejected                  → short public reply ("Quote closed").
  *
@@ -320,12 +320,12 @@ export async function dispatchJobCreatedZendesk(args: {
 
 async function dispatchJobTerminalNotice(args: {
   jobId: string;
-  status: "completed" | "cancelled";
+  status: "awaiting_payment" | "cancelled";
   client?: SupabaseClient;
 }): Promise<{ ok: boolean; posted?: boolean; error?: string }> {
   const supabase = args.client ?? createServiceClient();
   const sentColumn =
-    args.status === "completed" ? "completion_notice_sent_at" : "cancellation_notice_sent_at";
+    args.status === "awaiting_payment" ? "completion_notice_sent_at" : "cancellation_notice_sent_at";
 
   const { data: job, error } = await supabase
     .from("jobs")
@@ -361,7 +361,7 @@ async function dispatchJobTerminalNotice(args: {
   const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
 
   const html =
-    args.status === "completed"
+    args.status === "awaiting_payment"
       ? buildJobCompletedHtml({
           customerName: clientName,
           reference: String(job.reference ?? ""),
@@ -390,7 +390,7 @@ async function dispatchJobTerminalNotice(args: {
 }
 
 export function dispatchJobCompletedZendesk(jobId: string, client?: SupabaseClient) {
-  return dispatchJobTerminalNotice({ jobId, status: "completed", client });
+  return dispatchJobTerminalNotice({ jobId, status: "awaiting_payment", client });
 }
 
 export function dispatchJobCancelledZendesk(jobId: string, client?: SupabaseClient) {
