@@ -111,7 +111,20 @@ export async function POST(req: NextRequest) {
       // This covers both new inserts and out-of-band re-sync requests.
       lifecycle.created = await dispatchJobCreatedZendesk({ jobId: id, client: supabase });
 
-      if (status === "completed") {
+      /**
+       * O aviso à conta sai quando o job entra em `awaiting_payment`, e não em
+       * `completed` (dono, 10/09/2026).
+       *
+       * `awaiting_payment` é o fim do final check: report aprovado, trabalho
+       * entregue. `completed` é só o pagamento lançado, e disparar ali mandava um
+       * "All done — thanks!" por pagamento marcado: 42 em 7 dias, 16 num dia, 5 no
+       * mesmo minuto de um lote.
+       *
+       * "Nada do passado": os 38 jobs que já estavam em `awaiting_payment` em
+       * 10/09/2026 foram carimbados em `completion_notice_sent_at` antes deste
+       * deploy, então só avisa quem cruzar daqui para frente. Uma vez só por job.
+       */
+      if (status === "awaiting_payment") {
         lifecycle.completed = await dispatchJobCompletedZendesk(id, supabase);
       } else if (status === "cancelled") {
         lifecycle.cancelled = await dispatchJobCancelledZendesk(id, supabase);
