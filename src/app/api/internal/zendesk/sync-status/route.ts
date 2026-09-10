@@ -6,6 +6,7 @@ import { syncJobZendeskOnHoldFields } from "@/lib/zendesk-job-on-hold-sync";
 import { syncJobZendeskFormFields, syncQuoteZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import {
   dispatchJobCancelledZendesk,
+  dispatchJobCompletedZendesk,
   dispatchJobCreatedZendesk,
   dispatchQuoteRejectedZendesk,
 } from "@/lib/zendesk-lifecycle";
@@ -110,18 +111,9 @@ export async function POST(req: NextRequest) {
       // This covers both new inserts and out-of-band re-sync requests.
       lifecycle.created = await dispatchJobCreatedZendesk({ jobId: id, client: supabase });
 
-      /**
-       * Job concluído NÃO manda aviso público (dono, 10/09/2026).
-       *
-       * O "All done — thanks!" saía quando o job virava `completed`, e marcar
-       * pago leva o job a `completed`: cada pagamento lançado disparava um
-       * e-mail à conta. Foram 42 em 7 dias, 16 num dia só, 5 no mesmo minuto
-       * de um lote de pagamentos. E o texto prometia "report e fatura final em
-       * breve", que não saem por este caminho.
-       *
-       * O aviso de cancelamento continua: esse a conta precisa receber.
-       */
-      if (status === "cancelled") {
+      if (status === "completed") {
+        lifecycle.completed = await dispatchJobCompletedZendesk(id, supabase);
+      } else if (status === "cancelled") {
         lifecycle.cancelled = await dispatchJobCancelledZendesk(id, supabase);
       }
     } else if (entity === "quote") {
