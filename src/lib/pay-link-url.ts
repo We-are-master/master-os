@@ -16,3 +16,17 @@ export function invoicePayLinkUrl(reference: string, pct?: number): string {
   const suffix = Number.isFinite(p) && p >= 1 && p <= 99 ? `?pct=${p}` : "";
   return `${PAY_LINK_BASE}/pay/${ref}${suffix}`;
 }
+
+/**
+ * Link de um valor FIXO na fatura: `/pay/RCP-XXXX?amount=50.00`.
+ *
+ * Para cobrar um extra recém-lançado. Diferente do `pct`, que se recalcula a
+ * cada clique, aqui o número é o que está escrito — limitado ao saldo aberto no
+ * momento do clique, para nunca cobrar mais do que se deve.
+ */
+export function invoicePayLinkForAmount(reference: string, amountGbp: number): string | null {
+  const ref = reference.trim();
+  const valor = Math.round(Number(amountGbp) * 100) / 100;
+  if (!ref || !Number.isFinite(valor) || valor <= 0) return null;
+  return `${PAY_LINK_BASE}/pay/${encodeURIComponent(ref)}?amount=${valor.toFixed(2)}`;
+}

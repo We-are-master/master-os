@@ -241,6 +241,7 @@ import { JobReportV2Card, JobReportV2DownloadButton, JobReportPhotosZipButton } 
 import { ReportHealthCard } from "@/components/jobs/report-health-card";
 import { JobPartnerMediaCard } from "@/components/jobs/job-partner-media-card";
 import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submission-card";
+import { invoicePayLinkForAmount } from "@/lib/pay-link-url";
 import { jobOnHoldPorReclamacao } from "@/lib/job-on-hold-reasons";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { FillReportModal } from "@/components/jobs/fill-report-modal";
@@ -5251,7 +5252,45 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   : payload.partnerDeduction || isJobExtraDiscountExtraType(payload.extraType)
                     ? "Partner deduction saved"
                     : "Extra payout added";
-        toast.success(toastMsg);
+        /**
+         * Extra somado, link de cobrança na mão.
+         *
+         * O link sai AQUI e não no formulário de propósito: `/pay/REF?amount=`
+         * limita a cobrança ao saldo aberto no clique, e antes de o extra estar
+         * salvo esse saldo ainda não o inclui. Um link copiado de um formulário
+         * abandonado cobraria o valor antigo do cliente.
+         *
+         * Só para cobrança do cliente: desconto não se cobra, e extra de
+         * parceiro é dinheiro que sai, não que entra.
+         */
+        const extraCobravel =
+          payload.flow === "client_extra" &&
+          !isJobExtraDiscountExtraType(payload.extraType) &&
+          Number(payload.amount) > 0;
+        const faturaDoExtra = extraCobravel
+          ? ((job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ?? jobInvoices[0])
+          : undefined;
+        const linkDoExtra = faturaDoExtra?.reference
+          ? invoicePayLinkForAmount(faturaDoExtra.reference, Number(payload.amount))
+          : null;
+
+        if (linkDoExtra) {
+          toast.success(toastMsg, {
+            duration: 12000,
+            description: `Pay link for £${Number(payload.amount).toFixed(2)}`,
+            action: {
+              label: "Copy pay link",
+              onClick: () => {
+                void navigator.clipboard
+                  .writeText(linkDoExtra)
+                  .then(() => toast.success("Pay link copied"))
+                  .catch(() => toast.error("Could not copy — the link is in the invoice screen"));
+              },
+            },
+          });
+        } else {
+          toast.success(toastMsg);
+        }
         setMoneyDrawerOpen(false);
         setMoneyDrawerFlow(null);
         setMoneyDrawerInitialExtraType(undefined);
