@@ -11,6 +11,7 @@
 import type { Job } from "@/types/database";
 import { createServiceClient } from "@/lib/supabase/service";
 import { putJobOnHoldFromZendesk } from "@/lib/job-on-hold-from-zendesk";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 function baseUrl(): string {
   return `https://${process.env.ZENDESK_SUBDOMAIN}.zendesk.com/api/v2`;
@@ -42,7 +43,7 @@ type Reclamacao = {
 };
 
 async function classificarReclamacao(subject: string, texto: string, apiKey: string): Promise<Reclamacao> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

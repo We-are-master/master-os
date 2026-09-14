@@ -3,6 +3,7 @@ import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { depositAmountFromPercent } from "@/lib/quote-deposit";
+import { valorFixoDoLink } from "@/lib/pay-link-amount";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -63,12 +64,39 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       return NextResponse.redirect(`${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`, 303);
     }
 
-    // ?pct=NN charges NN% of the open balance; absent or out of range → full balance.
-    const pctRaw = Number(req.nextUrl.searchParams.get("pct"));
-    const pct = Number.isFinite(pctRaw) && pctRaw >= 1 && pctRaw <= 99 ? Math.round(pctRaw) : 100;
-    const amount = pct === 100 ? balance : depositAmountFromPercent(balance, pct);
-    if (amount < MIN_CHARGE_GBP) {
-      return htmlMessage("Amount too small", "The amount due on this link is below the card payment minimum. Please contact Fixfy.", 400);
+    /**
+     * `?amount=NN.NN` cobra um valor FIXO, e ganha do `?pct` quando os dois vêm.
+     *
+     * É o caso do extra: somei £50 ao job, quero o link de £50. Porcentagem não
+     * serve porque a fatia se recalcula a cada clique — o saldo muda com
+     * pagamento e com outro extra, e a mesma URL cobraria outro número amanhã.
+     *
+     * O teto continua sendo o saldo aberto: link nunca cobra mais do que se
+     * deve, mesmo que o valor escrito seja maior.
+     */
+    const amountParam = req.nextUrl.searchParams.get("amount");
+    let amount: number;
+    let pct: number;
+    if (amountParam != null && amountParam.trim() !== "") {
+      const fixo = valorFixoDoLink(amountParam, balance);
+      if (!fixo.ok) {
+        return fixo.motivo === "abaixo_do_minimo"
+          ? htmlMessage("Amount too small", "The amount on this link is below the card payment minimum. Please contact Fixfy.", 400)
+          : htmlMessage("Link not valid", "This payment link is not valid any more. Please contact Fixfy.", 400);
+      }
+      amount = fixo.valor;
+      // `pct` segue nos metadados porque o webhook usa 100 para decidir se a
+      // fatura foi paga por inteiro. Valor fixo só fecha a fatura se cobrir o
+      // saldo todo.
+      pct = fixo.valor >= balance - EPS ? 100 : Math.max(1, Math.min(99, Math.round((fixo.valor / balance) * 100)));
+    } else {
+      // ?pct=NN charges NN% of the open balance; absent or out of range → full balance.
+      const pctRaw = Number(req.nextUrl.searchParams.get("pct"));
+      pct = Number.isFinite(pctRaw) && pctRaw >= 1 && pctRaw <= 99 ? Math.round(pctRaw) : 100;
+      amount = pct === 100 ? balance : depositAmountFromPercent(balance, pct);
+      if (amount < MIN_CHARGE_GBP) {
+        return htmlMessage("Amount too small", "The amount due on this link is below the card payment minimum. Please contact Fixfy.", 400);
+      }
     }
 
     let jobId = "";

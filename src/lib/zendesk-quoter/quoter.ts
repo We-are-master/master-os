@@ -26,6 +26,7 @@ import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
 import { postcodesNoTexto } from "./achar-job";
 import { soOqueENovo } from "./sem-citacao";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const MAX_IMAGENS = 6;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
@@ -232,7 +233,7 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
     })),
   ];
 
-  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -590,7 +591,7 @@ export type ExtracaoBooking = {
 };
 
 export async function extrairBooking(ticket: TicketLido, apiKey: string): Promise<ExtracaoBooking> {
-  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -665,29 +666,102 @@ export function podeSerCard(url: string): boolean {
   }
 }
 
+/** "Não consegui LER o card", que é outra coisa que "o card não tem o dado". */
+export class CardIlegivel extends Error {
+  constructor(mensagem: string) {
+    super(mensagem);
+    this.name = "CardIlegivel";
+  }
+}
+
+/**
+ * Quantas passadas do Harvey um ticket ganha com o card ilegível antes de ele
+ * desistir e pedir o dado na nota. Três passadas são 15 minutos: tempo de
+ * sobra para um soluço de rede, ou do tracker deles, passar.
+ */
+export const PASSADAS_ATE_DESISTIR_DO_CARD = 3;
+
+/** Tentativas de abrir o card dentro de UMA passada antes de declará-lo ilegível. */
+const TENTATIVAS_NO_CARD = 3;
+
+/**
+ * Para onde o link do e-mail vai, sem navegador.
+ *
+ * O link rastreado da newsletter só se sabe seguindo, e seguir com um fetch
+ * custa um redirect, não um Chromium: a assinatura do e-mail (Facebook,
+ * Instagram, LinkedIn, X, YouTube) vem pelo mesmo tracker e abria navegador
+ * à toa a cada passada.
+ *
+ *   o card `/job-reports/…`        devolve o endereço direto, já resolvido
+ *   qualquer outra página (2xx)    devolve null: não é card, e fim
+ *   tracker fora do ar, ou 5xx     lança CardIlegivel: não dá para saber, e
+ *                                  "não sei" nunca pode virar "não é card"
+ */
+export async function resolverLinkDoCard(url: string): Promise<string | null> {
+  if (/\/job-reports\//i.test(new URL(url).pathname)) return url;
+  let res: Response;
+  try {
+    res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
+  } catch (err) {
+    throw new CardIlegivel(`o link rastreado não respondeu: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!res.ok) throw new CardIlegivel(`o link rastreado devolveu HTTP ${res.status}`);
+  let destino: URL;
+  try {
+    destino = new URL(res.url);
+  } catch {
+    return null;
+  }
+  return /\/job-reports\//i.test(destino.pathname) ? res.url : null;
+}
+
 export async function pescarCardHousekeep(url: string, apiKey: string): Promise<Partial<ExtracaoBooking>> {
+  const urlCard = await resolverLinkDoCard(url);
+  if (!urlCard) return {};
+
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-
     /**
-     * Onde o link foi parar decide se é card, e não o que a página escreve.
-     *
-     * O link rastreado da newsletter pode levar a qualquer lugar, e uma página
-     * de marketing tem texto de sobra para o modelo "extrair" um job inteiro de
-     * nada. `/job-reports/` no endereço final é a única prova barata, e sai
-     * antes da chamada ao modelo: página que não é card não custa nem um token.
+     * O card é app renderizado no cliente, e às vezes não vem: em 11/09/2026 o
+     * #50393 (Eric Allen, E1 3AQ) passou por aqui com o card perfeito e saiu
+     * como "sem nome, sem endereço", porque UMA abertura estourou o tempo e o
+     * erro morria num catch mudo. Agora ele tenta de novo, e quando não dá,
+     * diz que não deu: CardIlegivel, que quem chama distingue de "o card não
+     * tem o dado".
      */
-    const urlFinal = page.url();
-    if (!/\/job-reports\//i.test(urlFinal)) return {};
+    let texto = "";
+    let urlFinal = "";
+    let ultimoErro = "";
+    for (let tentativa = 1; tentativa <= TENTATIVAS_NO_CARD; tentativa++) {
+      const page = await browser.newPage();
+      try {
+        await page.goto(urlCard, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+        urlFinal = page.url();
+        const lido = ((await page.evaluate("document.body.innerText")) as string | null) ?? "";
+        // Onde a página foi parar ainda decide se é card: um redirect para a
+        // home, ou uma página de erro, tem texto de sobra para o modelo
+        // "extrair" um job inteiro de nada.
+        if (/\/job-reports\//i.test(urlFinal) && lido.trim().length >= 40) {
+          texto = lido;
+          break;
+        }
+        ultimoErro = /\/job-reports\//i.test(urlFinal)
+          ? `a página veio vazia (${lido.trim().length} caracteres)`
+          : `a página caiu em ${urlFinal}`;
+      } catch (err) {
+        ultimoErro = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "";
+      } finally {
+        await page.close().catch(() => {});
+      }
+      if (tentativa < TENTATIVAS_NO_CARD) await new Promise((r) => setTimeout(r, 2_000 * tentativa));
+    }
+    if (!texto) {
+      throw new CardIlegivel(`card ${urlCard.split("?")[0]} ilegível em ${TENTATIVAS_NO_CARD} tentativas: ${ultimoErro}`);
+    }
 
-    const texto = (await page.evaluate("document.body.innerText")) as string;
-    if (!texto || texto.trim().length < 40) return {};
-
-    const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+    const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -704,7 +778,7 @@ export async function pescarCardHousekeep(url: string, apiKey: string): Promise<
         ],
       }),
     });
-    if (!resposta.ok) return {};
+    if (!resposta.ok) throw new CardIlegivel(`a OpenAI devolveu HTTP ${resposta.status} lendo o card`);
     const corpo = (await resposta.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const j = JSON.parse(corpo.choices?.[0]?.message?.content ?? "{}") as Record<string, unknown>;
 
@@ -994,7 +1068,11 @@ export async function confirmarBookingDeParceiro(
   return await carimbarConfirmacao(ticketId, headers, parceiro, candidatos[0]!, postar, supabase);
 }
 
-export async function subirJobBooked(ticketId: number, postar: boolean): Promise<ResultadoBooking> {
+export async function subirJobBooked(
+  ticketId: number,
+  postar: boolean,
+  opcoes?: { desistirDoCard?: boolean },
+): Promise<ResultadoBooking> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -1022,8 +1100,22 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
   // "Link" traz tudo. Tem link? Pesca SEMPRE (dono, 18/08: o job nasce com
   // report link, janela de chegada, length e o Job details inteiro no scope)
   // e completa só os nulos.
+  /**
+   * Não ler o card NÃO é o mesmo que o card não ter o dado.
+   *
+   * Até 11/09/2026 o catch aqui era mudo ("card fora do ar não derruba o
+   * fluxo: os portões decidem"), e os portões decidiam errado: um timeout de
+   * 30s no #50393 virou nota de "missing client name / property address" num
+   * card que tinha Eric Allen, endereço e telefone inteiros, e a tag mais o
+   * .seen pararam o ticket para sempre. Agora a falha de leitura sobe como
+   * CardIlegivel e o poll dá mais passadas antes de desistir; só com
+   * `desistirDoCard` (o teto de passadas bateu) ela vira a nota de sempre,
+   * dizendo que foi o card que não abriu.
+   */
+  let cardIlegivel: string | null = null;
   if (ticket.linksHousekeep.length > 0) {
-    for (const link of ticket.linksHousekeep.slice(0, 2)) {
+    // Até 6 links: os que não são card custam um fetch, não um navegador.
+    for (const link of ticket.linksHousekeep.slice(0, 6)) {
       try {
         const card = await pescarCardHousekeep(link, apiKey);
         ex.clientName ||= card.clientName ?? null;
@@ -1038,11 +1130,15 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
         ex.detalhesJob ||= card.detalhesJob ?? null;
         ex.cardUrl ||= card.cardUrl ?? null;
         if (ex.clientName && ex.contato && ex.propertyAddress && ex.date && ex.detalhesJob) break;
-      } catch {
-        /* card fora do ar não derruba o fluxo: os portões decidem */
+      } catch (err) {
+        cardIlegivel = err instanceof Error ? err.message : String(err);
+        console.error(`[harvey] #${ticketId}: não li o card (${link.slice(0, 60)}…): ${cardIlegivel}`);
       }
     }
     ex.missing = [];
+    if (cardIlegivel && (!ex.clientName || !ex.propertyAddress) && !opcoes?.desistirDoCard) {
+      throw new CardIlegivel(`#${ticketId}: ${cardIlegivel}`);
+    }
   }
 
   /**
@@ -1077,6 +1173,12 @@ export async function subirJobBooked(ticketId: number, postar: boolean): Promise
       "",
       "Missing before the job can exist (owner rule: no full client, no job):",
       ...[...new Set(faltas.map((f) => f.toLowerCase().replace(/_/g, " ")))].map((f) => `- ${f}`),
+      ...(cardIlegivel
+        ? [
+            "",
+            `Heads-up: I could NOT open the Housekeep job card in ${PASSADAS_ATE_DESISTIR_DO_CARD} passes (${cardIlegivel}), so the data is probably there: open the "Link" in the email and check.`,
+          ]
+        : []),
       "",
       "When the info lands in this ticket, REMOVE the ai_job_created tag and I will retry on my next pass — or create the job manually in the OS.",
     ].join("\n");

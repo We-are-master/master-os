@@ -12,6 +12,7 @@
  * "json" no prompt, porque sem ela a API devolve 400 (aprendido na prática).
  */
 import type { ServicoCasado } from "./quote-engine";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 export type ResultadoDoMatch = {
   matches: ServicoCasado[];
@@ -40,7 +41,7 @@ export async function matchRequest(
   indice: IndiceServico[],
   apiKey: string,
 ): Promise<ResultadoDoMatch> {
-  const resposta = await fetch("https://api.openai.com/v1/chat/completions", {
+  const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

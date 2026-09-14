@@ -20,6 +20,10 @@ import {
 import { formatPartnerJobPriceDisplay } from "@/lib/job-pricing-resolver";
 import { listAssignablePartners, type AssignablePartner } from "@/services/partners";
 import { getJob } from "@/services/jobs";
+import { getPartnerServicePrice } from "@/services/partner-service-prices";
+import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { precoDoParceiroParaOJob } from "@/lib/assign-partner-prefill";
+import { PricingSourceChip } from "@/components/shared/pricing-source-chip";
 import type { Job } from "@/types/database";
 
 type Props = {
@@ -56,6 +60,22 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
   const [clientHourly, setClientHourly] = useState("");
   const [partnerHourly, setPartnerHourly] = useState("");
   const [hours, setHours] = useState("");
+  /**
+   * De onde veio o número que está no campo: acordo com ESTE parceiro, ou a
+   * tabela padrão. O chip existe porque os dois são plausíveis na tela e só o
+   * rótulo diferencia.
+   */
+  const [origemDoPreco, setOrigemDoPreco] = useState<"custom" | "standard" | null>(null);
+  /** Ele tem preço acordado, mas em várias faixas, e o job não diz qual. */
+  const [faixaIndefinida, setFaixaIndefinida] = useState(false);
+  /**
+   * Para QUAL parceiro o preço foi digitado à mão.
+   *
+   * Um booleano não servia: depois de uma edição manual, trocar de parceiro
+   * nunca mais puxaria o preço do novo. Guardando o id, a edição vale só para
+   * quem estava escolhido quando ela aconteceu.
+   */
+  const [precoEditadoPara, setPrecoEditadoPara] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -87,8 +107,65 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
     if (!isOpen) {
       setSearch("");
       setSelectedId("");
+      setOrigemDoPreco(null);
+      setFaixaIndefinida(false);
+      setPrecoEditadoPara(null);
     }
   }, [isOpen]);
+
+  /**
+   * Escolheu o parceiro, puxa o preço DELE para este tipo de trabalho.
+   *
+   * O modal só lia o `partner_cost` gravado no job, então trocar o parceiro não
+   * mudava número nenhum: continuava o nosso valor padrão, e o acordo com
+   * aquele parceiro ficava na tabela sem ninguém ler (dono, 10/09/2026). O
+   * auto-assign e o aceite pelo portal já liam; só a atribuição manual não.
+   *
+   * Não sobrescreve o que foi digitado à mão: quem tem a última palavra sobre o
+   * dinheiro é quem está olhando o job.
+   */
+  useEffect(() => {
+    if (!isOpen || !selectedId || precoEditadoPara === selectedId) return;
+    const catalogId = (job as { catalog_service_id?: string | null } | null)?.catalog_service_id;
+    if (!catalogId) {
+      setOrigemDoPreco(null);
+      setFaixaIndefinida(false);
+      return;
+    }
+    let cancelado = false;
+    void (async () => {
+      try {
+        const [acordo, catalogo] = await Promise.all([
+          getPartnerServicePrice(selectedId, catalogId),
+          listCatalogServicesForPicker(),
+        ]);
+        if (cancelado) return;
+        const servico = catalogo.find((c) => c.id === catalogId) ?? null;
+        const preco = precoDoParceiroParaOJob({
+          catalog: servico,
+          partnerOverride: acordo,
+          presetId: (job as { catalog_pricing_preset_id?: string | null } | null)?.catalog_pricing_preset_id ?? null,
+          horasDoJob: Number(hours) > 0 ? Number(hours) : null,
+        });
+        setFaixaIndefinida(preco.faixaIndefinida);
+        if (preco.origem === null) {
+          setOrigemDoPreco(null);
+          return;
+        }
+        setOrigemDoPreco(preco.origem);
+        if (preco.valorHora != null) setPartnerHourly(String(preco.valorHora));
+        if (preco.custoFixo != null) setPartnerCost(String(preco.custoFixo));
+      } catch (err) {
+        // Preço é conveniência: se a leitura falhar, o campo fica como está e a
+        // pessoa digita. Não vale derrubar a atribuição por causa disto.
+        console.error("[assign-partner] não consegui ler o preço do parceiro:", err);
+        if (!cancelado) { setOrigemDoPreco(null); setFaixaIndefinida(false); }
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [isOpen, selectedId, job, hours, precoEditadoPara]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -260,10 +337,29 @@ export function AssignPartnerModal({ jobId, jobReference, isOpen, onClose, onAss
                       <Input type="number" min={0} step="0.01" value={clientPrice} onChange={(e) => setClientPrice(e.target.value)} />
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-text-secondary">
-                      <span>Partner cost £</span>
-                      <Input type="number" min={0} step="0.01" value={partnerCost} onChange={(e) => setPartnerCost(e.target.value)} />
+                      <span className="flex items-center gap-1.5">
+                        Partner cost £
+                        <PricingSourceChip
+                          source={origemDoPreco}
+                          tooltip={
+                            origemDoPreco === "custom"
+                              ? "Rate agreed with this partner for this type of work"
+                              : "Catalog standard — this partner has no agreed rate for this work"
+                          }
+                        />
+                      </span>
+                      <Input
+                        type="number" min={0} step="0.01" value={partnerCost}
+                        onChange={(e) => { setPartnerCost(e.target.value); setPrecoEditadoPara(selectedId || null); }}
+                      />
                     </label>
                   </div>
+                  {faixaIndefinida ? (
+                    <p className="pt-1 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                      This partner has agreed prices for this work, but in more than one band. Pick the
+                      pricing band on the job and the rate fills in, or type the figure you agreed.
+                    </p>
+                  ) : null}
                   {/* Day rate e Half day sao o MESMO fixed por baixo (mig 281):
                       muda o rotulo que o parceiro le, nao o dinheiro. */}
                   <div className="flex flex-wrap gap-1 pt-1">

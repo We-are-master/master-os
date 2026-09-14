@@ -42,18 +42,49 @@ const JANELA_DIAS = 3;
 const TAG = "ai_quote_draft";
 const TAG_JOB = "ai_job_created";
 const MAX_JOBS_POR_CICLO = 2;
-const SEEN_PATH = join(process.cwd(), "scripts/harvey/.seen.json");
-const CANCEL_SEEN_PATH = join(process.cwd(), "scripts/harvey/.cancel-seen.json");
+/**
+ * Onde o Harvey guarda o que já viu.
+ *
+ * Era sempre dentro do repo, e isso o prende à máquina: em container, cada
+ * deploy nasce com o diretório limpo e ele reposta nota em ticket que já
+ * tratou — a mesma nota duplicada que o #50216 levou por outro motivo em
+ * 08/09/2026, agora multiplicada por todo ticket da janela.
+ *
+ * `HARVEY_STATE_DIR` aponta para um disco que sobrevive ao deploy. Sem a
+ * variável, nada muda: continua no repo, que é onde ele sempre esteve.
+ */
+const STATE_DIR = process.env.HARVEY_STATE_DIR?.trim() || join(process.cwd(), "scripts/harvey");
+
+const SEEN_PATH = join(STATE_DIR, ".seen.json");
+const CANCEL_SEEN_PATH = join(STATE_DIR, ".cancel-seen.json");
 /**
  * Quem já foi triado. Arquivo SEPARADO do `.seen.json` de propósito: `.seen`
  * quer dizer "acabou, não olhe mais", e ticket triado continua candidato — ele
  * pode virar pedido de quote num comentário de amanhã. Este arquivo só evita
  * repetir a NOTA de triagem no mesmo ticket a cada 5 minutos.
  */
-const TRIAGEM_SEEN_PATH = join(process.cwd(), "scripts/harvey/.triagem-seen.json");
+const TRIAGEM_SEEN_PATH = join(STATE_DIR, ".triagem-seen.json");
 /** Teto de notas de triagem por ciclo: sem ele, a primeira rodada despeja o backlog inteiro na fila. */
 const MAX_NOTAS_TRIAGEM_POR_CICLO = 5;
-const RECON_PATH = join(process.cwd(), "scripts/harvey/.reconciliado.json");
+const RECON_PATH = join(STATE_DIR, ".reconciliado.json");
+/**
+ * Passadas que cada ticket já gastou com o card da Housekeep ilegível.
+ *
+ * O card cai, o tracker deles engasga, a página vem vazia: nada disso é "o
+ * card não tem o dado", e até 11/09/2026 virava exatamente isso (o #50393
+ * parou com nota de "missing client name" num card íntegro). O ticket fica
+ * SEM tag e SEM .seen enquanto o card não abre, e volta na passada seguinte;
+ * este arquivo conta as passadas para ele desistir depois de
+ * PASSADAS_ATE_DESISTIR_DO_CARD, e aí sim pedir o dado na nota.
+ */
+const CARD_FALHAS_PATH = join(STATE_DIR, ".card-falhas.json");
+function lerContagem(caminho: string): Record<string, number> {
+  try { return JSON.parse(readFileSync(caminho, "utf8")) as Record<string, number>; } catch { return {}; }
+}
+function gravarContagem(caminho: string, contagem: Record<string, number>): void {
+  if (!existsSync(dirname(caminho))) mkdirSync(dirname(caminho), { recursive: true });
+  writeFileSync(caminho, JSON.stringify(contagem));
+}
 /** A view "Customer Support::🛠️ Jobs" — a fila oficial de jobs no Zendesk. */
 const VIEW_JOBS = "5687884937759";
 
@@ -105,7 +136,7 @@ async function buscarCandidatos(): Promise<TicketDaBusca[]> {
  * fatura, confirmação de agendamento ou reclamação.
  */
 async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<{ quote: boolean; booking: boolean }> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await (await import("../../src/lib/openai-com-retry")).chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -269,7 +300,8 @@ async function sincronizarAwaitingPayment(): Promise<void> {
 async function ciclo(): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD } =
+    await import("../../src/lib/zendesk-quoter/quoter");
   const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem } = await import("../../src/lib/zendesk-triage");
 
   const vistos = lerVistos();
@@ -504,24 +536,49 @@ async function ciclo(): Promise<void> {
     // no OS vale mais que um rascunho de preço.
     if (quer.booking && criados < MAX_JOBS_POR_CICLO) {
       console.log(`[harvey] #${t.id} "${t.subject.slice(0, 70)}" parece BOOKING — subindo pro OS...`);
+      const cardFalhas = lerContagem(CARD_FALHAS_PATH);
+      const passadasSemCard = cardFalhas[String(t.id)] ?? 0;
+      const esquecerCard = () => {
+        if (cardFalhas[String(t.id)] === undefined) return;
+        delete cardFalhas[String(t.id)];
+        gravarContagem(CARD_FALHAS_PATH, cardFalhas);
+      };
       try {
-        const r = await subirJobBooked(t.id, true);
+        const r = await subirJobBooked(t.id, true, { desistirDoCard: passadasSemCard >= PASSADAS_ATE_DESISTIR_DO_CARD });
         if (r.status === "criado") {
           vistos.add(t.id); gravarVistos(vistos);
           try { await adicionarTagNomeada(t.id, TAG_JOB); } catch (err) { console.error(`[harvey] tag job falhou no ${t.id}: ${err}`); }
+          esquecerCard();
           criados++;
           console.log(`[harvey] ✔ job ${r.reference} criado no OS a partir do #${t.id}`);
           continue;
         }
         if (r.status === "faltando") {
-          vistos.add(t.id); gravarVistos(vistos);
-          try { await adicionarTagNomeada(t.id, TAG_JOB); } catch (err) { console.error(`[harvey] tag falhou no ${t.id}: ${err}`); }
+          /**
+           * A nota promete "tire a tag e eu tento de novo", então a TAG é a
+           * trava, e o .seen só entra se a tag falhar. Com o .seen sempre
+           * gravado (até 11/09/2026), tirar a tag não fazia nada: o ticket
+           * continuava filtrado lá em cima, e a promessa era mentira.
+           */
+          try {
+            await adicionarTagNomeada(t.id, TAG_JOB);
+          } catch (err) {
+            vistos.add(t.id); gravarVistos(vistos);
+            console.error(`[harvey] tag falhou no ${t.id} (o .seen segura): ${err}`);
+          }
+          esquecerCard();
           criados++;
           console.log(`[harvey] ◐ booking no #${t.id} com dado faltando — nota interna pedindo`);
           continue;
         }
         // nao_e_booking: o extrator discordou do classificador; cai pro fluxo de quote.
       } catch (err) {
+        if (err instanceof CardIlegivel) {
+          cardFalhas[String(t.id)] = passadasSemCard + 1;
+          gravarContagem(CARD_FALHAS_PATH, cardFalhas);
+          console.log(`[harvey] ⟳ #${t.id}: card da Housekeep ilegível (passada ${passadasSemCard + 1}/${PASSADAS_ATE_DESISTIR_DO_CARD}), sem tag e sem .seen: volto na próxima`);
+          continue;
+        }
         console.error(`[harvey] booking falhou no ${t.id}: ${err}`);
         continue;
       }

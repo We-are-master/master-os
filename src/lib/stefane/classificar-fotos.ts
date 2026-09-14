@@ -18,6 +18,7 @@
  */
 
 import { HOUSEKEEP_COMODOS } from "./housekeep-report-form";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
@@ -110,7 +111,7 @@ export async function classificarFotos(
   let json: RespostaOpenAI | null = null;
   for (let tentativa = 0; tentativa < 4; tentativa++) {
     try {
-      res = await fetch(OPENAI_RESPONSES_URL, {
+      res = await chamarOpenAI(OPENAI_RESPONSES_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({

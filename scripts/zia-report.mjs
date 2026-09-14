@@ -24,6 +24,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { entregar } from "./lib/brief.mjs";
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENVIAR = process.argv.includes("--enviar");
 
@@ -212,23 +214,12 @@ if (!ENVIAR) {
   process.exit(0);
 }
 if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY ausente");
-const cfg = await q("company_settings?select=daily_brief_emails&limit=1");
-const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
-if (!para.length) throw new Error("company_settings.daily_brief_emails vazio");
-
 const assunto = pagas.length
-  ? `Zia: ${fmt(totalRecebido)} received (${pagas.length}) · ${fmt(totalVencido)} past due`
-  : `Zia: no payments today · ${fmt(totalVencido)} past due`;
+  ? `${fmt(totalRecebido)} received (${pagas.length}) · ${fmt(totalVencido)} past due`
+  : `no payments today · ${fmt(totalVencido)} past due`;
 
-const r = await fetch("https://api.resend.com/emails", {
-  method: "POST",
-  headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-  body: JSON.stringify({
-    from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-    to: para,
-    subject: assunto,
-    html,
-    text: texto,
-  }),
+await entregar({
+  secao: "zia", ordem: 20, titulo: "Zia · dinheiro que entrou",
+  assunto, html, texto,
+  precisaAcao: totalVencido > 0,
 });
-console.log(r.ok ? `email enviado para ${para.join(", ")}` : `falha no email: ${(await r.text()).slice(0, 200)}`);

@@ -31,6 +31,7 @@ import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import { avisarClienteDaRemarcacao } from "@/lib/notify-client-reschedule-server";
 import { acharJobDoTicket } from "./achar-job";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 export type ResultadoRemarcacao =
   | { acao: "aplicada"; reference: string; de: string; para: string; como: string; nota: string }
@@ -50,7 +51,7 @@ interface Lida {
 }
 
 async function lerRemarcacao(subject: string, texto: string, apiKey: string): Promise<Lida> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

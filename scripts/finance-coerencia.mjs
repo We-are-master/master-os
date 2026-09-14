@@ -28,6 +28,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { entregar } from "./lib/brief.mjs";
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MANDAR = process.argv.includes("--email");
 
@@ -111,21 +113,13 @@ async function main() {
   const texto = L.join("\n");
   console.log("\n" + texto + "\n");
 
-  if (MANDAR && total && env.RESEND_API_KEY) {
-    const cfg = await (await fetch(`${SB}/rest/v1/company_settings?select=daily_brief_emails&limit=1`, { headers: SH })).json();
-    const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
-    if (para.length) {
-      const r = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-        body: JSON.stringify({
-          from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-          to: para, subject: `A receber: ${total} incoerencia(s)`,
-          text: texto + "\n\n-- \nConferencia de coerencia. Nada aqui foi corrigido automaticamente.",
-        }),
-      });
-      console.log(r.ok ? `email enviado para ${para.join(", ")}` : `falha no email: ${(await r.text()).slice(0, 160)}`);
-    }
+  if (MANDAR && total) {
+    await entregar({
+      secao: "receber", ordem: 30, titulo: "A receber · coerência",
+      assunto: `${total} incoerência(s) no a receber`,
+      texto, rodape: "Conferencia de coerencia. Nada aqui foi corrigido automaticamente.",
+      precisaAcao: true,
+    });
   }
 }
 

@@ -109,8 +109,15 @@ function pickPartnerFixed(
       ? Number(override.fixed_partner_cost)
       : null;
   const value = resolvePartnerPay(ceiling, custom);
-  const source: PriceSource =
-    custom != null && value < ceiling ? "custom" : "standard";
+  /**
+   * É acordo do parceiro quando EXISTE acordo, não quando ele é mais barato.
+   *
+   * A condição era `value < ceiling`, e isso mentia justamente no caso em que o
+   * escritório mais precisa saber: parceiro que cobra ACIMA do padrão aparecia
+   * como "Standard". O `resolvePartnerPay` não limita de propósito (o combinado
+   * vale mesmo acima), então o rótulo tinha que acompanhar.
+   */
+  const source: PriceSource = custom != null && custom !== ceiling ? "custom" : "standard";
   return { value: value > 0 ? value : null, source };
 }
 
@@ -127,8 +134,9 @@ function pickPartnerHourly(
       ? Number(override.hourly_partner_rate)
       : null;
   const value = resolvePartnerPay(ceiling, custom);
-  const source: PriceSource =
-    custom != null && value < ceiling ? "custom" : "standard";
+  // Mesma correção do `pickPartnerFixed` logo acima: é acordo quando existe
+  // acordo, não quando ele é mais barato.
+  const source: PriceSource = custom != null && custom !== ceiling ? "custom" : "standard";
   return { value: value > 0 ? value : null, source };
 }
 

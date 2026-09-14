@@ -1,0 +1,11 @@
+node_modules
+.next
+.next-*
+.git
+.logs
+.emails-parceiro
+scratchpad
+*.log
+.env
+.env.local
+.tmp-*

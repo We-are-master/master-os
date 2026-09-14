@@ -30,6 +30,7 @@ import {
   type CertificateAiEnvelope,
   type CertificateReading,
 } from "@/lib/certificate-expiry";
+import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const BUCKET = "job-reports";
@@ -95,7 +96,7 @@ export async function readCertificateDocument(
 
   let res: Response;
   try {
-    res = await fetch(OPENAI_RESPONSES_URL, {
+    res = await chamarOpenAI(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({

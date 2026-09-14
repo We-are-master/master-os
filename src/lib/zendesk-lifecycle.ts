@@ -348,6 +348,28 @@ async function dispatchJobTerminalNotice(args: {
   if ((job as Record<string, unknown>)[sentColumn]) return { ok: true };
 
   /**
+   * O aviso de CONCLUSÃO à conta está desligado (dono, 14/09/2026).
+   *
+   * Ele é comentário público no ticket, então quem recebe é o requester, que
+   * num job de conta é a própria plataforma. Fica atrás de uma chave em vez de
+   * sair do código porque a decisão é "por enquanto": religar é definir
+   * `JOB_COMPLETION_NOTICE_ENABLED=1`, e nada mais.
+   *
+   * A carimbagem do `completion_notice_sent_at` fica de fora de propósito. Se
+   * marcássemos como enviado, o dia em que a chave voltar não existiria mais
+   * nada para mandar, e o silêncio de agora viraria silêncio permanente.
+   *
+   * O aviso de CANCELAMENTO não é afetado: aquele o cliente precisa receber.
+   *
+   * O status aqui é `awaiting_payment`, e não `completed`: desde o #637 o aviso
+   * sai no fim do final check, porque neste sistema `completed` quer dizer
+   * pagamento lançado, não trabalho entregue.
+   */
+  if (args.status === "awaiting_payment" && process.env.JOB_COMPLETION_NOTICE_ENABLED?.trim() !== "1") {
+    return { ok: true };
+  }
+
+  /**
    * A nota é pública: quem recebe é o requester do ticket, que num job de conta
    * é a CONTA. Cumprimentar o morador aqui manda o nome dele para o parceiro
    * B2B e trata a conta como cliente final. Ver `zendesk-notice-addressee`.

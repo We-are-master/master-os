@@ -18,6 +18,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { entregar } from "./lib/brief.mjs";
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENVIAR = process.argv.includes("--enviar");
 const SEMANA = process.argv.includes("--semana");
@@ -204,22 +206,8 @@ if (iHtml > -1 && process.argv[iHtml + 1]) {
   console.log("html em " + process.argv[iHtml + 1]);
 }
 if (!ENVIAR) { console.log("(modo seco: nada enviado)\n"); process.exit(0); }
-const cfg = await q("company_settings", "select=daily_brief_emails&limit=1");
-const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
-if (!para.length || !env.RESEND_API_KEY) { console.log("sem destinatario ou sem RESEND_API_KEY"); process.exit(1); }
-const r = await comRetry(
-  () =>
-    fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-      body: JSON.stringify({
-        from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-        to: para,
-        subject: assunto,
-        html,
-      }),
-    }),
-  "resend",
-  nemChegouASair,
-);
-console.log(r.ok ? `enviado para ${para.join(", ")}` : `falhou: ${(await r.text()).slice(0, 200)}`);
+await entregar({
+  secao: "negocio", ordem: 10, titulo: "Fixfy Daily Report",
+  assunto, html,
+  precisaAcao: false,
+});
