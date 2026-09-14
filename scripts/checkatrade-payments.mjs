@@ -35,6 +35,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { entregar } from "./lib/brief.mjs";
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APLICAR = process.argv.includes("--aplicar");
 const DESDE = (process.argv[process.argv.indexOf("--desde") + 1] ?? "").match(/^\d{4}-\d{2}-\d{2}$/)
@@ -415,24 +417,15 @@ async function main() {
 
   // ─── Email ────────────────────────────────────────────────────────────────
   const temExcecao = divergem.length || orfaos.length || aviso.length || invoiceAberta.length || naPlataforma.length || inc > 0;
-  if (APLICAR && env.RESEND_API_KEY && (temExcecao || aDar.length)) {
-    const cfg = await (await fetch(`${SB}/rest/v1/company_settings?select=daily_brief_emails&limit=1`, { headers: SH })).json();
-    const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
-    if (para.length) {
-      const assunto = temExcecao
-        ? `Checkatrade: ${aDar.length} baixa(s), ${divergem.length + orfaos.length} pendencia(s)`
-        : `Checkatrade: ${aDar.length} baixa(s), tudo conferido`;
-      const r = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-        body: JSON.stringify({
-          from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-          to: para, subject: assunto,
-          text: texto + "\n\n-- \nAgente de recebimentos. As pendencias acima nao foram lancadas: elas esperam voce.",
-        }),
-      });
-      console.log(r.ok ? `email enviado para ${para.join(", ")}` : `falha no email: ${(await r.text()).slice(0, 160)}`);
-    }
+  if (APLICAR && (temExcecao || aDar.length)) {
+    await entregar({
+      secao: "checkatrade", ordem: 50, titulo: "Checkatrade · baixas",
+      assunto: temExcecao
+        ? `${aDar.length} baixa(s), ${divergem.length + orfaos.length} pendencia(s)`
+        : `${aDar.length} baixa(s), tudo conferido`,
+      texto, rodape: "Agente de recebimentos. As pendencias acima nao foram lancadas: elas esperam voce.",
+      precisaAcao: Boolean(temExcecao),
+    });
   }
 }
 

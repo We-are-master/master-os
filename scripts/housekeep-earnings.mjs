@@ -33,6 +33,8 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { entregar } from "./lib/brief.mjs";
+
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APLICAR = process.argv.includes("--aplicar");
 
@@ -237,22 +239,14 @@ async function main() {
   const texto = L.join("\n");
   console.log("\n" + texto + "\n");
 
-  if (APLICAR && env.RESEND_API_KEY && (baixas || pendentes.length || invoiceAberta.length)) {
-    const cfg = await (await fetch(`${SB}/rest/v1/company_settings?select=daily_brief_emails&limit=1`, { headers: SH })).json();
-    const para = String(cfg?.[0]?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((s) => s.includes("@"));
-    if (para.length) {
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + env.RESEND_API_KEY },
-        body: JSON.stringify({
-          from: env.RESEND_FROM_EMAIL ?? "Fixfy <noreply@getfixfy.com>",
-          to: para,
-          subject: `Housekeep: ${baixas} baixa(s), ${pendentes.length + invoiceAberta.length} pendencia(s)`,
-          text: texto + "\n\n-- \nAgente de recebimentos da Housekeep. As pendencias acima nao foram lancadas.",
-        }),
-      });
-      console.log(res.ok ? `email enviado para ${para.join(", ")}` : `falha no email: ${(await res.text()).slice(0, 160)}`);
-    }
+  if (APLICAR && (baixas || pendentes.length || invoiceAberta.length)) {
+    const pend = pendentes.length + invoiceAberta.length;
+    await entregar({
+      secao: "housekeep", ordem: 40, titulo: "Housekeep · baixas",
+      assunto: `${baixas} baixa(s), ${pend} pendencia(s)`,
+      texto, rodape: "Agente de recebimentos da Housekeep. As pendencias acima nao foram lancadas.",
+      precisaAcao: pend > 0,
+    });
   }
 }
 
