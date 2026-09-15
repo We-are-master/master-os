@@ -365,6 +365,44 @@ export type ResultadoDoQuoter = {
  * mostra em Available Quotes na hora; desligada, nasce draft interna e o
  * Start Bidding continua sendo decisão de gente.
  */
+/**
+ * O ticket copia o status da quote, pela MESMA porta que a tela usa.
+ *
+ * Aqui estava o buraco, e ele não era o que parecia. Eu tinha diagnosticado
+ * "gatilho do banco só dispara no UPDATE", mas em produção o gatilho de quotes
+ * não existe: nem ele nem a função `tg_quotes_zendesk_sync` chegaram a ser
+ * criados (conferido no pg_trigger em 15/09/2026).
+ *
+ * Quem sincroniza é a APLICAÇÃO: `/api/quotes` chama `syncQuoteZendeskStatus`
+ * logo depois do insert, e a varredura de lances chama quando grava
+ * `quote_ready` — foi ela que moveu o #50448 para 🟢 Quote Ready. O Harvey é o
+ * único que escreve a quote direto no Supabase, então era o único que passava
+ * por fora dessa porta. As QT-2026-1144/1145/1146 nasceram em `bidding` e os
+ * três tickets continuavam em 🆕 New.
+ *
+ * Por que aqui e não num gatilho novo: o endpoint que o gatilho chamaria também
+ * dispara avisos ao cliente (o "quote closed" de quote recusada). Ligar isso
+ * para TODO caminho de escrita de quote é decisão de dono, não efeito colateral
+ * de consertar o Harvey.
+ *
+ * `await` e não `void`: aqui não há resposta HTTP para devolver, e um processo
+ * que fecha o ciclo antes do fetch terminar perde a sincronização calado.
+ */
+async function sincronizarTicket(
+  quoteId: string,
+  reference: string,
+  supabase: ReturnType<typeof createServiceClient>,
+): Promise<void> {
+  try {
+    const { syncQuoteZendeskStatus } = await import("@/lib/zendesk-status-sync");
+    const r = await syncQuoteZendeskStatus(quoteId, supabase);
+    if (r.synced) console.log(`[quoter] ${reference}: ticket movido para o status ${r.customStatusId}`);
+    else if (!r.ok) console.error(`[quoter] ${reference}: sync do ticket falhou — ${r.error}`);
+  } catch (err) {
+    console.error(`[quoter] ${reference}: sync do ticket estourou —`, err);
+  }
+}
+
 export async function garantirQuoteNoOs(
   ticket: TicketLido,
   pedido: PedidoConsolidado,
@@ -410,7 +448,10 @@ export async function garantirQuoteNoOs(
         })
         .eq("id", e.id);
       if (errPreenche) console.error(`[quoter] ${e.reference}: não consegui preencher o endereço —`, errPreenche);
-      else console.log(`[quoter] ${e.reference}: endereço chegou depois (${agora}), quote destravada`);
+      else {
+        console.log(`[quoter] ${e.reference}: endereço chegou depois (${agora}), quote destravada`);
+        await sincronizarTicket(e.id, e.reference, supabase);
+      }
     }
     return { quoteId: e.id, reference: e.reference, jaExistia: true };
   }
@@ -528,6 +569,7 @@ export async function garantirQuoteNoOs(
     return null;
   }
   const i = inserted as { id: string; reference: string };
+  await sincronizarTicket(i.id, i.reference, supabase);
   return { quoteId: i.id, reference: i.reference, jaExistia: false };
 }
 
