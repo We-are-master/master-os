@@ -230,6 +230,33 @@ interface UpdateTicketArgs {
   uploadTokens?:   string[];
   /** Whether the comment is visible to the requester. Default true. */
   publicComment?:  boolean;
+  /**
+   * Quem aparece como autor do comentário.
+   *
+   * O token da API é do Victor, então sem isto todo comentário sai como ele
+   * ([[zendesk-tudo-cai-no-victor]]). O Harvey tem assento de Contributor, cujo
+   * `ticket_comment_access` é `none`: ele não pode ser autor de nada. Quem pode
+   * é um agente pleno, e é o id dele que entra aqui.
+   *
+   * O Zendesk troca só o AUTOR: o updater continua sendo quem autenticou. É o
+   * que mantém os triggers de "agente respondeu" disparando e tirando o ticket
+   * do Action Required.
+   */
+  authorId?:       number;
+  /**
+   * Tags a acrescentar sem apagar as que já existem.
+   *
+   * Vão no MESMO PUT do comentário, e é por isso que elas servem de trava de
+   * "já falei neste ticket": em duas chamadas, o comentário sai, a tag falha, e
+   * cinco minutos depois o cliente recebe a mesma mensagem outra vez.
+   *
+   * O Zendesk aceita `additional_tags` no update de UM ticket, devolve 200 e
+   * NÃO grava nada (medido em 15/09/2026, ticket 50527: a mensagem saiu, o
+   * status mudou, a tag não apareceu, e a passada seguinte repetiu a mensagem).
+   * O campo que funciona é `tags`, que SUBSTITUI o conjunto — então lemos as
+   * atuais aqui dentro e mandamos a união.
+   */
+  additionalTags?: string[];
 }
 
 /**
@@ -242,6 +269,21 @@ interface UpdateTicketArgs {
  * ticket's current base status, so we always send both together when we
  * know the mapping (lifecycle ids are in lib/zendesk-statuses.ts).
  */
+/** As tags que o ticket tem agora. Vazio quando a leitura falha: melhor
+ *  acrescentar por cima de uma lista incompleta do que não carimbar nada. */
+async function lerTags(ticketId: string | number): Promise<string[]> {
+  try {
+    const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`, {
+      headers: { Authorization: authHeader() },
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { ticket?: { tags?: string[] } };
+    return json.ticket?.tags ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
   if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
 
@@ -263,7 +305,21 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
     } else {
       comment.body = args.commentBody ?? "";
     }
+    if (args.authorId != null) comment.author_id = args.authorId;
     ticket.comment = comment;
+  }
+
+  /**
+   * A união das tags, lida agora.
+   *
+   * `tags` substitui o conjunto inteiro, então mandar só a nova apagaria as
+   * outras — e são tags que filtram views e disparam triggers. A leitura é
+   * imediatamente antes do PUT para a janela de corrida ser a menor possível.
+   */
+  if (args.additionalTags?.length) {
+    const atuais = await lerTags(args.ticketId);
+    const uniao = [...new Set([...atuais, ...args.additionalTags])];
+    ticket.tags = uniao;
   }
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(args.ticketId))}.json`;

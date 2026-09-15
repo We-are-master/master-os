@@ -25,6 +25,7 @@ import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
 import { postcodesNoTexto } from "./achar-job";
+import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
 
@@ -45,6 +46,9 @@ export type TicketLido = {
   requesterName: string | null;
   requesterEmail: string | null;
   organizationId: number | null;
+  /** As tags do ticket. É nelas que mora a trava de "já falei com este
+   *  cliente" do aviso de cotação. */
+  tags: string[];
   /** O thread em texto, na ordem, com quem falou. */
   thread: string;
   /**
@@ -70,7 +74,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
   const tRes = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers });
   if (!tRes.ok) throw new Error(`Zendesk ticket ${ticketId}: HTTP ${tRes.status}`);
   const tJson = (await tRes.json()) as {
-    ticket: { id: number; subject: string; organization_id: number | null; requester_id: number };
+    ticket: { id: number; subject: string; organization_id: number | null; requester_id: number; tags?: string[] };
   };
 
   const cRes = await fetch(`${baseUrl()}/tickets/${ticketId}/comments.json?include=users`, { headers });
@@ -186,6 +190,7 @@ export async function lerTicketCompleto(ticketId: number): Promise<TicketLido> {
     requesterName: requester?.name ?? null,
     requesterEmail: requester?.email?.trim() || null,
     organizationId: tJson.ticket.organization_id,
+    tags: tJson.ticket.tags ?? [],
     thread: partes.join("\n\n---\n\n"),
     threadNova: partesNovas.join("\n\n---\n\n"),
     imagens,
@@ -335,7 +340,8 @@ export function montarNotaInterna(
   return linhas.join("\n");
 }
 
-/** A ÚNICA saída do quoter na fase 1: nota interna. Não existe envio público. */
+/** A nota interna: o preço, os convites e o que o cliente ouviu. Nunca sai
+ *  daqui para fora. Quem fala com o cliente é `avisarNoTicket`, e só ele. */
 export async function postarNotaInterna(ticketId: number, corpo: string): Promise<void> {
   await updateTicket({ ticketId, commentBody: corpo, publicComment: false });
 }
@@ -434,6 +440,17 @@ export async function garantirQuoteNoOs(
    */
   const vaiTransmitir = process.env.HARVEY_QUOTE_INVITES === "1";
   const autoFlow = process.env.AUTO_ASSIGN_ALL_JOBS === "1" || vaiTransmitir;
+  /**
+   * Sem endereço nenhum, a quote nasce `draft` e não `bidding`.
+   *
+   * `bidding` quer dizer "os parceiros estão sendo perguntados", e sem postcode
+   * ninguém é perguntado: o casamento de parceiro é por área, e o disparo
+   * recusa antes de sair. A QT-2026-1146 nasceu em `bidding` com ZERO convites
+   * e ficou ali parecendo transmitida. Um estado que promete o que não
+   * aconteceu é pior do que um estado atrasado, e é ele que o ticket copia.
+   */
+  const endereco = pedido.propertyAddress ?? pedido.postcode;
+  const transmite = Boolean(endereco) && (vaiTransmitir || (autoFlow && catalogServiceId));
   const { data: inserted, error: insertErr } = await supabase
     .from("quotes")
     .insert({
@@ -450,18 +467,18 @@ export async function garantirQuoteNoOs(
        * convidar hoje; deixar o campo nulo não dá, porque o disparo recusa
        * antes de sair. A rua o escritório completa quando o cliente responder.
        */
-      property_address: pedido.propertyAddress ?? pedido.postcode,
+      property_address: endereco,
       postcode: pedido.postcode,
       service_type: serviceType,
       catalog_service_id: catalogServiceId,
-      status: vaiTransmitir || (autoFlow && catalogServiceId) ? "bidding" : "draft",
+      status: transmite ? "bidding" : "draft",
       total_value: total,
       cost: arredonda2(resultado.quote.materialsCost),
       sell_price: total,
       margin_percent: 0,
       partner_cost: 0,
       partner_quotes_count: 0,
-      quote_type: vaiTransmitir || (autoFlow && catalogServiceId) ? "partner" : "internal",
+      quote_type: transmite ? "partner" : "internal",
       deposit_percent: 0,
       deposit_required: 0,
       scope: pedido.scopeOfWork || pedido.quoteRequest,
@@ -537,9 +554,31 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
       })
     : null;
 
+  /**
+   * O aviso ao cliente, e ele vem DEPOIS dos convites de propósito: o que ele
+   * pode prometer depende de eles terem saído. Ver `aviso-de-cotacao.ts` para
+   * as travas — em resumo: desligado por padrão, calado em ticket sem
+   * organização reconhecida, e uma vez só por ticket.
+   *
+   * Antes da nota interna porque é a nota que conta ao escritório o que o
+   * cliente recebeu.
+   */
+  const aviso = await avisarNoTicket({
+    ticketId,
+    tags: ticket.tags,
+    temEndereco: Boolean(pedido.propertyAddress ?? pedido.postcode),
+    convitesEnviados: convite?.enviados ?? 0,
+    orgReconhecida: org.ok,
+    postar,
+  }).catch((e) => {
+    console.error("[quoter] aviso ao cliente:", e);
+    return null;
+  });
+
   const nota = [
     montarNotaInterna(ticket, pedido, resultado, quoteRef),
-    ...(convite ? ["", "──────────", convite] : []),
+    ...(convite ? ["", "──────────", convite.nota] : []),
+    ...(aviso ? ["", "──────────", aviso] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
   ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
@@ -1292,7 +1331,7 @@ async function calcularOuMandarConvites(
   pedido: PedidoConsolidado,
   resultado: ResultadoPriceCheck,
   quoteRef: string,
-): Promise<string | null> {
+): Promise<{ nota: string; enviados: number } | null> {
   const supabase = createServiceClient();
   const { data: q } = await supabase
     .from("quotes")
@@ -1306,15 +1345,21 @@ async function calcularOuMandarConvites(
   };
 
   if (!quote.property_address) {
-    return [
-      "── Partner invitations ──",
-      "NOT sent: this quote has no property address, and partner matching needs the postcode.",
-      "Add the address on the quote and use Notify partners on the Quotes screen.",
-    ].join("\n");
+    return {
+      enviados: 0,
+      nota: [
+        "── Partner invitations ──",
+        "NOT sent: this quote has no property address, and partner matching needs the postcode.",
+        "Add the address on the quote and use Notify partners on the Quotes screen.",
+      ].join("\n"),
+    };
   }
   const serviceType = quote.service_type?.trim() ?? "";
   if (!serviceType && !quote.catalog_service_id) {
-    return ["── Partner invitations ──", "NOT sent: no type of work on the quote to match partners by."].join("\n");
+    return {
+      enviados: 0,
+      nota: ["── Partner invitations ──", "NOT sent: no type of work on the quote to match partners by."].join("\n"),
+    };
   }
 
   /** Os trades que as linhas do orçamento citam, do que pesa mais para o menos. */
@@ -1339,26 +1384,45 @@ async function calcularOuMandarConvites(
       trades: tradesDaQuote,
     });
     if (ids.length === 0) {
-      return [
-        "── Partner invitations (DRY RUN) ──",
-        `No partner covers this work in ${pc}. Tried: ${[serviceType, ...tradesDaQuote, "General Maintenance"].filter(Boolean).join(", ")}.`,
-      ].join("\n");
+      return {
+        enviados: 0,
+        nota: [
+          "── Partner invitations (DRY RUN) ──",
+          `No partner covers this work in ${pc}. Tried: ${[serviceType, ...tradesDaQuote, "General Maintenance"].filter(Boolean).join(", ")}.`,
+        ].join("\n"),
+      };
     }
     const viaFallback = usado.toLowerCase() !== serviceType.toLowerCase();
     const { data: ps } = await supabase.from("partners").select("company_name, contact_name").in("id", ids);
     const nomes = (ps ?? []).map((x: { company_name?: string | null; contact_name?: string | null }) =>
       `- ${x.company_name?.trim() || x.contact_name?.trim() || "partner"}`,
     );
-    return [
-      "── Partner invitations (DRY RUN — nothing sent) ──",
-      `${ids.length} partner(s) match ${viaFallback ? `${usado} (nobody covers ${serviceType} here)` : usado} at ${quote.property_address}:`,
-      ...nomes,
-      "",
-      "Set HARVEY_QUOTE_INVITES=1 to let me send these, or use Notify partners on the Quotes screen.",
-    ].join("\n");
+    return {
+      // Ensaio não convida ninguém, então não há o que prometer ao cliente.
+      enviados: 0,
+      nota: [
+        "── Partner invitations (DRY RUN — nothing sent) ──",
+        `${ids.length} partner(s) match ${viaFallback ? `${usado} (nobody covers ${serviceType} here)` : usado} at ${quote.property_address}:`,
+        ...nomes,
+        "",
+        "Set HARVEY_QUOTE_INVITES=1 to let me send these, or use Notify partners on the Quotes screen.",
+      ].join("\n"),
+    };
   }
 
   const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
+  /**
+   * Ensaio: um parceiro só, escolhido a dedo.
+   *
+   * Um pedido de mentira não pode acordar os parceiros de verdade — eles
+   * recebem push e e-mail com fotos e abrem a página do bid. Com esta variável
+   * o convite vai para um id só, que na prática é o registro de parceiro da
+   * própria casa, e a corrente inteira roda sem incomodar ninguém.
+   *
+   *   HARVEY_CONVITE_PARCEIRO_UNICO=<id do parceiro>
+   */
+  const soEste = process.env.HARVEY_CONVITE_PARCEIRO_UNICO?.trim();
+  if (soEste) console.log(`[quoter] ENSAIO: convite só para o parceiro ${soEste}`);
   const r = await dispatchQuoteBidInvites(supabase, {
     quoteId: quote.id,
     quoteReference: quote.reference,
@@ -1369,12 +1433,16 @@ async function calcularOuMandarConvites(
     scope: quote.scope,
     startIso: null,
     invitedBy: null,
+    ...(soEste ? { partnerIds: [soEste] } : {}),
   });
-  return [
-    "── Partner invitations ──",
-    `Sent to ${r.partnerIds.length} partner(s): ${r.emailsSent} email(s), ${r.pushSent} push.`,
-    "They bid on the public link; the office picks the winner.",
-  ].join("\n");
+  return {
+    enviados: r.partnerIds.length,
+    nota: [
+      soEste ? "── Partner invitations (ENSAIO — one partner only) ──" : "── Partner invitations ──",
+      `Sent to ${r.partnerIds.length} partner(s): ${r.emailsSent} email(s), ${r.pushSent} push.`,
+      "They bid on the public link; the office picks the winner.",
+    ].join("\n"),
+  };
 }
 
 /**
