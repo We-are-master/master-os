@@ -369,13 +369,31 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
  *  "Awaiting Payment" do Zendesk lista por ela (dono, 18/08/2026). */
 export const ZENDESK_AWAITING_PAYMENT_TAG = "awaiting_payment";
 
-/** Add tags to a ticket, leaving every other tag untouched. */
+/**
+ * Acrescenta tags sem derrubar as que já existem.
+ *
+ * Era `POST /tickets/{id}/tags.json`, que a documentação chama de "Add Tags" e
+ * que NESTA conta **substitui o conjunto inteiro**. Medido em 15/09/2026 no
+ * ticket 50536: com `zz_a, zz_c` no ticket, um POST de `["zz_d"]` devolveu 200
+ * e deixou só `zz_d`.
+ *
+ * O estrago é antigo e silencioso. Todo ticket que o Harvey tocou ficou com
+ * duas tags: a dele e a do reply status. As do Zendesk AI (intent, language,
+ * sentiment) sumiram de todos — #50519, #50522, #50486, #50448, #50393, zero
+ * em cada. E tag apagada não é só informação perdida: a view Action Required
+ * exclui `whatsapp` e `in_negotiation`, então um ticket que carregasse uma
+ * delas voltava para a fila sem ninguém entender por quê.
+ *
+ * Lê, une e grava. Uma leitura a mais por carimbo é barata perto disso.
+ */
 export async function addTicketTags(ticketId: string | number, tags: string[]): Promise<void> {
   if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
-  const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}/tags.json`, {
-    method: "POST",
+  const atuais = await lerTags(ticketId);
+  const uniao = [...new Set([...atuais, ...tags])];
+  const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`, {
+    method: "PUT",
     headers: { "Authorization": authHeader(), "Content-Type": "application/json" },
-    body: JSON.stringify({ tags }),
+    body: JSON.stringify({ ticket: { tags: uniao } }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
