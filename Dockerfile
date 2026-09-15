@@ -29,6 +29,25 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
+# O Playwright é devDependency, então `--omit=dev` o deixava de fora e o
+# `await import("playwright")` do leitor de card estourava dentro do container.
+# Era por isso que TODA reserva da Housekeep virava nota de "missing client
+# name": o Harvey respondia em 2 segundos, que é o tempo de um import falhar,
+# e não os 24 a 28 segundos que abrir o card de verdade custa.
+#
+# Instalado aqui, e não movido para `dependencies`, porque na Vercel ele não
+# serve para nada: o app não abre navegador, e carregá-lo lá seria pagar o
+# download em todo build do site. Quem precisa dele é este container.
+#
+# `--with-deps` traz as bibliotecas de sistema que o Chromium exige (fontes,
+# libnss, libatk e companhia). Sem elas o binário existe e não abre, que é o
+# mesmo silêncio de antes com outra cara.
+#
+# `chromium` sozinho, não os três navegadores: o leitor de card usa só ele, e
+# Firefox mais WebKit seriam algumas centenas de MB de imagem sem uso.
+RUN npm install --no-save playwright@$(node -p "require('./package.json').devDependencies.playwright.replace(/^[^0-9]*/, '')") \
+  && npx playwright install --with-deps chromium
+
 COPY . .
 
 # A cadência é variável e não número aqui dentro, seguindo o padrão do
