@@ -377,12 +377,41 @@ export async function garantirQuoteNoOs(
 
   const { data: existing } = await supabase
     .from("quotes")
-    .select("id, reference")
+    .select("id, reference, status, property_address")
     .eq("external_source", "zendesk")
     .eq("external_ref", ticketRef)
     .maybeSingle();
   if (existing) {
-    const e = existing as { id: string; reference: string };
+    const e = existing as { id: string; reference: string; status: string; property_address: string | null };
+    /**
+     * O buraco que o dono achou em 15/09/2026: a quote parada esperando o
+     * postcode nunca saía de `draft`.
+     *
+     * Quando falta endereço, a quote nasce `draft` e o cliente recebe um
+     * pedido de postcode. Ele responde, e este caminho devolvia a quote como
+     * ela estava — sem endereço, sem parceiro convidado, parada para sempre.
+     * A promessa "we'll come straight back with the quote" não era cumprida
+     * por ninguém.
+     *
+     * Preenche a lacuna e NUNCA sobrescreve: só quando o campo está vazio e a
+     * quote ainda é rascunho. Endereço digitado à mão pelo escritório, ou
+     * quote que já saiu de draft, ficam como estão.
+     */
+    const agora = pedido.propertyAddress ?? pedido.postcode;
+    if (!e.property_address && agora && e.status === "draft") {
+      const vaiTransmitirAgora = process.env.HARVEY_QUOTE_INVITES === "1";
+      const { error: errPreenche } = await supabase
+        .from("quotes")
+        .update({
+          property_address: agora,
+          postcode: pedido.postcode,
+          ...(vaiTransmitirAgora ? { status: "bidding", quote_type: "partner" } : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", e.id);
+      if (errPreenche) console.error(`[quoter] ${e.reference}: não consegui preencher o endereço —`, errPreenche);
+      else console.log(`[quoter] ${e.reference}: endereço chegou depois (${agora}), quote destravada`);
+    }
     return { quoteId: e.id, reference: e.reference, jaExistia: true };
   }
 

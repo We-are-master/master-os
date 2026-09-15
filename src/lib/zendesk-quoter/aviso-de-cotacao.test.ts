@@ -4,6 +4,7 @@ import {
   decidirAviso,
   TAG_AVISO_COTANDO,
   TAG_AVISO_POSTCODE,
+  respondeuComPostcode,
 } from "./aviso-de-cotacao";
 
 /** O caso feliz: endereço na mão e parceiros convidados. */
@@ -72,4 +73,45 @@ test("nenhuma das duas mensagens leva assinatura", () => {
     if (!d.fala) throw new Error("deveria falar");
     assert.doesNotMatch(d.html, /Fixfy|Leo|Victor|Kind regards|Best regards/);
   }
+});
+
+/* ── destravar o ticket parado ─────────────────────────────────────────── */
+const LEO = 6227542863391;
+const ask = { authorId: LEO, publico: true, corpo: "could you confirm the property postcode?", papel: "agent" };
+
+test("cliente respondeu com postcode: destrava", () => {
+  assert.equal(respondeuComPostcode([
+    { authorId: 9, publico: true, corpo: "need a quote for my bathroom", papel: "end-user" },
+    ask,
+    { authorId: 9, publico: true, corpo: "sure, it's NW2 0TT", papel: "end-user" },
+  ], LEO), true);
+});
+
+test("cliente respondeu SEM postcode: continua parado", () => {
+  // Destravar aqui faria o ciclo perguntar de novo, e o cliente levaria a
+  // mesma pergunta em looping.
+  assert.equal(respondeuComPostcode([
+    ask,
+    { authorId: 9, publico: true, corpo: "sorry, I'll check with the tenant", papel: "end-user" },
+  ], LEO), false);
+});
+
+test("postcode que veio ANTES da pergunta não conta", () => {
+  assert.equal(respondeuComPostcode([
+    { authorId: 9, publico: true, corpo: "bathroom at NW2 0TT", papel: "end-user" },
+    ask,
+  ], LEO), false);
+});
+
+test("nota interna do agente com postcode não destrava", () => {
+  assert.equal(respondeuComPostcode([
+    ask,
+    { authorId: 5679223041823, publico: true, corpo: "chased them, address is NW2 0TT", papel: "agent" },
+  ], LEO), false);
+});
+
+test("sem pergunta nenhuma no ticket, não há o que destravar", () => {
+  assert.equal(respondeuComPostcode([
+    { authorId: 9, publico: true, corpo: "NW2 0TT", papel: "end-user" },
+  ], LEO), false);
 });

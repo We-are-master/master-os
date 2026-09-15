@@ -306,6 +306,30 @@ async function ciclo(): Promise<void> {
 
   const vistos = lerVistos();
   const triados = lerIds(TRIAGEM_SEEN_PATH);
+
+  /**
+   * Antes de procurar ticket novo, destravar os que NÓS paramos.
+   *
+   * O ticket que ficou em On Hold esperando o postcode carrega a tag do ciclo,
+   * e a busca exclui quem a tem: ele sumia do campo de visão do Harvey mesmo
+   * depois de o cliente responder. A varredura tira as duas tags quando a
+   * resposta traz um postcode, e aqui ele sai também do `.seen`, que é a outra
+   * metade da trava. Sem este segundo gesto a tag volta na próxima passada e
+   * nada acontece.
+   */
+  try {
+    const { desparquearRespondidos } = await import("../../src/lib/zendesk-quoter/aviso-de-cotacao");
+    const destravados = await desparquearRespondidos(true);
+    for (const id of destravados) { vistos.delete(id); triados.delete(id); }
+    if (destravados.length) {
+      gravarVistos(vistos);
+      gravarIds(TRIAGEM_SEEN_PATH, triados);
+      console.log(`[harvey] ↺ ${destravados.length} ticket(s) destravado(s) com o postcode do cliente: ${destravados.join(", ")}`);
+    }
+  } catch (err) {
+    console.error("[harvey] varredura de parados falhou:", err);
+  }
+
   let notasTriagem = 0;
   const candidatos = (await buscarCandidatos()).filter(
     (t) =>

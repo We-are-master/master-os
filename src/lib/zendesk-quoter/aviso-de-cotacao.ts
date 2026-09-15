@@ -38,8 +38,15 @@
  * de verdade (a QT-2026-1144 tem postcode e zero convites: nenhum handyman
  * cobre CR4).
  */
-import { updateTicket } from "@/lib/zendesk";
+import { isZendeskConfigured, removeTicketTags, updateTicket } from "@/lib/zendesk";
 import { ZD_STATUS_BIDDING, ZD_STATUS_ON_HOLD } from "@/lib/zendesk-statuses";
+import { postcodesNoTexto } from "./achar-job";
+
+/** Mesmo par local do `quoter.ts`: o cliente do Zendesk em `lib/zendesk` não
+ *  expõe busca nem leitura de comentários. */
+const zdBase = () => `https://${process.env.ZENDESK_SUBDOMAIN}.zendesk.com/api/v2`;
+const authHeader = () =>
+  "Basic " + Buffer.from(`${process.env.ZENDESK_EMAIL}/token:${process.env.ZENDESK_API_TOKEN}`).toString("base64");
 
 /** Já dissemos "estamos cotando" neste ticket. */
 export const TAG_AVISO_COTANDO = "harvey_ack_quoting";
@@ -162,4 +169,82 @@ export async function avisarNoTicket(args: {
     console.error(`[quoter] aviso ao cliente falhou no #${args.ticketId}:`, err);
     return `── Customer reply ──\nNOT sent: ${err instanceof Error ? err.message : String(err)}.`;
   }
+}
+
+/* ==================== destravar o ticket que ficou esperando ==================== */
+/**
+ * O buraco que o dono achou antes do merge: "se ficar On Hold e o cliente
+ * responder, o Harvey vai ver e continuar?"
+ *
+ * Não ia. A busca do ciclo exclui `-tags:ai_quote_draft`, e essa tag é
+ * carimbada logo depois de cotar. O ticket parado esperando o postcode saía do
+ * campo de visão dele para sempre, e "we'll come straight back with the quote"
+ * virava promessa que ninguém cumpria.
+ *
+ * Esta varredura é o contrário da trava: procura só os tickets que NÓS
+ * paramos, vê se o cliente respondeu com um postcode, e destrava.
+ *
+ * Por que exigir o postcode em vez de qualquer resposta: sem ele, um "sorry,
+ * will check" destravaria o ticket, o ciclo perguntaria de novo, e o cliente
+ * levaria a mesma pergunta em looping. Resposta sem postcode fica parada para
+ * uma pessoa olhar, que é o resultado honesto.
+ */
+export function respondeuComPostcode(
+  comentarios: Array<{ authorId: number; publico: boolean; corpo: string; papel?: string }>,
+  autorDoAviso: number,
+): boolean {
+  let ondeParamos = -1;
+  for (let i = 0; i < comentarios.length; i++) {
+    const c = comentarios[i]!;
+    if (c.publico && c.authorId === autorDoAviso) ondeParamos = i;
+  }
+  if (ondeParamos === -1) return false;
+  return comentarios
+    .slice(ondeParamos + 1)
+    .filter((c) => c.publico && c.papel !== "agent" && c.papel !== "admin")
+    .some((c) => postcodesNoTexto(c.corpo).length > 0);
+}
+
+/**
+ * Roda a varredura de verdade. Devolve os ids destravados, para quem chama
+ * tirá-los também da memória local do ciclo — a tag sozinha não basta, o
+ * `.seen.json` também segura.
+ */
+export async function desparquearRespondidos(postar: boolean): Promise<number[]> {
+  if (!isZendeskConfigured()) return [];
+  const H = { Authorization: authHeader() };
+  const busca = `type:ticket status<solved tags:${TAG_AVISO_POSTCODE}`;
+  const res = await fetch(`${zdBase()}/search.json?query=${encodeURIComponent(busca)}&per_page=50`, { headers: H });
+  if (!res.ok) {
+    console.error(`[aviso] varredura de parados: HTTP ${res.status}`);
+    return [];
+  }
+  const { results } = (await res.json()) as { results?: Array<{ id: number }> };
+  const destravados: number[] = [];
+
+  for (const t of results ?? []) {
+    const r = await fetch(`${zdBase()}/tickets/${t.id}/comments.json?include=users`, { headers: H });
+    if (!r.ok) continue;
+    const j = (await r.json()) as {
+      comments: Array<{ author_id: number; public: boolean; body: string }>;
+      users?: Array<{ id: number; role: string }>;
+    };
+    const papel = new Map((j.users ?? []).map((u) => [u.id, u.role]));
+    const veio = respondeuComPostcode(
+      j.comments.map((c) => ({ authorId: c.author_id, publico: c.public, corpo: c.body, papel: papel.get(c.author_id) })),
+      AUTOR_DO_AVISO,
+    );
+    if (!veio) continue;
+
+    console.log(`[aviso] #${t.id}: o cliente mandou o postcode — destravando`);
+    if (postar) {
+      // As duas tags saem juntas: a nossa, que diz "já perguntei", e a do
+      // ciclo, que é o que esconde o ticket da busca.
+      await removeTicketTags(t.id, [TAG_AVISO_POSTCODE, "ai_quote_draft"]).catch((e) =>
+        console.error(`[aviso] #${t.id}: não consegui tirar as tags —`, e),
+      );
+    }
+    destravados.push(t.id);
+  }
+  return destravados;
 }
