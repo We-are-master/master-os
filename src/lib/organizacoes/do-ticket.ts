@@ -52,6 +52,50 @@ export async function organizacaoDoTicket(
 ): Promise<OrganizacaoDoTicket> {
   const assunto = String(ticket.subject ?? `#${ticket.id}`);
   const organizacoes = await carregarOrganizacoes(client);
+
+  /**
+   * A porta de ensaio, e ela é do tamanho de UM endereço.
+   *
+   * Sem isto não dá para ensaiar a corrente inteira: o dono só consegue mandar
+   * e-mail do próprio gmail, e gmail é domínio pessoal, que o portão barra com
+   * razão. Ensaiar "de verdade" pedindo para um cliente real escrever é pior
+   * que não ensaiar.
+   *
+   * Por que é seguro: casa um endereço EXATO, escolhido a dedo na variável, e
+   * não um domínio. Ligá-la não abre gmail nenhum além daquele. Sem a variável
+   * o caminho nem existe.
+   *
+   *   HARVEY_ENSAIO_EMAIL=victorhsouz@gmail.com
+   *   HARVEY_ENSAIO_CONTA=Fixfy
+   */
+  const ensaioEmail = process.env.HARVEY_ENSAIO_EMAIL?.trim().toLowerCase();
+  if (ensaioEmail && ticket.requesterEmail?.trim().toLowerCase() === ensaioEmail) {
+    const alvo = process.env.HARVEY_ENSAIO_CONTA?.trim() || "Fixfy";
+    /**
+     * A busca é no banco, não na lista já carregada.
+     *
+     * `carregarOrganizacoes` só devolve quem tem domínio que PROVA algo, e a
+     * conta de ensaio costuma ser justamente a que não tem (a Fixfy está
+     * cadastrada com um gmail de reserva). Procurar nela achava nada e o
+     * ensaio caía no portão normal, que foi o que aconteceu na primeira
+     * rodada de 15/09/2026.
+     */
+    const { createServiceClient } = await import("@/lib/supabase/service");
+    const { data: conta } = await (client ?? createServiceClient())
+      .from("accounts")
+      .select("id, company_name")
+      .ilike("company_name", alvo)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+    if (conta) {
+      const c = conta as { id: string; company_name: string };
+      console.log(`[organizacoes] ENSAIO: ${ensaioEmail} tratado como ${c.company_name}`);
+      return { ok: true, id: c.id, nome: c.company_name, dominio: `ensaio:${ensaioEmail}` };
+    }
+    console.error(`[organizacoes] ENSAIO: não achei a conta "${alvo}" — seguindo o portão normal`);
+  }
+
   const r = reconhecerOrganizacao(ticket.requesterEmail, organizacoes);
 
   if (r.tipo === "organizacao") {
