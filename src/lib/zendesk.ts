@@ -257,6 +257,8 @@ interface UpdateTicketArgs {
    * atuais aqui dentro e mandamos a união.
    */
   additionalTags?: string[];
+  /** Campos de formulário a gravar no MESMO PUT (id + valor). */
+  customFields?:   Array<{ id: number; value: unknown }>;
 }
 
 /**
@@ -316,6 +318,12 @@ export async function updateTicket(args: UpdateTicketArgs): Promise<void> {
    * outras — e são tags que filtram views e disparam triggers. A leitura é
    * imediatamente antes do PUT para a janela de corrida ser a menor possível.
    */
+  if (args.customFields?.length) {
+    ticket.custom_fields = args.customFields
+      .filter((f) => f && Number.isFinite(f.id) && f.value != null && f.value !== "")
+      .map((f) => ({ id: f.id, value: f.value }));
+  }
+
   if (args.additionalTags?.length) {
     const atuais = await lerTags(args.ticketId);
     const uniao = [...new Set([...atuais, ...args.additionalTags])];

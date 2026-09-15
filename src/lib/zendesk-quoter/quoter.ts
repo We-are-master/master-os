@@ -17,7 +17,7 @@
  */
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
-import { updateTicket } from "@/lib/zendesk";
+import { updateTicket, ZENDESK_REPLY_STATUS_FIELD_ID, ZENDESK_REPLY_STATUS_SENT_VALUE } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
 import { acharJobDoTicket } from "./achar-job";
 import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
@@ -340,10 +340,37 @@ export function montarNotaInterna(
   return linhas.join("\n");
 }
 
-/** A nota interna: o preço, os convites e o que o cliente ouviu. Nunca sai
- *  daqui para fora. Quem fala com o cliente é `avisarNoTicket`, e só ele. */
-export async function postarNotaInterna(ticketId: number, corpo: string): Promise<void> {
-  await updateTicket({ ticketId, commentBody: corpo, publicComment: false });
+/**
+ * A nota interna: o preço, os convites e o que o cliente ouviu. Nunca sai daqui
+ * para fora. Quem fala com o cliente é `avisarNoTicket`, e só ele.
+ *
+ * `marcarComoRespondido` grava o Reply Status como respondido no MESMO PUT, e
+ * existe por causa de uma armadilha do Zendesk: o trigger "Auto-mark Reply
+ * Status = Sent on Job/Quote creation" procura as tags `job-created`,
+ * `sent-to-os` e `auto_assigning_done`, e a do Harvey é `ai_job_created`. O
+ * operador `includes` casa palavra inteira e não pedaço ([[zendesk-trigger-operadores]]),
+ * então o trigger nunca disparou para ele: todo job que ele criava deixava o
+ * ticket no Action Required com trabalho já feito.
+ *
+ * Acrescentar a tag dele ao trigger seria pior: ela também é carimbada quando o
+ * booking NÃO vira job por falta de dado, e aí o ticket sairia da fila
+ * justamente quando alguém precisa olhar. Só quem chega em `status: "criado"`
+ * pede esta marca (dono, 15/09/2026: "em job booked pelo Harvey; só não fica se
+ * não foi booked").
+ */
+export async function postarNotaInterna(
+  ticketId: number,
+  corpo: string,
+  opcoes?: { marcarComoRespondido?: boolean },
+): Promise<void> {
+  await updateTicket({
+    ticketId,
+    commentBody: corpo,
+    publicComment: false,
+    ...(opcoes?.marcarComoRespondido
+      ? { customFields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }] }
+      : {}),
+  });
 }
 
 export type ResultadoDoQuoter = {
@@ -1386,7 +1413,8 @@ export async function subirJobBooked(
     "",
     "Unassigned — office picks the partner in the OS.",
   ].join("\n");
-  if (postar) await postarNotaInterna(ticketId, nota);
+  // O job nasceu: este ticket não deve mais nada a ninguém.
+  if (postar) await postarNotaInterna(ticketId, nota, { marcarComoRespondido: true });
   return { status: "criado", reference: corpo.reference ?? "?", nota };
 }
 
