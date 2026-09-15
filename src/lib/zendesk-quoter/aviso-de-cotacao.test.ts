@@ -5,6 +5,7 @@ import {
   TAG_AVISO_COTANDO,
   TAG_AVISO_POSTCODE,
   respondeuComPostcode,
+  TAG_POSTCODE_RECEBIDO,
 } from "./aviso-de-cotacao";
 
 /** O caso feliz: endereço na mão e parceiros convidados. */
@@ -114,4 +115,31 @@ test("sem pergunta nenhuma no ticket, não há o que destravar", () => {
   assert.equal(respondeuComPostcode([
     { authorId: 9, publico: true, corpo: "NW2 0TT", papel: "end-user" },
   ], LEO), false);
+});
+
+/* ── a terceira cara: ele respondeu o que faltava ──────────────────────── */
+test("quem respondeu o postcode ouve outra coisa, nao o agradecimento do envio", () => {
+  const d = decidirAviso({ ...COMPLETO, tags: [TAG_POSTCODE_RECEBIDO] });
+  assert.equal(d.fala, true);
+  if (!d.fala) return;
+  assert.equal(d.cara, "cotando");
+  assert.equal(d.tag, TAG_AVISO_COTANDO);
+  assert.match(d.html, /Thank you\. We're working on a quote now/);
+  assert.match(d.html, /let you know if we need anything else/);
+  // agradecer o envio a quem ja enviou e ja respondeu soa a robo que nao leu.
+  assert.doesNotMatch(d.html, /Thanks for sending this over/);
+  assert.doesNotMatch(d.html, /Fixfy|Leo|Victor|regards/);
+});
+
+test("sem a marca de resposta, o texto continua sendo o primeiro", () => {
+  const d = decidirAviso(COMPLETO);
+  if (!d.fala) throw new Error("deveria falar");
+  assert.match(d.html, /Thanks for sending this over/);
+});
+
+test("a marca de resposta nao fura a trava de ja ter falado", () => {
+  assert.equal(
+    decidirAviso({ ...COMPLETO, tags: [TAG_POSTCODE_RECEBIDO, TAG_AVISO_COTANDO] }).fala,
+    false,
+  );
 });

@@ -38,7 +38,7 @@
  * de verdade (a QT-2026-1144 tem postcode e zero convites: nenhum handyman
  * cobre CR4).
  */
-import { isZendeskConfigured, removeTicketTags, updateTicket } from "@/lib/zendesk";
+import { addTicketTags, isZendeskConfigured, removeTicketTags, updateTicket } from "@/lib/zendesk";
 import { ZD_STATUS_BIDDING, ZD_STATUS_ON_HOLD } from "@/lib/zendesk-statuses";
 import { postcodesNoTexto } from "./achar-job";
 
@@ -52,6 +52,14 @@ const authHeader = () =>
 export const TAG_AVISO_COTANDO = "harvey_ack_quoting";
 /** Já pedimos o postcode neste ticket. */
 export const TAG_AVISO_POSTCODE = "harvey_ack_postcode";
+/**
+ * O cliente respondeu ao nosso pedido de postcode.
+ *
+ * Carimbada pela varredura que destrava, e lida aqui só para escolher o texto:
+ * agradecer o envio a quem já enviou e já respondeu soa a robô que não leu
+ * nada. Quem foi destravado ouve outra coisa (dono, 15/09/2026).
+ */
+export const TAG_POSTCODE_RECEBIDO = "harvey_postcode_recebido";
 
 /**
  * Quem assina o aviso.
@@ -78,6 +86,17 @@ export type DecisaoDoAviso =
 const CORPO_COTANDO =
   "<p>Hi Team,</p>" +
   "<p>Thanks for sending this over. We're working on a quote now and will come back to you shortly.</p>";
+
+/**
+ * A terceira cara: ele respondeu o que faltava.
+ *
+ * "Thanks for sending this over" aqui seria agradecer de novo o pedido
+ * original. O que ele acabou de fazer foi responder, então é isso que se
+ * reconhece, mais a promessa de não voltar a incomodar sem motivo.
+ */
+const CORPO_DEPOIS_DO_POSTCODE =
+  "<p>Hi Team,</p>" +
+  "<p>Thank you. We're working on a quote now and I'll let you know if we need anything else.</p>";
 
 const CORPO_POSTCODE =
   "<p>Hi Team,</p>" +
@@ -116,13 +135,16 @@ export function decidirAviso(args: {
     return { fala: false, motivo: "no partner was invited — nothing to promise yet" };
   }
   if (args.tags.includes(TAG_AVISO_COTANDO)) return { fala: false, motivo: "already acknowledged" };
+  const respondeu = args.tags.includes(TAG_POSTCODE_RECEBIDO);
   return {
     fala: true,
     cara: "cotando",
     tag: TAG_AVISO_COTANDO,
-    html: CORPO_COTANDO,
+    html: respondeu ? CORPO_DEPOIS_DO_POSTCODE : CORPO_COTANDO,
     status: ZD_STATUS_BIDDING,
-    resumo: "told the customer we're working on a quote; ticket moved to Bidding",
+    resumo: respondeu
+      ? "thanked the customer for the postcode and said we're on it; ticket moved to Bidding"
+      : "told the customer we're working on a quote; ticket moved to Bidding",
   };
 }
 
@@ -242,6 +264,11 @@ export async function desparquearRespondidos(postar: boolean): Promise<number[]>
       // ciclo, que é o que esconde o ticket da busca.
       await removeTicketTags(t.id, [TAG_AVISO_POSTCODE, "ai_quote_draft"]).catch((e) =>
         console.error(`[aviso] #${t.id}: não consegui tirar as tags —`, e),
+      );
+      // E deixa a marca de que ele respondeu, que é o que escolhe o texto da
+      // próxima mensagem. Sem ela o Harvey agradeceria o envio pela segunda vez.
+      await addTicketTags(t.id, [TAG_POSTCODE_RECEBIDO]).catch((e) =>
+        console.error(`[aviso] #${t.id}: não consegui marcar o postcode recebido —`, e),
       );
     }
     destravados.push(t.id);

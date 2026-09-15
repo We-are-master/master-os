@@ -165,13 +165,17 @@ async function pedePreco(t: TicketDaBusca, apiKey: string): Promise<{ quote: boo
   }
 }
 
+/**
+ * Carimba a tag SEM derrubar as outras.
+ *
+ * Era `POST /tags.json`, que nesta conta substitui o conjunto inteiro em vez de
+ * acrescentar: foi assim que todo ticket tocado pelo Harvey ficou só com a tag
+ * dele e a do reply status, sem as do Zendesk AI. A leitura extra é o preço de
+ * não apagar o que os outros escreveram. Ver `addTicketTags` em lib/zendesk.
+ */
 async function adicionarTagNomeada(ticketId: number, tag: string): Promise<void> {
-  const res = await fetch(`${baseUrl()}/tickets/${ticketId}/tags.json`, {
-    method: "POST",
-    headers: { Authorization: authHeader(), "content-type": "application/json" },
-    body: JSON.stringify({ tags: [tag] }),
-  });
-  if (!res.ok) throw new Error(`tag failed: HTTP ${res.status}`);
+  const { addTicketTags } = await import("../../src/lib/zendesk");
+  await addTicketTags(ticketId, [tag]);
 }
 const adicionarTag = (ticketId: number) => adicionarTagNomeada(ticketId, TAG);
 
