@@ -102,6 +102,21 @@ function reportTemplateForJob(job: Job): ReportTemplate {
  * `POST /api/jobs/[id]/office-report`. The report has to exist; whose keyboard
  * it came from does not matter.
  */
+/**
+ * Se o relatório deste job ainda vai ser enviado a uma plataforma de cliente.
+ *
+ * O sinal é o mesmo que a Stefane usa para escolher o que enviar
+ * (`report_link ilike '%housekeep%'` em `scripts/stefane-worker.mts`): quem tem
+ * link da Housekeep vai para o formulário deles, que exige foto de chegada.
+ * Checkatrade, Express e job direto não passam por esse formulário.
+ *
+ * Um só lugar decide, e é este, para a nota que o escritório vê e o portão que
+ * bloqueia nunca discordarem.
+ */
+export function relatorioVaiParaPlataforma(job: Job): boolean {
+  return /housekeep/i.test(String((job as { report_link?: string | null }).report_link ?? ""));
+}
+
 export function reportCompletionGate(job: Job): { ok: boolean; message?: string } {
   // The report already reached the client's platform — Stefane submitted it, or
   // someone sent it by hand and marked it sent. The envelopes on this row stop
@@ -121,6 +136,7 @@ export function reportCompletionGate(job: Job): { ok: boolean; message?: string 
     finalReportSubmitted: job.final_report_submitted,
     timerStartedAt: job.partner_timer_started_at,
     timerEndedAt: job.partner_timer_ended_at,
+    plataformaExigeFotos: relatorioVaiParaPlataforma(job),
   });
   if (!health.bloqueado) return { ok: true };
   // Name what is missing, not just that something is: this message is read by

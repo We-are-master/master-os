@@ -101,12 +101,35 @@ export function reportHealth(input: {
    * palpite bom mas continua palpite.
    */
   exigencias?: ExigenciaDeFoto[];
+  /**
+   * Se o relatório ainda vai ser enviado a uma plataforma de cliente.
+   *
+   * Existe por causa de UMA exigência que não é nossa: o formulário de trade da
+   * Housekeep pede no mínimo uma foto em "Before photos", e foi por isso que o
+   * template de certificado ganhou seção de chegada em 20/08/2026.
+   *
+   * Em job que não vai para plataforma nenhuma essa cobrança não tem dono. O
+   * JOB-9558 e o JOB-9585 são EICR do LandLord Certificate, entregues como
+   * certificado e mandados ao Checkatrade: ficaram parados desde 10 e 11 de
+   * setembro pedindo uma foto de chegada que ninguém do outro lado queria.
+   *
+   * Regra do dono (16/09/2026): "quando é relatório tem que dar 100% só com
+   * relatório, não precisa de mais nada." Vale para o certificado, cujo
+   * entregável É o documento. Não vale para limpeza, onde a foto por cômodo é o
+   * trabalho.
+   *
+   * O padrão é `true` de propósito: quem não sabe responder continua sendo
+   * cobrado como antes.
+   */
+  plataformaExigeFotos?: boolean;
 }): SaudeDoRelatorio {
   const { template } = input;
   const slots = photoSlotsForTemplate(template);
+  /** Certificado que não vai para plataforma: o relatório é o certificado. */
+  const certificadoDireto = template === "certificate" && input.plataformaExigeFotos === false;
   const antes = fotosPorSlot(input.startReport);
   const depois = fotosPorSlot(input.finalReport);
-  const temSecaoDeChegada = slots.start.length > 0;
+  const temSecaoDeChegada = slots.start.length > 0 && !certificadoDireto;
   const itens: ItemDeSaude[] = [];
 
   const add = (i: ItemDeSaude) => itens.push(i);
@@ -217,13 +240,17 @@ export function reportHealth(input: {
     });
   }
 
-  add({
-    chave: "horarios",
-    rotulo: "Start and finish times set",
-    ok: !!input.timerStartedAt && !!input.timerEndedAt,
-    bloqueia: false,
-    peso: 5,
-  });
+  // O horário é o que a Stefane manda para a plataforma. Sem plataforma, não
+  // há para quem mandar, e cobrá-lo deixaria o certificado preso em 95%.
+  if (!certificadoDireto) {
+    add({
+      chave: "horarios",
+      rotulo: "Start and finish times set",
+      ok: !!input.timerStartedAt && !!input.timerEndedAt,
+      bloqueia: false,
+      peso: 5,
+    });
+  }
 
   const somaPesos = itens.reduce((a, i) => a + i.peso, 0);
   const somaOk = itens.filter((i) => i.ok).reduce((a, i) => a + i.peso, 0);

@@ -8548,6 +8548,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 finalReportSubmitted={job.final_report_submitted ?? null}
                 timerStartedAt={job.partner_timer_started_at ?? null}
                 timerEndedAt={job.partner_timer_ended_at ?? null}
+                reportLink={job.report_link ?? null}
               />
               <JobReportV2Card
                 jobId={job.id}

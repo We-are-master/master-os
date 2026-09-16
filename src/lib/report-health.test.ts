@@ -296,3 +296,47 @@ test("bloco de foto condicional só aparece quando o gatilho abre", () => {
   assert.equal(isFieldVisible(dano!, {}), false);
   assert.equal(isFieldVisible(dano!, { pre_existing_damage: true }), true);
 });
+
+/* ── certificado sem plataforma: o relatório é o entregável ─────────────── */
+const CERT_ENTREGUE = {
+  template: "certificate" as const,
+  startReport: null,
+  finalReport: { template: "certificate", photos: { certificate: ["x.pdf"] }, inspection_summary: "EICR carried out, no C1 or C2 observations found." },
+  finalReportSubmitted: true,
+  timerStartedAt: null,
+  timerEndedAt: null,
+};
+
+test("certificado que nao vai para plataforma fecha 100% so com o relatorio", () => {
+  // Regra do dono (16/09/2026). O JOB-9558 é um EICR do Checkatrade: o
+  // certificado foi emitido e ele ficou preso pedindo foto de chegada.
+  const h = reportHealth({ ...CERT_ENTREGUE, plataformaExigeFotos: false });
+  assert.equal(h.nota, 100);
+  assert.equal(h.bloqueado, false);
+  assert.equal(h.itens.some((i) => i.chave === "fotos_antes"), false);
+  assert.equal(h.itens.some((i) => i.chave === "horarios"), false);
+});
+
+test("o mesmo certificado indo para a Housekeep continua pedindo a foto de chegada", () => {
+  // O formulário de trade deles exige, e foi por isso que a seção existe.
+  const h = reportHealth({ ...CERT_ENTREGUE, plataformaExigeFotos: true });
+  assert.equal(h.bloqueado, true);
+  assert.equal(h.pendencias.some((p) => p.chave === "fotos_antes" && p.bloqueia), true);
+});
+
+test("sem responder de onde vem, cobra como antes", () => {
+  // O padrão não pode afrouxar nada por omissão.
+  assert.equal(reportHealth(CERT_ENTREGUE).bloqueado, true);
+});
+
+test("limpeza nao e afetada: a foto por comodo e o trabalho", () => {
+  const h = reportHealth({
+    template: "cleaner",
+    startReport: null,
+    finalReport: { template: "cleaner", photos: { kitchen: ["a"] } },
+    finalReportSubmitted: true,
+    plataformaExigeFotos: false,
+  });
+  assert.equal(h.bloqueado, true);
+  assert.equal(h.pendencias.some((p) => p.chave === "fotos_antes"), true);
+});
