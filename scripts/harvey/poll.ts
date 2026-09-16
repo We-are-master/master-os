@@ -302,6 +302,30 @@ async function sincronizarAwaitingPayment(): Promise<void> {
 }
 
 async function ciclo(): Promise<void> {
+  /**
+   * A chave de pausa, e ela existe por causa de um custo já pago.
+   *
+   * Em 12/09/2026 dois Harveys ficaram no ar ao mesmo tempo (o do Mac e o do
+   * Railway) e disputaram os mesmos tickets: o que chegava primeiro carimbava a
+   * tag, o outro achava o ticket já tratado, e toda reserva da Housekeep virou
+   * nota de "missing client name". Desligar um deles era o conserto, e não havia
+   * jeito de fazer isso sem mexer no launchd de um lado ou derrubar o serviço do
+   * outro.
+   *
+   * O `startCommand` do Railway não serve: ele fica gravado na configuração,
+   * aparece no painel, e o container continua rodando o CMD da imagem (medido em
+   * 16/09/2026, dois redeploys seguidos). Variável ele respeita.
+   *
+   * Então a pausa é uma variável e mora aqui, no primeiro gesto do ciclo: antes
+   * de ler ticket, antes de gastar modelo, antes de escrever em qualquer lugar.
+   *
+   *   HARVEY_PAUSADO=1
+   */
+  if (process.env.HARVEY_PAUSADO?.trim() === "1") {
+    console.log("[harvey] PAUSADO por HARVEY_PAUSADO=1 — nada lido, nada escrito.");
+    return;
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
   const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD } =
