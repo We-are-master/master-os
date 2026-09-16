@@ -40,6 +40,7 @@ export function ReportHealthCard({
   finalReportSubmitted,
   timerStartedAt,
   timerEndedAt,
+  reportLink,
 }: {
   /** Sem ele a nota mede contra o nosso piso, que é palpite. */
   jobUuid?: string | null;
@@ -49,6 +50,9 @@ export function ReportHealthCard({
   finalReportSubmitted: boolean | null;
   timerStartedAt: string | null;
   timerEndedAt: string | null;
+  /** O link do relatório no cliente. É ele que diz se ainda há um formulário
+   *  de plataforma a satisfazer — a mesma leitura que o portão faz. */
+  reportLink?: string | null;
 }) {
   /**
    * A exigência de foto lida da plataforma do cliente, campo a campo.
@@ -91,8 +95,12 @@ export function ReportHealthCard({
       timerStartedAt,
       timerEndedAt,
       exigencias,
+      // A MESMA leitura do portão (`relatorioVaiParaPlataforma`): a nota na tela
+      // e a regra que bloqueia não podem discordar, senão o card diz 100% e o
+      // botão recusa, ou o contrário.
+      plataformaExigeFotos: /housekeep/i.test(String(reportLink ?? "")),
     });
-  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt, exigencias]);
+  }, [jobTitle, startReport, finalReport, finalReportSubmitted, timerStartedAt, timerEndedAt, exigencias, reportLink]);
 
   /**
    * Relatório preenchido no formulário ERRADO para este cliente.
