@@ -6,6 +6,7 @@ import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { loadSelfBillPayoutLines } from "@/services/self-bills";
 import { selfBillJobCancellationFeeLine } from "@/lib/job-cancel-economics";
+import { readSelfBillAdjustments, SELF_BILL_ADJUSTMENT_KIND_LABEL } from "@/lib/self-bill-adjustments";
 import {
   isJobApprovedForSelfBillPayout,
   isSelfBillPayoutVoided,
@@ -258,6 +259,14 @@ export async function renderSelfBillPdfBuffer(
         }))
       : lines;
 
+  /** Deduções com nome próprio: seção separada no PDF, jobs intactos. */
+  const adjustments = readSelfBillAdjustments(sb.payout_breakdown).map((a) => ({
+    label: a.label,
+    kindLabel: SELF_BILL_ADJUSTMENT_KIND_LABEL[a.kind],
+    amount: a.amount,
+    jobReference: a.job_reference ?? null,
+  }));
+
   const logoUrl = await resolveSelfBillPdfLogoUrl(supabase);
   const footerLogoUrl = await resolveSelfBillFooterLogo();
 
@@ -287,6 +296,7 @@ export async function renderSelfBillPdfBuffer(
         internalBreakdown,
         logoUrl,
         footerLogoUrl,
+        adjustments,
       }}
     />,
   );
