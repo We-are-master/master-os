@@ -6,6 +6,7 @@ import {
   officeCancellationPartnerPayoutGbp,
   partnerCancellationClawbackOwedGbp,
 } from "@/lib/job-cancel-economics";
+import { readSelfBillAdjustments, sumSelfBillAdjustments } from "@/lib/self-bill-adjustments";
 import { parseISO } from "date-fns";
 import {
   computePartnerSelfBillDueIso,
@@ -475,8 +476,17 @@ export async function recomputeSelfBillTotals(selfBillId: string): Promise<void>
     jobValue += l.labour;
     materials += l.materials;
   }
-  const commission = 0;
-  const netPayout = jobValue + materials - commission;
+  // Os ajustes do documento (taxa de cancelamento, material cobrado de volta)
+  // vivem no payout_breakdown e entram aqui como `commission`.
+  const { data: docRow } = await supabase
+    .from("self_bills")
+    .select("payout_breakdown")
+    .eq("id", selfBillId)
+    .maybeSingle();
+  const commission = sumSelfBillAdjustments(
+    readSelfBillAdjustments((docRow as Pick<SelfBill, "payout_breakdown"> | null)?.payout_breakdown),
+  );
+  const netPayout = Math.max(0, jobValue + materials - commission);
   /**
    * `approved_at` sai do JOB, não de um clique separado.
    *
@@ -579,7 +589,14 @@ export async function refreshSelfBillPayoutState(
    * isto quando há visitas.
    */
   const jobsCount = payable.length;
-  const commission = 0;
+  /**
+   * `commission` era sempre zero aqui, e qualquer desconto escrito à mão no
+   * documento sumia no recálculo seguinte (foi o que apagou os £254 da G&M em
+   * 17/09/2026). Agora o valor é a soma dos ajustes do próprio documento
+   * (`payout_breakdown.adjustments`): o recálculo passa a preservar o que o
+   * escritório lançou, e o PDF mostra cada ajuste numa linha sua.
+   */
+  const commission = sumSelfBillAdjustments(readSelfBillAdjustments(before.payout_breakdown));
   let clawAdjustAll = 0;
   let officePayoutAdjustAll = 0;
   for (const r of jobs) {

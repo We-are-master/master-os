@@ -1111,11 +1111,33 @@ export interface SelfBill {
   /** Profile id of the user who clicked Approve. */
   approved_by?: string | null;
   /** Workforce auto-bill audit (fixed pay + % commission lines). */
-  payout_breakdown?: WorkforcePayoutBreakdown | null;
+  payout_breakdown?: SelfBillPayoutBreakdown | null;
 }
 
 export type WorkforcePaymentMethod = "bank_transfer" | "wise";
 export type WorkforceCommissionBasis = "revenue" | "gross_profit";
+
+export type SelfBillAdjustmentKind = "cancellation_fee" | "materials" | "other";
+
+/** Dedução com nome próprio num self-bill de parceiro. `amount` é positivo e sempre desconta. */
+export type SelfBillAdjustment = {
+  kind: SelfBillAdjustmentKind;
+  label: string;
+  amount: number;
+  job_reference?: string | null;
+  note?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+};
+
+/**
+ * `self_bills.payout_breakdown`: folha de pagamento (internal) traz o
+ * WorkforcePayoutBreakdown inteiro; self-bill de parceiro só traz
+ * `adjustments`. Ver `src/lib/self-bill-adjustments.ts`.
+ */
+export type SelfBillPayoutBreakdown = Partial<WorkforcePayoutBreakdown> & {
+  adjustments?: SelfBillAdjustment[] | null;
+};
 
 export type WorkforcePayoutBreakdown = {
   fixed_pay: number;

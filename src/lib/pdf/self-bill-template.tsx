@@ -52,6 +52,12 @@ export interface SelfBillPdfData {
   /** Explicit flag from server — preferred over inferring from optional text fields. */
   payoutVoided?: boolean;
   billOrigin?: "partner" | "internal";
+  /**
+   * Deduções do documento, fora dos jobs (taxa de cancelamento, material
+   * cobrado de volta). Com lista, a tabela de jobs fecha num subtotal e o
+   * total do documento vem depois desta seção. `amount` é positivo.
+   */
+  adjustments?: { label: string; kindLabel: string; amount: number; jobReference?: string | null }[];
   /** Data URI or https URL for header logo (white wordmark on navy). */
   logoUrl?: string;
   /** Wordmark branca oficial para o rodapé navy. */
@@ -257,6 +263,9 @@ function SelfBillPageHeader({ logoUrl }: { logoUrl?: string }) {
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
+  const adjustments = data.adjustments ?? [];
+  const hasAdjustments = !isVoided && adjustments.length > 0;
+  const adjustmentsTotal = adjustments.reduce((s, a) => s + a.amount, 0);
   const originalAmt =
     data.originalNetPayout != null && Number.isFinite(Number(data.originalNetPayout)) && Number(data.originalNetPayout) > 0
       ? Number(data.originalNetPayout)
@@ -362,11 +371,54 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
                     <Text style={[styles.cellNumText, styles.cellNum]}>{fmtPlain(line.partner_cost)}</Text>
                   </View>
                 ))}
-                {/* Rodapé da tabela: o total, e o único lugar onde "inc VAT" aparece. */}
-                <View style={styles.tableFoot} wrap={false}>
-                  <Text style={[styles.tfLabel]}>Total payout</Text>
+                {/* Rodapé da tabela: o total, e o único lugar onde "inc VAT" aparece.
+                    Com deduções, vira o subtotal dos jobs; o total do documento
+                    fecha embaixo da seção de deduções. */}
+                {hasAdjustments ? (
+                  <View style={styles.tableFoot} wrap={false}>
+                    <Text style={[styles.tfLabel]}>Jobs subtotal</Text>
+                    <View style={styles.tfValRow}>
+                      <Text style={styles.tfVal}>{fmtPlain(lineSum)}</Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.tableFoot} wrap={false}>
+                    <Text style={[styles.tfLabel]}>Total payout</Text>
+                    <View style={styles.tfValRow}>
+                      <Text style={styles.tfVal}>{fmtPlain(data.netPayout)}</Text>
+                      <Text style={styles.tfVat}>inc VAT</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            </>
+          ) : null}
+          {/* Deduções do documento: cada uma com nome, tipo e job de origem,
+              para o parceiro conferir sem precisar perguntar. */}
+          {hasAdjustments ? (
+            <>
+              <Text style={styles.sectionLabel}>Deductions</Text>
+              <View style={[styles.card, { marginBottom: 14 }]} wrap={false}>
+                {adjustments.map((a, i) => (
+                  <View key={`${a.label}-${i}`} style={styles.lineRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={styles.lineLabel}>{a.label}</Text>
+                      <Text style={styles.lineNote}>
+                        {a.kindLabel}
+                        {a.jobReference ? ` · ${a.jobReference}` : ""}
+                      </Text>
+                    </View>
+                    <Text style={styles.lineVal}>-{fmtPlain(a.amount)}</Text>
+                  </View>
+                ))}
+                <View style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>Total deductions</Text>
+                  <Text style={styles.lineVal}>-{fmtPlain(adjustmentsTotal)}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Total payout</Text>
                   <View style={styles.tfValRow}>
-                    <Text style={styles.tfVal}>{fmtPlain(data.netPayout)}</Text>
+                    <Text style={styles.totalVal}>{fmtPlain(data.netPayout)}</Text>
                     <Text style={styles.tfVat}>inc VAT</Text>
                   </View>
                 </View>
