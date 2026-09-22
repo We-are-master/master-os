@@ -224,6 +224,21 @@ export const runtime  = "nodejs";
  *     ticket_subject?:  string,      // with create_zendesk_ticket: subject the
  *                                    //   customer sees (the job reference is
  *                                    //   appended). Default "JOB · title · client".
+ *     payment_status?:  "paid" | "partial", // the money came in BEFORE the job
+ *                                    //   existed (card paid on the website).
+ *                                    //   Writes payment_status AND its twin
+ *                                    //   finance_status, plus paid_at (now,
+ *                                    //   unless paid_at is sent).
+ *                                    //   `status` is NOT touched: a paid job
+ *                                    //   is still unassigned until someone
+ *                                    //   works it, and the final check is what
+ *                                    //   closes it.
+ *     paid_at?:         string,      // ISO date the money came in. Defaults to
+ *                                    //   now when payment_status is sent.
+ *     payment_amount?:  number,      // how much was taken for THIS job (a
+ *                                    //   booking with 3 services sends the
+ *                                    //   split, not the whole basket).
+ *     stripe_payment_intent_id?: string, // the charge, for reconciliation.
  *     report_link?:     string       // Free-text URL where the office submits
  *                                    //   the customer-side report (Drive
  *                                    //   folder, Notion page, internal portal,
@@ -368,6 +383,38 @@ export async function POST(req: NextRequest) {
    */
   const imagesIn        = capJobImagesArray(coerceJobImagesArray(body.images));
   const internalNotesIn = nullish(body.internal_notes);
+
+  /**
+   * Reserva já paga no ato: o site B2C passa o cartão ANTES de o job existir,
+   * então o dinheiro entrou antes da primeira linha no OS.
+   *
+   * Sem isto o job nasce `unpaid`: vira "a receber" de um dinheiro que já está
+   * na conta, entra na conferência da Zia como cobrança em aberto e alguém
+   * acaba mandando link de pagamento a quem já pagou (JOB-9672, 22/09/2026).
+   *
+   * Marca SÓ o dinheiro. O `status` não se mexe: pago não é entregue, e quem
+   * fecha job continua sendo o final check. Job assim nasce `unassigned` e
+   * pago, que é exatamente o que uma compra no site é.
+   *
+   * `payment_status` e `finance_status` são gêmeas (ver types/database.ts):
+   * quem escreve uma escreve a outra na mesma chamada, senão a checagem de
+   * coerência da Zia acusa divergência.
+   */
+  const paymentStatusIn: "paid" | "partial" | null = (() => {
+    const v = str(body.payment_status).toLowerCase();
+    return v === "paid" || v === "partial" ? v : null;
+  })();
+  const paidAtIn = (() => {
+    const bruto = str(body.paid_at);
+    if (!bruto) return null;
+    const d = new Date(bruto);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  })();
+  const paymentAmountIn = (() => {
+    const n = Number(body.payment_amount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+  })();
+  const paymentIntentIn = str(body.stripe_payment_intent_id) || null;
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -898,7 +945,7 @@ export async function POST(req: NextRequest) {
     progress:           0,
     current_phase:      0,
     job_type:           rateType,
-    finance_status:     "unpaid",
+    finance_status:     paymentStatusIn ?? "unpaid",
     scope:              description,
     images:             imagesIn,
   };
@@ -935,6 +982,12 @@ export async function POST(req: NextRequest) {
   }
   if (internalNotesIn) {
     jobRow.internal_notes = internalNotesIn;
+  }
+  if (paymentStatusIn) {
+    jobRow.payment_status = paymentStatusIn;
+    jobRow.paid_at        = paidAtIn ?? new Date().toISOString();
+    if (paymentAmountIn !== null) jobRow.payment_amount = paymentAmountIn;
+    if (paymentIntentIn) jobRow.stripe_payment_intent_id = paymentIntentIn;
   }
   if (autoAssignBlocked) {
     const aviso = `NEEDS REVIEW · auto assign blocked: ${autoAssignBlocked.join(", ")}.`;
