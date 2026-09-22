@@ -11,13 +11,12 @@
  * vezes, porque cada aviso carrega uma data diferente.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createRespondIoClient, phoneIdentifier } from "@/lib/respond-io/client";
+import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 import { decidirEnvio } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
-const template = () => process.env.RESPONDIO_RESCHEDULE_TEMPLATE?.trim() || "reschedule";
-const idioma = () => process.env.RESPONDIO_TEMPLATE_LANG?.trim() || process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+const template = () => process.env.WHATSAPP_TEMPLATE_RESCHEDULE?.trim() || "booking_rescheduled";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 function primeiroNome(completo: string | null | undefined): string {
   const nome = String(completo ?? "").trim().split(/\s+/)[0];
@@ -25,7 +24,7 @@ function primeiroNome(completo: string | null | undefined): string {
 }
 
 export type ResultadoRescheduleWhatsapp =
-  | { estado: "enviado"; telefone: string; messageId: number }
+  | { estado: "enviado"; telefone: string; messageId: string }
   | { estado: "pulado"; motivo: string }
   | { estado: "falhou"; motivo: string };
 
@@ -72,7 +71,7 @@ export async function enviarRescheduleDoCliente(
     jaEnviadoEm: null,
   });
   if (!decisao.manda) return { estado: "pulado", motivo: decisao.motivo };
-  if (!canal()) return { estado: "pulado", motivo: "RESPONDIO_CONFIRMATION_CHANNEL_ID is not set" };
+  if (!whatsappConfigured()) return { estado: "pulado", motivo: "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)" };
 
   const data = dataPorExtenso(job.scheduled_date ?? job.scheduled_start_at ?? null);
   const janela = janelaDeChegada(job.scheduled_start_at ?? null, job.scheduled_end_at ?? null);
@@ -85,21 +84,13 @@ export async function enviarRescheduleDoCliente(
     String(job.title ?? "").trim() || "your booking",
   ];
 
-  const respond = createRespondIoClient();
-  const id = phoneIdentifier(decisao.telefone);
   try {
-    await respond.createOrUpdateContact(id, { firstName: parametros[0], phone: decisao.telefone });
-    const { messageId } = await respond.sendTemplate(
-      id,
-      {
-        name: template(),
-        languageCode: idioma(),
-        components: [
-          { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
-        ],
-      },
-      canal()!,
-    );
+    const { messageId } = await sendTemplate({
+      to: decisao.telefone,
+      name: template(),
+      language: idioma(),
+      bodyParams: parametros,
+    });
     console.log(`[reschedule-whatsapp] ${job.id} enviado para ${decisao.telefone} (message ${messageId})`);
     return { estado: "enviado", telefone: decisao.telefone, messageId };
   } catch (err) {

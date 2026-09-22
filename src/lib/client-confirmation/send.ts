@@ -11,47 +11,24 @@
  * alguém arrasta um card na tela do respond.io.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  createRespondIoClient,
-  phoneIdentifier,
-  type RespondIoClient,
-} from "@/lib/respond-io/client";
+import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 
 /**
- * Nome e canal do template vivem em env, e não em constante, porque template é
- * de painel: o nome é escolhido por quem submete à Meta, e o canal decide QUAL
- * número e perfil o cliente vê. Desde 28/08/2026 os dois canais são Fixfy:
- * 544116 (Whatsapp Business 07) é o ativo e 539660 (…20) é o antigo. Mandar
- * pelo canal errado entrega a mensagem certa com o remetente errado.
- */
-/**
- * Lidos na hora da chamada, não no import.
+ * Nome e idioma do template vivem em env, e não em constante, porque template
+ * é de painel: quem submete à Meta é que escolhe o nome, e mudar o nome não
+ * pode exigir deploy.
  *
- * Como constante de módulo isto quebrava em script: `import` é içado para
- * antes do corpo do arquivo, então a constante capturava o valor ANTES de o
- * `loadEnvLocal()` do script rodar, e o canal chegava nulo. O agendador do
- * lembrete de véspera pularia todo job com "nowhere to send from" sem que
- * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
+ * Lidos na hora da chamada, não no import: como constante de módulo isto
+ * quebrava em script, porque `import` é içado para antes do corpo do arquivo e
+ * a constante capturava o valor ANTES de o `loadEnvLocal()` rodar. O agendador
+ * do lembrete pularia todo job sem que nada parecesse errado (22/08/2026).
  */
-const template = () => process.env.RESPONDIO_CONFIRMATION_TEMPLATE?.trim() || "booking_confirmed";
-const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
-
-/**
- * A tag que o Workflow do respond.io escuta para mover a fase para Converted.
- *
- * O nome importa: é o gatilho configurado no painel deles. Mudar aqui sem
- * mudar lá quebra o funil em silêncio, porque a tag continua sendo gravada.
- */
-const TAG_CONFIRMADO = "booking_confirmed";
-
-/** Quanto esperar pela confirmação de entrega antes de desistir de esperar. */
-const TENTATIVAS_STATUS = 5;
-const ESPERA_MS = 3000;
+const template = () => process.env.WHATSAPP_TEMPLATE_CONFIRMATION?.trim() || "booking_confirmation";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 export type ResultadoConfirmacao =
-  | { estado: "enviado"; telefone: string; messageId: number }
+  | { estado: "enviado"; telefone: string; messageId: string }
   | { estado: "pulado"; motivo: string }
   | { estado: "falhou"; motivo: string };
 
@@ -94,39 +71,18 @@ function primeiroNome(completo: string | null | undefined): string {
 }
 
 /**
- * Espera a entrega de verdade.
- *
- * `sendTemplate` responder 200 só diz que o respond.io ACEITOU. A entrega é
- * assíncrona e o status vira `failed` segundos depois, com o motivo. Foi assim
- * que 90 leads pagos foram consumidos sem ninguém receber nada. Enquanto o
- * status não for terminal, não se grava `sent_at`.
+ * O que a Cloud API devolve é aceitação, não entrega: a entrega chega depois,
+ * por webhook, e ainda não escutamos esse webhook. Então o id da mensagem é o
+ * que grava o envio e é por ele que se acha a mensagem no painel da Meta
+ * quando alguém disser que não recebeu. Um número inválido, que era a falha
+ * comum no canal antigo, aqui volta na hora, como erro da chamada.
  */
-async function confirmarEntrega(
-  respond: RespondIoClient,
-  id: ReturnType<typeof phoneIdentifier>,
-  messageId: number,
-): Promise<{ ok: boolean; detalhe: string }> {
-  for (let i = 0; i < TENTATIVAS_STATUS; i++) {
-    await new Promise((r) => setTimeout(r, ESPERA_MS));
-    const status = await respond.messageStatus(id, messageId).catch(() => []);
-    const valores = status.map((s) => String(s.value ?? "").toLowerCase());
-    if (valores.some((v) => v === "failed" || v === "rejected")) {
-      const erro = status.find((s) => s.message)?.message ?? "no reason given";
-      return { ok: false, detalhe: erro };
-    }
-    if (valores.some((v) => v === "delivered" || v === "read" || v === "sent")) {
-      return { ok: true, detalhe: valores.join(",") };
-    }
-  }
-  // Sem status terminal no tempo que demos. Não é falha: o WhatsApp entrega
-  // para telefone desligado horas depois. Tratar como enviado e seguir.
-  return { ok: true, detalhe: "no terminal status yet" };
-}
+export type EnvioWhatsApp = typeof sendTemplate;
 
 export async function enviarConfirmacaoDoCliente(
   supabase: SupabaseClient,
   jobId: string,
-  opcoes?: { client?: RespondIoClient; simular?: boolean },
+  opcoes?: { enviar?: EnvioWhatsApp; simular?: boolean },
 ): Promise<ResultadoConfirmacao> {
   // Rastro no log para os primeiros dias: sem isto, "não mandou" e "mandou e
   // não entregou" ficam iguais na tela de quem opera, e o motivo só existiria
@@ -205,11 +161,9 @@ export async function enviarConfirmacaoDoCliente(
   });
   if (!decisao.manda) return anotarPulo(decisao.motivo);
 
-  // Sem canal configurado NÃO se manda pelo canal padrão: o padrão pode ser o
-  // canal de parceiro, e aí o cliente recebe a confirmação com a marca errada
-  // no perfil. Melhor virar pendência visível.
-  if (!canal()) {
-    return anotarPulo("RESPONDIO_CONFIRMATION_CHANNEL_ID is not set: nowhere to send from");
+  // Sem número configurado não se inventa remetente: vira pendência visível.
+  if (!whatsappConfigured()) {
+    return anotarPulo("WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)");
   }
 
   const data = dataPorExtenso((j.scheduled_date as string) ?? (j.scheduled_start_at as string));
@@ -232,60 +186,22 @@ export async function enviarConfirmacaoDoCliente(
     return { estado: "pulado", motivo: `dry run: would send ${template()} → ${parametros.join(" | ")}` };
   }
 
-  const respond = opcoes?.client ?? createRespondIoClient();
-  const id = phoneIdentifier(decisao.telefone);
+  const enviar = opcoes?.enviar ?? sendTemplate;
 
   try {
-    // O contato precisa existir antes da mensagem. Só nome e telefone: o campo
-    // `trade` é uma lista fechada e gravar valor fora do enum faz a API recusar
-    // o contato INTEIRO, então custom field nenhum entra por aqui.
-    await respond.createOrUpdateContact(id, {
-      firstName: parametros[0],
-      phone: decisao.telefone,
+    const { messageId } = await enviar({
+      to: decisao.telefone,
+      name: template(),
+      language: idioma(),
+      bodyParams: parametros,
     });
-
-    const { messageId } = await respond.sendTemplate(
-      id,
-      { name: template(), languageCode: idioma(), components: [
-        { type: "body", parameters: parametros.map((text) => ({ type: "text" as const, text })) },
-      ] },
-      canal()!,
-    );
-
-    const entrega = await confirmarEntrega(respond, id, messageId);
-    if (!entrega.ok) {
-      const motivo = `WhatsApp did not deliver: ${entrega.detalhe}`;
-      console.error(`[confirmacao] ${jobId} ${motivo}`);
-      await supabase.from("jobs").update({ client_confirmation_skipped: motivo }).eq("id", jobId);
-      return { estado: "falhou", motivo };
-    }
 
     await supabase
       .from("jobs")
       .update({ client_confirmation_sent_at: new Date().toISOString(), client_confirmation_skipped: null })
       .eq("id", jobId);
 
-    /**
-     * A conversa sai do funil de venda: isto aqui é só confirmação.
-     *
-     * Quem recebe esta mensagem já é cliente, com job marcado. Deixá-lo em
-     * "New Lead" enche o funil de gente que não há o que vender, e o vendedor
-     * perde tempo com quem já comprou (pedido do dono, 22/08/2026).
-     *
-     * A fase se move por tag, e não direto, porque `lifecycle` não tem escrita
-     * na API v2: todo caminho responde 404 e o `create_or_update` aceita o
-     * campo e o descarta devolvendo 200. No respond.io quem muda fase é
-     * Workflow, e a tag é o gatilho que ele enxerga vindo de fora.
-     *
-     * Sem `await` e engolindo o erro: a mensagem já chegou ao morador, que é o
-     * que importa. Falhar em arrumar o funil não pode transformar um envio
-     * bem-sucedido em erro.
-     */
-    void respond
-      .addTags(id, [TAG_CONFIRMADO])
-      .catch((e) => console.error(`[confirmacao] ${jobId} tag ${TAG_CONFIRMADO} falhou:`, e));
-
-    console.log(`[confirmacao] ${jobId} enviado para ${decisao.telefone} (${entrega.detalhe})`);
+    console.log(`[confirmacao] ${jobId} enviado para ${decisao.telefone} (${messageId})`);
     return { estado: "enviado", telefone: decisao.telefone, messageId };
   } catch (err) {
     const motivo = err instanceof Error ? err.message.slice(0, 200) : "unknown error";

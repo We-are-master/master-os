@@ -14,11 +14,8 @@
  * precisa de gesto explícito, não de descuido.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  createRespondIoClient,
-  phoneIdentifier,
-  type RespondIoClient,
-} from "@/lib/respond-io/client";
+import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
+import type { EnvioWhatsApp } from "./send";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
@@ -31,9 +28,8 @@ import { dataPorExtenso, janelaDeChegada } from "./send";
  * lembrete de véspera pularia todo job com "nowhere to send from" sem que
  * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
  */
-const template = () => process.env.RESPONDIO_REMINDER_TEMPLATE?.trim() || "24hrs_confirmation";
-const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+const template = () => process.env.WHATSAPP_TEMPLATE_REMINDER?.trim() || "booking_reminder";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 /** Status em que faz sentido dizer "chegamos amanhã". */
 const AGENDADOS = ["scheduled", "late"];
@@ -114,7 +110,8 @@ export async function varrerLembretesDeVespera(
   opcoes?: {
     agora?: Date;
     enviarDeVerdade?: boolean;
-    client?: RespondIoClient;
+    /** Injeção para teste: no ar quem manda é a Cloud API. */
+    enviar?: EnvioWhatsApp;
     /** Para envio manual fora da janela. O agendador nunca passa isto. */
     ignorarJanela?: boolean;
   },
@@ -148,7 +145,7 @@ export async function varrerLembretesDeVespera(
   }
 
   const linhas: LinhaDaVarredura[] = [];
-  const respond = opcoes?.client ?? (enviar ? createRespondIoClient() : null);
+  const manda: EnvioWhatsApp = opcoes?.enviar ?? sendTemplate;
 
   for (const raw of jobs ?? []) {
     const j = raw as unknown as Record<string, unknown>;
@@ -236,25 +233,17 @@ export async function varrerLembretesDeVespera(
       anota("pulado", "client messaging is off (CLIENT_MESSAGING_ENABLED)");
       continue;
     }
-    if (!canal() || !respond) {
-      anota("pulado", "RESPONDIO_CONFIRMATION_CHANNEL_ID is not set");
+    if (!whatsappConfigured()) {
+      anota("pulado", "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)");
       continue;
     }
 
     try {
-      const id = phoneIdentifier(decisao.telefone);
-      await respond.createOrUpdateContact(id, { firstName: parametros[0], phone: decisao.telefone });
-      const manda = (params: string[]) =>
-        respond!.sendTemplate(
-          id,
-          { name: template(), languageCode: idioma(), components: [
-            { type: "body", parameters: params.map((text) => ({ type: "text" as const, text })) },
-          ] },
-          canal()!,
-        );
+      const mandarCom = (params: string[]) =>
+        manda({ to: decisao.telefone, name: template(), language: idioma(), bodyParams: params });
       let semEndereco = false;
       try {
-        await manda(parametros);
+        await mandarCom(parametros);
       } catch (err) {
         /**
          * Corrida de aprovação da Meta (31/08): a versão do template com o
@@ -267,7 +256,7 @@ export async function varrerLembretesDeVespera(
         const msg = err instanceof Error ? err.message : "";
         const erroDeTemplate = /param|template|132000|localizable|number of/i.test(msg);
         if (!erroDeTemplate || parametros.length < 4) throw err;
-        await manda(parametros.slice(0, 3));
+        await mandarCom(parametros.slice(0, 3));
         semEndereco = true;
       }
       await supabase

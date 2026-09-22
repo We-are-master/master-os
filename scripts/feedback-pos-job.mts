@@ -26,10 +26,10 @@
  *   5. Só entre 09h e 20h de LONDRES: pedir feedback de madrugada é pedir
  *      nota baixa.
  *
- * Sai pelo mesmo canal da confirmação (RESPONDIO_CONFIRMATION_CHANNEL_ID — o
+ * Sai pelo mesmo número da confirmação (WHATSAPP_PHONE_NUMBER_ID — o
  * 07 desde 28/08), template `afterwork_feedback` (aprovado pela
- * Meta em 28/08, uma variável: o nome). Sem link no corpo: a resposta cai na
- * própria conversa do respond.io, onde o time já trabalha.
+ * Meta em 28/08, uma variável: o nome). Sem link no corpo: a resposta do
+ * cliente cai na caixa do WhatsApp Business, onde o time já trabalha.
  *
  * ── ATENÇÃO: o template ainda é o texto errado para este momento ─────────
  *
@@ -45,16 +45,15 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "./load-env-local.mjs";
-import { createRespondIoClient, phoneIdentifier } from "@/lib/respond-io/client";
+import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 import { decidirEnvio, mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
 
 loadEnvLocal();
 
 const ENVIAR = process.argv.includes("--enviar");
 const JANELA_HORAS = Number(process.env.FEEDBACK_WINDOW_HOURS ?? 72); // env só para ensaio/backfill
-const TEMPLATE = process.env.RESPONDIO_FEEDBACK_TEMPLATE?.trim() || "afterwork_feedback";
-const IDIOMA = process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const CANAL = Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+const TEMPLATE = process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
+const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -74,8 +73,8 @@ if (ENVIAR_AGORA && !mensagensAoClienteLigadas()) {
   console.log("[feedback] CLIENT_MESSAGING_ENABLED não é 1: nada sai.");
   process.exit(0);
 }
-if (ENVIAR_AGORA && !CANAL) {
-  throw new Error("RESPONDIO_CONFIRMATION_CHANNEL_ID ausente: sem canal, sem envio");
+if (ENVIAR_AGORA && !whatsappConfigured()) {
+  throw new Error("WhatsApp não configurado (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID): sem canal, sem envio");
 }
 
 const desde = new Date(Date.now() - JANELA_HORAS * 3600e3).toISOString();
@@ -94,7 +93,6 @@ const candidatos = jobs ?? [];
 console.log(`[feedback] ${new Date().toISOString().slice(0, 16)} · ${candidatos.length} job(s) pagos nas últimas ${JANELA_HORAS}h · modo ${ENVIAR_AGORA ? "ENVIO" : "ENSAIO"}`);
 if (!candidatos.length) process.exit(0);
 
-const respond = ENVIAR_AGORA ? createRespondIoClient() : null;
 let ok = 0, pulados = 0, falhas = 0;
 
 for (const j of candidatos) {
@@ -128,21 +126,9 @@ for (const j of candidatos) {
   }
 
   try {
-    const id = phoneIdentifier(decisao.telefone);
-    await respond!.createOrUpdateContact(id, { firstName: primeiroNome, phone: decisao.telefone });
-    await respond!.sendTemplate(
-      id,
-      {
-        name: TEMPLATE,
-        languageCode: IDIOMA,
-        // afterwork_feedback tem UMA variavel ({{1}} = nome). Mandar mais
-        // do que o corpo declara faz a Meta recusar o envio inteiro.
-        components: [
-          { type: "body", parameters: [{ type: "text" as const, text: primeiroNome }] },
-        ],
-      },
-      CANAL!,
-    );
+    // O template do feedback tem UMA variável ({{1}} = nome). Mandar mais do
+    // que o corpo declara faz a Meta recusar o envio inteiro.
+    await sendTemplate({ to: decisao.telefone, name: TEMPLATE, language: IDIOMA, bodyParams: [primeiroNome] });
     /**
      * A trava grava ANTES de qualquer conferência de entrega: pedido de
      * feedback repetido irrita mais do que um perdido — na dúvida, não repete.
