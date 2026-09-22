@@ -15,6 +15,8 @@ import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
 import {
   createTicket,
+  setTicketRequester,
+  updateTicket as zdUpdateTicket,
   ZENDESK_REPLY_STATUS_FIELD_ID,
   ZENDESK_REPLY_STATUS_SENT_VALUE,
 } from "@/lib/zendesk";
@@ -206,6 +208,18 @@ export const runtime  = "nodejs";
  *                                    //   Zendesk macro), the job is created
  *                                    //   linked to it (jobs.quote_id) and the
  *                                    //   quote is marked status='converted_to_job'.
+ *     customer_message_html?: string, // with create_zendesk_ticket: right after
+ *                                    //   the ticket is minted, the client
+ *                                    //   (client_email) becomes the requester
+ *                                    //   and this HTML goes out as a PUBLIC
+ *                                    //   reply, so the customer gets it from
+ *                                    //   the support address and any answer
+ *                                    //   lands on the same ticket as the job.
+ *                                    //   Used by the website booking. Response
+ *                                    //   carries customer_message_posted.
+ *     ticket_subject?:  string,      // with create_zendesk_ticket: subject the
+ *                                    //   customer sees (the job reference is
+ *                                    //   appended). Default "JOB · title · client".
  *     report_link?:     string       // Free-text URL where the office submits
  *                                    //   the customer-side report (Drive
  *                                    //   folder, Notion page, internal portal,
@@ -325,6 +339,12 @@ export async function POST(req: NextRequest) {
   // ticket itself and links it at insert time (external_source/external_ref),
   // so callers like the Checkatrade RPA never touch Zendesk directly.
   const createZendeskTicketIn = body.create_zendesk_ticket === true;
+  // Reserva paga no site: a mensagem ao cliente sai do endereço de suporte pelo
+  // PRÓPRIO ticket do job, com o cliente como solicitante desde o início. Assim a
+  // resposta dele cai na mesma conversa das notas internas, sem ticket paralelo.
+  const customerMessageHtmlIn = str(body.customer_message_html).slice(0, 20000);
+  const ticketSubjectIn = str(body.ticket_subject).slice(0, 150);
+  let customerMessagePosted = false;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
   /**
@@ -972,7 +992,9 @@ export async function POST(req: NextRequest) {
         ? [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }]
         : undefined;
     const tRes = await createTicket({
-      subject: `${inserted.reference} · ${titleResolved} · ${clientName}`,
+      subject: ticketSubjectIn
+        ? `${ticketSubjectIn} (${inserted.reference})`
+        : `${inserted.reference} · ${titleResolved} · ${clientName}`,
       // Private internal note (same rationale as create-ticket-for-entity):
       // the requester is the team placeholder, and the opening "created from
       // OS" details must never surface as a customer-facing reply.
@@ -994,6 +1016,32 @@ export async function POST(req: NextRequest) {
       if (linkErr) {
         console.error("[api/jobs] create_zendesk_ticket: link write failed:", linkErr.message);
         zendeskCorrections.push("zendesk_ticket_link_write_failed");
+      }
+      // A nota de abertura continua interna; o que o cliente vê é só a
+      // mensagem pública abaixo. Quando o job for agendado, a confirmação do
+      // dispatchJobCreatedZendesk vai para este mesmo ticket (o solicitante já
+      // é o cliente, então ela não troca nada).
+      if (customerMessageHtmlIn && clientEmail && clientEmail !== "team@getfixfy.com") {
+        const set = await setTicketRequester({
+          ticketId: tRes.id,
+          email:    clientEmail,
+          name:     clientName || null,
+          // O CLIENTE, nunca a conta: o external_id do usuário sai daqui
+          // (ver o caso dos 22 e-mails em zendesk-lifecycle).
+          entityId: clientId || String(inserted.id),
+        });
+        if (set.ok) {
+          try {
+            await zdUpdateTicket({ ticketId: tRes.id, htmlBody: customerMessageHtmlIn, publicComment: true });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] customer message failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        } else {
+          console.error("[api/jobs] customer requester failed:", set.error);
+          zendeskCorrections.push("customer_requester_failed");
+        }
       }
     } else {
       console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
@@ -1093,6 +1141,7 @@ export async function POST(req: NextRequest) {
       ...(autoAssignBlocked ? { warning: "auto_assign_blocked", auto_assign_blocked: autoAssignBlocked } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
+      ...(customerMessageHtmlIn ? { customer_message_posted: customerMessagePosted } : {}),
     },
     { status: 201 },
   );
