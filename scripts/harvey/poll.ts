@@ -364,6 +364,11 @@ async function ciclo(): Promise<void> {
       !vistos.has(t.id) &&
       !t.tags.includes(TAG) &&
       !/^\s*JOB-/i.test(t.subject) &&
+      // Ticket aberto pelo próprio OS é do job, não e-mail a triar. O assunto
+      // "JOB-…" já tirava a maioria; a reserva do site nasce "Booking FX-…
+      // (JOB-…)" e escapava: o Harvey leu a nossa confirmação como parceiro
+      // confirmando e fechou o ticket da compra (#50688, #50689, 22/09/2026).
+      !t.tags.includes("os-created") &&
       // "You have N job(s) on Tue 18 Aug" da Housekeep é LEMBRETE diário dos
       // jobs do dia seguinte (dono, 18/08) — não é booking nem pedido de
       // quote. Fica no Action Required pro humano; o Harvey nem gasta
