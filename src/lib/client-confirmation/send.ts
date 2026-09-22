@@ -24,7 +24,7 @@ import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
  * a constante capturava o valor ANTES de o `loadEnvLocal()` rodar. O agendador
  * do lembrete pularia todo job sem que nada parecesse errado (22/08/2026).
  */
-const template = () => process.env.WHATSAPP_TEMPLATE_CONFIRMATION?.trim() || "booking_confirmed";
+const template = () => process.env.WHATSAPP_TEMPLATE_CONFIRMATION?.trim() || "booking_confirmation";
 const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
 
 export type ResultadoConfirmacao =

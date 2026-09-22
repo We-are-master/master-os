@@ -28,7 +28,7 @@ import { dataPorExtenso, janelaDeChegada } from "./send";
  * lembrete de véspera pularia todo job com "nowhere to send from" sem que
  * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
  */
-const template = () => process.env.WHATSAPP_TEMPLATE_REMINDER?.trim() || "24hrs_confirmation";
+const template = () => process.env.WHATSAPP_TEMPLATE_REMINDER?.trim() || "24hrsbooking_confirmation";
 const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
 
 /** Status em que faz sentido dizer "chegamos amanhã". */
