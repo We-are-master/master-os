@@ -210,13 +210,17 @@ export const runtime  = "nodejs";
  *                                    //   quote is marked status='converted_to_job'.
  *     customer_message_html?: string, // with create_zendesk_ticket: right after
  *                                    //   the ticket is minted, the client
- *                                    //   (client_email) becomes the requester
- *                                    //   and this HTML goes out as a PUBLIC
- *                                    //   reply, so the customer gets it from
- *                                    //   the support address and any answer
- *                                    //   lands on the same ticket as the job.
- *                                    //   Used by the website booking. Response
- *                                    //   carries customer_message_posted.
+ *                                    //   (client_email) becomes the requester,
+ *                                    //   so the customer's answers land on the
+ *                                    //   same ticket as the job. Then:
+ *     customer_message_via?: "zendesk" | "email", // "zendesk" (default): the
+ *                                    //   HTML goes out as a PUBLIC reply from
+ *                                    //   the support address. "email": the
+ *                                    //   caller sends its own (branded) email
+ *                                    //   carrying zendesk_encoded_id, and the
+ *                                    //   HTML is kept as an internal note.
+ *                                    //   Response carries customer_requester_set
+ *                                    //   and customer_message_posted.
  *     ticket_subject?:  string,      // with create_zendesk_ticket: subject the
  *                                    //   customer sees (the job reference is
  *                                    //   appended). Default "JOB · title · client".
@@ -343,8 +347,11 @@ export async function POST(req: NextRequest) {
   // PRÓPRIO ticket do job, com o cliente como solicitante desde o início. Assim a
   // resposta dele cai na mesma conversa das notas internas, sem ticket paralelo.
   const customerMessageHtmlIn = str(body.customer_message_html).slice(0, 20000);
+  const customerMessageByEmail = str(body.customer_message_via) === "email";
   const ticketSubjectIn = str(body.ticket_subject).slice(0, 150);
   let customerMessagePosted = false;
+  let customerRequesterSet = false;
+  let createdZendeskEncodedId: string | null = null;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
   /**
@@ -1008,6 +1015,7 @@ export async function POST(req: NextRequest) {
     });
     if (tRes.ok && tRes.id) {
       createdZendeskTicketId = tRes.id;
+      createdZendeskEncodedId = tRes.encodedId ?? null;
       ticketId = String(tRes.id);
       const { error: linkErr } = await supabase
         .from("jobs")
@@ -1017,10 +1025,9 @@ export async function POST(req: NextRequest) {
         console.error("[api/jobs] create_zendesk_ticket: link write failed:", linkErr.message);
         zendeskCorrections.push("zendesk_ticket_link_write_failed");
       }
-      // A nota de abertura continua interna; o que o cliente vê é só a
-      // mensagem pública abaixo. Quando o job for agendado, a confirmação do
-      // dispatchJobCreatedZendesk vai para este mesmo ticket (o solicitante já
-      // é o cliente, então ela não troca nada).
+      // A nota de abertura continua interna. Quando o job for agendado, a
+      // confirmação do dispatchJobCreatedZendesk vai para este mesmo ticket (o
+      // solicitante já é o cliente, então ela não troca nada).
       if (customerMessageHtmlIn && clientEmail && clientEmail !== "team@getfixfy.com") {
         const set = await setTicketRequester({
           ticketId: tRes.id,
@@ -1030,17 +1037,28 @@ export async function POST(req: NextRequest) {
           // (ver o caso dos 22 e-mails em zendesk-lifecycle).
           entityId: clientId || String(inserted.id),
         });
-        if (set.ok) {
+        customerRequesterSet = set.ok;
+        if (!set.ok) {
+          console.error("[api/jobs] customer requester failed:", set.error);
+          zendeskCorrections.push("customer_requester_failed");
+        }
+        // "email": quem chamou manda o próprio e-mail (com o encoded id, para a
+        // resposta voltar para cá) e o ticket guarda a cópia como nota interna.
+        // "zendesk": a mensagem sai daqui como resposta pública.
+        if (set.ok || customerMessageByEmail) {
           try {
-            await zdUpdateTicket({ ticketId: tRes.id, htmlBody: customerMessageHtmlIn, publicComment: true });
+            await zdUpdateTicket({
+              ticketId: tRes.id,
+              htmlBody: customerMessageByEmail
+                ? `<p><b>Booking confirmation emailed to the customer (${clientEmail}):</b></p>${customerMessageHtmlIn}`
+                : customerMessageHtmlIn,
+              publicComment: !customerMessageByEmail,
+            });
             customerMessagePosted = true;
           } catch (err) {
             console.error("[api/jobs] customer message failed:", err);
             zendeskCorrections.push("customer_message_failed");
           }
-        } else {
-          console.error("[api/jobs] customer requester failed:", set.error);
-          zendeskCorrections.push("customer_requester_failed");
         }
       }
     } else {
@@ -1141,7 +1159,10 @@ export async function POST(req: NextRequest) {
       ...(autoAssignBlocked ? { warning: "auto_assign_blocked", auto_assign_blocked: autoAssignBlocked } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
-      ...(customerMessageHtmlIn ? { customer_message_posted: customerMessagePosted } : {}),
+      ...(createdZendeskEncodedId ? { zendesk_encoded_id: createdZendeskEncodedId } : {}),
+      ...(customerMessageHtmlIn
+        ? { customer_requester_set: customerRequesterSet, customer_message_posted: customerMessagePosted }
+        : {}),
     },
     { status: 201 },
   );

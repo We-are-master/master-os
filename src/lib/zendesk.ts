@@ -68,6 +68,12 @@ export interface CreateTicketResult {
   ok:      boolean;
   /** Numeric ticket id when ok=true. */
   id?:     number;
+  /**
+   * Zendesk's encoded id (e.g. "ZRGGKR-JXX2N"). Zendesk prints it hidden in
+   * its own notifications and threads a reply that quotes it back into this
+   * ticket, so an email we send ourselves can carry it too.
+   */
+  encodedId?: string;
   /** HTTP status from Zendesk (when reached). */
   status?: number;
   /** Error detail when ok=false. */
@@ -141,12 +147,12 @@ export async function createTicket(args: CreateTicketArgs): Promise<CreateTicket
       console.error(`[zendesk.createTicket] failed (${res.status}):`, text.slice(0, 500));
       return { ok: false, status: res.status, error: text.slice(0, 500) };
     }
-    const json = (await res.json().catch(() => ({}))) as { ticket?: { id?: number } };
+    const json = (await res.json().catch(() => ({}))) as { ticket?: { id?: number; encoded_id?: string } };
     const id = json.ticket?.id;
     if (!id) {
       return { ok: false, status: res.status, error: "Zendesk response missing ticket.id" };
     }
-    return { ok: true, id, status: res.status };
+    return { ok: true, id, encodedId: json.ticket?.encoded_id || undefined, status: res.status };
   } catch (err) {
     console.error("[zendesk.createTicket] network error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
