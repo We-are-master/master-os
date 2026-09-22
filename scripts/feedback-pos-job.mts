@@ -52,8 +52,8 @@ loadEnvLocal();
 
 const ENVIAR = process.argv.includes("--enviar");
 const JANELA_HORAS = Number(process.env.FEEDBACK_WINDOW_HOURS ?? 72); // env só para ensaio/backfill
-const TEMPLATE = process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "afterwork_feedback";
-const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
+const TEMPLATE = process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
+const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,

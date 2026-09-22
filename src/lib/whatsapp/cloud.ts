@@ -15,6 +15,11 @@
  *   WHATSAPP_WABA_ID          a conta do WhatsApp Business (só para ler templates)
  *   WHATSAPP_API_VERSION      opcional, padrão v21.0
  *
+ * Os templates vivem na nossa WABA e foram criados em 22/09/2026 (os antigos
+ * eram da WABA do respond.io e não vieram junto): booking_confirmation,
+ * booking_reminder, booking_rescheduled e job_feedback, todos em en_GB. Pedir
+ * um nome que não existe, ou o idioma errado, a Meta recusa com 132001.
+ *
  * Fora da janela de 24 horas o WhatsApp só aceita template aprovado, e é
  * sempre o nosso caso: confirmação, véspera e feedback saem sem o cliente ter
  * escrito antes. Por isso aqui só existe envio de template.
@@ -100,7 +105,7 @@ export async function sendTemplate(input: {
       type: "template",
       template: {
         name: input.name,
-        language: { code: input.language || "en" },
+        language: { code: input.language || "en_GB" },
         ...(components ? { components } : {}),
       },
     }),

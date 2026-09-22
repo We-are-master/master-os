@@ -15,8 +15,8 @@ import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 import { decidirEnvio } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
-const template = () => process.env.WHATSAPP_TEMPLATE_RESCHEDULE?.trim() || "reschedule";
-const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
+const template = () => process.env.WHATSAPP_TEMPLATE_RESCHEDULE?.trim() || "booking_rescheduled";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 function primeiroNome(completo: string | null | undefined): string {
   const nome = String(completo ?? "").trim().split(/\s+/)[0];

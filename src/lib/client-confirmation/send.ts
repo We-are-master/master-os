@@ -25,7 +25,7 @@ import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
  * do lembrete pularia todo job sem que nada parecesse errado (22/08/2026).
  */
 const template = () => process.env.WHATSAPP_TEMPLATE_CONFIRMATION?.trim() || "booking_confirmation";
-const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 export type ResultadoConfirmacao =
   | { estado: "enviado"; telefone: string; messageId: string }

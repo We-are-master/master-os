@@ -57,8 +57,8 @@ const ENVIAR = process.argv.includes("--enviar");
 /** A carência. Em env só para ensaio; a decisão de negócio é 5. */
 const CARENCIA_MIN = Number(process.env.FINAL_CHECK_GRACE_MIN ?? 5);
 const TEMPLATE =
-  process.env.WHATSAPP_TEMPLATE_APPROVAL?.trim() || process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "afterwork_feedback";
-const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en";
+  process.env.WHATSAPP_TEMPLATE_APPROVAL?.trim() || process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
+const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
