@@ -20,7 +20,7 @@
  * Lê o site de um checkout local do master-website, vizinho deste repo, ou do
  * caminho em MASTER_WEBSITE_DIR. Só lê: nada é gravado em lugar nenhum.
  *
- *   node scripts/catalogo/conferir-site-os.mjs
+ *   node --no-warnings scripts/catalogo/conferir-site-os.mjs
  */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
