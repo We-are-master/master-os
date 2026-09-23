@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { limparScope } from "@/lib/scope-limpo";
@@ -1120,18 +1120,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ─── Zendesk dispatch (fire-and-forget; idempotent) ─────────────────
+  // ─── Zendesk dispatch (depois da resposta; idempotent) ───────────────
   // Sync ticket custom_status_id and post the customer-facing booking
   // confirmation + open the partner side conversation. The DB trigger
   // (mig 166/167) is the backup path — both call the same idempotent
   // helpers, so duplicate execution is safe.
+  //
+  // `after()` e não `void Promise.all(...)`: na Vercel a função congela assim
+  // que a resposta sai, e o sync solto morria no meio. O ticket do job criado
+  // pelo site (JOB-9675, #50730, 23/09/2026) ficou em New em vez de
+  // Unassigned; no :3000 do Mac, processo longo, o mesmo código terminava.
+  // allSettled: uma falha não pode encerrar a espera das outras duas.
   if (ticketId) {
-    void Promise.all([
-      syncJobZendeskStatus(inserted.id, supabase),
-      dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
-      syncJobZendeskFormFields(inserted.id, supabase),
-    ]).catch((err) => {
-      console.error("[api/jobs] Zendesk dispatch failed:", err);
+    after(async () => {
+      const results = await Promise.allSettled([
+        syncJobZendeskStatus(inserted.id, supabase),
+        dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
+        syncJobZendeskFormFields(inserted.id, supabase),
+      ]);
+      for (const r of results) {
+        if (r.status === "rejected") console.error("[api/jobs] Zendesk dispatch failed:", r.reason);
+      }
     });
   }
 
