@@ -2,13 +2,17 @@
  * Ingestão de contatos: find-or-create em `clients`.
  *
  *   POST /api/contacts/ingest
- *   X-API-Key: MASTER_OS_LEAD_WEBHOOK_API_KEY
- *   { account_id, contacts: [{ name, email, phone, postcode, address, notes }] }
+ *   X-API-Key: MASTER_OS_LEAD_WEBHOOK_API_KEY (ou MASTER_OS_JOB_WEBHOOK_API_KEY)
+ *   { account_id, contacts: [{ name, email, phone, postcode, address, notes, marketing_opt_out }] }
  *   → { created, updated, skipped, results: [{ id, action }] }
  *
  * Quem chama é o RPA do Checkatrade, por dois caminhos: o lead (uma pessoa que
  * perguntou, não um job) e o Express job aceito, que enriquece a linha do
  * cliente com o postcode que `POST /api/jobs` não guarda.
+ *
+ * Desde 23/09/2026 também o site B2C: nome e e-mail de quem começou a reservar,
+ * na conta Fixfy, com a chave de job que ele já usa. `marketing_opt_out` ("Don't
+ * email me offers") vira a etiqueta `no-marketing`, que o pós-venda respeita.
  *
  * Reconstruída em 2026-08-11. A rota não estava no repositório, e nada no git
  * mostra que já esteve: era arquivo não rastreado e sumiu. O efeito passou
@@ -24,10 +28,10 @@
  * cada campo só é preenchido quando está vazio no banco.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
+import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { decideDispatch } from "@/lib/agent/sales/dispatch-gate";
 import { firstName } from "@/lib/agent/sales/lead-brief";
@@ -41,15 +45,9 @@ type ContactPayload = {
   postcode?: string | null;
   address?: string | null;
   notes?: string | null;
+  /** Site B2C: "Don't email me offers" marcado. Vira a etiqueta `no-marketing`. */
+  marketing_opt_out?: boolean | null;
 };
-
-function secretsMatch(provided: string | null, expected: string): boolean {
-  if (!provided) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
 
 /** "+44 7712 345678" e "07712345678" são a mesma pessoa. Compara só os dígitos. */
 function phoneKey(raw: string | null | undefined): string | null {
@@ -66,11 +64,12 @@ function leadMarker(notes: string | null | undefined): string | null {
 }
 
 export async function POST(req: NextRequest) {
-  const expected = process.env.MASTER_OS_LEAD_WEBHOOK_API_KEY?.trim();
-  if (!expected) {
+  // Chave de lead (RPA do Checkatrade) ou de job (site B2C, lead do primeiro passo da reserva).
+  const keys = [process.env.MASTER_OS_LEAD_WEBHOOK_API_KEY, process.env.MASTER_OS_JOB_WEBHOOK_API_KEY];
+  if (!keys.some((k) => k?.trim())) {
     return NextResponse.json({ error: "MASTER_OS_LEAD_WEBHOOK_API_KEY not configured." }, { status: 500 });
   }
-  if (!secretsMatch(req.headers.get("x-api-key"), expected)) {
+  if (!apiKeyAllowed(req.headers.get("x-api-key"), keys)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
@@ -114,7 +113,7 @@ export async function POST(req: NextRequest) {
     if (marker) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("notes", `%checkatrade-lead:${marker}%`)
         .is("deleted_at", null)
         .limit(1);
@@ -123,7 +122,7 @@ export async function POST(req: NextRequest) {
     if (!existing && key) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("phone", `%${key}`)
         .is("deleted_at", null)
         .limit(1);
@@ -132,7 +131,7 @@ export async function POST(req: NextRequest) {
     if (!existing && email) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("email", email)
         .is("deleted_at", null)
         .limit(1);
@@ -158,6 +157,7 @@ export async function POST(req: NextRequest) {
           source: "direct",
           status: "active",
           ...(body.account_id ? { source_account_id: body.account_id } : {}),
+          ...(c.marketing_opt_out ? { tags: tagsAfterOptOut([], true) } : {}),
         })
         .select("id")
         .single();
@@ -190,6 +190,8 @@ export async function POST(req: NextRequest) {
     fill("phone", c.phone);
     fill("address", c.address);
     fill("postcode", c.postcode);
+    const tags = tagsAfterOptOut(existing.tags, c.marketing_opt_out);
+    if (tags) patch.tags = tags;
 
     // Notas são acumuladas, não substituídas: cada enquiry é um fato novo sobre
     // a mesma pessoa, e o marcador de um lead antigo tem que sobreviver para o
