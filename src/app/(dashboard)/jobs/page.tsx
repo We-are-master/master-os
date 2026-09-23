@@ -199,6 +199,9 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentState } from "@/lib/job-payment-badge";
+import { overdueInvoiceIds } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
@@ -1284,6 +1287,29 @@ function JobsPageContent() {
           setCustomerPaidByJobId({});
           setCustomerPaidSumsReady(true);
         }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  // Coluna Payment: quais faturas dos jobs da lista estão vencidas, pela regra da aba Overdue do Finance.
+  const [overdueInvoiceIdSet, setOverdueInvoiceIdSet] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    const ids = invoiceIdsToCheckForOverdue(data);
+    if (ids.length === 0) {
+      setOverdueInvoiceIdSet(new Set());
+      return;
+    }
+    let cancelled = false;
+    void overdueInvoiceIds(ids).then(
+      (set) => {
+        if (!cancelled) setOverdueInvoiceIdSet(set);
+      },
+      () => {
+        if (!cancelled) setOverdueInvoiceIdSet(new Set());
       },
     );
     return () => {
@@ -3040,16 +3066,13 @@ function JobsPageContent() {
     },
     {
       key: "finance_status",
-      label: "Finance",
-      minWidth: "88px",
+      label: "Payment",
+      minWidth: "124px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
-      render: (item) => {
-        const fs = item.finance_status ?? "unpaid";
-        return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
-      },
+      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} />,
     },
     {
       key: "actions",
@@ -3125,16 +3148,16 @@ function JobsPageContent() {
     [jobMarginFooter],
   );
 
-  const replaceFinanceWithTicket = useCallback(
-    (cols: Column<Job>[]) => cols.map((c) => (c.key === "finance_status" ? zendeskTicketColumn : c)),
+  const addTicketAfterPayment = useCallback(
+    (cols: Column<Job>[]) => cols.flatMap((c) => (c.key === "finance_status" ? [c, zendeskTicketColumn] : [c])),
     [zendeskTicketColumn],
   );
 
-  /** Closed keeps Amount Due + Finance. Other tabs: partner Cost instead of Amount Due, Ticket instead of Finance (margin only in footer). */
+  /** Closed keeps Amount Due + Payment. Other tabs: partner Cost instead of Amount Due, then Payment and Ticket (margin only in footer). */
   const tableColumns = useMemo(() => {
     if (status === "closed") return columns;
-    return replaceFinanceWithTicket(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
-  }, [columns, status, replaceFinanceWithTicket, partnerCostColumn]);
+    return addTicketAfterPayment(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
+  }, [columns, status, addTicketAfterPayment, partnerCostColumn]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
