@@ -99,25 +99,24 @@ const CLIENT_LEAD_NURTURE: SequenceDefinition = {
 /**
  * L2 — passou dos trinta dias e não comprou. Fogo baixo, a cada duas semanas.
  *
- * Mesma agenda de quem já comprou, na metade do ritmo: uma edição por semana
- * em vez de duas. Quem chega aqui já ouviu a oferta dez vezes, então o que
+ * Mesma agenda e mesmo ritmo de quem já comprou: duas edições por semana. Quem chega aqui já ouviu a oferta dez vezes, então o que
  * segura essa pessoa é ser útil, não insistir.
  */
 /**
  * O ritmo de quem não comprou, num botão.
  *
- * Decisão do dono em 22/09/2026: começa com uma por semana e sobe para duas
- * depois de 30 dias, quando as primeiras taxas de rejeição e reclamação já
- * aparecerem no painel. Subir é trocar esta variável para 84, sem deploy.
+ * Decisão do dono em 23/09/2026: duas por semana para todo mundo, lead velho
+ * incluso ("todos que temos e os que vão entrar"). Baixar para uma por semana,
+ * se a reclamação subir, é `MARKETING_FOGO_BAIXO_HORAS=168`, sem deploy.
  */
 function horasDoFogoBaixo(): number {
   const n = Number(process.env.MARKETING_FOGO_BAIXO_HORAS?.trim());
-  return Number.isFinite(n) && n >= 24 ? n : 7 * D;
+  return Number.isFinite(n) && n >= 24 ? n : 84;
 }
 
 const CLIENT_LEAD_KEEPWARM: SequenceDefinition = {
   key: "client_lead_keepwarm",
-  label: "Cliente · não comprou (agenda, 1x por semana)",
+  label: "Cliente · não comprou (agenda, 2x por semana)",
   recurring: true,
   /** Uma por semana hoje; `MARKETING_FOGO_BAIXO_HORAS=84` faz duas. */
   get recurEveryHours() { return horasDoFogoBaixo(); },

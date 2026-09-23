@@ -67,6 +67,15 @@ export const INICIO_DA_TEMPORADA = "2026-09-28";
 export const FIM_DA_TEMPORADA = "2027-03-31";
 
 export const CUPONS: Cupom[] = [
+  /* ── Campanha de lançamento para a base (23/09/2026) ──────────────────── */
+  {
+    codigo: "WEEK10",
+    nome: "Fixfy · this week only",
+    percentual: 10,
+    expiraEm: "2026-09-27",
+    proposito: "Disparo de e-mail e WhatsApp para toda a base própria, 24 a 27/09. Prazo curto de propósito: é o motivo para agir agora.",
+  },
+
   /* ── Sempre válidos: entrada, indicação e volta ───────────────────────── */
   {
     codigo: "WELCOME10",

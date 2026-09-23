@@ -3,6 +3,7 @@
  *
  *   npx tsx scripts/marketing-cupons.mts                 # ensaio: mostra o que falta
  *   npx tsx scripts/marketing-cupons.mts --aplicar       # cria o que falta
+ *   npx tsx scripts/marketing-cupons.mts --so=WEEK10     # só esse código
  *
  * A chave sai de `STRIPE_SECRET_KEY` (ou `B2C_STRIPE_SECRET_KEY`). Se for
  * `sk_test_`, mexe no modo teste; se for `sk_live_`, mexe no dinheiro de
@@ -28,6 +29,8 @@
 import { CUPONS, comoSeLe, type Cupom } from "@/lib/marketing/cupons";
 
 const APLICAR = process.argv.includes("--aplicar");
+/** `--so=WEEK10,OUTRO` mexe só nesses códigos. */
+const SO = process.argv.find((a) => a.startsWith("--so="))?.slice(5).split(",").map((c) => c.trim().toUpperCase());
 
 const CHAVE = (process.env.STRIPE_SECRET_KEY || process.env.B2C_STRIPE_SECRET_KEY || "").trim();
 if (!CHAVE) {
@@ -37,9 +40,18 @@ if (!CHAVE) {
 }
 const AO_VIVO = CHAVE.startsWith("sk_live") || CHAVE.startsWith("rk_live");
 
-/** Fim do dia em Londres: um cupom que expira "em 31/03" vale o dia 31 inteiro. */
-function fimDoDia(iso: string): number {
-  return Math.floor(new Date(`${iso}T23:59:59Z`).getTime() / 1000);
+/**
+ * Fim do dia em Londres: um cupom que expira "em 31/03" vale o dia 31 inteiro.
+ *
+ * Tem que descontar o horário de verão. `23:59:59Z` em setembro é 00:59 do dia
+ * seguinte em Londres, e o WEEK10 prometido "até domingo à meia-noite" valeria
+ * uma hora a mais que o e-mail diz.
+ */
+export function fimDoDia(iso: string): number {
+  const utc = Date.parse(`${iso}T23:59:59Z`);
+  const hora = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date(utc)));
+  const adiantamento = hora === 0 ? 1 : 0; // BST: Londres está 1h à frente de UTC
+  return Math.floor((utc - adiantamento * 3600_000) / 1000);
 }
 
 /**
@@ -123,7 +135,7 @@ async function main() {
   if (AO_VIVO && APLICAR) console.log("Criando cupons REAIS. Eles só descontam quando alguém digita o código.\n");
 
   let criados = 0, existiam = 0, divergentes = 0;
-  for (const cupom of CUPONS) {
+  for (const cupom of CUPONS.filter((c) => !SO || SO.includes(c.codigo))) {
     const existente = await jaExiste(cupom.codigo);
     if (existente) {
       const problema = confere(cupom, existente);

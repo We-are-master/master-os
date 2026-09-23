@@ -149,7 +149,8 @@ export default async function MarketingPage() {
     <div style={{ padding: "28px 24px 80px", maxWidth: 1180, margin: "0 auto" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", margin: "0 0 6px" }}>Marketing</h1>
       <p style={{ color: "#55524C", margin: "0 0 32px", fontSize: 15 }}>
-        Quem dá para alcançar hoje, e o que cada campanha fez depois de sair.
+        Quem dá para alcançar hoje, e o que cada campanha fez depois de sair.{" "}
+        <a href="/marketing/ao-vivo" style={{ color: "#C2530A", fontWeight: 600 }}>Campanha ao vivo →</a>
       </p>
 
       {/* ─── Segmentos ─── */}

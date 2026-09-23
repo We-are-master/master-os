@@ -3,6 +3,7 @@
  *
  *   npx tsx scripts/whatsapp-criar-template.mts           # mostra o que iria
  *   npx tsx scripts/whatsapp-criar-template.mts --enviar  # submete à Meta
+ *   npx tsx scripts/whatsapp-criar-template.mts --passo=wa_oferta --enviar   # template WEEK10
  *
  * Submeter não manda nada a ninguém: o template entra em revisão da Meta
  * (minutos a horas) e só depois o cron pode usá-lo. Preço aqui é o do site em
@@ -20,7 +21,10 @@ for (const l of readFileSync(".env.local", "utf8").split("\n")) {
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
 }
 
-const NOME = process.argv.find((a) => a.startsWith("--nome="))?.slice(7) ?? "fixfy_cleaning_prices";
+const { WHATSAPP, linkDaCampanha, WEEK10 } = await import("../src/lib/marketing/week10-copy");
+/** `--passo=wa_followup` ou `--passo=wa_oferta`: usa a copy da campanha WEEK10. */
+const PASSO = process.argv.find((a) => a.startsWith("--passo="))?.slice(8) as keyof typeof WHATSAPP | undefined;
+const NOME = PASSO ? WHATSAPP[PASSO].template : process.argv.find((a) => a.startsWith("--nome="))?.slice(7) ?? "fixfy_cleaning_prices";
 const LINK = "https://www.getfixfy.com/?utm_source=whatsapp&utm_medium=broadcast&utm_campaign=wa_limpeza_lancamento_2026_10";
 
 const corpo = [
@@ -33,7 +37,26 @@ const corpo = [
   "Products and equipment included, no quotes and no waiting. If anything is missed, we come back within 7 days to fix it for free.",
 ].join("\n");
 
-const template = {
+const daCampanha = PASSO
+  ? {
+      name: NOME,
+      language: "en_GB",
+      category: "MARKETING",
+      components: [
+        { type: "BODY", text: WHATSAPP[PASSO].corpo, example: { body_text: [["Sarah", WEEK10.codigo]] } },
+        { type: "FOOTER", text: "Fixfy · London" },
+        {
+          type: "BUTTONS",
+          buttons: [
+            { type: "URL", text: WHATSAPP[PASSO].botao, url: linkDaCampanha(PASSO) },
+            { type: "QUICK_REPLY", text: "Stop promotions" },
+          ],
+        },
+      ],
+    }
+  : null;
+
+const template = daCampanha ?? {
   name: NOME,
   language: "en_GB",
   category: "MARKETING",

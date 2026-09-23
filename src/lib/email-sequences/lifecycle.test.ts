@@ -34,9 +34,9 @@ test("quem já comprou só ouve marketing a partir da segunda semana, e aí duas
   assert.equal(seq.recurEveryHours, 84, "84h dá duas por semana");
 });
 
-test("quem não comprou e é velho recebe a mesma agenda, na metade do ritmo", () => {
+test("quem não comprou e é velho recebe a mesma agenda, também duas por semana", () => {
   const seq = getSequence(FUNIL.naoComprouFogoBaixo)!;
-  assert.equal(seq.recurEveryHours, 7 * 24, "uma por semana");
+  assert.equal(seq.recurEveryHours, 84, "duas por semana, decisão de 23/09");
   assert.equal(seq.steps[0].key, getSequence(FUNIL.jaComprou)!.steps[0].key, "a mesma edição");
 });
 
