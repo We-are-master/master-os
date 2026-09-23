@@ -14,6 +14,9 @@
  *    2 bath) também tem de bater. As que o site não vende (hora avulsa,
  *    diária de pintura, CP12 de 2 a 4 aparelhos, EICR 5-6) só são listadas.
  *
+ * O serviço do OS é achado pelo título que o site manda, do jeito do /api/jobs
+ * (nome exato, depois o apelido da lista canônica em src/lib/type-of-work.ts).
+ *
  * Lê o site de um checkout local do master-website, vizinho deste repo, ou do
  * caminho em MASTER_WEBSITE_DIR. Só lê: nada é gravado em lugar nenhum.
  *
@@ -23,6 +26,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "../load-env-local.mjs";
+// A mesma função que o /api/jobs usa para ligar o service_type ao catálogo.
+import { catalogServiceIdForTypeOfWorkLabel } from "../../src/lib/type-of-work.ts";
 
 loadEnvLocal();
 
@@ -40,10 +45,24 @@ if (!url || !key) {
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 const { data: rows, error } = await supabase
   .from("service_catalog")
-  .select("name,pricing_presets,pricing_addons")
-  .eq("is_active", true);
+  .select("id,name,pricing_presets,pricing_addons")
+  .eq("is_active", true)
+  .is("deleted_at", null);
 if (error) throw error;
-const servico = Object.fromEntries(rows.map((r) => [r.name, r]));
+
+/**
+ * O serviço do OS para um título do site, achado como o /api/jobs acha: nome
+ * exato, depois o apelido da lista canônica. Em 23/09/2026 o dono renomeou
+ * "Electrical Safety Report" para "Electrical Installation Condition Report"
+ * e o job do site continuou ligando pelo apelido; conferir por nome exato
+ * dava falta onde não havia.
+ */
+const servico = new Proxy({}, {
+  get: (_, titulo) => {
+    const id = typeof titulo === "string" ? catalogServiceIdForTypeOfWorkLabel(titulo, rows) : null;
+    return rows.find((r) => r.id === id);
+  },
+});
 
 /** O que o site cobra e paga num cenário (só as linhas daquele serviço). */
 function site(sel, service, extra = {}) {
@@ -55,7 +74,8 @@ function site(sel, service, extra = {}) {
   };
 }
 
-const KIND = { eot: "End of Tenancy Clean", deep: "Deep Clean", after: "After Builders Clean" };
+// Títulos do próprio site (osTitle): renomear lá ou aqui não descola a conferência.
+const KIND = Object.fromEntries(P.CLEAN.kinds.map((k) => [k.id, k.osTitle]));
 const SIZE_LABEL = { studio: "Studio", 1: "1 bed", 2: "2 bed", 3: "3 bed", 4: "4 bed", 5: "5 bed" };
 const EXTRA_ADDON = { carpet: "Carpet steam clean (per room)", fridge: "Fridge freezer", windows: "Windows outside", balcony: "Balcony, terrace or patio" };
 const ORDEM = ["2nd", "3rd", "4th"];
@@ -71,8 +91,8 @@ const gbp = (n) => (n == null ? "?" : Number.isInteger(n) ? String(n) : n.toFixe
 
 /** Compara um item do site com a faixa ou add-on do OS; registra o que foi visto. */
 function conferir(onde, nome, label, item, esperado) {
-  const rotulo = `${nome} · ${label}`;
-  vistos.add(`${onde}|${nome}|${label}`);
+  const rotulo = `${servico[nome]?.name ?? nome} · ${label}`;
+  vistos.add(`${onde}|${servico[nome]?.name ?? nome}|${label}`);
   if (!item) {
     dif++;
     console.log(`FALTA  ${rotulo}: o site vende a £${gbp(esperado.price)} (parceiro £${gbp(esperado.pay)}) e o OS não tem`);
@@ -115,48 +135,49 @@ for (const [kind, nome] of Object.entries(KIND)) {
 // Pintura: touch-up, um cômodo e o pacote de material.
 {
   const touch = site({ services: ["paint"], paint: { option: "touchup", rooms: 1 } }, "paint");
-  conferir("faixa", "Painter", "Touch-ups (up to 3.5 hours)", faixa("Painter", "Touch-ups (up to 3.5 hours)"), touch);
+  const nome = P.PAINT.osTitle;
+  conferir("faixa", nome, "Touch-ups (up to 3.5 hours)", faixa(nome, "Touch-ups (up to 3.5 hours)"), touch);
   const room = site({ services: ["paint"], paint: { option: "rooms", rooms: 1 } }, "paint");
-  conferir("faixa", "Painter", "A room, walls, two coats", faixa("Painter", "A room, walls, two coats"), room);
+  conferir("faixa", nome, "A room, walls, two coats", faixa(nome, "A room, walls, two coats"), room);
   const mat = site({ services: ["paint"], paint: { option: "touchup", rooms: 1, materials: true } }, "paint");
-  conferir("addon", "Painter", "Paint and materials pack", addon("Painter", "Paint and materials pack"), { price: mat.price - touch.price, pay: mat.pay - touch.pay });
+  conferir("addon", nome, "Paint and materials pack", addon(nome, "Paint and materials pack"), { price: mat.price - touch.price, pay: mat.pay - touch.pay });
 }
 
 // Reparos: meia diária e diária.
 for (const [pkg, label] of [["half", "Half day (up to 3.5 hours)"], ["day", "Full day (up to 7 hours)"]]) {
   const s = site({ services: ["fix"], fix: { package: pkg } }, "fix");
-  conferir("faixa", "General Maintenance", label, faixa("General Maintenance", label), s);
+  conferir("faixa", P.FIX.osTitle, label, faixa(P.FIX.osTitle, label), s);
 }
 
 // Certificados: CP12 base, EICR e EPC por tamanho.
 {
   const item = (id) => P.CERT.items.find((i) => i.id === id);
   const gas = site({ services: ["cert"], size: "2", cert: { items: ["gas"] } }, "cert", { certItem: item("gas") });
-  conferir("faixa", "Gas Safety Certificate", "CP12, 1 appliance", faixa("Gas Safety Certificate", "CP12, 1 appliance"), gas);
+  conferir("faixa", item("gas").osTitle, "CP12, 1 appliance", faixa(item("gas").osTitle, "CP12, 1 appliance"), gas);
   const eicrLabel = { studio: "EICR studio (up to 8 circuits)", 1: "EICR 1 bed (up to 8 circuits)", 2: "EICR 2 bed (up to 8 circuits)", 3: "EICR 3 bed (up to 10 circuits)", 4: "EICR 4 bed (up to 12 circuits)" };
   for (const [size, label] of Object.entries(eicrLabel)) {
     const s = site({ services: ["cert"], size, cert: { items: ["eicr"] } }, "cert", { certItem: item("eicr") });
-    conferir("faixa", "Electrical Safety Report", label, faixa("Electrical Safety Report", label), s);
+    conferir("faixa", item("eicr").osTitle, label, faixa(item("eicr").osTitle, label), s);
   }
   const epcLabel = { studio: "EPC studio", 1: "EPC 1 bed", 2: "EPC 2 bed", 3: "EPC 3 bed", 4: "EPC 4 bed", 5: "EPC 5+ bed" };
   for (const [size, label] of Object.entries(epcLabel)) {
     const s = site({ services: ["cert"], size, cert: { items: ["epc"] } }, "cert", { certItem: item("epc") });
-    conferir("faixa", "Energy Performance Certificate", label, faixa("Energy Performance Certificate", label), s);
+    conferir("faixa", item("epc").osTitle, label, faixa(item("epc").osTitle, label), s);
   }
 }
 
-// Todo título que o site manda como service_type precisa existir ativo no OS.
+// Todo título que o site manda como service_type precisa ligar num serviço ativo do OS.
 const titulos = new Set([...P.CLEAN.kinds.map((k) => k.osTitle), P.PAINT.osTitle, P.FIX.osTitle, ...P.CERT.items.map((i) => i.osTitle)]);
 for (const t of titulos) {
   if (servico[t]) ok++;
-  else { dif++; console.log(`FALTA  o site manda "${t}" e não existe serviço ativo com esse nome`); }
+  else { dif++; console.log(`FALTA  o site manda "${t}" e o OS não liga em nenhum serviço ativo`); }
 }
 
 // ─── 2. Do OS para o site ────────────────────────────────────────────────────
 
 const soOs = [];
 for (const r of rows) {
-  const kind = Object.entries(KIND).find(([, n]) => n === r.name)?.[0];
+  const kind = Object.entries(KIND).find(([, n]) => servico[n]?.id === r.id)?.[0];
   for (const f of r.pricing_presets || []) {
     if (vistos.has(`faixa|${r.name}|${f.label}`)) continue;
     const m = f.label.match(/^(Studio|\d) ?(?:bed)? · (\d) bath$/i);
