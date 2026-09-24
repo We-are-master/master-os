@@ -33,6 +33,14 @@ const DESCONTO = 10;
 const VALIDADE_HORAS = 48;
 const CAMPANHA = "reserva-abandonada";
 
+/**
+ * Cupom FIXO do e-mail 3 quando não há STRIPE_PROMO_SECRET_KEY: criado à mão
+ * na Stripe live (Coupons → 10% → Promotion code COMEBACK10, sem restrição de
+ * cliente nem de primeira compra). Com a chave, cada lead ganha um código
+ * único de 48 h e este fica de reserva.
+ */
+const CODIGO_FIXO = "COMEBACK10";
+
 export function motorLigado(): boolean {
   return process.env.RESERVA_ABANDONADA?.trim().toLowerCase() === "on";
 }
@@ -207,10 +215,16 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
     try {
       let promo: ReservaAbandonada["promo"];
       if (passo === 3) {
-        const c = await criarCodigo(l, agora);
         const preco = Number(l.price);
-        promo = { code: c.code, percentOff: DESCONTO, discountedPrice: Math.round(preco * (100 - DESCONTO)) / 100, expiresAt: c.expiresAt };
-        await sb.from("site_leads").update({ promo_code: c.code, promo_id: c.id, promo_expires_at: c.expiresAt.toISOString() }).eq("id", l.id);
+        const comDesconto = Math.round(preco * (100 - DESCONTO)) / 100;
+        if (process.env.STRIPE_PROMO_SECRET_KEY?.trim()) {
+          const c = await criarCodigo(l, agora);
+          promo = { code: c.code, percentOff: DESCONTO, discountedPrice: comDesconto, expiresAt: c.expiresAt };
+          await sb.from("site_leads").update({ promo_code: c.code, promo_id: c.id, promo_expires_at: c.expiresAt.toISOString() }).eq("id", l.id);
+        } else {
+          promo = { code: CODIGO_FIXO, percentOff: DESCONTO, discountedPrice: comDesconto, expiresAt: null };
+          await sb.from("site_leads").update({ promo_code: CODIGO_FIXO }).eq("id", l.id);
+        }
       }
       const dados = dadosDoEmail(l, passo, promo);
       const e: EmailPronto = passo === 1 ? email1(dados) : passo === 2 ? email2(dados) : email3(dados);
