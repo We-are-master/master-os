@@ -11,7 +11,14 @@ export const PARTNER_REASON_CODES = [
 
 export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
 
+/**
+ * Set by the trade portal signup until the partner types the 6-digit email code
+ * (removed by /api/auth/verify-otp). Partners carrying it stay out of the Onboarding tab.
+ */
+export const EMAIL_UNVERIFIED_REASON = "email_unverified";
+
 const LABELS: Record<string, string> = {
+  email_unverified: "Email not verified",
   missing_documents: "Missing Documents",
   low_compliance_score: "Low Compliance Score",
   expired_docs: "Expired Docs",

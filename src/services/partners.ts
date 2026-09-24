@@ -1,6 +1,6 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
 import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
-import { PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
+import { EMAIL_UNVERIFIED_REASON, PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
 import type { Partner } from "@/types/database";
 import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 import {
@@ -143,7 +143,10 @@ async function listPartnersLegacy(
     if (params.status === "inactive") {
       query = query.in("status", ["inactive", "on_break"]);
     } else if (params.status === "onboarding") {
-      query = query.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
+      // Only partners who confirmed their email code count as onboarding.
+      query = query
+        .in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES])
+        .not("partner_status_reasons", "cs", `{${EMAIL_UNVERIFIED_REASON}}`);
     } else {
       query = query.eq("status", params.status);
     }
@@ -176,7 +179,9 @@ async function listPartnersLegacy(
       if (params.status === "inactive") {
         fallback = fallback.in("status", ["inactive", "on_break"]);
       } else if (params.status === "onboarding") {
-        fallback = fallback.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
+        fallback = fallback
+          .in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES])
+          .not("partner_status_reasons", "cs", `{${EMAIL_UNVERIFIED_REASON}}`);
       } else {
         fallback = fallback.eq("status", params.status);
       }

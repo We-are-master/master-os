@@ -103,6 +103,7 @@ import {
   type PartnerDocExpiryPolicy,
 } from "@/lib/partner-required-docs";
 import {
+  EMAIL_UNVERIFIED_REASON,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -1492,6 +1493,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           .select("id", { count: "exact", head: true })
           .lt("compliance_score", 50),
       ]);
+      // The Onboarding tab hides portal signups that never typed their email code.
+      const { count: unverifiedCount } = await supabase
+        .from("partners")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["onboarding", "needs_attention"])
+        .contains("partner_status_reasons", [EMAIL_UNVERIFIED_REASON]);
+      if (unverifiedCount) {
+        const onboardingOnly = Math.max(0, (counts["onboarding"] ?? 0) - unverifiedCount);
+        counts["onboarding"] = onboardingOnly;
+      }
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
