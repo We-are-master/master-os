@@ -40,11 +40,13 @@ import { saveUserPermissions, resolvePermission } from "@/services/admin-config"
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
+import { LeadOriginsTab } from "./lead-origins-tab";
 import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
 import { ServicesPricingClient } from "@/app/(dashboard)/services/services-pricing-client";
 const settingsAdminTabs = [
   { id: "ai-briefs", label: "AI & Daily brief" },
   { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
+  { id: "lead-origins", label: "Lead origins" },
   { id: "navigation", label: "Navigation" },
   { id: "permissions", label: "Roles & Permissions" },
   { id: "team", label: "Users Access" },
@@ -140,6 +142,7 @@ function SettingsPageInner() {
           {activeTab === "services" && canCatalog && <ServicesPricingClient embedded />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
           {activeTab === "setup" && isAdmin && <SetupTab />}
+          {activeTab === "lead-origins" && isAdmin && <LeadOriginsTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}

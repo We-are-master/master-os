@@ -13,10 +13,17 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export const CANAIS = ["website", "whatsapp", "phone", "email", "meta_form", "referral", "checkatrade", "walk_in", "other"] as const;
-export type Canal = (typeof CANAIS)[number];
+/**
+ * Origens vêm da tabela lead_channels (296, editável em Settings → Lead
+ * origins). A lista abaixo é o PADRÃO: vale enquanto a tabela não é lida (ou
+ * não existe) e tem as mesmas nove da semente da migration.
+ */
+export type Canal = string;
+export type CanalDef = { key: string; label: string; active: boolean; sort: number; aliases: string[] };
 
-export const ROTULO_CANAL: Record<Canal, string> = {
+export const CANAIS = ["website", "whatsapp", "phone", "email", "meta_form", "referral", "checkatrade", "walk_in", "other"] as const;
+
+export const ROTULO_CANAL: Record<string, string> = {
   website: "Website",
   whatsapp: "WhatsApp",
   phone: "Phone",
@@ -28,7 +35,7 @@ export const ROTULO_CANAL: Record<Canal, string> = {
   other: "Other",
 };
 
-/** Como o time escreve a origem numa planilha → o valor gravado. */
+/** Como o time escreve a origem numa planilha → o valor gravado (padrão). */
 const APELIDOS: Record<string, Canal> = {
   site: "website", web: "website", website: "website", getfixfy: "website",
   whatsapp: "whatsapp", wa: "whatsapp", zap: "whatsapp", whats: "whatsapp",
@@ -54,11 +61,33 @@ export type ResultadoImport = {
 const limpar = (v: unknown, max = 300) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 const soDigitos = (t: string) => t.replace(/\D/g, "");
 
-export function canalDe(v: string | null | undefined): Canal | null {
-  const k = (v ?? "").trim().toLowerCase().replace(/\s+/g, "_");
-  if (!k) return "other";
-  if (APELIDOS[k]) return APELIDOS[k];
-  return (CANAIS as readonly string[]).includes(k) ? (k as Canal) : null;
+export const CANAIS_PADRAO: CanalDef[] = CANAIS.map((key, i) => ({
+  key,
+  label: ROTULO_CANAL[key],
+  active: true,
+  sort: (i + 1) * 10,
+  aliases: Object.entries(APELIDOS).filter(([, v]) => v === key).map(([a]) => a),
+}));
+
+/** Rótulo de uma origem, pela lista lida do banco ou pelo padrão. */
+export function rotuloCanal(key: string | null | undefined, canais: CanalDef[] = CANAIS_PADRAO): string {
+  const k = key || "website";
+  return canais.find((c) => c.key === k)?.label ?? ROTULO_CANAL[k] ?? k;
+}
+
+/**
+ * O que a planilha escreveu → a chave gravada. Casa pela chave, pelo nome e
+ * pelos apelidos; só origens ATIVAS entram. Vazio vira "other".
+ */
+export function canalDe(v: string | null | undefined, canais: CanalDef[] = CANAIS_PADRAO): Canal | null {
+  const bruto = (v ?? "").trim().toLowerCase();
+  const k = bruto.replace(/\s+/g, "_");
+  const ativos = canais.filter((c) => c.active);
+  if (!k) return ativos.some((c) => c.key === "other") ? "other" : null;
+  const achado = ativos.find(
+    (c) => c.key === k || c.label.toLowerCase() === bruto || c.aliases.some((a) => a.toLowerCase() === bruto || a.toLowerCase() === k),
+  );
+  return achado?.key ?? null;
 }
 
 function estadoDe(v: string | null | undefined): "new" | "hot" | "contacted" | "lost" | null {
@@ -87,13 +116,13 @@ function dataDe(v: string | null | undefined): string | null | "invalida" {
 }
 
 /** Validação de uma linha, sem banco. Exportada para a prévia do import. */
-export function validarLinha(l: LinhaDeLead): { ok: true; dados: ReturnType<typeof montar> } | { ok: false; motivo: string } {
+export function validarLinha(l: LinhaDeLead, canais: CanalDef[] = CANAIS_PADRAO): { ok: true; dados: ReturnType<typeof montar> } | { ok: false; motivo: string } {
   const email = limpar(l.email, 200)?.toLowerCase() ?? null;
   const phone = limpar(l.phone, 40);
   if (!email && !phone) return { ok: false, motivo: "needs an email or a phone" };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, motivo: `email "${email}" is not valid` };
-  const canal = canalDe(l.channel);
-  if (!canal) return { ok: false, motivo: `channel "${l.channel}" is not one of ${CANAIS.join(", ")}` };
+  const canal = canalDe(l.channel, canais);
+  if (!canal) return { ok: false, motivo: `channel "${l.channel}" is not an active origin (${canais.filter((c) => c.active).map((c) => c.key).join(", ")})` };
   const estado = estadoDe(l.status);
   if (!estado) return { ok: false, motivo: `status "${l.status}" must be new, hot, contacted or lost` };
   const preco = precoDe(l.price);
@@ -133,6 +162,7 @@ export async function gravarLeads(
 ): Promise<ResultadoImport> {
   const res: ResultadoImport = { criados: 0, atualizados: 0, erros: [] };
   const agora = new Date().toISOString();
+  const canais = await lerCanais(sb);
 
   // Leads abertos de uma vez só, para casar por e-mail ou telefone em memória.
   const { data: abertos, error } = await sb
@@ -155,7 +185,7 @@ export async function gravarLeads(
 
   for (const [i, bruta] of linhas.entries()) {
     const numero = i + 2; // linha 1 do CSV é o cabeçalho
-    const v = validarLinha(bruta);
+    const v = validarLinha(bruta, canais);
     if (!v.ok) { res.erros.push({ linha: numero, motivo: v.motivo }); continue; }
     const d = v.dados;
     const existente = (d.email && porEmail.get(d.email)) || (d.phone && porTelefone.get(soDigitos(d.phone))) || null;
@@ -205,7 +235,7 @@ export async function gravarLeads(
     }).select("id").single();
     if (e || !novo) { res.erros.push({ linha: numero, motivo: e?.message ?? "insert failed" }); continue; }
     await sb.from("site_lead_activity").insert({
-      lead_id: novo.id, kind: "step", detail: `${rotuloOrigem} · ${ROTULO_CANAL[d.channel]}${d.service_label ? ` · ${d.service_label}` : ""}`,
+      lead_id: novo.id, kind: "step", detail: `${rotuloOrigem} · ${rotuloCanal(d.channel, canais)}${d.service_label ? ` · ${d.service_label}` : ""}`,
       actor_id: opts.actorId, meta: { via: opts.origem, channel: d.channel },
     });
     if (d.email) porEmail.set(d.email, { id: novo.id, ...d });
@@ -213,4 +243,11 @@ export async function gravarLeads(
     res.criados++;
   }
   return res;
+}
+
+/** As origens do banco, em ordem. Sem a tabela (antes da 296), o padrão. */
+export async function lerCanais(sb: SupabaseClient): Promise<CanalDef[]> {
+  const { data, error } = await sb.from("lead_channels").select("key, label, active, sort, aliases").order("sort").order("label");
+  if (error || !data?.length) return CANAIS_PADRAO;
+  return data.map((c) => ({ key: c.key as string, label: c.label as string, active: Boolean(c.active), sort: Number(c.sort), aliases: (c.aliases as string[]) ?? [] }));
 }

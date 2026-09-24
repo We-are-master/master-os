@@ -29,3 +29,16 @@ test("preço, status, data e etiquetas", () => {
   assert.equal(validarLinha({ email: "a@b.com", price: "abc" }).ok, false);
   assert.equal(validarLinha({ email: "a@b.com", status: "won" }).ok, false);
 });
+
+test("origem criada em Settings vale no CSV, e desativada não", () => {
+  const canais = [
+    { key: "tiktok", label: "TikTok", active: true, sort: 1, aliases: ["tt"] },
+    { key: "whatsapp", label: "WhatsApp", active: false, sort: 2, aliases: ["wa"] },
+    { key: "other", label: "Other", active: true, sort: 3, aliases: [] },
+  ];
+  assert.equal(canalDe("TT", canais), "tiktok");
+  assert.equal(canalDe("TikTok", canais), "tiktok");
+  assert.equal(canalDe("wa", canais), null);
+  assert.equal(canalDe("", canais), "other");
+  assert.equal(validarLinha({ phone: "07700 900123", channel: "tiktok" }, canais).ok, true);
+});
