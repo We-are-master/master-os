@@ -37,6 +37,9 @@ export const NAVIGATION: NavGroup[] = [
     label: "Operations",
     items: [
       { label: "Leads", href: "/leads", icon: "user-circle", permission: "leads" },
+      // Quem começou a reservar no site e não pagou (294). O /leads acima é outra
+      // coisa (jobs oferecidos a parceiros) e fica escondido do menu.
+      { label: "Leads", href: "/website-leads", icon: "user-circle", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
