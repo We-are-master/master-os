@@ -51,7 +51,8 @@ const base: ReservaAbandonada = {
 
 test("assuntos, primeiro nome e preço", () => {
   const e = email1(base);
-  assert.equal(e.subject, "Your fixed price for a 2 bed deep clean is waiting");
+  assert.equal(e.subject, "You're almost there!");
+  assert.ok(e.preheader.startsWith("Finish your booking: 2 bed deep clean"));
   assert.match(e.html, /Hi Alex,/);
   assert.match(e.html, /£237/);
   assert.equal(email2(base).subject, "Anything we can help with?");
