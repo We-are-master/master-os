@@ -27,7 +27,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus, Share2, BarChart3,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2, Archive,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -103,6 +103,8 @@ import {
   type PartnerDocExpiryPolicy,
 } from "@/lib/partner-required-docs";
 import {
+  ARCHIVED_REASON,
+  ONBOARDING_HIDDEN_REASONS,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -159,10 +161,7 @@ import {
 } from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 import { invitePartnerFromZero } from "@/lib/partner-invite";
-import {
-  computePartnerOnboardingProgress,
-  type PartnerOnboardingProgress,
-} from "@/lib/partner-ready-check";
+import { PARTNER_CONTRACT_TYPES, computePartnerChecklist, type PartnerChecklist } from "@/lib/partner-ready-check";
 import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
 import type { PartnerDocLike } from "@/lib/partner-required-docs";
 
@@ -1186,13 +1185,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
   /** Per-onboarding-partner core upload progress (Insurance / ID / Right to work) for the Onboarding tab bar. */
-  const [onboardingProgress, setOnboardingProgress] = useState<Map<string, PartnerOnboardingProgress>>(() => new Map());
+  /** Full checklist per partner (mandatory docs + active agreements signed; DBS never counts). */
+  const [checklistByPartner, setChecklistByPartner] = useState<Map<string, PartnerChecklist>>(() => new Map());
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
+  /** Server-side order for the list: earnings (default) or when the partner joined. */
+  const [dateSort, setDateSort] = useState<"earnings" | "newest" | "oldest">("earnings");
   const [listSortKey, setListSortKey] = useState<string | null>("total_earnings");
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
   const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
@@ -1315,6 +1317,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       ...params,
       status: params.status,
       trade: tradeFilter !== "all" ? tradeFilter : undefined,
+      ...(dateSort === "earnings" ? {} : { sortBy: "joined_at", sortDir: dateSort === "newest" ? "desc" : "asc" }),
     });
     try {
       const data = await enrichPartnersDirectoryEarnings(result.data);
@@ -1322,7 +1325,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     } catch {
       return result;
     }
-  }, [tradeFilter]);
+  }, [tradeFilter, dateSort]);
 
   const {
     data: partners,
@@ -1489,49 +1492,88 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         supabase
           .from("partners")
           .select("id", { count: "exact", head: true })
-          .lt("compliance_score", 50)
-          .is("deleted_at", null),
+          .lt("compliance_score", 50),
       ]);
+      // The Onboarding tab hides portal signups that did not confirm their email code or never
+      // started (no rates, no document). Archived ones are taken off below, so skip them here.
+      const { data: hiddenOnboarding } = await supabase
+        .from("partners")
+        .select("status, partner_status_reasons")
+        .in("status", ["onboarding", "needs_attention"])
+        .overlaps("partner_status_reasons", [...ONBOARDING_HIDDEN_REASONS]);
+      for (const row of (hiddenOnboarding ?? []) as Array<{ status: string; partner_status_reasons: string[] | null }>) {
+        if ((row.partner_status_reasons ?? []).includes(ARCHIVED_REASON)) continue;
+        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
+      }
+      // Archived partners (tests, duplicates) leave every tab and the total.
+      const { data: archivedRows } = await supabase
+        .from("partners")
+        .select("status")
+        .contains("partner_status_reasons", [ARCHIVED_REASON]);
+      for (const row of (archivedRows ?? []) as Array<{ status: string }>) {
+        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
+        if (counts["all"] != null) counts["all"] = Math.max(0, counts["all"] - 1);
+      }
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
       setPartnersBelow50Count(below50Res.count ?? 0);
 
-      // Core onboarding progress (Insurance / ID / Right to work) for the Onboarding tab bar.
+      // Full onboarding checklist for every partner: the 4 mandatory documents plus every active
+      // agreement signed in its current version (DBS never counts). The Onboarding bar counts what was
+      // SENT or signed (pending counts); the Compliance column counts what is approved and in date.
+      // partners.deleted_at and partner_documents.counts_toward_compliance do not exist in production
+      // (migration 125 was never applied): selecting or filtering them made these queries fail silently
+      // and every bar sat at 0%.
       try {
-        const { data: onboardingPartners } = await supabase
-          .from("partners")
-          .select("id, status, trade, trades, partner_legal_type, utr, crn, vat_number, vat_registered")
-          .in("status", ["onboarding", "needs_attention"])
-          .is("deleted_at", null);
-        const onboardingRows = (onboardingPartners ?? []) as Array<
-          Pick<
-            Partner,
-            "id" | "status" | "trade" | "trades" | "partner_legal_type" | "utr" | "crn" | "vat_number" | "vat_registered"
-          >
-        >;
-        if (onboardingRows.length === 0) {
-          setOnboardingProgress(new Map());
+        const [partnersRes, versionsRes] = await Promise.all([
+          supabase.from("partners").select("id"),
+          supabase
+            .from("contract_versions")
+            .select("id")
+            .eq("is_active", true)
+            .in("contract_type", [...PARTNER_CONTRACT_TYPES]),
+        ]);
+        if (partnersRes.error) console.error("[partners] checklist: partners query failed", partnersRes.error);
+        if (versionsRes.error) console.error("[partners] checklist: agreements query failed", versionsRes.error);
+        const ids = ((partnersRes.data ?? []) as Array<{ id: string }>).map((p) => p.id);
+        const activeVersionIds = ((versionsRes.data ?? []) as Array<{ id: string }>).map((v) => v.id);
+        if (ids.length === 0) {
+          setChecklistByPartner(new Map());
         } else {
-          const ids = onboardingRows.map((p) => p.id);
-          const docsRes = await supabase
-            .from("partner_documents")
-            .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
-            .in("partner_id", ids);
+          const [docsRes, sigRes] = await Promise.all([
+            supabase
+              .from("partner_documents")
+              .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at")
+              .in("partner_id", ids),
+            supabase.from("partner_contract_signatures").select("partner_id, contract_version_id").in("partner_id", ids),
+          ]);
+          if (docsRes.error) console.error("[partners] checklist: documents query failed", docsRes.error);
+          if (sigRes.error) console.error("[partners] checklist: signatures query failed", sigRes.error);
           const docsByPartnerId = new Map<string, PartnerDocLike[]>();
           for (const row of (docsRes.data ?? []) as Array<PartnerDocLike & { partner_id: string }>) {
             const arr = docsByPartnerId.get(row.partner_id) ?? [];
             arr.push(row);
             docsByPartnerId.set(row.partner_id, arr);
           }
-          const progress = new Map<string, PartnerOnboardingProgress>();
-          for (const p of onboardingRows) {
-            progress.set(p.id, computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id)));
+          const signedByPartnerId = new Map<string, Set<string>>();
+          for (const row of (sigRes.data ?? []) as Array<{ partner_id: string; contract_version_id: string }>) {
+            const set = signedByPartnerId.get(row.partner_id) ?? new Set<string>();
+            set.add(row.contract_version_id);
+            signedByPartnerId.set(row.partner_id, set);
           }
-          setOnboardingProgress(progress);
+          const map = new Map<string, PartnerChecklist>();
+          for (const id of ids) {
+            map.set(
+              id,
+              computePartnerChecklist(docsByPartnerId.get(id), signedByPartnerId.get(id) ?? new Set(), activeVersionIds),
+            );
+          }
+          setChecklistByPartner(map);
         }
-      } catch {
-        setOnboardingProgress(new Map());
+      } catch (err) {
+        console.error("[partners] checklist failed", err);
+        setChecklistByPartner(new Map());
       }
     } catch { /* cosmetic */ }
   }, []);
@@ -1603,6 +1645,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     refreshList();
     if (directoryDisplayMode === "kanban") void loadKanbanPartners();
   }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    refreshList();
+  }, [dateSort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createAvatarPreviewUrl = useMemo(
     () => (createAvatarFile ? URL.createObjectURL(createAvatarFile) : null),
@@ -2043,7 +2088,36 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  /** Archive = hide from every tab without deleting (jobs and self-bills keep pointing at the row). */
+  const archivePartners = useCallback(
+    async (targets: Array<Pick<Partner, "id" | "partner_status_reasons">>) => {
+      if (targets.length === 0) return;
+      const label = targets.length === 1 ? "this partner" : `${targets.length} partners`;
+      if (!window.confirm(`Archive ${label}? They disappear from every tab. Nothing is deleted.`)) return;
+      const supabase = getSupabase();
+      let failed = 0;
+      for (const p of targets) {
+        const reasons = Array.from(new Set([...(p.partner_status_reasons ?? []), ARCHIVED_REASON]));
+        const { error } = await supabase.from("partners").update({ partner_status_reasons: reasons }).eq("id", p.id);
+        if (error) failed += 1;
+      }
+      if (failed > 0) toast.error(`${failed} could not be archived`);
+      const done = targets.length - failed;
+      if (done > 0) toast.success(`${done} partner${done === 1 ? "" : "s"} archived`);
+      setSelectedIds(new Set());
+      refresh();
+      void loadCounts();
+    },
+    [refresh, loadCounts],
+  );
+
+  const handleBulkArchive = useCallback(() => {
+    void archivePartners(partners.filter((p) => selectedIds.has(p.id)));
+  }, [archivePartners, partners, selectedIds]);
+
   const sortedPartners = useMemo(() => {
+    // Newest / oldest come ordered from the server; re-sorting by earnings here would undo it.
+    if (dateSort !== "earnings") return partners;
     const sortKey = listSortKey ?? "total_earnings";
     const rows = [...partners];
     const dir = listSortDir === "asc" ? 1 : -1;
@@ -2059,7 +2133,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       return (av - bv) * dir;
     });
     return rows;
-  }, [partners, listSortKey, listSortDir]);
+  }, [partners, listSortKey, listSortDir, dateSort]);
 
   const maxEarningsInView = useMemo(
     () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
@@ -2150,24 +2224,41 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
+        // Real checklist first (approved docs + signed agreements); the stored compliance_score is only a
+        // fallback while it loads.
+        const c = checklistByPartner.get(item.id);
         const raw = item.compliance_score;
-        const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
-        const tier = complianceTier(s);
-        const approxOk = Math.round((Math.max(0, Math.min(100, s)) / 100) * 3);
+        const stored = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
+        const total = c ? c.docsTotal + c.contractsTotal : 3;
+        const okCount = c ? c.docsValid + c.contractsSigned : Math.round((Math.max(0, Math.min(100, stored)) / 100) * 3);
+        const s = c ? c.validPct : stored;
+        const tier = c
+          ? c.validPct >= 100
+            ? complianceTier(100)
+            : c.uploadedPct >= 100
+              ? complianceTier(50)
+              : complianceTier(0)
+          : complianceTier(stored);
         return (
           <div
             className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
-            title="Insurance · ID · Right to work (extras don’t count)"
+            title={
+              c
+                ? `Approved documents ${c.docsValid}/${c.docsTotal} · Agreements signed ${c.contractsSigned}/${c.contractsTotal} · Sent ${c.docsUploaded}/${c.docsTotal} (DBS does not count)`
+                : "Mandatory documents and agreements (DBS does not count)"
+            }
           >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", tier.textClass)}>
-                {approxOk}/3
+                {okCount}/{total}
               </span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", tier.textClass)}>
                 {tier.label}
               </span>
             </div>
-            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
+            <p className="text-[10px] text-text-tertiary leading-tight">
+              {c ? `Docs ${c.docsValid}/${c.docsTotal} · Contracts ${c.contractsSigned}/${c.contractsTotal}` : "Docs · Contracts"}
+            </p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", tier.barClass)}
@@ -2254,6 +2345,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </button>
             </>
           ) : null}
+          <button
+            type="button"
+            title="Archive (hide from every tab, nothing is deleted)"
+            onClick={() => void archivePartners([item])}
+            className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-text-tertiary hover:text-rose-600 hover:bg-surface-hover transition-colors"
+          >
+            <Archive className="h-4 w-4" />
+          </button>
           <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto shrink-0" aria-hidden />
         </div>
       ),
@@ -2277,9 +2376,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
-        const prog = onboardingProgress.get(item.id);
-        const pct = prog?.pct ?? 0;
-        const done = prog?.ready ?? false;
+        const c = checklistByPartner.get(item.id);
+        const pct = c?.uploadedPct ?? 0;
+        const done = pct >= 100;
+        const sent = c ? c.docsUploaded + c.contractsSigned : 0;
+        const total = c ? c.docsTotal + c.contractsTotal : 0;
         const barClass = done ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-sky-500";
         const textClass = done
           ? "text-emerald-600 dark:text-emerald-400"
@@ -2290,18 +2391,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           <div
             className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
             title={
-              prog
-                ? `${prog.submitted}/${prog.total} core docs (Insurance · ID · Right to work) — Activate when complete`
-                : "Core onboarding progress"
+              c
+                ? `Documents sent ${c.docsUploaded}/${c.docsTotal} · Agreements signed ${c.contractsSigned}/${c.contractsTotal}. Counts what the partner sent, approved or not. DBS does not count.`
+                : "Onboarding progress"
             }
           >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", textClass)}>{pct}%</span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", textClass)}>
-                {done ? "ACTIVATE" : prog ? `${prog.submitted}/${prog.total}` : "—"}
+                {done ? "ACTIVATE" : c ? `${sent}/${total}` : "—"}
               </span>
             </div>
-            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
+            <p className="text-[10px] text-text-tertiary leading-tight">
+              {c ? `Docs ${c.docsUploaded}/${c.docsTotal} · Contracts ${c.contractsSigned}/${c.contractsTotal}` : "Docs · Contracts"}
+            </p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", barClass)}
@@ -2510,6 +2613,22 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                       className="w-[7.25rem] sm:w-[9rem] shrink-0"
                     />
                   ) : null}
+                  {directoryDisplayMode !== "kanban" ? (
+                    <Select
+                      value={dateSort}
+                      onChange={(e) => {
+                        setDateSort(e.target.value as "earnings" | "newest" | "oldest");
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: "earnings", label: "Highest earnings" },
+                        { value: "newest", label: "Newest first" },
+                        { value: "oldest", label: "Oldest first" },
+                      ]}
+                      className="w-[8.5rem] sm:w-[10rem] shrink-0"
+                      aria-label="Sort partners"
+                    />
+                  ) : null}
                   <ExpandingSearch
                     value={search}
                     onChange={setSearch}
@@ -2566,6 +2685,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
@@ -2613,6 +2733,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
