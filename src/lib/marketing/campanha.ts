@@ -1,5 +1,5 @@
 /**
- * Campanha de disparo único para a base (a primeira é a WEEK10, 24 a 27/09/2026).
+ * Campanha de disparo único para a base (a primeira é a WEEK10, 24/09 a 02/10/2026).
  *
  * Três grupos, decididos pelo que a pessoa tem:
  *
@@ -197,13 +197,13 @@ export async function montarFila(opcoes: { aplicar: boolean; campanha?: string }
 const ABRE = Number(process.env.MARKETING_CAMPANHA_ABRE ?? "9");
 const FECHA = Number(process.env.MARKETING_CAMPANHA_FECHA ?? "20");
 
-/** A campanha trabalha 9h às 20h de Londres, todo dia: a oferta acaba num domingo. */
+/** A campanha trabalha 9h às 20h de Londres, todo dia: inclusive no fim de semana. */
 export function campanhaNaJanela(d = new Date()): boolean {
   const hora = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(d));
   return hora >= ABRE && hora < FECHA;
 }
 
-/** Oferta vencida não sai: ninguém recebe "10% até domingo" na segunda. */
+/** Oferta vencida não sai: ninguém recebe "10% até sexta" no sábado. */
 export function ofertaNoAr(d = new Date()): boolean {
   return d.getTime() < Date.parse(WEEK10.expiraEm) - 2 * HORA_MS;
 }
@@ -276,7 +276,7 @@ export async function voltaDeEmail(opcoes: { campanha?: string; n?: number; forc
         titulo: copy.titulo,
         nome: l.primeiro_nome === "there" ? undefined : l.primeiro_nome,
         blocos: copy.blocos,
-        oferta: { codigo: WEEK10.codigo, valor: "10% off", sobre: "any Fixfy service, applied for you at checkout", validade: "Sunday 27 September, midnight" },
+        oferta: { codigo: WEEK10.codigo, valor: "10% off", sobre: "any Fixfy service, applied for you at checkout", validade: "Friday 2 October, midnight" },
         cta: { texto: copy.cta, url: linkDaCampanha(passo) },
         unsubscribeUrl: saida,
       }),

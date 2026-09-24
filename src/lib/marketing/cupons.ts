@@ -72,8 +72,8 @@ export const CUPONS: Cupom[] = [
     codigo: "WEEK10",
     nome: "Fixfy · this week only",
     percentual: 10,
-    expiraEm: "2026-09-27",
-    proposito: "Disparo de e-mail e WhatsApp para toda a base própria, 24 a 27/09. Prazo curto de propósito: é o motivo para agir agora.",
+    expiraEm: "2026-10-02",
+    proposito: "Disparo de e-mail e WhatsApp para toda a base própria, 24/09 a 02/10 (estendido pelo dono em 24/09). Prazo curto de propósito: é o motivo para agir agora.",
   },
 
   /* ── Sempre válidos: entrada, indicação e volta ───────────────────────── */

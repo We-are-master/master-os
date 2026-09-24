@@ -16,7 +16,7 @@ const PASSO: Record<string, string> = {
   wa_followup: "WhatsApp 4h depois · os dois",
   email_oferta: "E-mail oferta · só e-mail",
   wa_oferta: "WhatsApp oferta · só número",
-  email_lembrete: "Lembrete de sábado",
+  email_lembrete: "Lembrete da véspera",
 };
 const GRUPO: Record<string, string> = { os_dois: "Têm os dois", so_numero: "Só número", so_email: "Só e-mail", teste: "Teste" };
 

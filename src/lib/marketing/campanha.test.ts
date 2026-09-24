@@ -48,9 +48,9 @@ test("os dois: e-mail agora, WhatsApp sem data até o e-mail sair", () => {
   assert.deepEqual(linhas.map((l) => [l.passo, l.agendado_para]), [["email_quente", "2026-09-24T12:00:00.000Z"], ["wa_followup", null]]);
 });
 
-test("oferta sai do ar antes de domingo à meia-noite", () => {
-  assert.equal(ofertaNoAr(new Date("2026-09-27T18:00:00Z")), true);
-  assert.equal(ofertaNoAr(new Date("2026-09-27T22:00:00Z")), false);
+test("oferta sai do ar antes de sexta 2/10 à meia-noite", () => {
+  assert.equal(ofertaNoAr(new Date("2026-10-02T18:00:00Z")), true);
+  assert.equal(ofertaNoAr(new Date("2026-10-02T22:00:00Z")), false);
 });
 
 test("janela da campanha: 9h às 20h de Londres", () => {

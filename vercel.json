@@ -12,18 +12,6 @@
     {
       "path": "/api/cron/workforce-self-bills",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/cron/email-sequences",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/marketing-lifecycle",
-      "schedule": "25 * * * *"
-    },
-    {
-      "path": "/api/cron/marketing-whatsapp",
-      "schedule": "40 * * * *"
     }
   ]
 }
