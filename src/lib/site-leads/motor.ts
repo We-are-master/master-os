@@ -40,6 +40,8 @@ const CAMPANHA = "reserva-abandonada";
  * único de 48 h e este fica de reserva.
  */
 const CODIGO_FIXO = "COMEBACK10";
+const REMETENTE_PADRAO = "Victor Souza <no-reply@getfixfy.com>";
+const RESPONDER_PADRAO = "hello@getfixfy.com";
 
 export function motorLigado(): boolean {
   return process.env.RESERVA_ABANDONADA?.trim().toLowerCase() === "on";
@@ -178,10 +180,10 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
     .limit(limite);
   if (error) { res.erros.push(error.message); return res; }
 
-  const remetente = process.env.RESEND_MARKETING_FROM?.trim();
-  if (!ensaio && !remetente) { res.erros.push("RESEND_MARKETING_FROM ausente"); return res; }
+  // Sai do getfixfy.com, já validado no Resend: não depende de variável (a env só troca, se um dia quiser).
+  const remetente = process.env.RESEND_MARKETING_FROM?.trim() || REMETENTE_PADRAO;
   const resend = ensaio ? null : new Resend(process.env.RESEND_API_KEY);
-  const replyTo = process.env.RESEND_MARKETING_REPLY_TO?.trim();
+  const replyTo = process.env.RESEND_MARKETING_REPLY_TO?.trim() || RESPONDER_PADRAO;
 
   for (const l of (leads ?? []) as Lead[]) {
     res.vistos++;
@@ -230,7 +232,7 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
       const e: EmailPronto = passo === 1 ? email1(dados) : passo === 2 ? email2(dados) : email3(dados);
       const unsub = dados.unsubscribeUrl;
       const { data: enviado, error: erroEnvio } = await resend!.emails.send({
-        from: remetente!,
+        from: remetente,
         to: [l.email],
         subject: e.subject,
         html: e.html,
