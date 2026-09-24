@@ -124,14 +124,14 @@ export async function registrarPasso(input: PassoDoSite, agora = new Date()) {
     const { error } = await sb.from("site_leads").update(campos).eq("id", existente.id as string);
     if (error) return { ok: false as const, error: error.message };
     if (passoNovo > passoAnterior) {
-      await registrarAtividade(sb, existente.id as string, "step", `Chegou ao passo ${passoNovo}`, { meta: { step: passoNovo } });
+      await registrarAtividade(sb, existente.id as string, "step", `Reached step ${passoNovo}`, { meta: { step: passoNovo } });
     }
     return { ok: true as const, id: existente.id as string, created: false };
   }
 
   const { data, error } = await sb.from("site_leads").insert(campos).select("id").single();
   if (error || !data) return { ok: false as const, error: error?.message ?? "insert falhou" };
-  await registrarAtividade(sb, data.id as string, "step", `Começou a reservar: ${campos.service_label ?? "serviço"} (passo ${passoNovo})`, {
+  await registrarAtividade(sb, data.id as string, "step", `Started a booking: ${campos.service_label ?? "service"} (step ${passoNovo})`, {
     meta: { step: passoNovo, source: campos.source },
   });
   return { ok: true as const, id: data.id as string, created: true };
@@ -145,7 +145,7 @@ export async function registrarPagamento(input: PagamentoDoSite, agora = new Dat
   const lead = await leadAberto(sb, email);
   if (!lead) return { ok: true as const, id: null, semLead: true };
 
-  const recuperadoPor = lead.email3_sent_at ? "e-mail 3" : lead.email2_sent_at ? "e-mail 2" : lead.email1_sent_at ? "e-mail 1" : null;
+  const recuperadoPor = lead.email3_sent_at ? "email 3" : lead.email2_sent_at ? "email 2" : lead.email1_sent_at ? "email 1" : null;
   await sb.from("site_leads").update({
     status: "won",
     sequence_state: "stopped",
@@ -158,7 +158,7 @@ export async function registrarPagamento(input: PagamentoDoSite, agora = new Dat
     sb,
     lead.id as string,
     "paid",
-    `Pagou${input.total != null ? ` £${Number(input.total).toFixed(2)}` : ""}${input.bookingRef ? ` (${input.bookingRef})` : ""}${recuperadoPor ? `, depois do ${recuperadoPor}` : ""}`,
+    `Paid${input.total != null ? ` £${Number(input.total).toFixed(2)}` : ""}${input.bookingRef ? ` (${input.bookingRef})` : ""}${recuperadoPor ? `, after ${recuperadoPor}` : ""}`,
     { meta: { jobId: input.jobId ?? null, promo: input.promoCode ?? null, recoveredBy: recuperadoPor } },
   );
   return { ok: true as const, id: lead.id as string };
@@ -185,9 +185,9 @@ export async function mudarEstado(
   }).eq("id", leadId);
   if (error) return { ok: false as const, error: error.message };
   const rotulo: Record<EstadoDoLead, string> = {
-    new: "Novo", hot: "Quente", contacted: "Em contato", won: "Cliente", lost: "Perdido", unsubscribed: "Descadastrado",
+    new: "New", hot: "Hot", contacted: "In contact", won: "Customer", lost: "Lost", unsubscribed: "Opted out",
   };
-  await registrarAtividade(sb, leadId, "status", `Estado: ${rotulo[estado]}${estado === "lost" && opts.motivo ? ` (${opts.motivo})` : ""}`, {
+  await registrarAtividade(sb, leadId, "status", `Status: ${rotulo[estado]}${estado === "lost" && opts.motivo ? ` (${opts.motivo})` : ""}`, {
     actorId: opts.actorId,
   });
   return { ok: true as const };

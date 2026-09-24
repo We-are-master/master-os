@@ -37,13 +37,16 @@ export function mergeNewNavItems(
       match = { label: cGroup.label, items: [] };
       result.push(match);
     }
-    for (const cItem of cGroup.items) {
+    for (const [cIndex, cItem] of cGroup.items.entries()) {
       const local = match!.items.find((i) => i.href === cItem.href);
       if (!local) {
-        match!.items.push({
-          ...cItem,
-          children: cItem.children?.map((ch) => ({ ...ch })),
-        });
+        // Item novo entra ao lado do vizinho que o precede no canônico, não no
+        // fim do grupo: a nav salva no banco é antiga e empurrava todo item
+        // novo para baixo (Leads do site caía depois de Schedule).
+        const novo = { ...cItem, children: cItem.children?.map((ch) => ({ ...ch })) };
+        const anterior = cGroup.items.slice(0, cIndex).reverse().find((c) => match!.items.some((i) => i.href === c.href));
+        const pos = anterior ? match!.items.findIndex((i) => i.href === anterior.href) + 1 : Math.min(cIndex, match!.items.length);
+        match!.items.splice(pos, 0, novo);
         markItemHrefsDeep(cItem, storedHrefs);
         continue;
       }

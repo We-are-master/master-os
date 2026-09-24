@@ -127,14 +127,14 @@ async function criarCodigo(l: Lead, agora: Date): Promise<{ code: string; id: st
 }
 
 async function motivoParaNaoMandar(sb: ReturnType<typeof createServiceClient>, l: Lead): Promise<string | null> {
-  if (!["new", "hot"].includes(l.status)) return `estado ${l.status}`;
-  if (l.sequence_state !== "scheduled") return `sequência ${l.sequence_state}`;
-  if (l.marketing_opt_out) return "pediu para não receber ofertas";
-  if (!(Number(l.price) > 0)) return "sem preço";
-  if (await estaBloqueado(l.email)) return "lista de bloqueio";
+  if (!["new", "hot"].includes(l.status)) return `status ${l.status}`;
+  if (l.sequence_state !== "scheduled") return `sequence ${l.sequence_state}`;
+  if (l.marketing_opt_out) return "asked for no offers";
+  if (!(Number(l.price) > 0)) return "no price";
+  if (await estaBloqueado(l.email)) return "on the suppression list";
   if (l.client_id) {
     const { data: c } = await sb.from("clients").select("tags").eq("id", l.client_id).maybeSingle();
-    if (Array.isArray(c?.tags) && c.tags.includes(NO_MARKETING_TAG)) return "etiqueta no-marketing";
+    if (Array.isArray(c?.tags) && c.tags.includes(NO_MARKETING_TAG)) return "tagged no-marketing";
     const { data: job } = await sb
       .from("jobs")
       .select("id, reference")
@@ -144,7 +144,7 @@ async function motivoParaNaoMandar(sb: ReturnType<typeof createServiceClient>, l
       .neq("status", "deleted")
       .limit(1)
       .maybeSingle();
-    if (job) return `job ${job.reference ?? job.id} criado depois do lead`;
+    if (job) return `job ${job.reference ?? job.id} created after the lead`;
   }
   return null;
 }
@@ -185,7 +185,7 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
       if (!ensaio) {
         // Job novo ou pedido de não receber: a sequência acaba aqui.
         await sb.from("site_leads").update({ sequence_state: "stopped", updated_at: agoraIso }).eq("id", l.id);
-        await registrarAtividade(sb, l.id, "email_skipped", `E-mail ${passo} não saiu: ${motivo}. Sequência encerrada.`);
+        await registrarAtividade(sb, l.id, "email_skipped", `Email ${passo} not sent: ${motivo}. Sequence stopped.`);
       }
       continue;
     }
@@ -236,7 +236,7 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
         provider_id: enviado?.id ?? null,
         sent_at: agoraIso,
       });
-      await registrarAtividade(sb, l.id, "email_sent", `E-mail ${passo} enviado: "${e.subject}"`, {
+      await registrarAtividade(sb, l.id, "email_sent", `Email ${passo} sent: "${e.subject}"`, {
         providerId: enviado?.id ?? null,
         meta: { step: passo, promo: promo?.code ?? null },
       });
