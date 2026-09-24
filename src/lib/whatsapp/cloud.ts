@@ -151,3 +151,26 @@ export async function listTemplates(): Promise<TemplateInfo[]> {
     };
   });
 }
+
+export type SaudeDoNumero = {
+  /** GREEN, YELLOW, RED ou UNKNOWN. Abaixo de GREEN a Meta está avisando. */
+  qualidade: string;
+  /** TIER_250, TIER_2K, TIER_10K…: conversas iniciadas por nós a cada 24h. */
+  limite: string | null;
+};
+
+/**
+ * Como a Meta está vendo o número agora. Campanha lê isto antes de cada lote:
+ * o número que manda promoção é o mesmo que manda a confirmação da visita, e
+ * a qualidade cai por denúncia de quem recebeu promoção sem querer.
+ */
+export async function saudeDoNumero(): Promise<SaudeDoNumero> {
+  if (!phoneNumberId()) throw new WhatsAppError("WHATSAPP_PHONE_NUMBER_ID is not set");
+  const data = await call<{ quality_rating?: string; whatsapp_business_manager_messaging_limit?: string }>(
+    `${phoneNumberId()}?fields=quality_rating,whatsapp_business_manager_messaging_limit`,
+  );
+  return {
+    qualidade: data.quality_rating ?? "UNKNOWN",
+    limite: data.whatsapp_business_manager_messaging_limit ?? null,
+  };
+}
