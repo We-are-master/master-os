@@ -29,15 +29,6 @@ export function useTheme() {
   return useContext(ThemeContext);
 }
 
-function getSystemPreference(): "light" | "dark" {
-  if (typeof window === "undefined") return "light";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function resolveTheme(theme: Theme): "light" | "dark" {
-  return theme === "system" ? getSystemPreference() : theme;
-}
-
 function applyStyle(style: Style) {
   if (style === "minimal") {
     document.documentElement.setAttribute("data-style", "minimal");
@@ -46,19 +37,20 @@ function applyStyle(style: Style) {
   }
 }
 
+/**
+ * The OS is light only (owner's call, 24/09/2026). `theme`/`resolved` stay in the
+ * context so existing callers keep working, but they are always "light": any saved
+ * "dark"/"system" preference is dropped and the `dark` class never goes on <html>.
+ */
 export function useThemeProvider() {
-  const [theme, setThemeState] = useState<Theme>("system");
-  const [resolved, setResolved] = useState<"light" | "dark">("light");
+  const theme: Theme = "light";
+  const resolved = "light" as const;
   const [style, setStyleState] = useState<Style>("default");
 
   useEffect(() => {
     queueMicrotask(() => {
-      const stored = localStorage.getItem("master-os-theme") as Theme | null;
-      const initial = stored ?? "system";
-      setThemeState(initial);
-      const r = resolveTheme(initial);
-      setResolved(r);
-      document.documentElement.classList.toggle("dark", r === "dark");
+      document.documentElement.classList.remove("dark");
+      localStorage.removeItem("master-os-theme");
 
       const storedStyle = localStorage.getItem("master-os-style") as Style | null;
       const initialStyle: Style = storedStyle === "minimal" ? "minimal" : "default";
@@ -67,24 +59,9 @@ export function useThemeProvider() {
     });
   }, []);
 
-  useEffect(() => {
-    if (theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => {
-      const r = getSystemPreference();
-      setResolved(r);
-      document.documentElement.classList.toggle("dark", r === "dark");
-    };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [theme]);
-
-  const setTheme = useCallback((t: Theme) => {
-    setThemeState(t);
-    localStorage.setItem("master-os-theme", t);
-    const r = resolveTheme(t);
-    setResolved(r);
-    document.documentElement.classList.toggle("dark", r === "dark");
+  // Accepts a theme for API compatibility; every value lands on light.
+  const setTheme = useCallback(() => {
+    document.documentElement.classList.remove("dark");
   }, []);
 
   const setStyle = useCallback((s: Style) => {
@@ -93,9 +70,7 @@ export function useThemeProvider() {
     applyStyle(s);
   }, []);
 
-  const toggle = useCallback(() => {
-    setTheme(resolved === "dark" ? "light" : "dark");
-  }, [resolved, setTheme]);
+  const toggle = useCallback(() => setTheme(), [setTheme]);
 
   const toggleStyle = useCallback(() => {
     setStyle(style === "minimal" ? "default" : "minimal");

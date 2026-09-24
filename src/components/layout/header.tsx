@@ -6,10 +6,10 @@ import { useProfile } from "@/hooks/use-profile";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Menu, LogOut, Moon, Sun, Sparkles,
-  Search, X, History, Monitor, Check, Minus,
+  Menu, LogOut, Sun, Sparkles,
+  Search, X, History, Check, Minus,
 } from "lucide-react";
-import type { Theme, Style } from "@/hooks/use-theme";
+import type { Style } from "@/hooks/use-theme";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { Badge } from "@/components/ui/badge";
 import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
@@ -360,10 +360,10 @@ function GlobalSearch() {
   );
 }
 
-// ── Theme menu (appearance + style) ───────────────────────────────────────────
+// ── Style menu (the OS is light only) ───────────────────────────────────────────
 
 function ThemeMenu() {
-  const { theme, resolved, style, setTheme, setStyle } = useTheme();
+  const { style, setStyle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -381,11 +381,6 @@ function ThemeMenu() {
     };
   }, [open]);
 
-  const appearanceOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
-    { value: "light", label: "Light", icon: Sun },
-    { value: "dark", label: "Dark", icon: Moon },
-    { value: "system", label: "System", icon: Monitor },
-  ];
   const styleOptions: { value: Style; label: string; icon: typeof Sun }[] = [
     { value: "default", label: "Default", icon: Sparkles },
     { value: "minimal", label: "Minimal", icon: Minus },
@@ -424,21 +419,11 @@ function ThemeMenu() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="relative flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
-        title="Theme"
+        title="Style"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <AnimatePresence mode="wait" initial={false}>
-          {resolved === "dark" ? (
-            <motion.div key="sun" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <Sun className="h-[18px] w-[18px]" />
-            </motion.div>
-          ) : (
-            <motion.div key="moon" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <Moon className="h-[18px] w-[18px]" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <Sparkles className="h-[18px] w-[18px]" />
       </button>
 
       <AnimatePresence>
@@ -451,17 +436,6 @@ function ThemeMenu() {
             className="absolute right-0 z-50 mt-2 w-52 rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
             role="menu"
           >
-            <p className="fx-kk px-2 pb-1 pt-1">Appearance</p>
-            {appearanceOptions.map((o) => (
-              <Row
-                key={o.value}
-                active={theme === o.value}
-                label={o.label}
-                Icon={o.icon}
-                onClick={() => setTheme(o.value)}
-              />
-            ))}
-            <div className="my-1.5 h-px bg-border" />
             <p className="fx-kk px-2 pb-1 pt-1">Style</p>
             {styleOptions.map((o) => (
               <Row
