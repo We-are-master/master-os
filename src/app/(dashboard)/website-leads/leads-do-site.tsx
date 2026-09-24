@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * A aba Leads: quem começou a reservar no site e não pagou.
+ * A aba Leads: quem começou a reservar no site e não pagou. Só a lista.
  *
- * Em cima, os números que dizem como estamos (abertos, quentes, recuperados,
- * onde as pessoas param). Embaixo, a lista por estado. Clicar num lead abre o
- * painel com contato, ações e a linha do tempo: cada passo, cada e-mail
- * (aberto e clicado), cada nota do time.
+ * Os números e o gráfico moram na Leads Room do office virtual (dono,
+ * 24/09: "pra o OS não ficar carregado à toa"). Aqui é trabalho: a lista por
+ * estado e, clicando, o cartão do lead com as informações que importam,
+ * contato, ações e a linha do tempo. Quem pagou vira cliente e sai da lista.
  */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Drawer } from "@/components/ui/drawer";
 
@@ -63,10 +63,11 @@ const ABAS = [
   { id: "abertos", rotulo: "Abertos", filtro: (l: LeadDaTela) => ["new", "hot", "contacted"].includes(l.status) },
   { id: "quentes", rotulo: "Quentes", filtro: (l: LeadDaTela) => l.status === "hot" },
   { id: "contato", rotulo: "Em contato", filtro: (l: LeadDaTela) => l.status === "contacted" },
-  { id: "clientes", rotulo: "Clientes", filtro: (l: LeadDaTela) => l.status === "won" },
   { id: "perdidos", rotulo: "Perdidos", filtro: (l: LeadDaTela) => l.status === "lost" || l.status === "unsubscribed" },
-  { id: "todos", rotulo: "Todos", filtro: () => true },
+  { id: "todos", rotulo: "Todos", filtro: (l: LeadDaTela) => l.status !== "won" },
 ] as const;
+
+const PASSOS = ["Your job", "Details", "Date and access", "Checkout"];
 
 const MOTIVOS = ["Price", "Date not available", "Outside our area", "Just researching", "No reply", "Booked elsewhere", "Other"];
 
@@ -98,16 +99,6 @@ function Pilula({ status }: { status: LeadDaTela["status"] }) {
   return <span style={{ fontSize: 11.5, fontWeight: 600, color: e.cor, background: e.fundo, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>{e.rotulo}</span>;
 }
 
-function Numero({ rotulo, valor, nota, cor }: { rotulo: string; valor: string; nota?: string; cor: string }) {
-  return (
-    <div style={{ border: "1px solid var(--border-color)", borderTop: `4px solid ${cor}`, background: "var(--card-bg)", padding: "14px 16px" }}>
-      <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: cor }}>{rotulo}</div>
-      <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 28, fontWeight: 600, marginTop: 6, lineHeight: 1 }}>{valor}</div>
-      {nota && <div style={{ fontSize: 12.5, color: "var(--text-secondary)", marginTop: 6 }}>{nota}</div>}
-    </div>
-  );
-}
-
 export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: LeadDaTela[]; motorLigado: boolean; exemplo?: boolean }) {
   const router = useRouter();
   const [aba, setAba] = useState<(typeof ABAS)[number]["id"]>("abertos");
@@ -116,20 +107,6 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
   const [motivo, setMotivo] = useState(MOTIVOS[0]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
-
-  const numeros = useMemo(() => {
-    const abertos = leads.filter((l) => ["new", "hot", "contacted"].includes(l.status));
-    const ganhos = leads.filter((l) => l.status === "won");
-    const porPasso = [1, 2, 3, 4].map((p) => leads.filter((l) => l.step_reached >= p).length);
-    return {
-      abertos: abertos.length,
-      quentes: leads.filter((l) => l.status === "hot").length,
-      ganhos: ganhos.length,
-      taxa: leads.length ? Math.round((ganhos.length / leads.length) * 100) : 0,
-      recuperado: ganhos.reduce((s, l) => s + Number(l.price ?? 0), 0),
-      porPasso,
-    };
-  }, [leads]);
 
   const filtro = ABAS.find((a) => a.id === aba)!.filtro;
   const lista = leads.filter(filtro);
@@ -172,34 +149,9 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
         </p>
       )}
       <p style={{ color: "var(--text-secondary)", margin: "10px 0 26px", fontSize: 15 }}>
-        Quem começou a reservar em getfixfy.com e não pagou, nos últimos 60 dias. Pagou, vira cliente e sai dos abertos.
+        Quem começou a reservar em getfixfy.com e não pagou. Pagou, vira cliente e sai daqui. Os números estão na Leads Room do office.
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
-        <Numero rotulo="Abertos" valor={String(numeros.abertos)} nota="novos, quentes e em contato" cor="#2F4FD6" />
-        <Numero rotulo="Quentes" valor={String(numeros.quentes)} nota="chegaram ao passo 3 ou 4" cor="#C2410C" />
-        <Numero rotulo="Recuperados" valor={String(numeros.ganhos)} nota={`${numeros.taxa}% dos leads pagaram`} cor="#1C6B46" />
-        <Numero rotulo="Recuperado" valor={libras(numeros.recuperado)} nota="valor das reservas pagas" cor="#1C6B46" />
-      </div>
-
-      <div style={{ background: "var(--card-bg)", border: "1px solid var(--border-color)", padding: "14px 16px", marginBottom: 28 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 10 }}>Até onde chegaram (todos os leads do período)</div>
-        {["Your job", "Details", "Date and access", "Checkout"].map((rotulo, i) => {
-          const n = numeros.porPasso[i];
-          const base = numeros.porPasso[0] || 1;
-          return (
-            <div key={rotulo} style={{ display: "grid", gridTemplateColumns: "140px 1fr 44px", gap: 10, alignItems: "center", fontSize: 13, marginBottom: 6 }}>
-              <span>{i + 1} · {rotulo}</span>
-              <div style={{ height: 10, background: "var(--surface-secondary)", borderRadius: 3 }}>
-                <div style={{ height: "100%", width: `${(n / base) * 100}%`, background: i < 2 ? "#2F4FD6" : "#C2410C", borderRadius: 3 }} />
-              </div>
-              <span style={{ fontFamily: "ui-monospace, Menlo, monospace", textAlign: "right" }}>{n}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      <h2 style={titulo2}>Lista</h2>
       <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
         {ABAS.map((a) => {
           const n = leads.filter(a.filtro).length;
@@ -264,6 +216,29 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <Pilula status={aberto.status} />
               <span style={{ color: "var(--text-secondary)" }}>{sequencia(aberto)}</span>
+            </div>
+
+            <div>
+              <div style={titulo2}>Informações</div>
+              <dl style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: "6px 12px", margin: 0 }}>
+                {([
+                  ["Serviço", aberto.service_label ?? "·"],
+                  ["Preço", libras(aberto.price)],
+                  ["Parou em", `Passo ${aberto.step_reached} · ${PASSOS[aberto.step_reached - 1] ?? ""}`],
+                  ["Veio de", `${origem(aberto).linha}${origem(aberto).detalhe ? ` · ${origem(aberto).detalhe}` : ""}`],
+                  ["Entrou em", quando(aberto.created_at)],
+                  ["Último movimento", quando(aberto.last_activity_at)],
+                  ["E-mail 1", aberto.email1_sent_at ? `enviado ${quando(aberto.email1_sent_at)}` : aberto.email1_due_at ? `agendado ${quando(aberto.email1_due_at)}` : "·"],
+                  ["E-mail 2", aberto.email2_sent_at ? `enviado ${quando(aberto.email2_sent_at)}` : aberto.email2_due_at ? `agendado ${quando(aberto.email2_due_at)}` : "·"],
+                  ["E-mail 3 (10%)", aberto.email3_sent_at ? `enviado ${quando(aberto.email3_sent_at)}` : aberto.email3_due_at ? `agendado ${quando(aberto.email3_due_at)}` : "·"],
+                  ...(aberto.promo_code ? [["Código", aberto.promo_code]] : []),
+                ] as Array<[string, string]>).map(([k, v]) => (
+                  <div key={k} style={{ display: "contents" }}>
+                    <dt style={{ color: "var(--text-tertiary)", fontSize: 13 }}>{k}</dt>
+                    <dd style={{ margin: 0 }}>{v}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
 
             <div>

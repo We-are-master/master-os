@@ -1,10 +1,10 @@
 /**
  * Leads do site: quem começou a reservar em getfixfy.com e não pagou.
  *
- * Server component: lê os leads dos últimos 60 dias, a linha do tempo de cada
- * um e, dos e-mails que saíram, se foram abertos ou clicados (isso mora em
- * marketing_touches, carimbado pelo webhook do Resend). A tela e as ações
- * ficam no componente de cliente.
+ * Server component: lê todos os leads que ainda não viraram cliente, a linha
+ * do tempo de cada um e, dos e-mails que saíram, se foram abertos ou clicados
+ * (isso mora em marketing_touches, carimbado pelo webhook do Resend). A tela
+ * e as ações ficam no componente de cliente; os números, na Leads Room.
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
@@ -13,23 +13,14 @@ import { LeadsDoSite, type LeadDaTela } from "./leads-do-site";
 
 export const dynamic = "force-dynamic";
 
-const DIAS = 60;
-
-/** Fora do componente: `Date.now()` no corpo do componente o lint do React barra. */
-function inicioDaJanela(): string {
-  return new Date(Date.now() - DIAS * 86_400_000).toISOString();
-}
-
 export default async function WebsiteLeadsPage() {
   const sb = createServiceClient();
-  const desde = inicioDaJanela();
-
   const { data: leads, error } = await sb
     .from("site_leads")
     .select("*")
-    .gte("last_activity_at", desde)
+    .neq("status", "won")
     .order("last_activity_at", { ascending: false })
-    .limit(500);
+    .limit(2000);
 
   if (error) {
     return (
