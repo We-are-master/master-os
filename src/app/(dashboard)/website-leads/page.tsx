@@ -8,7 +8,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { motorLigado } from "@/lib/site-leads/motor";
+import { lerCanais } from "@/lib/site-leads/manual";
 import { LeadsDoSite, type LeadDaTela } from "./leads-do-site";
 
 export const dynamic = "force-dynamic";
@@ -59,5 +59,7 @@ export default async function WebsiteLeadsPage() {
       }),
   }));
 
-  return <LeadsDoSite leads={linhas} motorLigado={motorLigado()} />;
+  const canais = await lerCanais(sb);
+
+  return <LeadsDoSite leads={linhas} canais={canais} />;
 }

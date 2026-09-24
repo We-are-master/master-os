@@ -13,7 +13,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
-import { CABECALHOS_CSV, CANAIS, ROTULO_CANAL, validarLinha, type LinhaDeLead, type ResultadoImport } from "@/lib/site-leads/manual";
+import { CABECALHOS_CSV, validarLinha, type CanalDef, type LinhaDeLead, type ResultadoImport } from "@/lib/site-leads/manual";
 
 const CAMPO = "h-9 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary placeholder:text-text-tertiary";
 const ROTULO = "mb-1 block text-xs font-medium text-text-secondary";
@@ -31,7 +31,7 @@ async function enviar(leads: LinhaDeLead[], origem: "form" | "csv"): Promise<Res
 
 // ----------------------------------------------------------------- um lead
 
-export function AdicionarLead({ aberto, fechar, pronto }: { aberto: boolean; fechar: () => void; pronto: () => void }) {
+export function AdicionarLead({ canais, aberto, fechar, pronto }: { canais: CanalDef[]; aberto: boolean; fechar: () => void; pronto: () => void }) {
   const vazio: LinhaDeLead = { channel: "whatsapp", status: "new" };
   const [f, setF] = useState<LinhaDeLead>(vazio);
   const [erro, setErro] = useState("");
@@ -40,7 +40,7 @@ export function AdicionarLead({ aberto, fechar, pronto }: { aberto: boolean; fec
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    const v = validarLinha(f);
+    const v = validarLinha(f, canais);
     if (!v.ok) { setErro(v.motivo); return; }
     setSalvando(true);
     setErro("");
@@ -66,7 +66,7 @@ export function AdicionarLead({ aberto, fechar, pronto }: { aberto: boolean; fec
         <label>
           <span className={ROTULO}>Origin</span>
           <select className={CAMPO} value={f.channel ?? "whatsapp"} onChange={muda("channel")}>
-            {CANAIS.map((c) => <option key={c} value={c}>{ROTULO_CANAL[c]}</option>)}
+            {canais.filter((c) => c.active).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </select>
         </label>
         <label>
@@ -126,14 +126,14 @@ export function lerCsv(texto: string): LinhaDeLead[] {
   });
 }
 
-export function ImportarLeads({ aberto, fechar, pronto }: { aberto: boolean; fechar: () => void; pronto: () => void }) {
+export function ImportarLeads({ canais, aberto, fechar, pronto }: { canais: CanalDef[]; aberto: boolean; fechar: () => void; pronto: () => void }) {
   const [linhas, setLinhas] = useState<LinhaDeLead[]>([]);
   const [arquivo, setArquivo] = useState("");
   const [resultado, setResultado] = useState<ResultadoImport | null>(null);
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
 
-  const checagem = linhas.map((l, i) => ({ linha: i + 2, v: validarLinha(l) }));
+  const checagem = linhas.map((l, i) => ({ linha: i + 2, v: validarLinha(l, canais) }));
   const validas = checagem.filter((c) => c.v.ok).length;
   const invalidas = checagem.filter((c) => !c.v.ok) as Array<{ linha: number; v: { ok: false; motivo: string } }>;
 
@@ -184,7 +184,7 @@ export function ImportarLeads({ aberto, fechar, pronto }: { aberto: boolean; fec
             Columns: <span className="font-mono">{CABECALHOS_CSV.join(", ")}</span>. Only email <b>or</b> phone is required.
           </p>
           <p className="mb-0 mt-1 text-xs text-text-secondary">
-            <b>channel</b>: {CANAIS.join(", ")} (wa, facebook, indicação… also work). <b>status</b>: new, hot, contacted, lost.
+            <b>channel</b>: {canais.filter((c) => c.active).map((c) => c.key).join(", ")} (names and aliases from Settings → Lead origins also work). <b>status</b>: new, hot, contacted, lost.
             <b> tags</b>: separate with ; or ,. <b>created_at</b>: 2026-09-24 14:30 or 24/09/2026.
           </p>
         </div>

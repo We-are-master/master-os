@@ -22,7 +22,7 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CANAIS, ROTULO_CANAL, type Canal } from "@/lib/site-leads/manual";
+import { rotuloCanal, type Canal, type CanalDef } from "@/lib/site-leads/manual";
 import { AdicionarLead, ImportarLeads } from "./adicionar-leads";
 
 export type AtividadeDaTela = {
@@ -98,9 +98,9 @@ function quando(iso: string | null): string {
 }
 
 /** Origem do lead: o canal por onde chegou e, quando tem, a campanha e o cartão do anúncio. */
-function origem(l: LeadDaTela): { linha: string; detalhe: string } {
+function origem(l: LeadDaTela, canais: CanalDef[]): { linha: string; detalhe: string } {
   const s = l.source ?? {};
-  const canal = ROTULO_CANAL[l.channel ?? "website"] ?? "Website";
+  const canal = rotuloCanal(l.channel, canais);
   if (s.utm_source === "meta") return { linha: `${canal} · Meta ads`, detalhe: [s.utm_campaign, s.utm_content].filter(Boolean).join(" · ") };
   if (s.utm_source) return { linha: `${canal} · ${s.utm_source}`, detalhe: [s.utm_campaign, s.utm_content].filter(Boolean).join(" · ") };
   if (s.utm_campaign) return { linha: canal, detalhe: s.utm_campaign };
@@ -128,7 +128,7 @@ function whatsappDe(tel: string): string {
   return `https://wa.me/${d.startsWith("0") ? `44${d.slice(1)}` : d}`;
 }
 
-export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: LeadDaTela[]; motorLigado: boolean; exemplo?: boolean }) {
+export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaTela[]; canais: CanalDef[]; exemplo?: boolean }) {
   const router = useRouter();
   const [aba, setAba] = useState<string>("open");
   const [busca, setBusca] = useState("");
@@ -211,7 +211,7 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
       key: "source",
       label: "Origin",
       render: (l) => {
-        const o = origem(l);
+        const o = origem(l, canais);
         return (
           <div className="min-w-0">
             <p className="truncate text-sm text-text-primary">{o.linha}</p>
@@ -238,7 +238,7 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
         ["Service", aberto.service_label ?? VAZIO],
         ["Price", libras(aberto.price)],
         ["Stopped at", aberto.channel === "website" ? `Step ${aberto.step_reached} · ${PASSOS[aberto.step_reached - 1] ?? ""}` : "Not a website booking"],
-        ["Origin", [origem(aberto).linha, origem(aberto).detalhe].filter(Boolean).join(" · ")],
+        ["Origin", [origem(aberto, canais).linha, origem(aberto, canais).detalhe].filter(Boolean).join(" · ")],
         ["Started", quando(aberto.created_at)],
         ["Last activity", quando(aberto.last_activity_at)],
         ["Email 1", linhaEmail(aberto.email1_sent_at, aberto.email1_due_at)],
@@ -262,9 +262,6 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Badge variant={motorLigado ? "success" : "warning"} dot>
-              {motorLigado ? "Recovery emails on" : "Recovery emails off (dry run)"}
-            </Badge>
             <ToolbarIconButton icon={RefreshCw} label="Refresh leads" onClick={() => router.refresh()} />
             <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setImportarAberto(true)}>
               Import CSV
@@ -294,7 +291,7 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
                 aria-label="Filter by origin"
               >
                 <option value="all">All origins</option>
-                {CANAIS.map((c) => <option key={c} value={c}>{ROTULO_CANAL[c]}</option>)}
+                {canais.map((c) => <option key={c.key} value={c.key}>{c.label}{c.active ? "" : " (inactive)"}</option>)}
               </select>
               <ExpandingSearch value={busca} onChange={setBusca} placeholder="Search leads…" />
             </div>
@@ -428,8 +425,8 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
         ) : null}
       </Drawer>
 
-      <AdicionarLead aberto={adicionarAberto} fechar={() => setAdicionarAberto(false)} pronto={() => router.refresh()} />
-      <ImportarLeads aberto={importarAberto} fechar={() => setImportarAberto(false)} pronto={() => router.refresh()} />
+      <AdicionarLead canais={canais} aberto={adicionarAberto} fechar={() => setAdicionarAberto(false)} pronto={() => router.refresh()} />
+      <ImportarLeads canais={canais} aberto={importarAberto} fechar={() => setImportarAberto(false)} pronto={() => router.refresh()} />
     </PageTransition>
   );
 }
