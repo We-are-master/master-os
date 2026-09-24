@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
@@ -20,8 +21,6 @@ function getServiceSupabase() {
   );
 }
 
-const baseUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-
 function withServerTiming(body: unknown, status: number, marks: Array<[string, number]>) {
   const metric = marks
     .filter(([, v]) => Number.isFinite(v) && v >= 0)
@@ -35,7 +34,7 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
 /**
  * POST /api/quotes/respond
  * Public: customer accepts or rejects a quote via email link.
- * On accept with deposit_required > 0: creates job, deposit invoice, Stripe payment link; returns paymentLinkUrl.
+ * On accept with deposit_required > 0: creates job and deposit invoice; returns the invoice /pay link as paymentLinkUrl.
  * Body: { token: string, action: "accept" | "reject", rejectionReason?: string }
  */
 export async function POST(req: NextRequest) {
@@ -162,10 +161,9 @@ export async function POST(req: NextRequest) {
     const depositRequired = Number(quote.deposit_required ?? 0);
 
     if (depositRequired > 0) {
-      // Create job, deposit invoice, and Stripe payment link; then mark quote accepted
-      let stripe: ReturnType<typeof requireStripe>;
+      // Create job and deposit invoice (paid through its /pay link); then mark quote accepted
       try {
-        stripe = requireStripe();
+        requireStripe();
       } catch {
         return NextResponse.json(
           { error: "Payment is not configured. Please contact us to complete your acceptance." },
@@ -303,33 +301,10 @@ export async function POST(req: NextRequest) {
         return withServerTiming({ error: "Failed to create deposit invoice" }, 500, marks);
       }
 
-      const tStripe = performance.now();
-      const product = await stripe.products.create({
-        name: `Deposit — ${quote.reference}`,
-        description: `Deposit for ${invClientName} — ${quote.reference}`,
-        metadata: {
-          invoice_id: invoice.id,
-          reference: invoiceReference,
-          quote_id: quoteId,
-          job_id: job.id,
-        },
-      });
-
-      const price = await stripe.prices.create({
-        product: product.id,
-        unit_amount: Math.round(depositRequired * 100),
-        currency: "gbp",
-      });
-
-      const paymentLink = await stripe.paymentLinks.create({
-        line_items: [{ price: price.id, quantity: 1 }],
-        metadata: { invoice_id: invoice.id, reference: invoiceReference, job_id: job.id },
-        after_completion: {
-          type: "redirect",
-          redirect: { url: `${baseUrl()}/payment-success?ref=${encodeURIComponent(quote.reference)}&from=quote` },
-        },
-      });
-      marks.push(["stripe_calls", performance.now() - tStripe]);
+      // O depósito é cobrado pelo /pay da fatura, que cria a sessão na hora com
+      // a chave atual e cai no webhook como pay_link "os". Payment Link fixo
+      // gravado aqui ficava preso à chave do dia em que o quote foi aceito.
+      const paymentLinkUrl = invoicePayLinkUrl(invoiceReference);
 
       const tWrites = performance.now();
       /** Final invoice ref RPC can run in parallel with the post-Stripe writes. */
@@ -342,8 +317,8 @@ export async function POST(req: NextRequest) {
         supabase
           .from("invoices")
           .update({
-            stripe_payment_link_id: paymentLink.id,
-            stripe_payment_link_url: paymentLink.url,
+            stripe_payment_link_id: null,
+            stripe_payment_link_url: paymentLinkUrl,
             stripe_payment_status: "pending",
             stripe_customer_email: invStripeEmail,
           })
@@ -415,7 +390,7 @@ export async function POST(req: NextRequest) {
         action: "accept",
         reference: quote.reference,
         message: "Quote accepted. Complete your deposit payment to confirm.",
-        paymentLinkUrl: paymentLink.url,
+        paymentLinkUrl,
       }, 200, marks);
     }
 

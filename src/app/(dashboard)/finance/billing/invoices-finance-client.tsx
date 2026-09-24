@@ -92,6 +92,7 @@ import {
 } from "@/lib/invoice-finance-tab";
 import { weekPeriodHelpText } from "@/lib/self-bill-period";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
+import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
   draft: { label: "Draft", variant: "default" },
@@ -1952,7 +1953,7 @@ export function InvoiceDetailDrawer({
     setJobPartnerPaidSum(null);
     setJobLinkedInvoices([]);
     setStripeState({
-      linkUrl: invoice.stripe_payment_link_url ?? undefined,
+      linkUrl: invoicePayLinkForClient(invoice.reference, invoice.stripe_payment_link_url) || undefined,
       linkId: invoice.stripe_payment_link_id ?? undefined,
       paymentStatus: invoice.stripe_payment_status ?? "none",
       paidAt: invoice.stripe_paid_at ?? undefined,

@@ -30,3 +30,28 @@ export function invoicePayLinkForAmount(reference: string, amountGbp: number): s
   if (!ref || !Number.isFinite(valor) || valor <= 0) return null;
   return `${PAY_LINK_BASE}/pay/${encodeURIComponent(ref)}?amount=${valor.toFixed(2)}`;
 }
+
+/**
+ * Link que o cliente deve receber para uma fatura, a partir do que está gravado.
+ *
+ * Até 24/09/2026 a Vercel rodava com a chave de TESTE da Stripe, e o aceite de
+ * quote gravava na fatura um Payment Link fixo (`buy.stripe.com/test_...`) que
+ * abre em Sandbox para sempre: cartão real é recusado. Esses links continuam no
+ * banco, então quem lê `stripe_payment_link_url` passa por aqui e recebe o
+ * `/pay/REF`, que cria a sessão na hora com a chave atual.
+ *
+ * Link vazio continua vazio: fatura sem link é decisão de quem a gravou.
+ */
+export function invoicePayLinkForClient(
+  reference: string | null | undefined,
+  storedUrl: string | null | undefined,
+): string {
+  const url = storedUrl?.trim() ?? "";
+  if (!url) return "";
+  if (isStripeTestLink(url) && reference?.trim()) return invoicePayLinkUrl(reference);
+  return url;
+}
+
+export function isStripeTestLink(url: string): boolean {
+  return /^https:\/\/(buy|checkout)\.stripe\.com\/(c\/pay\/cs_)?test_/i.test(url.trim());
+}
