@@ -17,8 +17,16 @@ export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
  */
 export const EMAIL_UNVERIFIED_REASON = "email_unverified";
 
+/**
+ * Archived: test accounts and duplicates that must disappear from every Directory tab and
+ * count, without deleting rows that jobs or self-bills still point at. Reversible: drop the
+ * reason and the partner comes back.
+ */
+export const ARCHIVED_REASON = "archived";
+
 const LABELS: Record<string, string> = {
   email_unverified: "Email not verified",
+  archived: "Archived",
   missing_documents: "Missing Documents",
   low_compliance_score: "Low Compliance Score",
   expired_docs: "Expired Docs",

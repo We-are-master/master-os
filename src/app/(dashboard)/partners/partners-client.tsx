@@ -103,6 +103,7 @@ import {
   type PartnerDocExpiryPolicy,
 } from "@/lib/partner-required-docs";
 import {
+  ARCHIVED_REASON,
   EMAIL_UNVERIFIED_REASON,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
@@ -1502,6 +1503,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       if (unverifiedCount) {
         const onboardingOnly = Math.max(0, (counts["onboarding"] ?? 0) - unverifiedCount);
         counts["onboarding"] = onboardingOnly;
+      }
+      // Archived partners (tests, duplicates) leave every tab and the total.
+      const { data: archivedRows } = await supabase
+        .from("partners")
+        .select("status")
+        .contains("partner_status_reasons", [ARCHIVED_REASON]);
+      for (const row of (archivedRows ?? []) as Array<{ status: string }>) {
+        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
+        if (counts["all"] != null) counts["all"] = Math.max(0, counts["all"] - 1);
       }
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
