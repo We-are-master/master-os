@@ -276,7 +276,7 @@ import {
 import { formatArrivalTimeRange, formatHourMinuteAmPm, formatLocalYmd, formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { coerceJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { jobReportLinkHref } from "@/lib/job-report-link";
-import { invoicePayLinkUrl } from "@/lib/pay-link-url";
+import { invoicePayLinkForClient, invoicePayLinkUrl } from "@/lib/pay-link-url";
 import {
   invoiceAmountPaid,
   invoiceBalanceDue,
@@ -9980,7 +9980,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                     <Badge variant={stripePaid ? "success" : "default"} size="sm">Stripe: {inv.stripe_payment_status ?? "none"}</Badge>
                                     {inv.stripe_payment_link_url && (
                                       <>
-                                        <Button size="sm" variant="outline" icon={<CreditCard className="h-3 w-3" />} onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}>Pay link</Button>
+                                        <Button size="sm" variant="outline" icon={<CreditCard className="h-3 w-3" />} onClick={() => window.open(invoicePayLinkForClient(inv.reference, inv.stripe_payment_link_url), "_blank", "noopener,noreferrer")}>Pay link</Button>
                                         <Button size="sm" variant="secondary" loading={syncingInvoiceId === inv.id} icon={<RefreshCw className="h-3 w-3" />} onClick={() => void handleStripeInvoiceSync(inv)}>Sync</Button>
                                       </>
                                     )}

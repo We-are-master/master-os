@@ -8,6 +8,7 @@ import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTradeFeeOptions } from "@/lib/invoice-trade-fee-split";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
+import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 
 export type InvoiceClientEmailContext = {
   clientName: string;
@@ -357,9 +358,7 @@ export function buildInvoiceClientEmailHTML(
     ? buildPaymentMethodBlock(resolvePaymentMethod(invoice), resolveTransactionId(invoice))
     : "";
 
-  const payLinkBase = !paid && invoice.stripe_payment_link_url?.trim()
-    ? invoice.stripe_payment_link_url.trim()
-    : "";
+  const payLinkBase = paid ? "" : invoicePayLinkForClient(invoice.reference, invoice.stripe_payment_link_url);
   // Partial requests charge the requested % through the OS /pay link; legacy
   // fixed Stripe Payment Links can't vary the amount, so they keep the full link.
   const requestPct = Math.round(Number(options?.requestPercent ?? 0));
