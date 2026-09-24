@@ -27,7 +27,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus, Share2, BarChart3,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2, Archive,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -104,7 +104,7 @@ import {
 } from "@/lib/partner-required-docs";
 import {
   ARCHIVED_REASON,
-  EMAIL_UNVERIFIED_REASON,
+  ONBOARDING_HIDDEN_REASONS,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -1494,15 +1494,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           .select("id", { count: "exact", head: true })
           .lt("compliance_score", 50),
       ]);
-      // The Onboarding tab hides portal signups that never typed their email code.
-      const { count: unverifiedCount } = await supabase
+      // The Onboarding tab hides portal signups that did not confirm their email code or never
+      // started (no rates, no document). Archived ones are taken off below, so skip them here.
+      const { data: hiddenOnboarding } = await supabase
         .from("partners")
-        .select("id", { count: "exact", head: true })
+        .select("status, partner_status_reasons")
         .in("status", ["onboarding", "needs_attention"])
-        .contains("partner_status_reasons", [EMAIL_UNVERIFIED_REASON]);
-      if (unverifiedCount) {
-        const onboardingOnly = Math.max(0, (counts["onboarding"] ?? 0) - unverifiedCount);
-        counts["onboarding"] = onboardingOnly;
+        .overlaps("partner_status_reasons", [...ONBOARDING_HIDDEN_REASONS]);
+      for (const row of (hiddenOnboarding ?? []) as Array<{ status: string; partner_status_reasons: string[] | null }>) {
+        if ((row.partner_status_reasons ?? []).includes(ARCHIVED_REASON)) continue;
+        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
       }
       // Archived partners (tests, duplicates) leave every tab and the total.
       const { data: archivedRows } = await supabase
@@ -2087,6 +2088,33 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  /** Archive = hide from every tab without deleting (jobs and self-bills keep pointing at the row). */
+  const archivePartners = useCallback(
+    async (targets: Array<Pick<Partner, "id" | "partner_status_reasons">>) => {
+      if (targets.length === 0) return;
+      const label = targets.length === 1 ? "this partner" : `${targets.length} partners`;
+      if (!window.confirm(`Archive ${label}? They disappear from every tab. Nothing is deleted.`)) return;
+      const supabase = getSupabase();
+      let failed = 0;
+      for (const p of targets) {
+        const reasons = Array.from(new Set([...(p.partner_status_reasons ?? []), ARCHIVED_REASON]));
+        const { error } = await supabase.from("partners").update({ partner_status_reasons: reasons }).eq("id", p.id);
+        if (error) failed += 1;
+      }
+      if (failed > 0) toast.error(`${failed} could not be archived`);
+      const done = targets.length - failed;
+      if (done > 0) toast.success(`${done} partner${done === 1 ? "" : "s"} archived`);
+      setSelectedIds(new Set());
+      refresh();
+      void loadCounts();
+    },
+    [refresh, loadCounts],
+  );
+
+  const handleBulkArchive = useCallback(() => {
+    void archivePartners(partners.filter((p) => selectedIds.has(p.id)));
+  }, [archivePartners, partners, selectedIds]);
+
   const sortedPartners = useMemo(() => {
     // Newest / oldest come ordered from the server; re-sorting by earnings here would undo it.
     if (dateSort !== "earnings") return partners;
@@ -2317,6 +2345,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </button>
             </>
           ) : null}
+          <button
+            type="button"
+            title="Archive (hide from every tab, nothing is deleted)"
+            onClick={() => void archivePartners([item])}
+            className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-text-tertiary hover:text-rose-600 hover:bg-surface-hover transition-colors"
+          >
+            <Archive className="h-4 w-4" />
+          </button>
           <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto shrink-0" aria-hidden />
         </div>
       ),
@@ -2649,6 +2685,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
@@ -2696,6 +2733,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />

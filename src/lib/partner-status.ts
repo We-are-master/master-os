@@ -18,6 +18,16 @@ export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
 export const EMAIL_UNVERIFIED_REASON = "email_unverified";
 
 /**
+ * Set by the trade portal when the partner row is born; cleared on the first rate card
+ * save or document upload. Together with EMAIL_UNVERIFIED_REASON it keeps signups that
+ * never really started out of the Onboarding tab.
+ */
+export const ONBOARDING_NOT_STARTED_REASON = "onboarding_not_started";
+
+/** Any of these hides a partner from the Onboarding tab (list and count). */
+export const ONBOARDING_HIDDEN_REASONS = [EMAIL_UNVERIFIED_REASON, ONBOARDING_NOT_STARTED_REASON] as const;
+
+/**
  * Archived: test accounts and duplicates that must disappear from every Directory tab and
  * count, without deleting rows that jobs or self-bills still point at. Reversible: drop the
  * reason and the partner comes back.
@@ -26,6 +36,7 @@ export const ARCHIVED_REASON = "archived";
 
 const LABELS: Record<string, string> = {
   email_unverified: "Email not verified",
+  onboarding_not_started: "Onboarding not started",
   archived: "Archived",
   missing_documents: "Missing Documents",
   low_compliance_score: "Low Compliance Score",
