@@ -100,15 +100,15 @@ function Pilula({ status }: { status: LeadDaTela["status"] }) {
 
 function Numero({ rotulo, valor, nota, cor }: { rotulo: string; valor: string; nota?: string; cor: string }) {
   return (
-    <div style={{ border: "1px solid #E3DFD8", borderTop: `4px solid ${cor}`, background: "#fff", padding: "14px 16px" }}>
+    <div style={{ border: "1px solid var(--border-color)", borderTop: `4px solid ${cor}`, background: "var(--card-bg)", padding: "14px 16px" }}>
       <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: cor }}>{rotulo}</div>
       <div style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 28, fontWeight: 600, marginTop: 6, lineHeight: 1 }}>{valor}</div>
-      {nota && <div style={{ fontSize: 12.5, color: "#55524C", marginTop: 6 }}>{nota}</div>}
+      {nota && <div style={{ fontSize: 12.5, color: "var(--text-secondary)", marginTop: 6 }}>{nota}</div>}
     </div>
   );
 }
 
-export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motorLigado: boolean }) {
+export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: LeadDaTela[]; motorLigado: boolean; exemplo?: boolean }) {
   const router = useRouter();
   const [aba, setAba] = useState<(typeof ABAS)[number]["id"]>("abertos");
   const [abertoId, setAbertoId] = useState<string | null>(null);
@@ -152,10 +152,10 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
     }
   }
 
-  const titulo2: React.CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#88847D", margin: "0 0 12px", paddingBottom: 8, borderBottom: "1px solid #E3DFD8" };
+  const titulo2: React.CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--text-tertiary)", margin: "0 0 12px", paddingBottom: 8, borderBottom: "1px solid var(--border-color)" };
   const botao = (cor: string, cheio = false): React.CSSProperties => ({
     fontSize: 13, fontWeight: 600, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-    border: `1px solid ${cor}`, background: cheio ? cor : "#fff", color: cheio ? "#fff" : cor, textDecoration: "none", display: "inline-block",
+    border: `1px solid ${cor}`, background: cheio ? cor : "var(--card-bg)", color: cheio ? "#fff" : cor, textDecoration: "none", display: "inline-block",
   });
 
   return (
@@ -166,7 +166,12 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
           E-mails de retomada: {motorLigado ? "ligados" : "desligados (ensaio)"}
         </span>
       </div>
-      <p style={{ color: "#55524C", margin: "0 0 26px", fontSize: 15 }}>
+      {exemplo && (
+        <p style={{ background: "#FFF4E0", color: "#96590A", border: "1px solid #F2D2A0", padding: "10px 14px", margin: "10px 0 0", fontSize: 14, fontWeight: 600 }}>
+          Exemplo local: a migration 294 ainda não rodou, então estes leads são montados a partir dos 4 reais, com dados fictícios. Nada aqui grava no banco.
+        </p>
+      )}
+      <p style={{ color: "var(--text-secondary)", margin: "10px 0 26px", fontSize: 15 }}>
         Quem começou a reservar em getfixfy.com e não pagou, nos últimos 60 dias. Pagou, vira cliente e sai dos abertos.
       </p>
 
@@ -177,15 +182,15 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
         <Numero rotulo="Recuperado" valor={libras(numeros.recuperado)} nota="valor das reservas pagas" cor="#1C6B46" />
       </div>
 
-      <div style={{ background: "#fff", border: "1px solid #E3DFD8", padding: "14px 16px", marginBottom: 28 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#55524C", marginBottom: 10 }}>Até onde chegaram (todos os leads do período)</div>
+      <div style={{ background: "var(--card-bg)", border: "1px solid var(--border-color)", padding: "14px 16px", marginBottom: 28 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 10 }}>Até onde chegaram (todos os leads do período)</div>
         {["Your job", "Details", "Date and access", "Checkout"].map((rotulo, i) => {
           const n = numeros.porPasso[i];
           const base = numeros.porPasso[0] || 1;
           return (
             <div key={rotulo} style={{ display: "grid", gridTemplateColumns: "140px 1fr 44px", gap: 10, alignItems: "center", fontSize: 13, marginBottom: 6 }}>
               <span>{i + 1} · {rotulo}</span>
-              <div style={{ height: 10, background: "#F1EFEC", borderRadius: 3 }}>
+              <div style={{ height: 10, background: "var(--surface-secondary)", borderRadius: 3 }}>
                 <div style={{ height: "100%", width: `${(n / base) * 100}%`, background: i < 2 ? "#2F4FD6" : "#C2410C", borderRadius: 3 }} />
               </div>
               <span style={{ fontFamily: "ui-monospace, Menlo, monospace", textAlign: "right" }}>{n}</span>
@@ -201,44 +206,44 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
           const ativo = a.id === aba;
           return (
             <button key={a.id} role="tab" aria-selected={ativo} onClick={() => setAba(a.id)}
-              style={{ fontSize: 13, fontWeight: 600, padding: "6px 12px", borderRadius: 999, cursor: "pointer", border: `1px solid ${ativo ? "#020040" : "#E3DFD8"}`, background: ativo ? "#020040" : "#fff", color: ativo ? "#fff" : "#16171A" }}>
+              style={{ fontSize: 13, fontWeight: 600, padding: "6px 12px", borderRadius: 999, cursor: "pointer", border: `1px solid ${ativo ? "#ED4B00" : "var(--border-color)"}`, background: ativo ? "#ED4B00" : "var(--card-bg)", color: ativo ? "#fff" : "var(--text-primary)" }}>
               {a.rotulo} <span style={{ opacity: 0.7 }}>{n}</span>
             </button>
           );
         })}
       </div>
 
-      <div style={{ overflowX: "auto", background: "#fff", border: "1px solid #E3DFD8" }}>
+      <div style={{ overflowX: "auto", background: "var(--card-bg)", border: "1px solid var(--border-color)" }}>
         <table style={{ width: "100%", minWidth: 860, borderCollapse: "collapse", fontSize: 13.5 }}>
           <thead>
-            <tr style={{ textAlign: "left", color: "#88847D", fontSize: 11.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <tr style={{ textAlign: "left", color: "var(--text-tertiary)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>
               {["Lead", "Quer", "Parou em", "Veio de", "Sequência", "Estado"].map((h) => (
-                <th key={h} style={{ padding: "10px 14px", borderBottom: "1px solid #E3DFD8", fontWeight: 600 }}>{h}</th>
+                <th key={h} style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-color)", fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {lista.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 22, color: "#88847D" }}>Nenhum lead nesta aba.</td></tr>
+              <tr><td colSpan={6} style={{ padding: 22, color: "var(--text-tertiary)" }}>Nenhum lead nesta aba.</td></tr>
             )}
             {lista.map((l) => {
               const o = origem(l);
               return (
-                <tr key={l.id} onClick={() => setAbertoId(l.id)} style={{ cursor: "pointer", borderBottom: "1px solid #F1EFEC" }}>
+                <tr key={l.id} onClick={() => setAbertoId(l.id)} style={{ cursor: "pointer", borderBottom: "1px solid var(--border-light)" }}>
                   <td style={{ padding: "10px 14px" }}>
                     <div style={{ fontWeight: 600 }}>{l.full_name || l.email}</div>
-                    <div style={{ color: "#88847D", fontSize: 12.5 }}>{quando(l.last_activity_at)}{l.postcode ? ` · ${l.postcode}` : ""}</div>
+                    <div style={{ color: "var(--text-tertiary)", fontSize: 12.5 }}>{quando(l.last_activity_at)}{l.postcode ? ` · ${l.postcode}` : ""}</div>
                   </td>
                   <td style={{ padding: "10px 14px" }}>
                     <div>{l.service_label ?? "·"}</div>
-                    <div style={{ color: "#88847D", fontSize: 12.5 }}>{libras(l.price)}</div>
+                    <div style={{ color: "var(--text-tertiary)", fontSize: 12.5 }}>{libras(l.price)}</div>
                   </td>
                   <td style={{ padding: "10px 14px" }}>Passo {l.step_reached}</td>
                   <td style={{ padding: "10px 14px" }}>
                     <div>{o.linha}</div>
-                    <div style={{ color: "#88847D", fontSize: 12.5, fontFamily: "ui-monospace, Menlo, monospace" }}>{o.detalhe}</div>
+                    <div style={{ color: "var(--text-tertiary)", fontSize: 12.5, fontFamily: "ui-monospace, Menlo, monospace" }}>{o.detalhe}</div>
                   </td>
-                  <td style={{ padding: "10px 14px", color: "#55524C" }}>{sequencia(l)}</td>
+                  <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{sequencia(l)}</td>
                   <td style={{ padding: "10px 14px" }}><Pilula status={l.status} /></td>
                 </tr>
               );
@@ -252,13 +257,13 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
         onClose={() => { setAbertoId(null); setErro(""); }}
         title={aberto?.full_name || aberto?.email || "Lead"}
         subtitle={aberto ? `${aberto.service_label ?? "Serviço"} · ${libras(aberto.price)} · passo ${aberto.step_reached}` : undefined}
-        width="520px"
+        width="w-[520px]"
       >
         {aberto && (
-          <div style={{ display: "grid", gap: 20, fontSize: 14 }}>
+          <div style={{ display: "grid", gap: 20, fontSize: 14, padding: "18px 22px 28px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <Pilula status={aberto.status} />
-              <span style={{ color: "#55524C" }}>{sequencia(aberto)}</span>
+              <span style={{ color: "var(--text-secondary)" }}>{sequencia(aberto)}</span>
             </div>
 
             <div>
@@ -269,10 +274,10 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
                 {aberto.postcode && <span>{aberto.postcode}</span>}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <a href={`mailto:${aberto.email}`} style={botao("#020040")}>E-mail</a>
+                <a href={`mailto:${aberto.email}`} style={botao("var(--text-primary)")}>E-mail</a>
                 {aberto.phone && <a href={`https://wa.me/${aberto.phone.replace(/\D/g, "").replace(/^0/, "44")}`} target="_blank" rel="noreferrer" style={botao("#1FA855")}>WhatsApp</a>}
-                {aberto.phone && <a href={`tel:${aberto.phone}`} style={botao("#020040")}>Ligar</a>}
-                {aberto.resume_url && <a href={aberto.resume_url} target="_blank" rel="noreferrer" style={botao("#88847D")}>Ver a reserva</a>}
+                {aberto.phone && <a href={`tel:${aberto.phone}`} style={botao("var(--text-primary)")}>Ligar</a>}
+                {aberto.resume_url && <a href={aberto.resume_url} target="_blank" rel="noreferrer" style={botao("var(--text-tertiary)")}>Ver a reserva</a>}
               </div>
             </div>
 
@@ -286,7 +291,7 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
                   {aberto.status === "contacted" && (
                     <button disabled={salvando} onClick={() => agir({ status: aberto.step_reached >= 3 ? "hot" : "new" })} style={botao("#2F4FD6")}>Retomar os e-mails</button>
                   )}
-                  <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ fontSize: 13, padding: "7px 8px", border: "1px solid #E3DFD8", borderRadius: 8 }}>
+                  <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ fontSize: 13, padding: "7px 8px", border: "1px solid var(--border-color)", borderRadius: 8, background: "var(--card-bg)", color: "var(--text-primary)" }}>
                     {MOTIVOS.map((m) => <option key={m}>{m}</option>)}
                   </select>
                   <button disabled={salvando} onClick={() => agir({ status: "lost", reason: motivo })} style={botao("#A5251B")}>Perdido</button>
@@ -304,8 +309,8 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
             <div>
               <div style={titulo2}>Nota</div>
               <textarea value={nota} onChange={(e) => setNota(e.target.value)} rows={3} placeholder="O que foi falado, próximo passo…"
-                style={{ width: "100%", fontSize: 14, padding: 10, border: "1px solid #E3DFD8", borderRadius: 8, fontFamily: "inherit", resize: "vertical" }} />
-              <button disabled={salvando || !nota.trim()} onClick={() => agir({ note: nota })} style={{ ...botao("#020040", true), marginTop: 8, opacity: nota.trim() ? 1 : 0.5 }}>Salvar nota</button>
+                style={{ width: "100%", fontSize: 14, padding: 10, border: "1px solid var(--border-color)", borderRadius: 8, fontFamily: "inherit", resize: "vertical", background: "var(--card-bg)", color: "var(--text-primary)" }} />
+              <button disabled={salvando || !nota.trim()} onClick={() => agir({ note: nota })} style={{ ...botao("#ED4B00", true), marginTop: 8, opacity: nota.trim() ? 1 : 0.5 }}>Salvar nota</button>
               {erro && <p role="alert" style={{ color: "#A5251B", margin: "8px 0 0" }}>{erro}</p>}
             </div>
 
@@ -314,18 +319,18 @@ export function LeadsDoSite({ leads, motorLigado }: { leads: LeadDaTela[]; motor
               <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
                 {aberto.atividades.map((a) => (
                   <li key={a.id} style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 10 }}>
-                    <span style={{ color: "#88847D", fontSize: 12.5, fontFamily: "ui-monospace, Menlo, monospace" }}>{quando(a.at)}</span>
+                    <span style={{ color: "var(--text-tertiary)", fontSize: 12.5, fontFamily: "ui-monospace, Menlo, monospace" }}>{quando(a.at)}</span>
                     <span>
                       {a.detail}
                       {a.kind === "email_sent" && (
-                        <span style={{ color: "#55524C", fontSize: 12.5 }}>
+                        <span style={{ color: "var(--text-secondary)", fontSize: 12.5 }}>
                           {" "}· {a.clicked_at ? "clicou" : a.opened_at ? "abriu" : "não abriu ainda"}
                         </span>
                       )}
                     </span>
                   </li>
                 ))}
-                {aberto.atividades.length === 0 && <li style={{ color: "#88847D" }}>Sem registros.</li>}
+                {aberto.atividades.length === 0 && <li style={{ color: "var(--text-tertiary)" }}>Sem registros.</li>}
               </ol>
             </div>
           </div>
