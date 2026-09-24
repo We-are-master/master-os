@@ -7,6 +7,7 @@ import {
   PARTNER_ACCOUNT_ACTIVATED_SUBJECT,
 } from "@/lib/partner-account-activated-email";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
+import { createTradePortalAutoLoginUrl } from "@/lib/partner-portal-link";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
 
 const STAFF_ROLES = new Set(["admin", "manager", "operator"]);
@@ -77,7 +78,14 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     "there";
 
   const tradePortalBase = resolvePartnerTradePortalBaseUrl().replace(/\/$/, "");
-  const loginUrl = `${tradePortalBase}/login?email=${encodeURIComponent(email)}`;
+  // The button signs them straight into the portal. If the token can't be
+  // minted, fall back to the login page rather than not sending the email.
+  let loginUrl = `${tradePortalBase}/login?email=${encodeURIComponent(email)}`;
+  try {
+    loginUrl = await createTradePortalAutoLoginUrl(supabase, id, tradePortalBase);
+  } catch (e) {
+    console.error("[send-activated-email] auto-login link failed, using login page:", e);
+  }
   const branding = await loadCompanyBranding(supabase);
   const rawAccountType = (partner as { account_type?: string | null }).account_type ?? null;
   const accountType =
