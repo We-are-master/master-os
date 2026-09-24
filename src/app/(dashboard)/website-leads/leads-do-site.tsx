@@ -13,7 +13,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink } from "lucide-react";
+import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
@@ -22,6 +22,8 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CANAIS, ROTULO_CANAL, type Canal } from "@/lib/site-leads/manual";
+import { AdicionarLead, ImportarLeads } from "./adicionar-leads";
 
 export type AtividadeDaTela = {
   id: string;
@@ -44,10 +46,13 @@ export type LeadDaTela = {
   price: number | null;
   resume_url: string | null;
   source: Record<string, string> | null;
+  channel: Canal;
+  notes: string | null;
+  tags: string[] | null;
   step_reached: number;
   status: "new" | "hot" | "contacted" | "won" | "lost" | "unsubscribed";
   lost_reason: string | null;
-  sequence_state: "scheduled" | "paused" | "stopped" | "done";
+  sequence_state: "scheduled" | "paused" | "stopped" | "done" | "none";
   email1_due_at: string | null;
   email2_due_at: string | null;
   email3_due_at: string | null;
@@ -92,11 +97,14 @@ function quando(iso: string | null): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 }
 
+/** Origem do lead: o canal por onde chegou e, quando tem, a campanha e o cartão do anúncio. */
 function origem(l: LeadDaTela): { linha: string; detalhe: string } {
   const s = l.source ?? {};
-  if (s.utm_source === "meta") return { linha: `Meta · ${s.utm_campaign ?? ""}`.trim(), detalhe: s.utm_content ?? "" };
-  if (s.utm_source) return { linha: `${s.utm_source}${s.utm_campaign ? ` · ${s.utm_campaign}` : ""}`, detalhe: s.utm_content ?? "" };
-  return { linha: "Direct", detalhe: "" };
+  const canal = ROTULO_CANAL[l.channel ?? "website"] ?? "Website";
+  if (s.utm_source === "meta") return { linha: `${canal} · Meta ads`, detalhe: [s.utm_campaign, s.utm_content].filter(Boolean).join(" · ") };
+  if (s.utm_source) return { linha: `${canal} · ${s.utm_source}`, detalhe: [s.utm_campaign, s.utm_content].filter(Boolean).join(" · ") };
+  if (s.utm_campaign) return { linha: canal, detalhe: s.utm_campaign };
+  return { linha: l.channel === "website" ? "Website · direct" : canal, detalhe: "" };
 }
 
 function sequencia(l: LeadDaTela): string {
@@ -104,6 +112,7 @@ function sequencia(l: LeadDaTela): string {
   if (l.sequence_state === "paused") return "Paused (in contact)";
   if (l.sequence_state === "stopped") return "Stopped";
   if (l.sequence_state === "done") return "3 of 3 sent";
+  if (l.sequence_state === "none") return "No automatic flow yet";
   const [nome, hora] = !l.email1_sent_at ? ["Email 1", l.email1_due_at] : !l.email2_sent_at ? ["Email 2", l.email2_due_at] : ["Email 3", l.email3_due_at];
   return `${nome} · ${quando(hora)}`;
 }
@@ -123,6 +132,9 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
   const router = useRouter();
   const [aba, setAba] = useState<string>("open");
   const [busca, setBusca] = useState("");
+  const [canal, setCanal] = useState<"all" | Canal>("all");
+  const [adicionarAberto, setAdicionarAberto] = useState(false);
+  const [importarAberto, setImportarAberto] = useState(false);
   const [abertoId, setAbertoId] = useState<string | null>(null);
   const [abaDoLead, setAbaDoLead] = useState("overview");
   const [nota, setNota] = useState("");
@@ -137,8 +149,9 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
     const q = busca.trim().toLowerCase();
     return leads
       .filter(filtro)
-      .filter((l) => !q || [l.full_name, l.email, l.postcode, l.service_label, l.phone].some((v) => (v ?? "").toLowerCase().includes(q)));
-  }, [leads, aba, busca]);
+      .filter((l) => canal === "all" || (l.channel ?? "website") === canal)
+      .filter((l) => !q || [l.full_name, l.email, l.postcode, l.service_label, l.phone, l.notes, ...(l.tags ?? [])].some((v) => (v ?? "").toLowerCase().includes(q)));
+  }, [leads, aba, busca, canal]);
 
   const aberto = leads.find((l) => l.id === abertoId) ?? null;
 
@@ -184,16 +197,19 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
       key: "step",
       label: "Stopped at",
       width: "140px",
-      render: (l) => (
-        <div>
-          <p className="text-sm text-text-primary">Step {l.step_reached}</p>
-          <p className="text-xs text-text-tertiary">{PASSOS[l.step_reached - 1] ?? ""}</p>
-        </div>
-      ),
+      render: (l) =>
+        l.channel === "website" ? (
+          <div>
+            <p className="text-sm text-text-primary">Step {l.step_reached}</p>
+            <p className="text-xs text-text-tertiary">{PASSOS[l.step_reached - 1] ?? ""}</p>
+          </div>
+        ) : (
+          <span className="text-sm text-text-tertiary">Not a booking</span>
+        ),
     },
     {
       key: "source",
-      label: "Source",
+      label: "Origin",
       render: (l) => {
         const o = origem(l);
         return (
@@ -221,14 +237,16 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
     ? [
         ["Service", aberto.service_label ?? VAZIO],
         ["Price", libras(aberto.price)],
-        ["Stopped at", `Step ${aberto.step_reached} · ${PASSOS[aberto.step_reached - 1] ?? ""}`],
-        ["Source", [origem(aberto).linha, origem(aberto).detalhe].filter(Boolean).join(" · ")],
+        ["Stopped at", aberto.channel === "website" ? `Step ${aberto.step_reached} · ${PASSOS[aberto.step_reached - 1] ?? ""}` : "Not a website booking"],
+        ["Origin", [origem(aberto).linha, origem(aberto).detalhe].filter(Boolean).join(" · ")],
         ["Started", quando(aberto.created_at)],
         ["Last activity", quando(aberto.last_activity_at)],
         ["Email 1", linhaEmail(aberto.email1_sent_at, aberto.email1_due_at)],
         ["Email 2", linhaEmail(aberto.email2_sent_at, aberto.email2_due_at)],
         ["Email 3 · 10%", linhaEmail(aberto.email3_sent_at, aberto.email3_due_at)],
         ...(aberto.promo_code ? ([["Promo code", aberto.promo_code]] as Array<[string, string]>) : []),
+        ...(aberto.tags?.length ? ([["Tags", aberto.tags.join(", ")]] as Array<[string, string]>) : []),
+        ...(aberto.notes ? ([["Notes", aberto.notes]] as Array<[string, string]>) : []),
       ]
     : [];
 
@@ -248,6 +266,12 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
               {motorLigado ? "Recovery emails on" : "Recovery emails off (dry run)"}
             </Badge>
             <ToolbarIconButton icon={RefreshCw} label="Refresh leads" onClick={() => router.refresh()} />
+            <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setImportarAberto(true)}>
+              Import CSV
+            </Button>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setAdicionarAberto(true)}>
+              Add lead
+            </Button>
           </div>
         </PageHeader>
 
@@ -263,6 +287,15 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
               <Tabs tabs={abas} activeTab={aba} onChange={setAba} />
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <select
+                value={canal}
+                onChange={(e) => setCanal(e.target.value as "all" | Canal)}
+                className="h-8 rounded-lg border border-border bg-card px-2 text-xs font-medium text-text-primary"
+                aria-label="Filter by origin"
+              >
+                <option value="all">All origins</option>
+                {CANAIS.map((c) => <option key={c} value={c}>{ROTULO_CANAL[c]}</option>)}
+              </select>
               <ExpandingSearch value={busca} onChange={setBusca} placeholder="Search leads…" />
             </div>
           </div>
@@ -394,6 +427,9 @@ export function LeadsDoSite({ leads, motorLigado, exemplo = false }: { leads: Le
           </div>
         ) : null}
       </Drawer>
+
+      <AdicionarLead aberto={adicionarAberto} fechar={() => setAdicionarAberto(false)} pronto={() => router.refresh()} />
+      <ImportarLeads aberto={importarAberto} fechar={() => setImportarAberto(false)} pronto={() => router.refresh()} />
     </PageTransition>
   );
 }

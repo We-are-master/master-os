@@ -159,6 +159,7 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
     .from("site_leads")
     .select("*")
     .eq("sequence_state", "scheduled")
+    .eq("channel", "website")
     .in("status", ["new", "hot"])
     .or(
       `and(email1_sent_at.is.null,email1_due_at.lte.${agoraIso}),` +
