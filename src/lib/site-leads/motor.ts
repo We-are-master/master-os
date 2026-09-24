@@ -33,6 +33,16 @@ const DESCONTO = 10;
 const VALIDADE_HORAS = 48;
 const CAMPANHA = "reserva-abandonada";
 
+/**
+ * Cupom FIXO do e-mail 3 quando não há STRIPE_PROMO_SECRET_KEY: criado à mão
+ * na Stripe live (Coupons → 10% → Promotion code COMEBACK10, sem restrição de
+ * cliente nem de primeira compra). Com a chave, cada lead ganha um código
+ * único de 48 h e este fica de reserva.
+ */
+const CODIGO_FIXO = "COMEBACK10";
+const REMETENTE_PADRAO = "Fixfy Team <no-reply@getfixfy.com>";
+const RESPONDER_PADRAO = "hello@getfixfy.com";
+
 export function motorLigado(): boolean {
   return process.env.RESERVA_ABANDONADA?.trim().toLowerCase() === "on";
 }
@@ -170,10 +180,10 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
     .limit(limite);
   if (error) { res.erros.push(error.message); return res; }
 
-  const remetente = process.env.RESEND_MARKETING_FROM?.trim();
-  if (!ensaio && !remetente) { res.erros.push("RESEND_MARKETING_FROM ausente"); return res; }
+  // Sai do getfixfy.com, já validado no Resend: não depende de variável (a env só troca, se um dia quiser).
+  const remetente = process.env.RESEND_MARKETING_FROM?.trim() || REMETENTE_PADRAO;
   const resend = ensaio ? null : new Resend(process.env.RESEND_API_KEY);
-  const replyTo = process.env.RESEND_MARKETING_REPLY_TO?.trim();
+  const replyTo = process.env.RESEND_MARKETING_REPLY_TO?.trim() || RESPONDER_PADRAO;
 
   for (const l of (leads ?? []) as Lead[]) {
     res.vistos++;
@@ -207,16 +217,22 @@ export async function rodarMotor({ dryRun = true, agora = new Date(), limite = 5
     try {
       let promo: ReservaAbandonada["promo"];
       if (passo === 3) {
-        const c = await criarCodigo(l, agora);
         const preco = Number(l.price);
-        promo = { code: c.code, percentOff: DESCONTO, discountedPrice: Math.round(preco * (100 - DESCONTO)) / 100, expiresAt: c.expiresAt };
-        await sb.from("site_leads").update({ promo_code: c.code, promo_id: c.id, promo_expires_at: c.expiresAt.toISOString() }).eq("id", l.id);
+        const comDesconto = Math.round(preco * (100 - DESCONTO)) / 100;
+        if (process.env.STRIPE_PROMO_SECRET_KEY?.trim()) {
+          const c = await criarCodigo(l, agora);
+          promo = { code: c.code, percentOff: DESCONTO, discountedPrice: comDesconto, expiresAt: c.expiresAt };
+          await sb.from("site_leads").update({ promo_code: c.code, promo_id: c.id, promo_expires_at: c.expiresAt.toISOString() }).eq("id", l.id);
+        } else {
+          promo = { code: CODIGO_FIXO, percentOff: DESCONTO, discountedPrice: comDesconto, expiresAt: null };
+          await sb.from("site_leads").update({ promo_code: CODIGO_FIXO }).eq("id", l.id);
+        }
       }
       const dados = dadosDoEmail(l, passo, promo);
       const e: EmailPronto = passo === 1 ? email1(dados) : passo === 2 ? email2(dados) : email3(dados);
       const unsub = dados.unsubscribeUrl;
       const { data: enviado, error: erroEnvio } = await resend!.emails.send({
-        from: remetente!,
+        from: remetente,
         to: [l.email],
         subject: e.subject,
         html: e.html,

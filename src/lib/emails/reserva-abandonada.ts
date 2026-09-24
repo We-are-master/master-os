@@ -48,7 +48,13 @@ export type ReservaAbandonada = {
   whatsappUrl: string;
   unsubscribeUrl: string;
   /** Só no e-mail 3. */
-  promo?: { code: string; percentOff: number; discountedPrice: number; expiresAt: Date };
+  /**
+   * Só no e-mail 3. Com `expiresAt` é o código ÚNICO da pessoa (48 h, uso
+   * único); sem ele é o cupom FIXO da Stripe (COMEBACK10), que não expira por
+   * pessoa, então o e-mail não promete prazo nem "personal" (DMCC: prazo falso
+   * é prática enganosa).
+   */
+  promo?: { code: string; percentOff: number; discountedPrice: number; expiresAt?: Date | null };
   /** Base dos ícones e do logo. Padrão: o próprio OS. */
   assetBase?: string;
 };
@@ -182,9 +188,9 @@ function caixaDoCodigo(d: ReservaAbandonada): string {
   if (!d.promo) return "";
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px; background:${CLIENT_BRAND.softOrangeBg}; border:2px dashed ${CLIENT_BRAND.orange}; border-radius:12px;">
     <tr><td align="center" style="padding:20px;">
-      <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">Your personal code · already applied</div>
+      <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.expiresAt ? "Your personal code · already applied" : "Your code · already applied"}</div>
       <div style="font-family:ui-monospace,Menlo,Consolas,monospace; font-size:28px; line-height:36px; font-weight:700; color:${CLIENT_BRAND.navy}; letter-spacing:0.04em; margin:8px 0 4px;">${escapeHtml(d.promo.code)}</div>
-      <div style="font-size:13px; line-height:20px; color:${CLIENT_BRAND.body};">Valid until <b>${escapeHtml(formatarValidade(d.promo.expiresAt))}</b></div>
+      ${d.promo.expiresAt ? `<div style="font-size:13px; line-height:20px; color:${CLIENT_BRAND.body};">Valid until <b>${escapeHtml(formatarValidade(d.promo.expiresAt))}</b></div>` : ""}
     </td></tr>
   </table>`;
 }
@@ -326,32 +332,44 @@ export function email3(d: ReservaAbandonada): EmailPronto {
   const nome = primeiroNome(d);
   const base = d.assetBase ?? appBaseUrl();
   const pct = d.promo.percentOff;
+  const unico = Boolean(d.promo.expiresAt);
+  const validade = d.promo.expiresAt ? formatarValidade(d.promo.expiresAt) : "";
   const subject = `Get ${pct}% OFF to finish your booking`;
-  const preheader = "Your personal discount is already applied and valid for 48 hours.";
-  const validade = formatarValidade(d.promo.expiresAt);
+  const preheader = unico
+    ? "Your personal discount is already applied and valid for 48 hours."
+    : `Your ${pct}% discount is already applied to your saved booking.`;
+  const navy = (t: string) => `<b style="color:${CLIENT_BRAND.navy};">${t}</b>`;
+  const frasesDoCodigo = unico
+    ? `Your unique code is ${navy(escapeHtml(d.promo.code))}, and it has already been applied to your booking. The discount is valid until ${navy(escapeHtml(validade))}. After that time, the code will expire automatically.`
+    : `Your code ${navy(escapeHtml(d.promo.code))} has already been applied to your booking.`;
   const corpo = [
-    p(`We have added a personal <b style="color:${CLIENT_BRAND.navy};">${pct}% discount</b> to your saved ${escapeHtml(d.service.name)} booking.`),
+    p(`We have added a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
     cartaoDaReserva(d, true),
-    p(`Original price: ${formatarLibras(d.price)}<br>Your discounted price: <b style="color:${CLIENT_BRAND.navy};">${formatarLibras(d.promo.discountedPrice)}</b>`),
+    p(`Original price: ${formatarLibras(d.price)}<br>Your discounted price: ${navy(formatarLibras(d.promo.discountedPrice))}`),
     caixaDoCodigo(d),
-    p(`Your unique code is <b style="color:${CLIENT_BRAND.navy};">${escapeHtml(d.promo.code)}</b>, and it has already been applied to your booking. The discount is valid until <b style="color:${CLIENT_BRAND.navy};">${escapeHtml(validade)}</b>. After that time, the code will expire automatically.`),
+    p(frasesDoCodigo),
     p("Use the button below to continue from where you stopped and confirm your booking with the discount applied."),
     botao(`Finish my booking with ${pct}% off`, d.resumeUrl),
     blocoWhatsApp("Have a question before confirming?", d.whatsappUrl),
   ].join("");
   const text = `Hi ${nome},
 
-We have added a personal ${pct}% discount to your saved ${d.service.name} booking.
+We have added a ${unico ? "personal " : ""}${pct}% discount to your saved ${d.service.name} booking.
 
 Original price: ${formatarLibras(d.price)}
 Your discounted price: ${formatarLibras(d.promo.discountedPrice)}
 
-Your unique code is ${d.promo.code}, and it has already been applied to your booking.
+${unico ? `Your unique code is ${d.promo.code}, and it has already been applied to your booking.
 
-The discount is valid until ${validade}. After that time, the code will expire automatically.
+The discount is valid until ${validade}. After that time, the code will expire automatically.` : `Your code ${d.promo.code} has already been applied to your booking.`}
 
 Finish my booking with ${pct}% off: ${d.resumeUrl}
 
 Have a question before confirming? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
-  return { subject, preheader, text, html: montar({ preheader, etiqueta: `${pct}% off · 48 hours`, titulo: `${pct}% off, already applied`, nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl }) };
+  return {
+    subject,
+    preheader,
+    text,
+    html: montar({ preheader, etiqueta: unico ? `${pct}% off · 48 hours` : `${pct}% off`, titulo: `${pct}% off, already applied`, nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl }),
+  };
 }

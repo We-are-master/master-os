@@ -73,3 +73,11 @@ test("sem travessão no texto que o cliente lê", () => {
     assert.ok(!t.text.includes("—") && !t.subject.includes("—"));
   }
 });
+
+test("cupom fixo (sem chave da Stripe): sem prazo e sem 'personal'", () => {
+  const e = email3({ ...base, promo: { code: "COMEBACK10", percentOff: 10, discountedPrice: 213.3, expiresAt: null } });
+  assert.match(e.html, /COMEBACK10/);
+  assert.doesNotMatch(e.text, /valid until|personal|unique|48 hours/i);
+  assert.doesNotMatch(e.preheader, /48 hours|personal/i);
+  assert.match(e.text, /Your code COMEBACK10 has already been applied/);
+});
