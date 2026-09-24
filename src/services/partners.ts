@@ -96,7 +96,10 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   const tradeArg = params.trade && params.trade !== "all" ? params.trade : null;
   const searchArg = params.search?.trim() || null;
 
-  if (statusArg !== "__needs_fallback__") {
+  // The bundle RPC has no sort argument: date sorts go through the direct query.
+  const needsDirectSort = params.sortBy === "joined_at";
+
+  if (statusArg !== "__needs_fallback__" && !needsDirectSort) {
     const { data, error } = await supabase.rpc("get_partners_list_bundle", {
       p_status: statusArg,
       p_trade:  tradeArg,
@@ -162,7 +165,7 @@ async function listPartnersLegacy(
     }
   }
 
-  query = query.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc" });
+  query = query.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc", nullsFirst: false });
   query = query.range(from, to);
 
   let { data, error, count } = await query;
