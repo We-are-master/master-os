@@ -263,8 +263,9 @@ function rodapeTexto(d: ReservaAbandonada): string {
 export function email1(d: ReservaAbandonada): EmailPronto {
   const nome = primeiroNome(d);
   const base = d.assetBase ?? appBaseUrl();
-  const subject = `Your fixed price for ${d.service.withArticle} is waiting`;
-  const preheader = "Your details and fixed price are saved";
+  // Curto de propósito: no celular o assunto corta perto de 40 caracteres. O serviço e o preço vão no preheader.
+  const subject = "You're almost there!";
+  const preheader = `Finish your booking: ${d.service.name} · ${formatarLibras(d.price)} fixed price`;
   const corpo = [
     p(`We have saved the details of your ${escapeHtml(d.service.name)} booking, so you will not need to start again.`),
     cartaoDaReserva(d, false),
