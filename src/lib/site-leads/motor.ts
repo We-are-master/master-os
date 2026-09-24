@@ -40,7 +40,7 @@ const CAMPANHA = "reserva-abandonada";
  * único de 48 h e este fica de reserva.
  */
 const CODIGO_FIXO = "COMEBACK10";
-const REMETENTE_PADRAO = "Victor Souza <no-reply@getfixfy.com>";
+const REMETENTE_PADRAO = "Fixfy Team <no-reply@getfixfy.com>";
 const RESPONDER_PADRAO = "hello@getfixfy.com";
 
 export function motorLigado(): boolean {
