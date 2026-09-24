@@ -1489,8 +1489,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         supabase
           .from("partners")
           .select("id", { count: "exact", head: true })
-          .lt("compliance_score", 50)
-          .is("deleted_at", null),
+          .lt("compliance_score", 50),
       ]);
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
@@ -1498,12 +1497,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       setPartnersBelow50Count(below50Res.count ?? 0);
 
       // Core onboarding progress (Insurance / ID / Right to work) for the Onboarding tab bar.
+      // Counts what the partner UPLOADED (pending counts), not what was approved.
+      // partners.deleted_at and partner_documents.counts_toward_compliance do not exist in
+      // production (migration 125 was never applied): filtering or selecting them made both
+      // queries fail silently and every bar sat at 0%.
       try {
-        const { data: onboardingPartners } = await supabase
+        const { data: onboardingPartners, error: onboardingErr } = await supabase
           .from("partners")
           .select("id, status, trade, trades, partner_legal_type, utr, crn, vat_number, vat_registered")
-          .in("status", ["onboarding", "needs_attention"])
-          .is("deleted_at", null);
+          .in("status", ["onboarding", "needs_attention"]);
+        if (onboardingErr) console.error("[partners] onboarding progress: partners query failed", onboardingErr);
         const onboardingRows = (onboardingPartners ?? []) as Array<
           Pick<
             Partner,
@@ -1516,8 +1519,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           const ids = onboardingRows.map((p) => p.id);
           const docsRes = await supabase
             .from("partner_documents")
-            .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
+            .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at")
             .in("partner_id", ids);
+          if (docsRes.error) console.error("[partners] onboarding progress: documents query failed", docsRes.error);
           const docsByPartnerId = new Map<string, PartnerDocLike[]>();
           for (const row of (docsRes.data ?? []) as Array<PartnerDocLike & { partner_id: string }>) {
             const arr = docsByPartnerId.get(row.partner_id) ?? [];
