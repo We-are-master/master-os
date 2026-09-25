@@ -870,6 +870,10 @@ export interface Partner {
   coverage_latitude?: number | null;
   coverage_longitude?: number | null;
   coverage_base_postcode?: string | null;
+  /** Onboarding (trade portal "Tools & materials", migration 299): has the tools for their trades. */
+  has_own_tools?: boolean | null;
+  /** Onboarding: can buy the materials a job needs. */
+  can_supply_materials?: boolean | null;
   /** Outward codes covered when `coverage_mode` is `postcodes`. */
   included_postcodes?: string[] | null;
   /** City ids from OS catalogue (e.g. `london`). */
