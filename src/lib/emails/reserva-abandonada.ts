@@ -3,6 +3,7 @@
  *
  *   1  30 minutos depois   "o seu preço está guardado"
  *   2  4 horas depois do 1 "alguma dúvida?", com o que está incluso
+ *      (limpeza fala de cômodo e checklist; conserto fala do trabalho feito)
  *   3  dia seguinte, 10h   10% com código único já aplicado, 48 horas
  *
  * Texto aprovado pelo dono em 24/09/2026. Parente das campanhas
@@ -38,6 +39,11 @@ export type ReservaAbandonada = {
     /** "a 2 bed deep clean". Vai no assunto do e-mail 1. */
     withArticle: string;
   };
+  /**
+   * Limpeza fala de cômodo e checklist; conserto, pintura e certificado não.
+   * O e-mail 2 muda as promessas conforme isso. Padrão: limpeza.
+   */
+  kind?: "cleaning" | "trade";
   /** Linhas curtas do cartão da reserva: "2 bedrooms", "Up to 3.5 hours". */
   details?: string[];
   postcode?: string | null;
@@ -188,7 +194,7 @@ function caixaDoCodigo(d: ReservaAbandonada): string {
   if (!d.promo) return "";
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px; background:${CLIENT_BRAND.softOrangeBg}; border:2px dashed ${CLIENT_BRAND.orange}; border-radius:12px;">
     <tr><td align="center" style="padding:20px;">
-      <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.expiresAt ? "Your personal code · already applied" : "Your code · already applied"}</div>
+      <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.expiresAt ? "Your personal code · already applied" : "We've applied code"}</div>
       <div style="font-family:ui-monospace,Menlo,Consolas,monospace; font-size:28px; line-height:36px; font-weight:700; color:${CLIENT_BRAND.navy}; letter-spacing:0.04em; margin:8px 0 4px;">${escapeHtml(d.promo.code)}</div>
       ${d.promo.expiresAt ? `<div style="font-size:13px; line-height:20px; color:${CLIENT_BRAND.body};">Valid until <b>${escapeHtml(formatarValidade(d.promo.expiresAt))}</b></div>` : ""}
     </td></tr>
@@ -292,10 +298,15 @@ export function email2(d: ReservaAbandonada): EmailPronto {
   const nome = primeiroNome(d);
   const base = d.assetBase ?? appBaseUrl();
   const subject = "Anything we can help with?";
+  const limpeza = (d.kind ?? "cleaning") === "cleaning";
   const preheader = "Clear pricing, report photos, secure payment and a 14-day guarantee.";
+  const fotos = limpeza ? "Photos of every room once the service is complete" : "Photos of the finished work once the job is complete";
+  const garantia = limpeza
+    ? "If anything on the agreed checklist is not completed correctly, let us know within 14 days and we will return to put it right at no additional cost."
+    : "If any of the agreed work is not done correctly, let us know within 14 days and we will return to put it right at no additional cost.";
   const itens = [
     { icone: "price", texto: "A clear fixed price, including VAT" },
-    { icone: "photos", texto: "Photos of every room once the service is complete" },
+    { icone: "photos", texto: fotos },
     { icone: "guarantee", texto: "A 14-day Fixfy guarantee" },
     { icone: "secure", texto: "Secure payment through Stripe" },
     { icone: "nohidden", texto: "No hidden charges" },
@@ -303,7 +314,7 @@ export function email2(d: ReservaAbandonada): EmailPronto {
   const corpo = [
     p("If you paused because you wanted to check a few details, here is what you can expect from Fixfy:"),
     listaComIcones(itens, base),
-    p("If anything on the agreed checklist is not completed correctly, let us know within 14 days and we will return to put it right at no additional cost."),
+    p(garantia),
     p("Your details are still saved, so you can continue without entering everything again."),
     botao("Finish my booking", d.resumeUrl),
     blocoWhatsApp("Would you prefer to speak with someone first?", d.whatsappUrl),
@@ -313,12 +324,12 @@ export function email2(d: ReservaAbandonada): EmailPronto {
 If you paused because you wanted to check a few details, here is what you can expect from Fixfy:
 
 - A clear fixed price, including VAT
-- Photos of every room once the service is complete
+- ${fotos}
 - A 14-day Fixfy guarantee
 - Secure payment through Stripe
 - No hidden charges
 
-If anything on the agreed checklist is not completed correctly, let us know within 14 days and we will return to put it right at no additional cost.
+${garantia}
 
 Your details are still saved, so you can continue without entering everything again.
 
@@ -336,13 +347,15 @@ export function email3(d: ReservaAbandonada): EmailPronto {
   const unico = Boolean(d.promo.expiresAt);
   const validade = d.promo.expiresAt ? formatarValidade(d.promo.expiresAt) : "";
   const subject = `Get ${pct}% OFF to finish your booking`;
+  // O preço no preheader: é a primeira coisa que aparece na caixa de entrada, antes de abrir.
+  const precos = `${formatarLibras(d.price)} is now ${formatarLibras(d.promo.discountedPrice)}`;
   const preheader = unico
-    ? "Your personal discount is already applied and valid for 48 hours."
-    : `Your ${pct}% discount is already applied to your saved booking.`;
+    ? `${precos} with your personal code, valid for 48 hours.`
+    : `${precos} with code ${d.promo.code}, already applied.`;
   const navy = (t: string) => `<b style="color:${CLIENT_BRAND.navy};">${t}</b>`;
   const frasesDoCodigo = unico
     ? `Your unique code is ${navy(escapeHtml(d.promo.code))}, and it has already been applied to your booking. The discount is valid until ${navy(escapeHtml(validade))}. After that time, the code will expire automatically.`
-    : `Your code ${navy(escapeHtml(d.promo.code))} has already been applied to your booking.`;
+    : `We've applied code ${navy(escapeHtml(d.promo.code))} to your booking.`;
   const corpo = [
     p(`We have added a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
     cartaoDaReserva(d, true),
@@ -362,7 +375,7 @@ Your discounted price: ${formatarLibras(d.promo.discountedPrice)}
 
 ${unico ? `Your unique code is ${d.promo.code}, and it has already been applied to your booking.
 
-The discount is valid until ${validade}. After that time, the code will expire automatically.` : `Your code ${d.promo.code} has already been applied to your booking.`}
+The discount is valid until ${validade}. After that time, the code will expire automatically.` : `We've applied code ${d.promo.code} to your booking.`}
 
 Finish my booking with ${pct}% off: ${d.resumeUrl}
 
