@@ -80,5 +80,15 @@ test("cupom fixo (sem chave da Stripe): sem prazo e sem 'personal'", () => {
   assert.match(e.html, /COMEBACK10/);
   assert.doesNotMatch(e.text, /valid until|personal|unique|48 hours/i);
   assert.doesNotMatch(e.preheader, /48 hours|personal/i);
-  assert.match(e.text, /Your code COMEBACK10 has already been applied/);
+  assert.match(e.text, /We've applied code COMEBACK10 to your booking/);
+  assert.equal(e.preheader, "£237 is now £213.30 with code COMEBACK10, already applied.");
+});
+
+test("e-mail 2 de conserto não fala de cômodo nem de checklist", () => {
+  const limpeza = email2(base);
+  assert.match(limpeza.text, /Photos of every room/);
+  assert.match(limpeza.text, /agreed checklist/);
+  const conserto = email2({ ...base, kind: "trade", service: { name: "handyman half day", withArticle: "a handyman half day" } });
+  assert.doesNotMatch(conserto.text + conserto.html, /every room|checklist/i);
+  assert.match(conserto.text, /Photos of the finished work/);
 });

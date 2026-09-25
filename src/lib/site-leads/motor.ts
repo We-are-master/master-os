@@ -85,6 +85,12 @@ function linkDeRetomada(l: Lead, passo: Passo, promo?: string): string {
   return u.toString();
 }
 
+/** Só limpeza no carrinho. Misturou conserto ou certificado, o e-mail não promete foto de cômodo. */
+function soLimpeza(sel: Lead["selection"]): boolean {
+  const s = Array.isArray(sel?.services) ? (sel.services as unknown[]).map(String) : [];
+  return s.length > 0 && s.every((x) => x === "clean");
+}
+
 function dadosDoEmail(l: Lead, passo: Passo, promo?: ReservaAbandonada["promo"]): ReservaAbandonada {
   const nome = String(l.service_label || "booking").trim();
   const detalhes = Array.isArray(l.selection?.details) ? (l.selection.details as unknown[]).map(String).slice(0, 3) : [];
@@ -92,6 +98,7 @@ function dadosDoEmail(l: Lead, passo: Passo, promo?: ReservaAbandonada["promo"])
   return {
     firstName: l.full_name,
     service: { name: nome, withArticle: comArtigo(nome) },
+    kind: soLimpeza(l.selection) ? "cleaning" : "trade",
     details: detalhes,
     postcode: l.postcode,
     price: Number(l.price ?? 0),
