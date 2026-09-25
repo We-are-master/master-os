@@ -14,6 +14,14 @@ export type SequenceStep = {
   offsetHours: number;
   subject: (ctx: SequenceContext) => string;
   html: (ctx: SequenceContext) => string;
+  /**
+   * Como este envio aparece no painel de campanhas.
+   *
+   * Existe por causa da agenda da temporada: lá o passo é sempre o mesmo ("a
+   * edição da vez"), e sem isto as 52 peças somariam numa linha só, onde não
+   * dá para ver qual assunto vendeu. O padrão é `sequencia:passo`.
+   */
+  campanha?: (ctx: SequenceContext) => string;
 };
 
 export type SequenceDefinition = {

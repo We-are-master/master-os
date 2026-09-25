@@ -11,6 +11,8 @@
 import type { SequenceDefinition } from "./types";
 import * as C from "./client-templates";
 import * as X from "./cold-templates";
+import * as L from "./lifecycle-templates";
+import { pecaDaData } from "./agenda";
 
 const D = 24;
 
@@ -72,6 +74,93 @@ const CLIENT_WINBACK: SequenceDefinition = {
   ],
 };
 
+
+/* ═══════════ O funil de sempre: quem não comprou, e quem já comprou ═══════════ */
+
+/**
+ * L1 — quem pediu preço e não fechou. Dez toques em trinta dias.
+ *
+ * O primeiro sai na hora em que a pessoa entra na base, e os três seguintes
+ * caem nos dias 1, 2 e 4. Cadência de quem sabe que lead de serviço de casa
+ * decide na primeira semana. Para na hora em que a pessoa compra: quem fecha
+ * sai daqui e entra no clube.
+ */
+const CLIENT_LEAD_NURTURE: SequenceDefinition = {
+  key: "client_lead_nurture",
+  label: "Cliente · não comprou (30 dias)",
+  steps: L.NURTURE.map((peca, i) => ({
+    key: peca.key,
+    offsetHours: [0, 1, 2, 4, 6, 8, 11, 14, 21, 30][i] * D,
+    subject: () => L.assuntoNurture(i),
+    html: (ctx) => L.renderNurture(i, ctx),
+  })),
+};
+
+/**
+ * L2 — passou dos trinta dias e não comprou. Fogo baixo, a cada duas semanas.
+ *
+ * Mesma agenda de quem já comprou, na metade do ritmo: uma edição por semana
+ * em vez de duas. Quem chega aqui já ouviu a oferta dez vezes, então o que
+ * segura essa pessoa é ser útil, não insistir.
+ */
+/**
+ * O ritmo de quem não comprou, num botão.
+ *
+ * Decisão do dono em 22/09/2026: começa com uma por semana e sobe para duas
+ * depois de 30 dias, quando as primeiras taxas de rejeição e reclamação já
+ * aparecerem no painel. Subir é trocar esta variável para 84, sem deploy.
+ */
+function horasDoFogoBaixo(): number {
+  const n = Number(process.env.MARKETING_FOGO_BAIXO_HORAS?.trim());
+  return Number.isFinite(n) && n >= 24 ? n : 7 * D;
+}
+
+const CLIENT_LEAD_KEEPWARM: SequenceDefinition = {
+  key: "client_lead_keepwarm",
+  label: "Cliente · não comprou (agenda, 1x por semana)",
+  recurring: true,
+  /** Uma por semana hoje; `MARKETING_FOGO_BAIXO_HORAS=84` faz duas. */
+  get recurEveryHours() { return horasDoFogoBaixo(); },
+  steps: [
+    {
+      key: "edicao",
+      offsetHours: 0,
+      subject: L.assuntoAgenda,
+      html: L.renderAgenda,
+      campanha: () => `season:${pecaDaData().key}`,
+    },
+  ],
+};
+
+/**
+ * L3 — já comprou. Duas por semana, a partir da SEGUNDA semana.
+ *
+ * O primeiro toque sai no 14º dia depois do job, e não antes por decisão: na
+ * primeira semana quem fala com o cliente é o transacional (confirmação,
+ * relatório, cobrança), e promoção no meio disso confunde as duas coisas.
+ *
+ * Depois disso o motor gira a cada 84 horas, que dá duas por semana. A peça
+ * vem da AGENDA da temporada, escolhida pela data e não pelo contador da
+ * pessoa: é o que faz o e-mail de preparar para o frio chegar em novembro e o
+ * spring clean em março, para quem entrou em outubro e para quem entrou em
+ * fevereiro.
+ */
+const CLIENT_CUSTOMER_CLUB: SequenceDefinition = {
+  key: "client_customer_club",
+  label: "Cliente · já comprou (agenda, 2x por semana)",
+  recurring: true,
+  recurEveryHours: 84,
+  steps: [
+    {
+      key: "edicao",
+      offsetHours: 14 * D,
+      subject: L.assuntoAgenda,
+      html: L.renderAgenda,
+      campanha: () => `season:${pecaDaData().key}`,
+    },
+  ],
+};
+
 /* ===== Cold outbound (Apify-sourced, B2B). Always carry unsubscribeUrl. ===== */
 
 /** Recruit tradespeople scraped from Google Maps / directories. */
@@ -97,6 +186,9 @@ const B2B_CLIENT_COLD: SequenceDefinition = {
 };
 
 export const SEQUENCES: Record<string, SequenceDefinition> = {
+  [CLIENT_LEAD_NURTURE.key]: CLIENT_LEAD_NURTURE,
+  [CLIENT_LEAD_KEEPWARM.key]: CLIENT_LEAD_KEEPWARM,
+  [CLIENT_CUSTOMER_CLUB.key]: CLIENT_CUSTOMER_CLUB,
   [CLIENT_DEMAND_NURTURE.key]: CLIENT_DEMAND_NURTURE,
   [CLIENT_BOOKING_CONFIRMED.key]: CLIENT_BOOKING_CONFIRMED,
   [CLIENT_POST_JOB.key]: CLIENT_POST_JOB,
@@ -111,6 +203,31 @@ export const COLD_SEQUENCE_BY_SEGMENT: Record<"partner" | "b2b_client", string> 
   partner: PARTNER_COLD.key,
   b2b_client: B2B_CLIENT_COLD.key,
 };
+
+/**
+ * As três chaves do funil de sempre, num lugar só.
+ *
+ * Quem varre a base e quem mede no painel referem por aqui, nunca por string
+ * solta: renomear uma sequência sem renomear no outro lado é como se para de
+ * enviar sem ninguém perceber.
+ */
+export const FUNIL = {
+  naoComprou: CLIENT_LEAD_NURTURE.key,
+  naoComprouFogoBaixo: CLIENT_LEAD_KEEPWARM.key,
+  jaComprou: CLIENT_CUSTOMER_CLUB.key,
+} as const;
+
+/** Toda sequência de marketing (o que a lista de bloqueio governa). */
+export const SEQUENCIAS_DE_MARKETING: string[] = [
+  CLIENT_LEAD_NURTURE.key,
+  CLIENT_LEAD_KEEPWARM.key,
+  CLIENT_CUSTOMER_CLUB.key,
+  CLIENT_DEMAND_NURTURE.key,
+  CLIENT_SEASONAL.key,
+  CLIENT_WINBACK.key,
+  PARTNER_COLD.key,
+  B2B_CLIENT_COLD.key,
+];
 
 export function getSequence(key: string): SequenceDefinition | null {
   return SEQUENCES[key] ?? null;

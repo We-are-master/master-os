@@ -56,7 +56,7 @@ ${partnerEmailHeadBlock()}
 ${partnerEmailBaseStyles()}
 </head>
 ${partnerEmailBodyOpen()}
-${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. Sign in to start receiving jobs.")}
+${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. One tap and you are in.")}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
@@ -71,7 +71,7 @@ ${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. Sign in to 
       <tr><td style="padding:20px 40px 20px 40px;" class="px-mobile">
         ${partnerEmailSplitTitleHtml(safe.firstName, "You&#39;re live on Fixfy Trade &#127881;")}
         <p style="margin:0 0 8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">
-          Great news — the ${safe.companyName} team just approved your onboarding. Your trade account is active
+          Great news, the ${safe.companyName} team just approved your onboarding. Your trade account is active
           and ready to receive work.
         </p>
         ${tierChip ? `<div style="margin:14px 0 0;">${tierChip}</div>` : ""}
@@ -83,13 +83,13 @@ ${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. Sign in to 
           <tr>
             <td align="center" bgcolor="#ED4B00" style="background-color:#ED4B00; border-radius:12px;">
               <a href="${safe.loginUrl}" target="_blank" style="display:inline-block; padding:14px 26px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:-0.02em;">
-                Sign in to Fixfy Trade &rarr;
+                Open Fixfy Trade &rarr;
               </a>
             </td>
           </tr>
         </table>
         <p style="margin:12px 0 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; color:#6B6B85; word-break:break-all;">
-          Or paste this link: <a href="${safe.loginUrl}" style="color:#ED4B00;">${safe.loginUrl}</a>
+          This button signs you in, no code needed. It works for 7 days, then sign in with your email as usual.
         </p>
       </td></tr>
 

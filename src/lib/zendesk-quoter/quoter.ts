@@ -1042,6 +1042,22 @@ type ResultadoConfirmacao =
 
 const soLetras = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * Domínio que não identifica parceiro nenhum (22/09/2026).
+ *
+ * O nosso aparece em quase todo ticket (link do app.getfixfy.com, e-mail do
+ * hello@), então um parceiro cadastrado com e-mail @getfixfy.com casava com
+ * tudo: o "oktest" fechou 8 tickets desde 21/08, entre eles um "Job Request",
+ * dois "Checkatrade Express" e as reservas do site, e carimbou parceiro
+ * confirmado em job sem parceiro. E-mail gratuito tem o mesmo defeito: um
+ * parceiro @outlook.com casaria com qualquer ticket que cite "outlook".
+ */
+const DOMINIOS_QUE_NAO_IDENTIFICAM = new Set([
+  "getfixfy", "fixfy", "wearemaster", "zendesk",
+  "gmail", "googlemail", "outlook", "hotmail", "icloud", "yahoo", "live", "msn",
+  "btinternet", "aol", "protonmail", "proton", "me", "mac", "sky", "virginmedia", "talktalk",
+]);
+
 async function acharParceiroNoTexto(
   texto: string,
 ): Promise<{ id: string; nome: string } | null> {
@@ -1056,7 +1072,9 @@ async function acharParceiroNoTexto(
     // "landlordcertification", que é como a empresa assina no e-mail.
     const dominio = soLetras((p.email ?? "").split("@")[1]?.split(".")[0] ?? "");
     if (nome.length >= 6 && alvo.includes(nome)) return { id: p.id, nome: p.company_name };
-    if (dominio.length >= 6 && alvo.includes(dominio)) return { id: p.id, nome: p.company_name };
+    if (dominio.length >= 6 && !DOMINIOS_QUE_NAO_IDENTIFICAM.has(dominio) && alvo.includes(dominio)) {
+      return { id: p.id, nome: p.company_name };
+    }
   }
   return null;
 }
@@ -1112,8 +1130,16 @@ export async function confirmarBookingDeParceiro(
   const tRes = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers });
   if (!tRes.ok) return { status: "nao_e_parceiro" };
   const { ticket } = (await tRes.json()) as {
-    ticket: { subject: string; description?: string; html_description?: string };
+    ticket: { subject: string; description?: string; html_description?: string; tags?: string[] };
   };
+  // Ticket que o próprio OS abriu (job do site, do RPA, da API) é do job, não
+  // e-mail de parceiro: a primeira mensagem é a nossa nota com o link do OS.
+  if ((ticket.tags ?? []).includes("os-created")) return { status: "nao_e_parceiro" };
+  // Confirmação de parceiro diz que confirmou, no assunto ("your booking with
+  // Landlord Certification is confirmed"). Sem isso, qualquer ticket que citasse
+  // um parceiro fechava: 6 "Gentle Reminder – Payment Due" (cobrança!), uma
+  // self-bill, um "Job Request" de cliente e "TICKET 21/09 Monday" (22/09/2026).
+  if (!/\bconfirm/i.test(ticket.subject ?? "")) return { status: "nao_e_parceiro" };
   const texto = `${ticket.subject ?? ""} ${ticket.description ?? ""}`;
 
   const parceiro = await acharParceiroNoTexto(texto);

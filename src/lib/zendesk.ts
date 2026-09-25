@@ -502,6 +502,8 @@ export async function getTicketCustomFieldValue(
 
 export type ZendeskTicketSnapshot = {
   subject: string | null;
+  /** new | open | pending | hold | solved | closed */
+  status: string | null;
   /** Custom field id → string value (non-empty only). */
   fields: Record<number, string>;
 };
@@ -525,6 +527,7 @@ export async function getZendeskTicketSnapshot(
     const json = (await res.json().catch(() => ({}))) as {
       ticket?: {
         subject?: string | null;
+        status?: string | null;
         custom_fields?: Array<{ id?: number; value?: unknown }>;
       };
     };
@@ -542,6 +545,7 @@ export async function getZendeskTicketSnapshot(
       status: res.status,
       ticket: {
         subject: raw?.subject?.trim() || null,
+        status: raw?.status ?? null,
         fields,
       },
     };

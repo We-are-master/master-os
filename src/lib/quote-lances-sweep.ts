@@ -18,7 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
-import { addTicketTags } from "@/lib/zendesk";
+import { addTicketTags, getZendeskTicketSnapshot } from "@/lib/zendesk";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
@@ -38,6 +38,8 @@ export const JANELA_HORAS = 2;
 export const PRAZO_SEM_LANCE_HORAS = JANELA_HORAS + 24;
 /** Marca de "já avisei que ninguém cotou", no banco para não repetir a nota. */
 const AVISEI_SEM_LANCE = "no_bids_reported";
+/** Mesma coisa quando não há onde avisar: o ticket já estava fechado. */
+const TICKET_FECHADO_SEM_LANCE = "no_bids_ticket_closed";
 /** Tag no ticket para o silêncio aparecer no Action Required. */
 export const TAG_SEM_LANCE = "harvey_no_bids";
 /** Teto por ciclo: sem ele a primeira rodada despeja o backlog inteiro. */
@@ -137,7 +139,8 @@ export async function varrerLancesParaRascunho(
        */
       const horas = horasDesde(primeiro.invited_at);
       if (horas < PRAZO_SEM_LANCE_HORAS) continue;
-      if ((bruta.automation_status as string | null) === AVISEI_SEM_LANCE) continue;
+      const marca = bruta.automation_status as string | null;
+      if (marca === AVISEI_SEM_LANCE || marca === TICKET_FECHADO_SEM_LANCE) continue;
 
       const convidados = (await supabase
         .from("quote_partner_invitations")
@@ -153,6 +156,20 @@ export async function varrerLancesParaRascunho(
 
       if (!armado) {
         r.detalhes.push(`[ensaio] ${q.reference}: ${Math.round(horas)}h sem lance de ${convidados} convidado(s)`);
+        continue;
+      }
+      /**
+       * Ticket fechado não aceita nota: o Zendesk devolve 422 e, sem a marca,
+       * ele tentava de novo a cada ciclo (QT-2026-1150 no #50536, 24/09/2026).
+       * Conversa encerrada não precisa de aviso, então marca e segue.
+       */
+      const snap = await getZendeskTicketSnapshot(q.external_ref);
+      if (snap.ok && snap.ticket?.status === "closed") {
+        await supabase
+          .from("quotes")
+          .update({ automation_status: TICKET_FECHADO_SEM_LANCE, updated_at: new Date().toISOString() })
+          .eq("id", q.id);
+        r.detalhes.push(`${q.reference}: sem lance, mas o ticket #${q.external_ref} está fechado — não aviso`);
         continue;
       }
       try {
