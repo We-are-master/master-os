@@ -68,6 +68,7 @@ import {
   PartnerCoverageEditor,
   PartnerCoverageTab,
 } from "@/components/partners/partner-coverage-tab";
+import { formatPartnerEquipmentSummary, PartnerEquipmentTab } from "@/components/partners/partner-equipment-tab";
 import {
   COVERAGE_CITY_LONDON_ID,
   defaultLondonIncludedPostcodes,
@@ -140,6 +141,7 @@ import type { BadgeVariant } from "@/components/ui/badge";
 import {
   PartnerServiceRatesTabSection,
   PartnerServiceRatesCreateStep,
+  usePartnerRateCardSummary,
   buildPartnerServicePriceInputFromDraft,
   type RowDraft as PartnerServiceRateRowDraft,
 } from "./service-rates-tab";
@@ -4268,6 +4270,7 @@ function PartnerDetailDrawer({
   onTeamChanged?: () => void;
 }) {
   const [tab, setTab] = useState("overview");
+  const rateCardSummary = usePartnerRateCardSummary(partner?.id ?? null);
   const [documentsSubTab, setDocumentsSubTab] = useState<PartnerDocumentsSubTab>("files");
 
   const openDocuments = useCallback((sub: PartnerDocumentsSubTab = "files") => {
@@ -6169,7 +6172,11 @@ function PartnerDetailDrawer({
                   <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
                 </DrawerSection>
 
-                <DrawerSection title="Rate card" summary="Prices agreed with this partner">
+                <DrawerSection title="Tools & materials" summary={formatPartnerEquipmentSummary(partner)}>
+                  <PartnerEquipmentTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
+                </DrawerSection>
+
+                <DrawerSection title="Rate card" summary={rateCardSummary}>
                   <PartnerServiceRatesTabSection
                     partnerId={partner.id}
                     partner={{
