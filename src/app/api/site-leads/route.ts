@@ -4,6 +4,7 @@
  *   POST { event: "step", email, name, phone, postcode, step, selection,
  *          serviceLabel, price, resumeUrl, source, marketingOptOut }
  *   POST { event: "paid", email, jobId, bookingRef, total, promoCode }
+ *   POST { event: "funnel", visitId, step, services, utm, landing }  (anônimo, 301)
  *
  * Mesma chave do /api/contacts/ingest (X-API-Key com a chave de lead ou de
  * job), porque quem chama é o mesmo servidor do site.
@@ -12,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiKeyAllowed } from "@/lib/contacts-ingest";
 import { registrarPagamento, registrarPasso } from "@/lib/site-leads/core";
+import { registrarFunil } from "@/lib/site-leads/funil";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,6 +32,11 @@ export async function POST(req: NextRequest) {
     body = (await req.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (body.event === "funnel") {
+    const r = await registrarFunil(body);
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
   }
 
   if (body.event === "paid") {
