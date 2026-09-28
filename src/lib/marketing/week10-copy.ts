@@ -17,6 +17,11 @@ export const WEEK10 = {
   codigo: "WEEK10",
   /** Sexta 02/10/2026 23:59:59 em Londres (BST). Estendido pelo dono em 24/09 (era domingo 27/09). */
   expiraEm: "2026-10-02T22:59:59Z",
+  /**
+   * Segunda 28/09/2026 00:00 em Londres (BST), o dia em que a fila foi montada.
+   * Compra, resposta e pedido de saída daqui em diante contam para a campanha.
+   */
+  inicio: "2026-09-27T23:00:00Z",
   site: "https://www.getfixfy.com/",
 } as const;
 
@@ -85,7 +90,7 @@ export const EMAILS: Record<PassoEmail, EmailDaCampanha> = {
       },
       {
         "tipo": "texto",
-        "html": "Prices include VAT. The price is fixed and never goes up on the day. Every pro is vetted and insured. For cleaning services, if anything is missed, we offer a free re-clean within 7 days."
+        "html": "Prices include VAT. The price is fixed and never goes up on the day. Every pro is vetted and insured. For cleaning services, if anything is missed, we offer a free re-clean within 14 days."
       }
     ],
     "cta": "Book with WEEK10"
@@ -120,7 +125,7 @@ export const EMAILS: Record<PassoEmail, EmailDaCampanha> = {
 
 export const WHATSAPP: Record<PassoWhatsApp, { template: string; corpo: string; botao: string }> = {
   wa_followup: { template: "fixfy_week10_followup_v2", corpo: "Hi {{1}}, we sent you a quick email earlier, so just a small follow-up here.\n\nIf a clean is still on your list, you can get 10% off with code {{2}} until Friday 2 October at midnight.\n\nEnd of tenancy cleaning starts from £200. Deep cleaning starts from £174. Prices include VAT, and the price is fixed before you book.\n\nYou can reply here with any question.", botao: "Book online" },
-  wa_oferta: { template: "fixfy_week10_offer_v2", corpo: "Hi {{1}}, thanks for asking Fixfy for a price earlier this year.\n\nIf you still need fixed-price cleaning across London, prices start from:\nEnd of tenancy £200\nDeep clean £174\nAfter builders £204\n\nUse code {{2}} for 10% off until Friday 2 October at midnight.\n\nPrices include VAT, products and equipment. The price is fixed and will not go up on the day.\n\nReply here with any question, or tap below to book.", botao: "Book online" },
+  wa_oferta: { template: "fixfy_week10_offer_v3", corpo: "Hi {{1}}, if you still need fixed-price cleaning across London, prices start from:\nEnd of tenancy £200\nDeep clean £174\nAfter builders £204\n\nUse code {{2}} for 10% off until Friday 2 October at midnight.\n\nPrices include VAT, products and equipment. The price is fixed and will not go up on the day.\n\nReply here with any question, or tap below to book.", botao: "Book online" },
 };
 
 /** O link de cada peça, com o código (o site aplica sozinho) e a origem. */

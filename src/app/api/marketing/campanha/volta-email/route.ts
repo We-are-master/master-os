@@ -1,7 +1,8 @@
 /**
  * Uma volta de e-mail da campanha. O n8n chama de 15 em 15 minutos.
- * Manda até MARKETING_EMAIL_POR_VOLTA (padrão 60) pelo batch do Resend e
- * agenda o WhatsApp de follow-up de quem tem os dois canais.
+ * Manda até MARKETING_EMAIL_POR_VOLTA (padrão 75) pelo batch do Resend, só
+ * das 9h às 12h de Londres, e agenda o WhatsApp de follow-up de quem tem os
+ * dois canais para as 15h do mesmo dia.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { chaveDoN8nOk } from "@/lib/marketing/chave-do-n8n";

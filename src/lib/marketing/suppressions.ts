@@ -29,8 +29,20 @@ export function normalizarEmail(email: string | null | undefined): string | null
  * por destinatário.
  */
 export async function bloqueados(emails: string[]): Promise<Set<string>> {
+  return new Set((await bloqueiosComData(emails)).keys());
+}
+
+/**
+ * Os bloqueios de uma lista de e-mails, com motivo e data.
+ *
+ * A triagem da campanha precisa da data: o bloqueio que já existia quando a
+ * fila foi montada tirou só o e-mail (a pessoa ficou no WhatsApp, decisão do
+ * dono), e o que aparece no meio da campanha é recusa que vale para os dois.
+ */
+export async function bloqueiosComData(emails: string[]): Promise<Map<string, { motivo: MotivoSupressao; desde: string }>> {
   const limpos = new Set(emails.map(normalizarEmail).filter((e): e is string => !!e));
-  if (limpos.size === 0) return new Set();
+  const achados = new Map<string, { motivo: MotivoSupressao; desde: string }>();
+  if (limpos.size === 0) return achados;
 
   /**
    * Puxa a lista INTEIRA e cruza na memória, em vez de perguntar por e-mail.
@@ -44,18 +56,17 @@ export async function bloqueados(emails: string[]): Promise<Set<string>> {
    * contatos, e ela é lida uma vez por campanha, não uma vez por pessoa.
    */
   const sb = createServiceClient();
-  const achados = new Set<string>();
   const PAGINA = 1000;
   for (let inicio = 0; ; inicio += PAGINA) {
     const { data, error } = await sb
       .from("email_suppressions")
-      .select("email")
+      .select("email, reason, created_at")
       .range(inicio, inicio + PAGINA - 1);
     if (error) throw new Error(`suppressions: ${error.message}`);
     const pagina = data ?? [];
     for (const r of pagina) {
       const e = String(r.email).toLowerCase();
-      if (limpos.has(e)) achados.add(e);
+      if (limpos.has(e)) achados.set(e, { motivo: r.reason as MotivoSupressao, desde: String(r.created_at) });
     }
     if (pagina.length < PAGINA) break;
   }
