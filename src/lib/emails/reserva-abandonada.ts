@@ -1,18 +1,23 @@
 /**
  * Os três e-mails de quem começou a reservar no site e não pagou.
  *
- *   1  30 minutos depois   "o seu preço está guardado"
- *   2  4 horas depois do 1 "alguma dúvida?", com o que está incluso
+ *   1  30 minutos depois de parar     "o seu preço está guardado"
+ *   2  9h30 do dia seguinte ao 1      "alguma dúvida?", com o que está incluso
  *      (limpeza fala de cômodo e checklist; conserto fala do trabalho feito)
- *   3  dia seguinte, 10h   10% com código único já aplicado, 48 horas
+ *   3  9h30 do dia seguinte ao 2      10% com código já aplicado
  *
  * Texto aprovado pelo dono em 24/09/2026. Parente das campanhas
  * (`campanha-layout`), com cabeçalho branco e logo pequeno, laranja só no botão, tudo em
  * tabela e estilo em linha. Os ícones do e-mail 2 são PNG em
  * `public/email/abandono/`, porque o Gmail não mostra SVG.
  *
- * Quem decide QUANDO cada um sai é `agendaDoAbandono`; quem decide SE sai
- * (pagou, descadastrou, conversa aberta com o time) é o motor, na hora do envio.
+ * Quem decide QUANDO cada um sai é `src/lib/site-leads/agenda.ts`; quem decide
+ * SE sai (pagou, descadastrou, respondeu, conversa aberta com o time) é o
+ * motor, na hora do envio.
+ *
+ * `ticketRef` é o encoded id do ticket do lead no Zendesk. Vai escondido no fim
+ * do e-mail, entre colchetes, como o Zendesk faz nos e-mails dele: a resposta
+ * que cita o e-mail cai no ticket do lead, mesmo enviada para o hello@.
  */
 
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -63,6 +68,8 @@ export type ReservaAbandonada = {
   promo?: { code: string; percentOff: number; discountedPrice: number; expiresAt?: Date | null };
   /** Base dos ícones e do logo. Padrão: o próprio OS. */
   assetBase?: string;
+  /** Encoded id do ticket do lead no Zendesk ("ZRGGKR-JXX2N"). Sem ele, a resposta vira ticket novo. */
+  ticketRef?: string | null;
 };
 
 export type EmailPronto = { subject: string; preheader: string; html: string; text: string };
@@ -79,59 +86,25 @@ export function formatarValidade(d: Date): string {
   return `${dia} at ${hora}`;
 }
 
-// ---------------------------------------------------------------- horários
+// ---------------------------------------------------------------- peças
 
-const JANELA_INICIO = 8;
-const JANELA_FIM = 20;
-
-/** Hora e data de Londres de um instante. */
-function partesLondres(d: Date) {
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).formatToParts(d).map((x) => [x.type, x.value]),
-  );
-  return { ano: +p.year, mes: +p.month, dia: +p.day, hora: +p.hour % 24, minuto: +p.minute };
-}
-
-/** O instante de uma hora cheia de Londres num dia de Londres (lida com o horário de verão). */
-function londres(ano: number, mes: number, dia: number, hora: number): Date {
-  const palpite = new Date(Date.UTC(ano, mes - 1, dia, hora));
-  const visto = partesLondres(palpite);
-  const diferencaHoras = visto.hora - hora + (visto.dia !== dia ? (visto.dia > dia ? 24 : -24) : 0);
-  return new Date(palpite.getTime() - diferencaHoras * 3_600_000);
-}
-
-function diaSeguinte(d: Date, hora: number): Date {
-  const p = partesLondres(d);
-  const amanha = new Date(Date.UTC(p.ano, p.mes - 1, p.dia + 1));
-  return londres(amanha.getUTCFullYear(), amanha.getUTCMonth() + 1, amanha.getUTCDate(), hora);
-}
-
-/** Fora das 8h às 20h de Londres, empurra para as 8h (do mesmo dia ou do seguinte). */
-function dentroDaJanela(d: Date): Date {
-  const p = partesLondres(d);
-  if (p.hora >= JANELA_INICIO && p.hora < JANELA_FIM) return d;
-  if (p.hora < JANELA_INICIO) return londres(p.ano, p.mes, p.dia, JANELA_INICIO);
-  return diaSeguinte(d, JANELA_INICIO);
+/** O encoded id do Zendesk só com o formato dele; qualquer outra coisa não entra no e-mail. */
+function refDoTicket(ref: string | null | undefined): string | null {
+  const r = String(ref ?? "").trim().toUpperCase();
+  return /^[A-Z0-9]{4,12}-[A-Z0-9]{3,12}$/.test(r) ? r : null;
 }
 
 /**
- * Quando cada e-mail sai, a partir do momento em que a pessoa parou.
- *
- * 1: 30 minutos depois (fora da janela, 8h). 2: 4 horas depois do 1; passou
- * das 20h, vai para as 8h do dia seguinte. 3: 10h do dia seguinte ao do
- * e-mail 2, então quando o 2 atrasa o 3 atrasa junto e os dois nunca chegam
- * com duas horas de diferença.
+ * O encoded id escondido (mesma cor do fundo, 1px), como o Zendesk faz: some
+ * para quem lê e volta na citação da resposta. Não é `display:none` porque há
+ * cliente de e-mail que corta o que está oculto ao citar.
  */
-export function agendaDoAbandono(parouEm: Date): { email1: Date; email2: Date; email3: Date } {
-  const email1 = dentroDaJanela(new Date(parouEm.getTime() + 30 * 60_000));
-  const email2 = dentroDaJanela(new Date(email1.getTime() + 4 * 3_600_000));
-  const email3 = diaSeguinte(email2, 10);
-  return { email1, email2, email3 };
+function refEscondida(ref: string | null | undefined): string {
+  const r = refDoTicket(ref);
+  return r
+    ? `<span class="zd_encoded_id" aria-hidden="true" style="color:${CLIENT_BRAND.canvas}; font-size:1px; line-height:1px;">[${escapeHtml(r)}]</span>`
+    : "";
 }
-
-// ---------------------------------------------------------------- peças
 
 function preheaderOculto(texto: string): string {
   return `<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:${CLIENT_BRAND.canvas}; opacity:0;">${escapeHtml(texto)}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>`;
@@ -201,7 +174,7 @@ function caixaDoCodigo(d: ReservaAbandonada): string {
   </table>`;
 }
 
-function montar(opts: { preheader: string; etiqueta: string; titulo: string; nome: string; corpo: string; base: string; unsubscribeUrl: string }): string {
+function montar(opts: { preheader: string; etiqueta: string; titulo: string; nome: string; corpo: string; base: string; unsubscribeUrl: string; ticketRef?: string | null }): string {
   const logo = `${opts.base}/email/abandono/fixfy-logo-white.png`;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -247,6 +220,7 @@ ${preheaderOculto(opts.preheader)}
         You are receiving this because you started a booking at getfixfy.com.<br>
         ${EMPRESA}<br>
         <a href="${escapeHtml(opts.unsubscribeUrl)}" style="color:${CLIENT_BRAND.gray}; text-decoration:underline;">Unsubscribe</a>
+        ${refEscondida(opts.ticketRef)}
       </td></tr>
     </table>
   </td></tr>
@@ -261,7 +235,8 @@ function primeiroNome(d: ReservaAbandonada): string {
 }
 
 function rodapeTexto(d: ReservaAbandonada): string {
-  return `\n\nThe Fixfy Team\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}`;
+  const ref = refDoTicket(d.ticketRef);
+  return `\n\nThe Fixfy Team\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
 }
 
 // ---------------------------------------------------------------- os três
@@ -291,7 +266,7 @@ Your booking has not been confirmed yet, but you can continue from exactly where
 Finish my booking: ${d.resumeUrl}
 
 Have a question before booking? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
-  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Booking saved", titulo: "Your fixed price is waiting", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl }) };
+  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Booking saved", titulo: "Your fixed price is waiting", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
 }
 
 export function email2(d: ReservaAbandonada): EmailPronto {
@@ -336,7 +311,7 @@ Your details are still saved, so you can continue without entering everything ag
 Finish my booking: ${d.resumeUrl}
 
 Would you prefer to speak with someone first? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
-  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Before you book", titulo: "Everything included, nothing hidden", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl }) };
+  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Before you book", titulo: "Everything included, nothing hidden", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
 }
 
 export function email3(d: ReservaAbandonada): EmailPronto {
@@ -384,6 +359,6 @@ Have a question before confirming? Chat with us on WhatsApp: ${d.whatsappUrl}${r
     subject,
     preheader,
     text,
-    html: montar({ preheader, etiqueta: unico ? `${pct}% off · 48 hours` : `${pct}% off`, titulo: `${pct}% off, already applied`, nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl }),
+    html: montar({ preheader, etiqueta: unico ? `${pct}% off · 48 hours` : `${pct}% off`, titulo: `${pct}% off, already applied`, nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }),
   };
 }

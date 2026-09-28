@@ -88,14 +88,24 @@ export async function sendTemplate(input: {
   name: string;
   language?: string;
   bodyParams?: string[];
+  /**
+   * A parte variável de um botão de link (`https://site/{{1}}`), pela posição
+   * do botão no template (0 = o primeiro). Botão de resposta rápida não leva nada.
+   */
+  urlButtons?: Array<{ index: number; suffix: string }>;
 }): Promise<{ messageId: string; to: string }> {
   const to = toWhatsAppNumber(input.to);
   if (!to) throw new WhatsAppError(`número inválido para WhatsApp: ${input.to}`);
   if (!phoneNumberId()) throw new WhatsAppError("WHATSAPP_PHONE_NUMBER_ID is not set");
 
-  const components = input.bodyParams?.length
-    ? [{ type: "body", parameters: input.bodyParams.map((text) => ({ type: "text", text })) }]
-    : undefined;
+  const partes: Record<string, unknown>[] = [];
+  if (input.bodyParams?.length) {
+    partes.push({ type: "body", parameters: input.bodyParams.map((text) => ({ type: "text", text })) });
+  }
+  for (const b of input.urlButtons ?? []) {
+    partes.push({ type: "button", sub_type: "url", index: String(b.index), parameters: [{ type: "text", text: b.suffix }] });
+  }
+  const components = partes.length ? partes : undefined;
 
   const data = await call<{ messages?: { id: string }[] }>(`${phoneNumberId()}/messages`, {
     method: "POST",
@@ -124,32 +134,51 @@ export type TemplateInfo = {
   /** Quantas variáveis o corpo pede ({{1}}, {{2}}…), para o envio não errar a conta. */
   bodyVariables: number;
   body: string;
+  /** Os botões na ordem do template: o `index` do envio é a posição aqui. */
+  buttons: Array<{ type: string; text: string; url?: string }>;
 };
+
+type TemplateDaMeta = {
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  components?: { type: string; text?: string; buttons?: { type: string; text?: string; url?: string }[] }[];
+};
+
+function paraTemplateInfo(t: TemplateDaMeta): TemplateInfo {
+  const body = t.components?.find((c) => c.type?.toUpperCase() === "BODY")?.text ?? "";
+  const vars = new Set((body.match(/\{\{\d+\}\}/g) ?? []).map((v) => v));
+  const botoes = t.components?.find((c) => c.type?.toUpperCase() === "BUTTONS")?.buttons ?? [];
+  return {
+    name: t.name,
+    language: t.language,
+    status: t.status,
+    category: t.category,
+    bodyVariables: vars.size,
+    body,
+    buttons: botoes.map((b) => ({ type: String(b.type ?? "").toUpperCase(), text: b.text ?? "", ...(b.url ? { url: b.url } : {}) })),
+  };
+}
 
 /** Os templates da conta, do jeito que a Meta aprovou. Só leitura. */
 export async function listTemplates(): Promise<TemplateInfo[]> {
   if (!wabaId()) throw new WhatsAppError("WHATSAPP_WABA_ID is not set");
-  const data = await call<{
-    data?: {
-      name: string;
-      language: string;
-      status: string;
-      category: string;
-      components?: { type: string; text?: string }[];
-    }[];
-  }>(`${wabaId()}/message_templates?limit=100`);
-  return (data.data ?? []).map((t) => {
-    const body = t.components?.find((c) => c.type?.toUpperCase() === "BODY")?.text ?? "";
-    const vars = new Set((body.match(/\{\{\d+\}\}/g) ?? []).map((v) => v));
-    return {
-      name: t.name,
-      language: t.language,
-      status: t.status,
-      category: t.category,
-      bodyVariables: vars.size,
-      body,
-    };
-  });
+  const data = await call<{ data?: TemplateDaMeta[] }>(`${wabaId()}/message_templates?limit=100`);
+  return (data.data ?? []).map(paraTemplateInfo);
+}
+
+/**
+ * Um template pelo nome e idioma, com o status de agora (APPROVED, PENDING,
+ * PAUSED, DISABLED, REJECTED). Null quando não existe nesse idioma. Só leitura.
+ */
+export async function buscarTemplate(nome: string, idioma: string): Promise<TemplateInfo | null> {
+  if (!wabaId()) throw new WhatsAppError("WHATSAPP_WABA_ID is not set");
+  const data = await call<{ data?: TemplateDaMeta[] }>(
+    `${wabaId()}/message_templates?name=${encodeURIComponent(nome)}&fields=name,language,status,category,components`,
+  );
+  const t = (data.data ?? []).find((x) => x.name === nome && x.language === idioma);
+  return t ? paraTemplateInfo(t) : null;
 }
 
 export type SaudeDoNumero = {

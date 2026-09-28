@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { WhatsAppError, sendTemplate, toWhatsAppNumber, whatsappConfigured } from "./cloud";
+import { WhatsAppError, buscarTemplate, sendTemplate, toWhatsAppNumber, whatsappConfigured } from "./cloud";
 
 const fetchOriginal = globalThis.fetch;
 
@@ -72,6 +72,56 @@ describe("envio de template", () => {
         ],
       },
     });
+  });
+
+  it("botão de link com parte variável vai como component `button` na posição dele", async () => {
+    const chamadas = fetchFalso();
+    await sendTemplate({
+      to: "07123456789",
+      name: "fixfy_booking_recovery_v1",
+      language: "en_GB",
+      bodyParams: ["Ana", "2 bed deep clean", "COMEBACK10"],
+      urlButtons: [{ index: 0, suffix: "?s=clean&size=2&promo=COMEBACK10" }],
+    });
+    const t = chamadas[0].body.template as { components: unknown[] };
+    assert.deepEqual(t.components, [
+      { type: "body", parameters: [{ type: "text", text: "Ana" }, { type: "text", text: "2 bed deep clean" }, { type: "text", text: "COMEBACK10" }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: "?s=clean&size=2&promo=COMEBACK10" }] },
+    ]);
+  });
+
+  it("lê um template pelo nome: status e a ordem dos botões", async () => {
+    process.env.WHATSAPP_WABA_ID = "999";
+    const chamadas = fetchFalso({
+      body: {
+        data: [
+          {
+            name: "fixfy_booking_recovery_v1",
+            language: "en_GB",
+            status: "PENDING",
+            category: "MARKETING",
+            components: [
+              { type: "BODY", text: "Hi {{1}}, your {{2}} price is still saved, code {{3}}." },
+              { type: "BUTTONS", buttons: [{ type: "URL", text: "Finish my booking", url: "https://www.getfixfy.com/{{1}}" }, { type: "QUICK_REPLY", text: "Stop promotions" }] },
+            ],
+          },
+        ],
+      },
+    });
+    const t = await buscarTemplate("fixfy_booking_recovery_v1", "en_GB");
+    delete process.env.WHATSAPP_WABA_ID;
+    assert.match(chamadas[0].url, /\/999\/message_templates\?name=fixfy_booking_recovery_v1&fields=/);
+    assert.equal(t?.status, "PENDING");
+    assert.equal(t?.bodyVariables, 3);
+    assert.deepEqual(t?.buttons.map((b) => b.type), ["URL", "QUICK_REPLY"]);
+  });
+
+  it("template que não existe naquele idioma volta null", async () => {
+    process.env.WHATSAPP_WABA_ID = "999";
+    fetchFalso({ body: { data: [{ name: "x", language: "en_US", status: "APPROVED", category: "MARKETING" }] } });
+    const t = await buscarTemplate("x", "en_GB");
+    delete process.env.WHATSAPP_WABA_ID;
+    assert.equal(t, null);
   });
 
   it("template sem variável vai sem components: mandar vazio faz a Meta recusar", async () => {

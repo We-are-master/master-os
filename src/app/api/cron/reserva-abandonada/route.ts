@@ -2,7 +2,8 @@
  * A volta do motor da reserva abandonada. O n8n chama a cada 10 minutos.
  *
  * Esta rota EXECUTA quando RESERVA_ABANDONADA=on: chamar "para ver se está de
- * pé" manda e-mail de verdade. Para olhar sem mexer:
+ * pé" manda e-mail e WhatsApp de verdade, abre ticket no Zendesk e cria código
+ * na Stripe. Para olhar sem mexer (o ensaio só LÊ o Zendesk e a Meta):
  *
  *   curl -H "Authorization: Bearer $CRON_SECRET" \
  *        "https://app.getfixfy.com/api/cron/reserva-abandonada?dry-run=1"
