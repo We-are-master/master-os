@@ -14,7 +14,9 @@ import { DEFAULT_PERMISSIONS } from "@/services/admin-config";
  * Only keys that actually change what a non-admin sees. Workforce (`team`) and
  * Settings (`settings`) stay OUT on purpose: /people is hard admin-only (nav +
  * server guard) and the Settings admin tabs are role-gated — a checkbox here
- * would promise access the rest of the system refuses to give.
+ * would promise access the rest of the system refuses to give. Same rule for
+ * actions: manage_team / manage_roles / delete_data / export_data are read by
+ * nothing (team routes are admin-only), so they are not offered here.
  */
 const PAGE_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] = [
   { key: "dashboard", label: "Pulse", hint: "Overview dashboard" },
@@ -28,12 +30,15 @@ const PAGE_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] =
   { key: "service_catalog", label: "Services & pricing" },
 ];
 
-const ACTION_PERMISSIONS: { key: PermissionKey; label: string }[] = [
-  { key: "manage_team", label: "Manage team" },
-  { key: "manage_roles", label: "Manage roles" },
-  { key: "delete_data", label: "Delete data" },
-  { key: "export_data", label: "Export data" },
+const ACTION_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] = [
+  { key: "manage_partners", label: "Manage partners", hint: "Activate, edit, partner login email & password" },
+  { key: "manage_jobs", label: "Manage jobs", hint: "Job owner & Setup tab (not money)" },
 ];
+
+const VISIBLE_KEYS = new Set<PermissionKey>([
+  ...PAGE_PERMISSIONS.map((p) => p.key),
+  ...ACTION_PERMISSIONS.map((p) => p.key),
+]);
 
 interface PermissionsPickerProps {
   role: RoleKey;
@@ -58,7 +63,9 @@ export function PermissionsPicker({ role, matrix, value, onChange, disabled }: P
   }, [matrix, role]);
 
   const isAdmin = role === "admin";
-  const overrideCount = Object.keys(value).length;
+  // Overrides on keys this picker no longer shows still live in the profile;
+  // count only what the person can actually see and untick here.
+  const overrideCount = Object.keys(value).filter((k) => VISIBLE_KEYS.has(k as PermissionKey)).length;
 
   const toggle = (key: PermissionKey, checked: boolean) => {
     const roleDefault = roleDefaults[key] === true;

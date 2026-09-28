@@ -15,7 +15,9 @@ export type PermissionKey =
   | "manage_team"
   | "manage_roles"
   | "delete_data"
-  | "export_data";
+  | "export_data"
+  | "manage_partners"
+  | "manage_jobs";
 
 export type RoleKey = "admin" | "manager" | "operator";
 
@@ -36,6 +38,8 @@ export const PERMISSION_KEYS: readonly PermissionKey[] = [
   "manage_roles",
   "delete_data",
   "export_data",
+  "manage_partners",
+  "manage_jobs",
 ] as const;
 
 export type PermissionsByRole = Record<RoleKey, Record<PermissionKey, boolean>>;

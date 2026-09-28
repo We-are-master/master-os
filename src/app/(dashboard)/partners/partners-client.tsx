@@ -54,6 +54,7 @@ import { getStatusCounts, getAggregates } from "@/services/base";
 import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import type { ListParams } from "@/services/base";
 import {
   getTeamMembers,
@@ -280,7 +281,7 @@ function PartnersDirectoryGridView({
   onSelectionChange,
   selectedPartnerId,
   onOpenPartner,
-  isAdmin,
+  canManagePartners,
   bulkActionsSlot,
   catalogServices,
   maxEarningsInView,
@@ -300,7 +301,7 @@ function PartnersDirectoryGridView({
   onSelectionChange: (ids: Set<string>) => void;
   selectedPartnerId?: string | null;
   onOpenPartner: (p: Partner) => void;
-  isAdmin: boolean;
+  canManagePartners: boolean;
   bulkActionsSlot: ReactNode;
   catalogServices: readonly CatalogService[];
   maxEarningsInView: number;
@@ -311,12 +312,12 @@ function PartnersDirectoryGridView({
   onSendOnboardingLink: (p: Partner) => void;
 }) {
   const allIds = data.map((p) => p.id);
-  const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
-  const someSelected = isAdmin && allIds.some((id) => selectedIds.has(id));
+  const allSelected = canManagePartners && data.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = canManagePartners && allIds.some((id) => selectedIds.has(id));
   const selectionCount = selectedIds.size;
 
   const toggleAll = () => {
-    if (!isAdmin || !onSelectionChange) return;
+    if (!canManagePartners || !onSelectionChange) return;
     if (allSelected) {
       const next = new Set(selectedIds);
       for (const id of allIds) next.delete(id);
@@ -329,7 +330,7 @@ function PartnersDirectoryGridView({
   };
 
   const toggleOne = (id: string) => {
-    if (!isAdmin || !onSelectionChange) return;
+    if (!canManagePartners || !onSelectionChange) return;
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -338,7 +339,7 @@ function PartnersDirectoryGridView({
 
   return (
     <div className="relative overflow-hidden">
-      {isAdmin ? (
+      {canManagePartners ? (
         <AnimatePresence>
           {selectionCount > 0 ? (
             <motion.div
@@ -425,7 +426,7 @@ function PartnersDirectoryGridView({
                   isOpen ? "border-primary/40 bg-primary/[0.04]" : "",
                 )}
               >
-                {isAdmin ? (
+                {canManagePartners ? (
                   <div
                     className="absolute left-3 top-3 z-[1]"
                     role="presentation"
@@ -436,7 +437,7 @@ function PartnersDirectoryGridView({
                   </div>
                 ) : null}
 
-                <div className={cn("p-4 flex flex-col gap-3", isAdmin && "pt-11")}>
+                <div className={cn("p-4 flex flex-col gap-3", canManagePartners && "pt-11")}>
                   <div className="flex gap-3 min-w-0">
                     <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} className="shrink-0" />
                     <div className="min-w-0 flex-1">
@@ -1221,8 +1222,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const { profile } = useProfile();
+  const { can } = useAdminConfig();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
-  const isAdmin = profile?.role === "admin";
+  const canManagePartners = can("manage_partners");
   const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
   const router = useRouter();
 
@@ -2670,7 +2672,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 pageSize={PARTNERS_PAGE_SIZE}
                 onPageChange={setPage}
                 loading={loading}
-                selectable={isAdmin}
+                selectable={canManagePartners}
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 className="border-0 shadow-none rounded-none"
@@ -2728,7 +2730,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   setPartnerDrawerInitialTab(undefined);
                   setSelectedPartner(p);
                 }}
-                isAdmin={isAdmin}
+                canManagePartners={canManagePartners}
                 bulkActionsSlot={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
@@ -4289,7 +4291,8 @@ function PartnerDetailDrawer({
   const [loadingFinance, setLoadingFinance] = useState(false);
   const [newNote, setNewNote] = useState("");
   const { profile } = useProfile();
-  const isAdmin = profile?.role === "admin";
+  const { can } = useAdminConfig();
+  const canManagePartners = can("manage_partners");
   const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
 
   const isAppUserMode = !!teamMember;
@@ -4967,7 +4970,7 @@ function PartnerDetailDrawer({
       setActivateForceOpen(false);
 
       let postActivateNote = "";
-      if (isAdmin) {
+      if (canManagePartners) {
         try {
           if (partner.auth_user_id) {
             await syncAppUserRow(partner.auth_user_id, partner.id);
@@ -5004,7 +5007,7 @@ function PartnerDetailDrawer({
         toast.success(`Partner activated${postActivateNote}`);
       }
     },
-    [partner, computedCompliance, onPartnerPatch, activateAccountType, isAdmin, syncAppUserRow, linkEmail, linkPartnerAppAccountByEmail],
+    [partner, computedCompliance, onPartnerPatch, activateAccountType, canManagePartners, syncAppUserRow, linkEmail, linkPartnerAppAccountByEmail],
   );
 
   const submitDeactivate = useCallback(async () => {
@@ -5334,7 +5337,7 @@ function PartnerDetailDrawer({
               <p className="text-xs text-text-tertiary">{appFinancial.jobs_count} jobs, {appFinancial.completed_count} completed · {appFinancial.self_bills_count} self-bills</p>
             </div>
           )}
-          {tab === "actions" && isAdmin && (
+          {tab === "actions" && canManagePartners && (
             <div className="p-6 space-y-5">
               <p className="text-sm font-semibold text-text-primary">Admin actions</p>
               <div className="space-y-3">
@@ -5421,7 +5424,7 @@ function PartnerDetailDrawer({
               </div>
             </div>
           )}
-          {tab === "actions" && !isAdmin && <div className="p-6 text-sm text-text-tertiary">Admin only</div>}
+          {tab === "actions" && !canManagePartners && <div className="p-6 text-sm text-text-tertiary">Needs Manage partners access</div>}
         </div>
       </Drawer>
     );
@@ -5525,7 +5528,7 @@ function PartnerDetailDrawer({
             catalogServices={partnerCatalogForIds}
             className="min-w-0"
           />
-          {isAdmin ? (
+          {canManagePartners ? (
             partner.status !== "active" ? (
               <Button
                 size="sm"
@@ -5749,7 +5752,7 @@ function PartnerDetailDrawer({
                       )}
                       <div className="flex shrink-0 items-center gap-1">
                         {partner.verified ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> : null}
-                        {isAdmin && !editingOverview ? (
+                        {canManagePartners && !editingOverview ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -5766,7 +5769,7 @@ function PartnerDetailDrawer({
                             Edit name
                           </Button>
                         ) : null}
-                        {isAdmin ? (
+                        {canManagePartners ? (
                           <Button
                             size="sm"
                             variant={editingOverview ? "outline" : "ghost"}
@@ -6104,7 +6107,7 @@ function PartnerDetailDrawer({
               <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
-                  {isAdmin ? (
+                  {canManagePartners ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -6131,7 +6134,7 @@ function PartnerDetailDrawer({
                 </p>
               </div>
             </div>
-            {isAdmin && editingOverview && (
+            {canManagePartners && editingOverview && (
               <div className="flex flex-col @sm:flex-row gap-2">
                 <Button size="sm" className="flex-1 min-h-10" onClick={handleSaveOverview}>
                   Save changes
@@ -6161,12 +6164,12 @@ function PartnerDetailDrawer({
                     kind="partner"
                     partner={partner}
                     onPartnerUpdate={onPartnerUpdate}
-                    canEdit={isAdmin}
+                    canEdit={canManagePartners}
                   />
                 </DrawerSection>
 
                 <DrawerSection title="Coverage" summary={formatPartnerCoverageSummary(partner) || "Coverage TBC"}>
-                  <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
+                  <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
                 </DrawerSection>
 
                 <DrawerSection title="Rate card" summary="Prices agreed with this partner">
@@ -6200,7 +6203,7 @@ function PartnerDetailDrawer({
             </div>
           </div>
 
-          {isAdmin && (
+          {canManagePartners && (
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <div className="flex items-center gap-1.5">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mobile app account</p>
@@ -6314,7 +6317,7 @@ function PartnerDetailDrawer({
             </div>
           )}
 
-          {partner.auth_user_id && isAdmin && (
+          {partner.auth_user_id && canManagePartners && (
             <div className="pt-4 border-t border-border-light space-y-3">
               <p className="text-sm font-semibold text-text-primary">Admin actions</p>
               <div>
@@ -6570,10 +6573,10 @@ function PartnerDetailDrawer({
                   className="h-8 text-xs"
                   onClick={() => {
                     setTab("overview");
-                    if (isAdmin) setEditingOverview(true);
+                    if (canManagePartners) setEditingOverview(true);
                   }}
                 >
-                  {isAdmin ? "Fix in Overview" : "View Overview"}
+                  {canManagePartners ? "Fix in Overview" : "View Overview"}
                 </Button>
               </div>
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
@@ -7058,7 +7061,7 @@ function PartnerDetailDrawer({
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
               <div className="flex items-center gap-2">
-                {isAdmin && (
+                {canManagePartners && (
                   <Button
                     size="sm"
                     variant="outline"

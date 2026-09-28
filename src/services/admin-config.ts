@@ -361,6 +361,8 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     manage_roles: true,
     delete_data: true,
     export_data: true,
+    manage_partners: true,
+    manage_jobs: true,
   },
   manager: {
     dashboard: true,
@@ -378,6 +380,8 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     manage_roles: false,
     delete_data: false,
     export_data: true,
+    manage_partners: true,
+    manage_jobs: true,
   },
   operator: {
     dashboard: true,
@@ -395,6 +399,10 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     manage_roles: false,
     delete_data: false,
     export_data: false,
+    // Contas de parceiro também têm perfil operator: ação de gestão nunca
+    // nasce ligada aqui, só por override na pessoa (Workforce → Login Details).
+    manage_partners: false,
+    manage_jobs: false,
   },
 };
 
