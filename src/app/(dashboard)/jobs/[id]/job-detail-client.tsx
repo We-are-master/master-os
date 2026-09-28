@@ -115,6 +115,7 @@ import {
   type AppJobReportRow,
 } from "@/services/job-reports";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { useCancelJob } from "@/hooks/use-cancel-job";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
@@ -1531,6 +1532,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     parking: 0,
   });
   const isAdmin = profile?.role === "admin";
+  const { can } = useAdminConfig();
+  /** Job owner + Setup tab. Payments and Financial setup stay on isAdmin. */
+  const canManageJobs = can("manage_jobs");
   const jobRef = useRef<Job | null>(null);
   const autoOwnerFillRef = useRef<Set<string>>(new Set());
   /** User chose "Unassigned" for job owner — do not auto-fill with current profile. */
@@ -2764,9 +2768,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job?.client_id, job?.updated_at]);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!canManageJobs) return;
     listAssignableUsers().then(setAssignableUsers).catch(() => {});
-  }, [isAdmin]);
+  }, [canManageJobs]);
 
   useEffect(() => {
     if (!partnerModalOpen) return;
@@ -3167,10 +3171,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job?.id, job?.additional_notes]);
 
   useEffect(() => {
-    if (!isAdmin && detailTab === 5) {
+    if (!canManageJobs && detailTab === 5) {
       setDetailTab(0);
     }
-  }, [isAdmin, detailTab]);
+  }, [canManageJobs, detailTab]);
 
   /** Sem reclamação não há aba 6; se o estado ficou nela, volta pro começo. */
   useEffect(() => {
@@ -8111,7 +8115,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     { label: "Reports", index: 3 as const },
                     { label: "Notes", index: 4 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
-                    ...(isAdmin ? [{ label: "Setup", index: 5 as const }] : []),
+                    ...(canManageJobs ? [{ label: "Setup", index: 5 as const }] : []),
                   ] as const
                 ).map((tab) => (
                   <button
@@ -8759,7 +8763,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             ) : null}
 
-            {isAdmin && detailTab === 5 ? (
+            {canManageJobs && detailTab === 5 ? (
             <div className="space-y-3">
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden" open>
               <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
@@ -8782,6 +8786,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             </details>
 
+            {/* Money stays admin: manage_jobs opens Setup for the Zendesk link only. */}
+            {isAdmin && (
             <details className="group rounded-xl border border-border-light bg-card overflow-hidden" open>
               <summary className="flex items-center justify-between p-3 cursor-pointer select-none">
                 <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Financial setup</p>
@@ -8942,6 +8948,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 <Button type="button" size="sm" variant="primary" loading={savingFin} onClick={handleSaveFinancials}>Save</Button>
               </div>
             </details>
+            )}
             </div>
             ) : null}
               </div>
@@ -9082,7 +9089,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
               <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Job owner</p>
-              {isAdmin ? (
+              {canManageJobs ? (
                 <JobOwnerSelect
                   value={job.owner_id}
                   fallbackName={job.owner_name}

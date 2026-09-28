@@ -625,12 +625,12 @@ function TeamTab() {
 const ALL_PERMISSIONS: PermissionKey[] = [
   "dashboard", "requests", "leads", "quotes", "jobs", "service_catalog", "partners",
   "accounts", "finance", "team", "settings", "manage_team", "manage_roles",
-  "delete_data", "export_data",
+  "delete_data", "export_data", "manage_partners", "manage_jobs",
 ];
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "service_catalog"] },
-  { label: "Network & Finance", keys: ["partners", "accounts", "finance", "team"] },
+  { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "manage_jobs", "service_catalog"] },
+  { label: "Network & Finance", keys: ["partners", "manage_partners", "accounts", "finance", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
 
@@ -1072,6 +1072,8 @@ const permissionLabels: Record<string, string> = {
   manage_roles: "Manage Roles",
   delete_data: "Delete Records",
   export_data: "Export Data",
+  manage_partners: "Manage Partners",
+  manage_jobs: "Manage Jobs",
 };
 
 function PermissionsTab() {

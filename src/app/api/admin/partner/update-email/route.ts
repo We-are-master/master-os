@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { assertPartnerLoginTarget, requireStaffPermission } from "@/lib/staff-permission";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
-  const supabase = await import("@/lib/supabase/server").then((m) => m.createClient());
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", auth.user.id).single();
-  if ((profile as { role?: string } | null)?.role !== "admin") {
-    return NextResponse.json({ error: "Forbidden", message: "Admin only" }, { status: 403 });
-  }
+  const gate = await requireStaffPermission(auth, "manage_partners");
+  if (gate instanceof NextResponse) return gate;
 
   try {
     const { userId, newEmail } = await req.json();
@@ -26,6 +24,10 @@ export async function POST(req: NextRequest) {
     }
 
     const admin = createServiceClient();
+    if (gate.role !== "admin") {
+      const denied = await assertPartnerLoginTarget(admin, userId);
+      if (denied) return denied;
+    }
     const { data: user, error: updateError } = await admin.auth.admin.updateUserById(userId, { email });
     if (updateError) {
       return NextResponse.json({ error: updateError.message }, { status: 400 });
