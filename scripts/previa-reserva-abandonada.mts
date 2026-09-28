@@ -9,13 +9,16 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { agendaDoAbandono, email1, email2, email3, type ReservaAbandonada } from "../src/lib/emails/reserva-abandonada";
+import { email1, email2, email3, type ReservaAbandonada } from "../src/lib/emails/reserva-abandonada";
+import { planoDaSequencia } from "../src/lib/site-leads/agenda";
 
 const saida = process.argv[2] ?? "previa-reserva-abandonada";
 mkdirSync(saida, { recursive: true });
 
 const parou = new Date("2026-09-24T14:12:00Z");
-const agenda = agendaDoAbandono(parou);
+// Sem atraso: cada passo sai na hora marcada (na vida real conta do envio de verdade do anterior).
+const plano = planoDaSequencia({ parouEm: parou, enviados: {}, comWhatsApp: true });
+const agenda = { email1: plano[1]!, email2: plano[2]!, email3: plano[3]! };
 const expira = new Date(agenda.email3.getTime() + 48 * 3_600_000);
 
 const exemplo: ReservaAbandonada = {
@@ -29,6 +32,7 @@ const exemplo: ReservaAbandonada = {
   unsubscribeUrl: "https://app.getfixfy.com/api/email/unsubscribe?t=exemplo",
   assetBase: "ASSET",
   promo: { code: "BACK-7K2Q", percentOff: 10, discountedPrice: 213.3, expiresAt: expira },
+  ticketRef: "ZRGGKR-JXX2N",
 };
 
 function embutir(html: string): string {

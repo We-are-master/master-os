@@ -59,6 +59,11 @@ export type LeadDaTela = {
   email1_sent_at: string | null;
   email2_sent_at: string | null;
   email3_sent_at: string | null;
+  /** 302: o quarto toque, o ticket do lead e a resposta do cliente. */
+  whatsapp_due_at?: string | null;
+  whatsapp_sent_at?: string | null;
+  zendesk_ticket_id?: number | null;
+  replied_at?: string | null;
   promo_code: string | null;
   won_at: string | null;
   booking_ref: string | null;
@@ -108,13 +113,29 @@ function origem(l: LeadDaTela, canais: CanalDef[]): { linha: string; detalhe: st
 }
 
 function sequencia(l: LeadDaTela): string {
-  if (l.status === "won") return l.email3_sent_at ? "Recovered by email 3" : l.email2_sent_at ? "Recovered by email 2" : l.email1_sent_at ? "Recovered by email 1" : "Paid, no email";
+  if (l.status === "won") {
+    return l.whatsapp_sent_at
+      ? "Recovered by WhatsApp"
+      : l.email3_sent_at ? "Recovered by email 3" : l.email2_sent_at ? "Recovered by email 2" : l.email1_sent_at ? "Recovered by email 1" : "Paid, no email";
+  }
+  if (l.replied_at && l.sequence_state !== "scheduled") return `Replied ${quando(l.replied_at)}`;
   if (l.sequence_state === "paused") return "Paused (in contact)";
   if (l.sequence_state === "stopped") return "Stopped";
-  if (l.sequence_state === "done") return "3 of 3 sent";
+  if (l.sequence_state === "done") return l.whatsapp_sent_at ? "4 of 4 sent" : "3 of 3 sent";
   if (l.sequence_state === "none") return "No automatic flow yet";
-  const [nome, hora] = !l.email1_sent_at ? ["Email 1", l.email1_due_at] : !l.email2_sent_at ? ["Email 2", l.email2_due_at] : ["Email 3", l.email3_due_at];
+  const [nome, hora] = !l.email1_sent_at
+    ? ["Email 1", l.email1_due_at]
+    : !l.email2_sent_at
+      ? ["Email 2", l.email2_due_at]
+      : !l.email3_sent_at || !l.whatsapp_due_at
+        ? ["Email 3", l.email3_due_at]
+        : ["WhatsApp", l.whatsapp_due_at ?? null];
   return `${nome} · ${quando(hora)}`;
+}
+
+/** O ticket do lead no Zendesk (o mesmo subdomínio padrão do selo de ticket do OS). */
+function linkDoTicket(id: number): string {
+  return `https://${process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN || "fixfy"}.zendesk.com/agent/tickets/${id}`;
 }
 
 function linhaEmail(enviado: string | null, agendado: string | null): string {
@@ -220,7 +241,7 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
         );
       },
     },
-    { key: "sequence", label: "Recovery emails", render: (l) => <span className="text-sm text-text-secondary">{sequencia(l)}</span> },
+    { key: "sequence", label: "Recovery", render: (l) => <span className="text-sm text-text-secondary">{sequencia(l)}</span> },
     {
       key: "status",
       label: "Status",
@@ -244,6 +265,11 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
         ["Email 1", linhaEmail(aberto.email1_sent_at, aberto.email1_due_at)],
         ["Email 2", linhaEmail(aberto.email2_sent_at, aberto.email2_due_at)],
         ["Email 3 · 10%", linhaEmail(aberto.email3_sent_at, aberto.email3_due_at)],
+        ...(aberto.whatsapp_sent_at || aberto.whatsapp_due_at
+          ? ([["WhatsApp · 10%", linhaEmail(aberto.whatsapp_sent_at ?? null, aberto.whatsapp_due_at ?? null)]] as Array<[string, string]>)
+          : []),
+        ...(aberto.replied_at ? ([["Replied", quando(aberto.replied_at)]] as Array<[string, string]>) : []),
+        ...(aberto.zendesk_ticket_id ? ([["Zendesk", `#${aberto.zendesk_ticket_id}`]] as Array<[string, string]>) : []),
         ...(aberto.promo_code ? ([["Promo code", aberto.promo_code]] as Array<[string, string]>) : []),
         ...(aberto.tags?.length ? ([["Tags", aberto.tags.join(", ")]] as Array<[string, string]>) : []),
         ...(aberto.notes ? ([["Notes", aberto.notes]] as Array<[string, string]>) : []),
@@ -257,8 +283,9 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
           title="Leads"
           infoTooltip={
             "People who started a booking at getfixfy.com and did not pay.\n\n" +
-            "Each one gets three recovery emails (30 min, +4 h, next day 10:00 with 10% off). Paying turns the lead into a customer and it leaves this list.\n\n" +
-            "In contact pauses the emails. Numbers and the funnel live in the office Leads Room."
+            "Each one gets email 1 thirty minutes after stopping (08:30 if that is at night), email 2 the next morning at 09:30, email 3 with 10% off the morning after, and a WhatsApp with the same code at 15:00 that day when there is a phone. Every step counts from when the previous one really went out.\n\n" +
+            "Each lead has one Zendesk ticket where replies land. Any reply stops the automatic touches and moves the lead to In contact. Paying turns the lead into a customer and it leaves this list.\n\n" +
+            "Numbers and the funnel live in the office Leads Room."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -358,6 +385,9 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
                     {aberto.resume_url ? (
                       <a href={aberto.resume_url} target="_blank" rel="noreferrer" className={LINK_ACAO}><ExternalLink className="h-3.5 w-3.5" />Open booking</a>
                     ) : null}
+                    {aberto.zendesk_ticket_id ? (
+                      <a href={linkDoTicket(aberto.zendesk_ticket_id)} target="_blank" rel="noreferrer" className={LINK_ACAO}><ExternalLink className="h-3.5 w-3.5" />Zendesk ticket</a>
+                    ) : null}
                   </div>
                 </section>
 
@@ -414,6 +444,9 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
                       {a.detail}
                       {a.kind === "email_sent" ? (
                         <span className="ml-1 text-xs text-text-tertiary">· {a.clicked_at ? "clicked" : a.opened_at ? "opened" : "not opened yet"}</span>
+                      ) : null}
+                      {a.kind === "whatsapp" ? (
+                        <span className="ml-1 text-xs text-text-tertiary">· {a.opened_at ? "read" : "not read yet"}</span>
                       ) : null}
                     </span>
                   </li>
