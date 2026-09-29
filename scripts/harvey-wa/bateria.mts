@@ -90,6 +90,10 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
     cliente: ["I need a gas safety certificate and an EICR for a 2 bed flat in SE1"],
     checar: (t) => [!(/£244/.test(t) || (/£79/.test(t) && /£165/.test(t))) && "nem o total £244 nem os dois preços (£79 + £165)"].filter(Boolean) as string[],
   },
+  banho: {
+    cliente: ["I need help with my bath"],
+    checar: (t) => [!/I['’]?m Harvey/i.test(t) && "não se apresentou na primeira resposta", !/\?/.test(t) && "não fez a pergunta pra entender o problema"].filter(Boolean) as string[],
+  },
   semvaga: {
     cliente: ["Hi, how much for a deep clean? 1 bed in SW4, 1 bathroom", "ok I'd like to book please"],
     checar: (t, f, r) => [r.link && "gerou link sem dia livre", !r.passou && "sem dia livre, não passou pra equipe", /see(ing)? (live )?dates|system|tool/i.test(t) && "falou de sistema"].filter(Boolean) as string[],
@@ -132,6 +136,11 @@ for (const nome of escolhidos) {
   const textoHarvey = conversa.filter((f) => f.papel === "harvey").map((f) => f.texto).join("\n");
   const problemas = caso.checar(textoHarvey, ferramentas, { passou, link });
   if (/[—–]/.test(textoHarvey)) problemas.push("usou travessão");
+  if ((textoHarvey.match(/Harvey/g) ?? []).length > 1 && nome !== "bot") problemas.push("repetiu o nome");
+  const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
+  if (nome !== "reclamacao" && nome !== "stop" && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
+  if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
+  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split("checkout.stripe.com")[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
   console.log(linhas.join("\n"));
