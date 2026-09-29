@@ -68,8 +68,11 @@ const FERRAMENTAS = [
     type: "function",
     function: {
       name: "get_available_dates",
-      description: "The days and arrival windows that can be booked (Monday to Saturday, never same day).",
-      parameters: { type: "object", properties: {} },
+      description: "The days and arrival windows that can be booked for these services (Monday to Saturday, never same day, fully booked days left out).",
+      parameters: {
+        type: "object",
+        properties: { services: { type: "array", items: { type: "string", enum: ["clean", "paint", "fix", "cert"] }, description: "what they are booking" } },
+      },
     },
   },
   {
@@ -196,7 +199,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
   }
-  if (nome === "get_available_dates") return (await site({ action: "slots" })).data;
+  if (nome === "get_available_dates") return (await site({ action: "slots", services: Array.isArray(a.services) ? a.services : [] })).data;
   if (nome === "hand_off_to_team") {
     r.passarParaEquipe = String(a.reason || "Harvey asked for a person");
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };

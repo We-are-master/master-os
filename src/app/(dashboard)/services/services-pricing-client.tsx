@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   LayoutGrid,
@@ -18,7 +18,7 @@ import { SearchInput } from "@/components/ui/input";
 import { KpiCard, Pill } from "@/components/fx/primitives";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listCatalogServices } from "@/services/catalog-services";
+import { listCatalogServices, listServiceCategories } from "@/services/catalog-services";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
   buildAllServicePricingViews,
@@ -304,6 +304,20 @@ function marginTierFromHead(head: { pay: number; charge: number }): MarginTier {
   return "bad";
 }
 
+/** Linha de título da categoria dentro da tabela de serviços. */
+function FragmentoCategoria({ nome, total, children }: { nome: string; total: number; children: ReactNode }) {
+  return (
+    <>
+      <tr>
+        <td colSpan={7} className="bg-surface-hover/60 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+          {nome} <span className="ml-1 font-normal normal-case text-text-tertiary">{total}</span>
+        </td>
+      </tr>
+      {children}
+    </>
+  );
+}
+
 function ServiceListRows({
   views,
   expandedIds,
@@ -554,6 +568,11 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
   const [statusFilter, setStatusFilter] = useState<ServicesStatusFilter>("active");
   const [search, setSearch] = useState("");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+
+  useEffect(() => {
+    void listServiceCategories().then(setCategories).catch(() => setCategories([]));
+  }, []);
 
   const allViews = useMemo(() => buildAllServicePricingViews(data), [data]);
   const kpis = useMemo(() => computeServicesPricingKpis(allViews), [allViews]);
@@ -749,12 +768,16 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
                     </td>
                   </tr>
                 ) : (
-                  <ServiceListRows
-                    views={filtered}
-                    expandedIds={expandedIds}
-                    onToggle={toggleExpanded}
-                    onEdit={editor.openEdit}
-                  />
+                  // Agrupado pela categoria (304); serviço sem categoria fica em "No category".
+                  [...categories, { id: "", name: "No category" }].map((cat) => {
+                    const doGrupo = filtered.filter((v) => (v.service.category_id ?? "") === cat.id || (!cat.id && !categories.some((c) => c.id === v.service.category_id)));
+                    if (!doGrupo.length) return null;
+                    return (
+                      <FragmentoCategoria key={cat.id || "none"} nome={cat.name} total={doGrupo.length}>
+                        <ServiceListRows views={doGrupo} expandedIds={expandedIds} onToggle={toggleExpanded} onEdit={editor.openEdit} />
+                      </FragmentoCategoria>
+                    );
+                  })
                 )}
               </tbody>
             </table>

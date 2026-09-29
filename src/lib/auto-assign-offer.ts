@@ -1,5 +1,5 @@
-/** Default hours an auto-assign offer stays open (trade portal countdown). */
-export const AUTO_ASSIGN_OFFER_HOURS_DEFAULT = 24;
+/** Horas que a oferta fica aberta (contagem do portal). 29/09/2026: 2h, depois abre para a categoria. */
+export const AUTO_ASSIGN_OFFER_HOURS_DEFAULT = 2;
 
 export function autoAssignOfferHours(): number {
   const raw = Number(process.env.AUTO_ASSIGN_OFFER_HOURS ?? AUTO_ASSIGN_OFFER_HOURS_DEFAULT);

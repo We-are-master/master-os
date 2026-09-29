@@ -849,6 +849,12 @@ export async function POST(req: NextRequest) {
       const catalog = await resolveCatalogServiceForSmartPrice(supabase, null, serviceType);
       if (catalog.ok) {
         resolvedCatalogServiceId = catalog.row.id;
+      } else {
+        // Serviço desativado no catálogo ainda é um serviço: o job fica ligado
+        // à categoria dele (plano de 29/09/2026: todo job com serviço).
+        const { data: inativos } = await supabase.from("service_catalog").select("id, name").is("deleted_at", null);
+        const achado = catalogServiceIdForTypeOfWorkLabel(serviceType, (inativos ?? []) as Pick<CatalogService, "id" | "name">[]);
+        if (achado) resolvedCatalogServiceId = achado;
       }
     }
     const fixedResolved = resolveFixedManualPricing({
@@ -885,6 +891,12 @@ export async function POST(req: NextRequest) {
       console.warn("[api/jobs] auto assign blocked by gate:", gate.missing.join(", "));
     }
   }
+  // Sem serviço do catálogo não há categoria, e sem categoria não há a quem
+  // oferecer (plano de 29/09/2026). O job nasce unassigned com o motivo.
+  if (autoAssign && !resolvedCatalogServiceId && !(catalogServiceIdIn && isValidUUID(catalogServiceIdIn))) {
+    autoAssign = false;
+    autoAssignBlocked = [...(autoAssignBlocked ?? []), "catalog service (type of work not in Settings → Services)"];
+  }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
   let matchedPartnerIds: string[] = [];
@@ -897,6 +909,7 @@ export async function POST(req: NextRequest) {
       postcode: propertyPostcode,
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
+      partnerCost: rateType === "hourly" ? null : partnerCost,
     });
   }
 
@@ -1004,6 +1017,24 @@ export async function POST(req: NextRequest) {
   if (insErr || !inserted) {
     console.error("[api/jobs] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
+  }
+
+  // Pagou antes do job (site, WhatsApp): o dinheiro entra no MESMO livro que o
+  // pay link usa (job_payments). Sem isto o final check não via o pagamento e
+  // o job caía em awaiting_payment cobrando de novo quem já pagou (29/09/2026).
+  if (paymentStatusIn) {
+    const valorPago = paymentAmountIn ?? (paymentStatusIn === "paid" ? clientPrice : null);
+    if (valorPago && valorPago > 0) {
+      const { error: payErr } = await supabase.from("job_payments").insert({
+        job_id: (inserted as { id: string }).id,
+        type: paymentStatusIn === "paid" ? "customer_final" : "customer_deposit",
+        amount: Math.round(valorPago * 100) / 100,
+        payment_date: (paidAtIn ?? new Date().toISOString()).slice(0, 10),
+        payment_method: "stripe",
+        note: `Paid at booking${paymentIntentIn ? ` · Stripe payment ${paymentIntentIn}` : ""}`,
+      });
+      if (payErr) console.error("[api/jobs] job_payments (paid at booking) failed:", payErr.message);
+    }
   }
 
   void geocodeUkAddressServer(propertyAddress)

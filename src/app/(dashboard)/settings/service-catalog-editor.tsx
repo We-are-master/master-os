@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { CatalogService, CatalogPricingMode, ServicePricingAddon, ServicePricingPreset } from "@/types/database";
+import type { CatalogService, CatalogPricingMode, ServiceCategory, ServicePricingAddon, ServicePricingPreset } from "@/types/database";
 import { useProfile } from "@/hooks/use-profile";
 import {
   createCatalogService,
   updateCatalogService,
+  listServiceCategories,
+  createServiceCategory,
 } from "@/services/catalog-services";
 import {
   parsePricingAddons,
@@ -55,6 +57,8 @@ const emptyForm = {
   sort_order: "0",
   is_active: true,
   display_icon_key: "",
+  /** Categoria (304). Vazio = ainda sem categoria. */
+  category_id: "",
 };
 
 type PresetFormRow = {
@@ -266,6 +270,31 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   /** When false, updating the service name also refreshes the suggested icon slug (until user picks Automatic or a manual icon). */
   const [catalogIconLocked, setCatalogIconLocked] = useState(false);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [creatingCategory, setCreatingCategory] = useState(false);
+
+  useEffect(() => {
+    void listServiceCategories()
+      .then(setCategories)
+      .catch(() => toast.error("Could not load service categories"));
+  }, []);
+
+  const addCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    setCreatingCategory(true);
+    try {
+      const nova = await createServiceCategory(newCategoryName);
+      setCategories((prev) => [...prev, nova]);
+      setForm((f) => ({ ...f, category_id: nova.id }));
+      setNewCategoryName("");
+      toast.success(`Category "${nova.name}" created`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the category");
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
 
   const notifySaved = useCallback(() => {
     options?.onSaved?.();
@@ -304,6 +333,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      category_id: row.category_id ?? "",
     });
   };
 
@@ -334,6 +364,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      category_id: row.category_id ?? "",
     });
     setCreateOpen(true);
   };
@@ -359,6 +390,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
         sort_order: Math.floor(Number(form.sort_order) || 0),
         is_active: form.is_active,
         display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+        category_id: form.category_id || null,
       };
     }
     return {
@@ -381,6 +413,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: Math.floor(Number(form.sort_order) || 0),
       is_active: form.is_active,
       display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+      category_id: form.category_id || null,
     };
   };
 
@@ -411,6 +444,10 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
     e.preventDefault();
     if (!form.name.trim()) {
       toast.error("Name is required");
+      return;
+    }
+    if (!form.category_id) {
+      toast.error("Choose a category");
       return;
     }
     const presetBuild = buildPresetsForSave();
@@ -444,6 +481,10 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
     e.preventDefault();
     if (!editRow || !form.name.trim()) {
       toast.error("Name is required");
+      return;
+    }
+    if (!form.category_id) {
+      toast.error("Choose a category");
       return;
     }
     const presetBuild = buildPresetsForSave();
@@ -621,6 +662,29 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
           }}
           placeholder="e.g. Boiler service"
         />
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1 basis-[12rem]">
+          <Select
+            label="Category *"
+            value={form.category_id}
+            onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+            options={[
+              { value: "", label: "Choose a category" },
+              ...categories.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+          />
+        </div>
+        <div className="flex min-w-0 flex-1 basis-[12rem] items-end gap-2">
+          <Input
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            placeholder="New category, e.g. Outdoor"
+          />
+          <Button type="button" variant="outline" size="sm" loading={creatingCategory} disabled={!newCategoryName.trim()} onClick={() => void addCategory()}>
+            Add
+          </Button>
+        </div>
       </div>
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-[12rem]">

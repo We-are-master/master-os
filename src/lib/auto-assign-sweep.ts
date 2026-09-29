@@ -10,8 +10,11 @@
  *   3. Refaz o matching e convida SÓ quem nunca recebeu o Job Offer daquele
  *      job (parceiro ativado depois do primeiro disparo entra; quem já
  *      recebeu não recebe de novo — regra de email do projeto).
- *   4. Encalhe: 24h sem aceite → reabre o ticket do job com nota interna
- *      (cai no Action Required), uma vez só (tag `ai_offer_stale`).
+ *   4. Degraus (29/09/2026): nas primeiras 2h só quem tem o serviço exato;
+ *      depois, quem tem a mesma CATEGORIA também recebe.
+ *   5. Encalhe: 4h sem aceite → reabre o ticket do job com nota interna e
+ *      põe quem ajuda (HARVEY_AJUDA_PARA) como seguidor, que é notificado;
+ *      uma vez só (tag `ai_offer_stale`).
  *
  * Nasce em MODO ENSAIO (lição de 20/08: rotina solta em produção sem ensaio
  * soltou um parceiro de 15 jobs). Só age com HARVEY_OFERTAS_ARMADO=1; sem a
@@ -26,8 +29,10 @@ import { resolveJobMatchServiceType } from "@/lib/zendesk-job-ingest";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { updateTicket, addTicketTags } from "@/lib/zendesk";
 
-const TETO_JOBS_POR_CICLO = 10;
-const ENCALHE_HORAS = 24;
+const TETO_JOBS_POR_CICLO = 30;
+/** Depois disso a oferta abre para a categoria inteira. */
+const DEGRAU_2_HORAS = Number(process.env.AUTO_ASSIGN_DEGRAU_2_HORAS ?? 2);
+const ENCALHE_HORAS = Number(process.env.AUTO_ASSIGN_ENCALHE_HORAS ?? 4);
 const TAG_ENCALHE = "ai_offer_stale";
 
 type JobDaVitrine = {
@@ -80,6 +85,15 @@ async function reabrirTicketComNota(ticketId: string, nota: string): Promise<voi
     body: JSON.stringify({ ticket: { status: "open" } }),
   });
   await addTicketTags(ticketId, [TAG_ENCALHE]);
+  // Quem ajuda vira seguidor do ticket: o Zendesk avisa a pessoa da nota.
+  const ajuda = (process.env.HARVEY_AJUDA_PARA ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+  if (ajuda.length) {
+    await fetch(`${base}/tickets/${ticketId}.json`, {
+      method: "PUT",
+      headers: { Authorization: auth, "content-type": "application/json" },
+      body: JSON.stringify({ ticket: { followers: ajuda.map((user_email) => ({ user_email, action: "put" })) } }),
+    }).catch((e) => console.error("[ofertas] seguidor falhou", ticketId, e));
+  }
 }
 
 export async function varrerOfertas(): Promise<ResultadoVarredura> {
@@ -164,6 +178,14 @@ export async function varrerOfertas(): Promise<ResultadoVarredura> {
       }
     }
 
+    // Há quanto tempo a oferta está no ar (primeiro convite ou criação do job).
+    const inicioOferta = Math.min(
+      ...invites.map((i) => (i.invited_at ? Date.parse(i.invited_at) : Infinity)),
+      job.created_at ? Date.parse(job.created_at) : Infinity,
+    );
+    const horasNoAr = Number.isFinite(inicioOferta) ? (agora - inicioOferta) / 3_600_000 : 0;
+    const degrau: "servico" | "categoria" = horasNoAr >= DEGRAU_2_HORAS ? "categoria" : "servico";
+
     // 3. Re-match: novos parceiros (ativados depois do disparo) entram; quem
     //    já recebeu o Job Offer nunca recebe email de novo.
     const matched = await matchPartnerIdsForWork(supabase, {
@@ -178,6 +200,9 @@ export async function varrerOfertas(): Promise<ResultadoVarredura> {
         startAt: job.scheduled_start_at,
         endAt: job.scheduled_end_at,
       },
+      jobId: job.id,
+      partnerCost: (job as { partner_cost?: number | null }).partner_cost ?? null,
+      degrau,
     });
     const desejados = matched.filter((id) => !recusaram.has(id));
     const novos = desejados.filter((id) => !jaConvidados.has(id));
@@ -227,7 +252,8 @@ export async function varrerOfertas(): Promise<ResultadoVarredura> {
           if (!tJson?.ticket?.tags?.includes(TAG_ENCALHE)) {
             await reabrirTicketComNota(
               tk,
-              `⚠️ HARVEY · ${job.reference} is ${Math.floor(horasParado)}h in auto assign with no acceptance. ` +
+              `⚠️ HARVEY · ${job.reference} is ${Math.floor(horasParado)}h in auto assign with no acceptance ` +
+                `(offered to the exact service, then to the whole category). ` +
                 `Decide: improve the partner pay, assign by hand, or cancel.`,
             );
           }

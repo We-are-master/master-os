@@ -5,17 +5,12 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import {
-  CATALOG_CATEGORY_LABELS,
-  CATALOG_CATEGORY_ORDER,
-  groupCatalogServicesByCategory,
-  type CatalogServiceCategory,
-} from "@/lib/catalog-service-categories";
+import { resolveCatalogServiceCategory } from "@/lib/catalog-service-categories";
 import { isCatalogTradeCategoryLabel, tradeCategoryCatalogRows } from "@/lib/partner-trade-categories";
-import { listCatalogServicesForPicker } from "@/services/catalog-services";
+import { listCatalogServicesForPicker, listServiceCategories } from "@/services/catalog-services";
 import { updatePartner } from "@/services/partners";
 import { getSupabase } from "@/services/base";
-import type { Account, CatalogService, Partner } from "@/types/database";
+import type { Account, CatalogService, Partner, ServiceCategory } from "@/types/database";
 import { resolveServiceDisplayIcon } from "@/lib/service-display-icons";
 
 type PartnerMode = {
@@ -143,20 +138,35 @@ export function CatalogTradesSkillsTab(props: Props) {
   const [enabledIds, setEnabledIds] = useState<Set<string>>(() => new Set());
   const [primaryId, setPrimaryId] = useState<string | null>(null);
 
-  const catalogByCategory = useMemo(() => groupCatalogServicesByCategory(catalog), [catalog]);
-  const catalogSections = useMemo(
-    () =>
-      CATALOG_CATEGORY_ORDER.map((category) => ({
-        category,
-        label: CATALOG_CATEGORY_LABELS[category],
-        rows: catalogByCategory.get(category) ?? [],
-      })).filter((s) => s.rows.length > 0),
-    [catalogByCategory],
-  );
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+
+  /**
+   * Seções pelas categorias do banco (304). Serviço ainda sem categoria cai
+   * em "Other" (não some): a adivinhação pelo nome fica só para ele.
+   */
+  const catalogSections = useMemo(() => {
+    const secoes = categories.map((c) => ({ id: c.id, label: c.name, isTrade: c.slug === "general-maintenance", rows: [] as CatalogService[] }));
+    const outros: CatalogService[] = [];
+    for (const row of catalog) {
+      const s = row.category_id ? secoes.find((x) => x.id === row.category_id) : undefined;
+      if (s) s.rows.push(row);
+      else outros.push(row);
+    }
+    const todas = [...secoes];
+    if (outros.length) todas.push({ id: "other", label: "Other", isTrade: false, rows: outros });
+    return todas.filter((s) => s.rows.length > 0);
+  }, [catalog, categories]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    void listServiceCategories()
+      .then((cats) => {
+        if (!cancelled) setCategories(cats);
+      })
+      .catch(() => {
+        /* sem categorias, tudo cai em "Other" e a tela segue funcionando */
+      });
     void listCatalogServicesForPicker()
       .then((rows) => {
         if (cancelled) return;
@@ -300,10 +310,38 @@ export function CatalogTradesSkillsTab(props: Props) {
     );
   }
 
-  function renderSection(title: string, rows: CatalogService[], category?: CatalogServiceCategory) {
+  /** Liga ou desliga a categoria inteira de uma vez. */
+  const toggleCategory = (rows: CatalogService[], on: boolean) => {
+    setEnabledIds((prev) => {
+      const next = new Set(prev);
+      for (const row of rows) {
+        if (on) next.add(row.id);
+        else next.delete(row.id);
+      }
+      if (!on && primaryId && rows.some((r) => r.id === primaryId)) setPrimaryId(null);
+      return next;
+    });
+  };
+
+  function renderSection(title: string, rows: CatalogService[], isTrade: boolean) {
+    const ligados = rows.filter((r) => enabledIds.has(r.id)).length;
+    const tudo = ligados === rows.length;
     return (
       <div key={title} className="rounded-xl border border-border-light bg-card p-4 space-y-3 @container">
-        <p className="text-sm font-semibold text-text-primary">{title}</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-text-primary">
+            {title} <span className="ml-1 text-xs font-normal text-text-tertiary">{ligados}/{rows.length}</span>
+          </p>
+          {canEdit ? (
+            <button
+              type="button"
+              className="text-xs font-medium text-[#ED4B00] hover:underline"
+              onClick={() => toggleCategory(rows, !tudo)}
+            >
+              {tudo ? "Clear all" : "Select all"}
+            </button>
+          ) : null}
+        </div>
         <div className="grid grid-cols-1 @md:grid-cols-2 gap-3">
           {rows.map((row) => {
             const on = enabledIds.has(row.id);
@@ -315,7 +353,7 @@ export function CatalogTradesSkillsTab(props: Props) {
                 enabled={on}
                 isPrimary={isPrimary}
                 canEdit={canEdit}
-                primaryLabel={category === "trades" ? "trade" : "service"}
+                primaryLabel={isTrade || resolveCatalogServiceCategory(row) === "trades" ? "trade" : "service"}
                 onToggle={(v) => toggleService(row.id, v)}
                 onMakePrimary={() => makePrimary(row.id)}
               />
@@ -339,7 +377,7 @@ export function CatalogTradesSkillsTab(props: Props) {
         </p>
       </div>
 
-      {catalogSections.map((section) => renderSection(section.label, section.rows, section.category))}
+      {catalogSections.map((section) => renderSection(section.label, section.rows, section.isTrade))}
 
       {canEdit ? (
         <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
