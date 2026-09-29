@@ -160,6 +160,12 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
       r.resposta = m.content ? limparTexto(m.content) : null;
+      // Primeira resposta da conversa sempre se apresenta (dono, 29/09/2026):
+      // não fica só na instrução, que o modelo às vezes esquece.
+      const jaFalou = conversa.some((f) => f.papel !== "cliente");
+      if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
+        r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
+      }
       return r;
     }
     for (const c of chamadas) {
