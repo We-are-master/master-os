@@ -1,5 +1,8 @@
 /**
- * Chase do Harvey no WhatsApp (src/lib/harvey-wa/chase.ts), a cada 10 min pelo n8n.
+ * Varredura do Harvey no WhatsApp, a cada 10 min pelo n8n:
+ *  - chase de quem parou de responder (src/lib/harvey-wa/chase.ts)
+ *  - transferência aguardando o sinal: confirma, lembra e libera (transferencia.ts).
+ *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
  *
@@ -11,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { varrerChases } from "@/lib/harvey-wa/chase";
+import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,8 +37,10 @@ export async function GET(req: NextRequest) {
   const ensaio = req.nextUrl.searchParams.get("dry-run") === "1";
   if (process.env.HARVEY_WA_LIGADO !== "1" && !ensaio) return NextResponse.json({ ok: true, desligado: "HARVEY_WA_LIGADO != 1" });
   try {
-    const r = await varrerChases(createServiceClient(), { aplicar: !ensaio });
-    return NextResponse.json({ ok: true, ...r });
+    const sb = createServiceClient();
+    const chase = await varrerChases(sb, { aplicar: !ensaio });
+    const transferencias = await varrerTransferencias(sb, new Date(), { aplicar: !ensaio });
+    return NextResponse.json({ ok: true, chase, transferencias });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });
