@@ -34,7 +34,7 @@ export type ResultadoChase = { ensaio: boolean; olhados: number; enviados: numbe
 export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: boolean }, agora = new Date()): Promise<ResultadoChase> {
   const out: ResultadoChase = { ensaio: !aplicar, olhados: 0, enviados: 0, semNada: 0, detalhes: [] };
   const hora = horaEmLondres(agora);
-  if (hora < 8 || hora >= 21) return out;
+  if (escala() === 1 && (hora < 8 || hora >= 21)) return out; // no teste acelerado vale a qualquer hora
 
   const desde = new Date(agora.getTime() - JANELA_H * 3_600_000).toISOString();
   const { data } = await sb
