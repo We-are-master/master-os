@@ -34,6 +34,9 @@ async function candidatos<T extends { phone: string | null }>(sb: SupabaseClient
 export async function quemE(sb: SupabaseClient, telefone: string | null): Promise<Identidade> {
   const chave = chaveDoTelefone(telefone);
   if (!chave) return { tipo: "novo" };
+  // Telefone da equipe: tem uma dúzia de cadastros de teste de parceiro e testa o Harvey como cliente.
+  const equipe = ["7508801803", ...(process.env.HARVEY_WA_TELEFONES_EQUIPE ?? "").split(",").map(chaveDoTelefone)].filter(Boolean);
+  if (equipe.includes(chave)) return { tipo: "novo" };
   // A conta interna (e-mail @getfixfy.com, o parceiro "Fixfy") não conta: é o
   // telefone da equipe, que testa como cliente (mesma regra do Harvey do e-mail).
   const parceiros = (await candidatos<Parceiro>(sb, "partners", "id, status, company_name, contact_name, email, phone, trade, zendesk_organization_id", chave)).filter(
