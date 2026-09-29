@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id",
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id",
       )
       .eq("id", quoteId)
       .single();
@@ -199,6 +199,8 @@ export async function POST(req: NextRequest) {
       }
       const baseJobRow: Record<string, unknown> = {
         reference: jobReference,
+        // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+        catalog_service_id: (quote as { catalog_service_id?: string | null }).catalog_service_id ?? null,
         title: quote.title ?? "Job from quote",
         client_id: qClientId || null,
         client_name: quote.client_name ?? "",
@@ -424,6 +426,8 @@ export async function POST(req: NextRequest) {
 
     const baseJobRowNoDep: Record<string, unknown> = {
       reference: jobReferenceNoDep,
+      // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+      catalog_service_id: (quote as { catalog_service_id?: string | null }).catalog_service_id ?? null,
       title: quote.title ?? "Job from quote",
       client_id: qClientId || null,
       client_name: quote.client_name ?? "",

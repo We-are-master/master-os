@@ -35,9 +35,20 @@ export type CatalogPresetOverridesMap = Record<string, CatalogPriceItemOverride>
 export type CatalogAddonOverridesMap = Record<string, CatalogPriceItemOverride>;
 
 /** Price book row: defaults for requests/quotes (always editable per record). */
+/** Categoria do serviço (304): General Maintenance, Cleaning, Certificates... */
+export interface ServiceCategory {
+  id: string;
+  name: string;
+  slug: string;
+  sort: number;
+  is_active: boolean;
+}
+
 export interface CatalogService {
   id: string;
   name: string;
+  /** Categoria (304). Null só em linha antiga que ainda não foi classificada. */
+  category_id?: string | null;
   pricing_mode: CatalogPricingMode;
   fixed_price: number;
   hourly_rate: number;

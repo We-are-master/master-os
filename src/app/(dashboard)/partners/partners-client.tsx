@@ -146,6 +146,8 @@ import {
 import { upsertPartnerServicePrice } from "@/services/partner-service-prices";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
+import { PartnerAvailabilityTab } from "@/components/partners/partner-availability-tab";
+import { PartnerCancellationsSection } from "@/components/partners/partner-cancellations-section";
 import {
   displayPartnerRating,
   PARTNER_COMPLAINT_PENALTY_POINTS,
@@ -6160,6 +6162,14 @@ function PartnerDetailDrawer({
                   <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
                 </DrawerSection>
 
+                <DrawerSection title="Availability" summary={resumoDisponibilidade(partner)}>
+                  <PartnerAvailabilityTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
+                </DrawerSection>
+
+                <DrawerSection title="Cancellations" summary="Jobs this partner cancelled in the portal">
+                  <PartnerCancellationsSection partnerId={partner.id} canEdit={canManagePartners} />
+                </DrawerSection>
+
                 <DrawerSection title="Rate card" summary="Prices agreed with this partner">
                   <PartnerServiceRatesTabSection
                     partnerId={partner.id}
@@ -7805,3 +7815,13 @@ function PartnerDetailDrawer({
   );
 }
 
+
+/** "Mon–Fri · 5/day" ou o aviso de que falta preencher (sem dia = fora do auto-assign). */
+function resumoDisponibilidade(partner: Partner): string {
+  const av = (partner as Partner & { availability?: { days?: Record<string, { on?: boolean }>; maxJobsPerDay?: number } | null }).availability;
+  const ordem = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const rotulo: Record<string, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+  const ligados = ordem.filter((d) => av?.days?.[d]?.on === true);
+  if (!ligados.length) return "Not set · no offers";
+  return `${ligados.map((d) => rotulo[d]).join(" ")} · ${av?.maxJobsPerDay ?? 5}/day`;
+}

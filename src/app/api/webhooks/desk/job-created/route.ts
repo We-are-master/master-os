@@ -14,6 +14,8 @@ import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { dispatchAutoAssignJobInvites, sendPushToPartners } from "@/lib/auto-assign-job-invites";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import { catalogServiceIdForTypeOfWorkLabel, normalizeTypeOfWork } from "@/lib/type-of-work";
+import { autoAssignGate } from "@/lib/auto-assign-gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -165,17 +167,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ─── Serviço do catálogo (29/09/2026: todo job ligado a um serviço) ──
+  const { data: catalogoRows } = await supabase.from("service_catalog").select("id, name, is_active").is("deleted_at", null);
+  const catalogo = (catalogoRows ?? []) as Array<{ id: string; name: string; is_active: boolean }>;
+  const catalogServiceId =
+    catalogServiceIdForTypeOfWorkLabel(serviceType, catalogo.filter((c) => c.is_active)) ??
+    catalogServiceIdForTypeOfWorkLabel(serviceType, catalogo);
+
   // ─── Auto-assign: find matching partners ────────────────────────────
   let matchedPartnerIds: string[] = [];
 
-  if (assignmentMode === "auto") {
-    // Trade match + partner self-service prefs (excluded postcodes).
-    matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
-      serviceType,
-      postcode: extractUkPostcode(propertyAddress),
-      kind: "job",
-      availabilitySlot: { scheduledDate: scheduledDate || null },
+  if (assignmentMode === "auto" && catalogServiceId) {
+    // Mesmo portão da /api/jobs: sem os campos ou com margem baixa, não oferta.
+    const gate = autoAssignGate({
+      serviceType: normalizeTypeOfWork(serviceType) || serviceType,
+      propertyAddress,
+      scope,
+      scheduledStartAt: scheduledDate ? `${scheduledDate}T09:00:00Z` : null,
+      scheduledEndAt: scheduledDate ? `${scheduledDate}T17:00:00Z` : null,
+      jobType: "fixed",
+      clientPrice,
+      partnerCost,
+      hourlyClientRate: null,
+      hourlyPartnerRate: null,
     });
+    if (gate.ok) {
+      matchedPartnerIds = await matchPartnerIdsForWork(supabase, {
+        serviceType,
+        catalogServiceId,
+        postcode: extractUkPostcode(propertyAddress),
+        kind: "job",
+        availabilitySlot: { scheduledDate: scheduledDate || null },
+        partnerCost,
+      });
+    } else {
+      console.warn("[webhook/desk/job] auto assign blocked by gate:", gate.missing.join(", "));
+    }
   }
 
   // ─── Determine status ───────────────────────────────────────────────
@@ -221,6 +248,7 @@ export async function POST(req: NextRequest) {
     finance_status: "unpaid",
     external_source: "zendesk",
     external_ref: ticketId,
+    ...(catalogServiceId ? { catalog_service_id: catalogServiceId } : {}),
   };
 
   if (assignmentMode === "auto" && matchedPartnerIds.length > 0) {

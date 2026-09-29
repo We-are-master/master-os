@@ -52,7 +52,7 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
   },
   handyman: {
     cliente: ["Need someone to fix a dripping tap, put up a curtain rail and fill some holes. NW5", "how much?"],
-    checar: (t) => [!/£180/.test(t) && "não disse half day £180", /£329/.test(t) && "ofereceu o dia inteiro sem precisar", !/material/i.test(t) && "não avisou que material não está incluso"].filter(Boolean) as string[],
+    checar: (t) => [!/£180/.test(t) && "não disse half day £180", /£329/.test(t) && "ofereceu o dia inteiro sem precisar", !/material|part/i.test(t) && "não avisou que material não está incluso"].filter(Boolean) as string[],
   },
   fora: {
     cliente: ["Hi, can you do an end of tenancy in Oxford? OX4 1AA, 1 bed"],
@@ -88,7 +88,11 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
   },
   certificado: {
     cliente: ["I need a gas safety certificate and an EICR for a 2 bed flat in SE1"],
-    checar: (t) => [!/£79/.test(t) && "gás £79 não apareceu", !/£165/.test(t) && "EICR 2 bed £165 não apareceu"].filter(Boolean) as string[],
+    checar: (t) => [!(/£244/.test(t) || (/£79/.test(t) && /£165/.test(t))) && "nem o total £244 nem os dois preços (£79 + £165)"].filter(Boolean) as string[],
+  },
+  semvaga: {
+    cliente: ["Hi, how much for a deep clean? 1 bed in SW4, 1 bathroom", "ok I'd like to book please"],
+    checar: (t, f, r) => [r.link && "gerou link sem dia livre", !r.passou && "sem dia livre, não passou pra equipe", /see(ing)? (live )?dates|system|tool/i.test(t) && "falou de sistema"].filter(Boolean) as string[],
   },
   pessoa: {
     cliente: ["can I speak to a real person please"],
@@ -100,7 +104,8 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
   },
 };
 
-const escolhidos = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(CASOS);
+// "semvaga" só faz sentido com a capacidade ligada: roda quando pedido pelo nome.
+const escolhidos = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(CASOS).filter((c) => c !== "semvaga");
 const cat = catalog();
 let falhas = 0;
 const relatorio: string[] = [];

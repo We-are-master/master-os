@@ -1903,6 +1903,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                   },
                 })).jobs[0]!
               : await createJob(baseJobRow);
+            // Request que vira job em auto assign: a oferta precisa sair (antes ficava parada).
+            if (job.status === "auto_assigning") {
+              void fetch(`/api/jobs/${job.id}/dispatch-auto-assign-invites`, { method: "POST" }).catch((err) =>
+                console.error("[requests/convert] auto-assign dispatch failed:", err),
+              );
+            }
             await Promise.all([
               updateRequestStatus(convertToJobOpen.id, "converted_to_job", { enrich: false }),
               logAudit({

@@ -1952,6 +1952,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         const baseJobRow = {
           title: formData.title,
+          // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+          catalog_service_id: (quoteToConvert as { catalog_service_id?: string | null }).catalog_service_id ?? undefined,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           property_id: quoteToConvert.property_id ?? undefined,

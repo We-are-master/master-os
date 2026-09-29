@@ -294,11 +294,23 @@ export async function processAutoAssignJobAccept(args: {
           args.supabase,
           job,
         );
-        isVitrineEligible = partnerMatchesTypeOfWork(
-          fullPartner as Partner,
-          serviceType,
-          catalogServiceId,
-        );
+        if (catalogServiceId) {
+          // Regra nova (29/09/2026): serviço do catálogo na mesma categoria,
+          // disponibilidade, folga, máx. por dia, valor mínimo. Igual à oferta.
+          const { elegiveisParaJob, paraJobDeEscala } = await import("@/lib/capacity");
+          const el = await elegiveisParaJob(
+            args.supabase,
+            paraJobDeEscala({ ...(job as never as Parameters<typeof paraJobDeEscala>[0]), catalog_service_id: catalogServiceId }),
+            "categoria",
+          );
+          isVitrineEligible = el.elegiveis.some((p) => p.id === args.partnerId);
+        } else {
+          isVitrineEligible = partnerMatchesTypeOfWork(
+            fullPartner as Partner,
+            serviceType,
+            catalogServiceId,
+          );
+        }
       }
     } catch (err) {
       console.error("[processAutoAssignJobAccept] vitrine eligibility check failed:", err);

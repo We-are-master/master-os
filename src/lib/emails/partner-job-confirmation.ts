@@ -1069,6 +1069,8 @@ export interface PartnerJobConfirmationRequestData extends PartnerJobEmailSchedu
   priceDisplay:     string;
   /** Tokenised accept URL — required. */
   acceptUrl:        string;
+  /** Portal de parceiros (oportunidades): ver a oferta, o prazo e as outras. */
+  portalUrl?:       string | null;
   /** Hours within which the partner is expected to accept. Default 24. */
   responseHours?:   number;
   /** Hourly/fixed + type-of-work rules shown before the Accept CTA. */
@@ -1102,6 +1104,7 @@ export function buildPartnerJobConfirmationRequestEmail(
     scope:   escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 32),
     accept:  escapeHtml(data.acceptUrl),
+    portal:  escapeHtml(data.portalUrl ?? ""),
     hours:   String(responseHours),
     support: escapeHtml(supportEmail),
     supportTel:     escapeHtml(supportPhone),
@@ -1163,7 +1166,8 @@ ${partnerEmailLogoHeaderRow()}
       </td></tr>
       ${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
-        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>
+        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>${data.portalUrl ? `
+        <p style="margin:12px 0 0; font-size:13px; line-height:20px;"><a href="${safe.portal}" target="_blank" style="color:#ED4B00; text-decoration:underline;">See it in your partner portal</a></p>` : ""}
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
         <p style="margin:0 0 8px 0; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
@@ -1198,7 +1202,8 @@ ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
-Accept Job Now: ${data.acceptUrl}
+Accept Job Now: ${data.acceptUrl}${data.portalUrl ? `
+See it in your partner portal: ${data.portalUrl}` : ""}
 
 Can't take it? Reply to this email and we'll reallocate.
 Otherwise: ${supportEmail} / ${supportPhone}
