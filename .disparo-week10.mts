@@ -42,7 +42,7 @@ for (const l of readFileSync(".env.local", "utf8").split("\n")) {
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
 }
 
-const LOG = "/private/tmp/claude-501/-Users-victorsouza-master-os/5c0ae987-2042-4b5e-a2f1-3ab944abb1d8/scratchpad/campanha-week10.log";
+const LOG = new URL("./campanha-week10.log", import.meta.url).pathname;
 const hora = () => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
 const log = (...p: unknown[]) => appendFileSync(LOG, `${hora()} ${p.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")}\n`);
 
@@ -67,7 +67,12 @@ async function rodadaEmail() {
   if (r.enviados || r.falhas || r.pulados || (r.parou && r.parou !== "fora da janela")) log("email", r);
 }
 
+// WHATSAPP_DESLIGADO=1: o token da Cloud API está dando #200 (29/09). Sem isso a
+// fila da tarde inteira viraria "falhou". E-mail e Zendesk seguem normais.
+const whatsappDesligado = process.env.WHATSAPP_DESLIGADO === "1";
+
 async function rodadaWhatsApp() {
+  if (whatsappDesligado) return;
   const presas = await soltarReservasPresas();
   if (presas) log("whatsapp reservas soltas", presas);
   if (!whatsappNaJanela()) return;
@@ -100,7 +105,7 @@ async function rodadaWhatsApp() {
 }
 
 async function checarV3() {
-  if (v3Liberada) return;
+  if (v3Liberada || whatsappDesligado) return;
   const url = `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_WABA_ID}/message_templates?name=fixfy_week10_offer_v3&fields=name,status`;
   const j = (await (await fetch(url, { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } })).json()) as { data?: Array<{ status: string }> };
   const status = j.data?.[0]?.status ?? "?";
