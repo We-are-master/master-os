@@ -95,13 +95,26 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
 
   const leadId = await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
   const mudancas: Record<string, unknown> = { atualizado_em: new Date().toISOString(), lead_id: leadId };
-  if (r.checkout) Object.assign(mudancas, { checkout_ref: r.checkout.ref, checkout_total: r.checkout.total, checkout_deposit: r.checkout.deposit, email: r.checkout.email.toLowerCase() });
+  if (r.checkout)
+    Object.assign(mudancas, {
+      checkout_ref: r.checkout.ref,
+      checkout_total: r.checkout.total,
+      checkout_deposit: r.checkout.deposit,
+      checkout_method: r.checkout.metodo,
+      checkout_at: new Date().toISOString(),
+      checkout_sinal: r.checkout.sinal,
+      job_ids: r.checkout.jobIds,
+      lembrado_em: null,
+      liberado_em: null,
+      sinal_recebido_em: null,
+      email: r.checkout.email.toLowerCase(),
+    });
   if (r.passarParaEquipe) {
     await passarParaEquipe(conversa.id, r.passarParaEquipe);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
-  return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `link ${r.checkout.ref}` : "respondeu";
+  return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
 
 /**

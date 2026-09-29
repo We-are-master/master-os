@@ -692,7 +692,11 @@ export async function POST(req: NextRequest) {
   // A chave única do auto assign: ligada, TODO job injetado nasce candidato —
   // o portão (completude + piso de margem) decide logo abaixo se entra de
   // verdade ou cai em unassigned (Needs Review). Desligada, nada muda.
-  if (!autoAssign && process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
+  // Exceção: reserva por transferência aguardando o depósito (`hold_for_deposit`)
+  // nunca vai para a oferta; o despacho sai quando a equipe registra o depósito.
+  const aguardandoDeposito = body.hold_for_deposit === true;
+  if (aguardandoDeposito) autoAssign = false;
+  if (!autoAssign && !aguardandoDeposito && process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
     autoAssign = true;
     zendeskCorrections.push("auto_assign_forced_by_global_switch");
   }

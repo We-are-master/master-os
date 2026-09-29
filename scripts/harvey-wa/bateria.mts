@@ -17,9 +17,16 @@ const { b2cServerEnv } = await import(`${SITE}/server/b2c/env.js`);
 const { pensar } = await import("../../src/lib/harvey-wa/cerebro");
 type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string };
 
+process.env.HARVEY_BANK_DETAILS ||= "Account name: Fixfy Ltd\nSort code: 04-00-75\nAccount number: 12345678";
 const env = b2cServerEnv();
 const chave = { "x-agent-key": env.osLeadKey || env.osKey };
 const site = async (corpo: Record<string, unknown>) => {
+  if (corpo.action === "bank") {
+    if (process.env.DEBUG_CHECKOUT) console.log("BANK ARGS", JSON.stringify(corpo));
+    const b = corpo.booking as { selection: unknown; postcode: string; promoCode?: string };
+    const q = await handleAgent({ action: "quote", selection: b.selection, postcode: b.postcode, promoCode: b.promoCode }, chave);
+    return { status: 200, data: { ref: "FX-TESTE2", total: q.data.total, deposit: q.data.deposit, jobs: [] } };
+  }
   if (corpo.action === "checkout") {
     if (process.env.DEBUG_CHECKOUT) console.log("CHECKOUT ARGS", JSON.stringify(corpo));
     const b = corpo.booking as { selection: unknown; postcode: string; contact: { email: string; phone: string } };
@@ -42,9 +49,30 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
       "I'll be there",
       "free parking on the street",
       "Sarah Jones, sarah.jones.test@example.com",
-      "50% now please",
+      "card link please",
     ],
-    checar: (t, f, r) => [!f.includes("get_quote") && "não chamou get_quote", !/£266/.test(t) && "não disse £266", !r.link && "não gerou link", !/133/.test(t) && "não falou dos £133 do depósito"].filter(Boolean) as string[],
+    checar: (t, f, r) => [!f.includes("get_quote") && "não chamou get_quote", !/£266/.test(t) && "não disse £266", !r.link && "não gerou link", !/133/.test(t) && "não falou dos £133 do depósito", !/bank|transfer/i.test(t) && "não ofereceu transferência"].filter(Boolean) as string[],
+  },
+  banco: {
+    cliente: [
+      "Hi, how much for an end of tenancy clean?",
+      "SW11 2AB, 2 bed 1 bath",
+      "ok sounds good. Friday morning if you can",
+      "14 Lavender Hill",
+      "I'll be there",
+      "free parking on the street",
+      "Sarah Jones, sarah.jones.test@example.com",
+      "I'll do a bank transfer",
+    ],
+    checar: (t, f, r) =>
+      [
+        !r.link && "não reservou",
+        !/12345678/.test(t) && "não mandou os dados do banco",
+        !/FX-TESTE2/.test(t) && "não mandou a referência",
+        !/133/.test(t) && "não disse o sinal de £133",
+        !/24 ?h|24 hours|tomorrow/i.test(t) && "não disse que segura 24h",
+        /checkout\.stripe\.com/.test(t) && "mandou link do cartão",
+      ].filter(Boolean) as string[],
   },
   deep: {
     cliente: ["hello, do you do deep cleans? 3 bed house in E17", "2 bathrooms", "how much is carpet cleaning on top? 3 bedrooms have carpet"],
@@ -140,7 +168,7 @@ for (const nome of escolhidos) {
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
   if (nome !== "reclamacao" && nome !== "stop" && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
-  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split("checkout.stripe.com")[0])) problemas.push("disse que está reservado antes do link");
+  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|12345678/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
   console.log(linhas.join("\n"));
