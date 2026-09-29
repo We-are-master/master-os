@@ -17,7 +17,7 @@ const { b2cServerEnv } = await import(`${SITE}/server/b2c/env.js`);
 const { pensar } = await import("../../src/lib/harvey-wa/cerebro");
 type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string };
 
-process.env.HARVEY_BANK_DETAILS ||= "Account name: Fixfy Ltd\nSort code: 04-00-75\nAccount number: 12345678";
+delete process.env.HARVEY_BANK_DETAILS; // usa os dados das faturas
 const env = b2cServerEnv();
 const chave = { "x-agent-key": env.osLeadKey || env.osKey };
 const site = async (corpo: Record<string, unknown>) => {
@@ -67,7 +67,7 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
     checar: (t, f, r) =>
       [
         !r.link && "não reservou",
-        !/12345678/.test(t) && "não mandou os dados do banco",
+        !/06913415/.test(t) && "não mandou os dados do banco",
         !/FX-TESTE2/.test(t) && "não mandou a referência",
         !/133/.test(t) && "não disse o sinal de £133",
         !/24 ?h|24 hours|tomorrow/i.test(t) && "não disse que segura 24h",
@@ -168,7 +168,7 @@ for (const nome of escolhidos) {
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
   if (nome !== "reclamacao" && nome !== "stop" && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
-  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|12345678/)[0])) problemas.push("disse que está reservado antes do link");
+  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
   console.log(linhas.join("\n"));
