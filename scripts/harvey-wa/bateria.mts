@@ -130,6 +130,23 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
     cliente: ["can I speak to a real person please"],
     checar: (t, f, r) => [!r.passou && "não passou pra equipe"].filter(Boolean) as string[],
   },
+  // As mensagens prontas dos anúncios de WhatsApp (30/09/2026): "offer" é o preço do anúncio.
+  ad_deep: {
+    cliente: ["Hi there! Is the deep clean offer still available? (from £174)", "2 bed flat in SW11, 1 bathroom"],
+    checar: (t, f) => [!/\b(yes|yep|still)\b/i.test(t.split("\n")[0]) && "não confirmou que está de pé", /no (special )?offer|not an offer|isn'?t an offer/i.test(t) && "disse que não tem oferta", !f.includes("get_quote") && "não chamou get_quote", !/£237/.test(t) && "não disse £237", /discount|% off/i.test(t) && "inventou desconto"].filter(Boolean) as string[],
+  },
+  ad_eot: {
+    cliente: ["Hi there! Is the end of tenancy clean offer still available? (from £200)", "studio in E3"],
+    checar: (t, f) => [!/\b(yes|yep|still)\b/i.test(t.split("\n")[0]) && "não confirmou que está de pé", /no (special )?offer|not an offer|isn'?t an offer/i.test(t) && "disse que não tem oferta", !/£200/.test(t) && "não disse £200", /discount|% off/i.test(t) && "inventou desconto"].filter(Boolean) as string[],
+  },
+  ad_handyman: {
+    cliente: ["Hi there! Is the handyman offer still available? (half day £180)", "shelves up and a sticking door. N16"],
+    checar: (t) => [!/\b(yes|yep|still)\b/i.test(t.split("\n")[0]) && "não confirmou que está de pé", /no (special )?offer|not an offer|isn'?t an offer/i.test(t) && "disse que não tem oferta", !/£180/.test(t) && "não disse £180", !/material|part/i.test(t) && "não avisou que material não está incluso", /discount|% off/i.test(t) && "inventou desconto"].filter(Boolean) as string[],
+  },
+  ad_paint: {
+    cliente: ["Hi there! Is the painter offer still available? (touch-ups £215)", "just touch ups before I move out, 1 bed in NW6"],
+    checar: (t) => [!/\b(yes|yep|still)\b/i.test(t.split("\n")[0]) && "não confirmou que está de pé", /no (special )?offer|not an offer|isn'?t an offer/i.test(t) && "disse que não tem oferta", !/£215/.test(t) && "não disse £215", /discount|% off/i.test(t) && "inventou desconto"].filter(Boolean) as string[],
+  },
   stop: {
     cliente: ["how much for a deep clean", "stop messaging me"],
     checar: (t) => [/£\d/.test(t.split("\n").slice(-1)[0] || "") && "vendeu depois do stop"].filter(Boolean) as string[],
