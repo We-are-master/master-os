@@ -72,6 +72,7 @@ export type MensagemSc = {
   received: string;
   author: { type: "user" | "business"; displayName?: string; userId?: string };
   content: { type: string; text?: string; mediaUrl?: string; altText?: string };
+  source?: { type?: string };
 };
 
 /** As últimas mensagens da conversa (cliente, Harvey e equipe), da mais velha para a mais nova. */
