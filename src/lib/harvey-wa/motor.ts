@@ -12,6 +12,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Fala } from "./cerebro";
+import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
@@ -89,11 +90,20 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
-  const r = await pensar(paraFalas(msgs), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1" }, chamarSite, await catalogo());
+  // De qual anúncio veio: a mensagem pronta do anúncio é a 1ª do cliente. Conversa longa
+  // (a 1ª saiu do histórico) usa o que ficou gravado no lead.
+  const primeiraDoCliente = msgs.find((m) => m.author.type === "user");
+  const leadExistente = (estado?.lead_id as string | null) ?? null;
+  const origem =
+    origemDaConversa(primeiraDoCliente?.content.text) ??
+    (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
+    ORIGEM_PADRAO;
+
+  const r = await pensar(paraFalas(msgs), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha }, chamarSite, await catalogo());
 
   if (r.resposta) await enviarTexto(conversa.id, r.resposta);
 
-  const leadId = await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
+  const leadId = await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, r });
   const mudancas: Record<string, unknown> = { atualizado_em: new Date().toISOString(), lead_id: leadId };
   if (r.checkout)
     Object.assign(mudancas, {
@@ -124,7 +134,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
  */
 async function registrarLead(
   sb: ReturnType<typeof createServiceClient>,
-  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; r: Awaited<ReturnType<typeof pensar>> },
+  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; origem: Origem; r: Awaited<ReturnType<typeof pensar>> },
 ): Promise<string | null> {
   const agora = new Date().toISOString();
   const campos: Record<string, unknown> = { last_activity_at: agora, updated_at: agora };
@@ -146,8 +156,13 @@ async function registrarLead(
         status: (campos.status as string) ?? "new",
         step_reached: (campos.step_reached as number) ?? 1,
         sequence_state: "none",
-        source: { utm_source: "whatsapp", utm_medium: "chat", utm_campaign: "wa_v1" },
-        tags: ["harvey-wa"],
+        source: {
+          utm_source: "whatsapp",
+          utm_medium: a.origem.conteudo ? "paid_social" : "chat",
+          utm_campaign: a.origem.campanha,
+          ...(a.origem.conteudo ? { utm_content: a.origem.conteudo } : {}),
+        },
+        tags: a.origem.conteudo ? ["harvey-wa", "wa-ads"] : ["harvey-wa"],
         selection: {},
       })
       .select("id")
