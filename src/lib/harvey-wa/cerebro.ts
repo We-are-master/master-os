@@ -6,10 +6,17 @@
  */
 
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
-import { promptDoHarvey } from "./prompt";
+import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 
-export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string };
+export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
+
+/** O que o Harvey consulta e grava no OS. O motor liga no banco; a bateria usa de mentira. */
+export type Contas = {
+  reservas: (email?: string | null) => Promise<unknown>;
+  situacaoDoParceiro?: () => Promise<unknown>;
+  salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
+};
 
 export type Contexto = {
   telefone: string | null;
@@ -17,6 +24,13 @@ export type Contexto = {
   campanha?: string;
   /** Preenchido pelo pensar(): o cliente já escolheu cartão ou transferência? */
   escolheuPagamento?: boolean;
+  /** Quem escreve: parceiro fala com o Harvey dos parceiros (documentos, jobs). */
+  quem?: "parceiro" | "cliente" | "novo";
+  /** Uma linha sobre a pessoa, do OS (nome, status do parceiro). */
+  sobreQuem?: string;
+  contas?: Contas;
+  /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
+  ultimaMidia?: string | null;
 };
 
 export type Resultado = {
@@ -40,6 +54,8 @@ export type Resultado = {
   } | null;
   cotacao: { servico: string; total: number; postcode: string | null } | null;
   ferramentas: string[];
+  /** Documentos de parceiro gravados nesta resposta (para o log). */
+  documentos: unknown[];
 };
 
 const MODELO = () => process.env.HARVEY_WA_MODEL?.trim() || "gpt-5.4";
@@ -65,7 +81,7 @@ const SELECAO = {
   required: ["services"],
 } as const;
 
-const FERRAMENTAS = [
+const FERRAMENTAS_CLIENTE = [
   {
     type: "function",
     function: {
@@ -130,17 +146,56 @@ const FERRAMENTAS = [
       parameters: { type: "object", properties: { reason: { type: "string", description: "one line in English: what is needed and why" } }, required: ["reason"] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_my_bookings",
+      description: "Their existing bookings with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, and any balance to pay with its link. Use it whenever they ask about a booking they already have.",
+      parameters: { type: "object", properties: { email: { type: "string", description: "only if they gave the email they booked with" } } },
+    },
+  },
+] as const;
+
+const FERRAMENTAS_PARCEIRO = [
+  {
+    type: "function",
+    function: {
+      name: "get_my_account",
+      description: "The partner's account: status, which documents are missing to be activated, documents waiting for review or expired, and their upcoming jobs.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_document",
+      description: "Saves the photo or PDF the partner just sent as one of their documents and checks it. Call it right after they send the file, with what the document is. If it is approved and the essentials are complete, their account is activated.",
+      parameters: {
+        type: "object",
+        properties: { doc_type: { type: "string", enum: ["id_proof", "right_to_work", "insurance", "proof_of_address", "dbs", "certification"] } },
+        required: ["doc_type"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "hand_off_to_team",
+      description: "Pass the conversation to a person from the team: payments and self-bills, disputes, cancelling or moving a job, anything you cannot answer.",
+      parameters: { type: "object", properties: { reason: { type: "string", description: "one line in English: what is needed and why" } }, required: ["reason"] },
+    },
+  },
 ] as const;
 
 type MensagemOpenAi =
   | { role: "system" | "user" | "assistant"; content: string | null; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
   | { role: "tool"; tool_call_id: string; content: string };
 
-async function openai(mensagens: MensagemOpenAi[]) {
+async function openai(mensagens: MensagemOpenAi[], ferramentas: readonly unknown[]) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODELO(), messages: mensagens, tools: FERRAMENTAS, reasoning_effort: "none" }),
+    body: JSON.stringify({ model: MODELO(), messages: mensagens, tools: ferramentas, reasoning_effort: "none" }),
     signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -163,18 +218,21 @@ function limparTexto(t: string): string {
 }
 
 export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSite, catalogo: unknown): Promise<Resultado> {
-  const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [] };
-  ctx = { ...ctx, escolheuPagamento: escolheuPagamento(conversa) };
+  const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [], documentos: [] };
+  const parceiro = ctx.quem === "parceiro";
+  const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
+  ctx = { ...ctx, escolheuPagamento: escolheuPagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
+    ctx.sobreQuem ?? null,
   ]
     .filter(Boolean)
     .join(" ");
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: promptDoHarvey(catalogo) + (sobre ? `\n\n# This customer\n\n${sobre}` : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro() : promptDoHarvey(catalogo)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") }, ...paraOpenAi(conversa)];
 
   for (let volta = 0; volta < 6; volta++) {
-    const m = await openai(msgs);
+    const m = await openai(msgs, parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE);
     msgs.push(m);
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
@@ -223,6 +281,15 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const linhas = (data.lines as Array<{ label: string }> | undefined) ?? [];
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
+  }
+  if (nome === "get_my_bookings") return ctx.contas ? ctx.contas.reservas(typeof a.email === "string" ? a.email : null) : { error: "not available" };
+  if (nome === "get_my_account") return ctx.contas?.situacaoDoParceiro ? ctx.contas.situacaoDoParceiro() : { error: "not available" };
+  if (nome === "save_document") {
+    if (!ctx.ultimaMidia) return { error: "No file received yet. Ask them to send a clear photo or a PDF of the document here." };
+    if (!ctx.contas?.salvarDocumento) return { error: "not available" };
+    const d = await ctx.contas.salvarDocumento(String(a.doc_type), ctx.ultimaMidia);
+    r.documentos.push(d);
+    return d;
   }
   if (nome === "get_available_dates") return (await site({ action: "slots", services: Array.isArray(a.services) ? a.services : [] })).data;
   if (nome === "hand_off_to_team") {

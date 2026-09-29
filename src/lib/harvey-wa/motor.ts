@@ -11,7 +11,11 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { pensar, type Fala } from "./cerebro";
+import { pensar, type Contas, type Fala } from "./cerebro";
+import { quemE, type Identidade } from "./identidade";
+import { reservasDoCliente, situacaoDoParceiro } from "./contas";
+import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
+import { classificarNoZendesk, type DadosDoCliente } from "./zendesk-wa";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
@@ -41,7 +45,7 @@ function paraFalas(msgs: MensagemSc[]): Fala[] {
     .map((m): Fala | null => {
       const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
       if (!texto.trim()) return null;
-      if (m.author.type === "user") return { papel: "cliente", texto };
+      if (m.author.type === "user") return { papel: "cliente", texto, ...(m.content.mediaUrl ? { midia: m.content.mediaUrl } : {}) };
       return { papel: m.author.displayName === "Harvey" ? "harvey" : "equipe", texto };
     })
     .filter((f): f is Fala => f !== null);
@@ -104,12 +108,52 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
-  const r = await pensar(paraFalas(sessaoAtual(msgs)), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1" }, chamarSite, await catalogo());
+  const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
+  const contas: Contas = {
+    reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    ...(quem.tipo === "parceiro"
+      ? {
+          situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
+          salvarDocumento: (tipo: string, mediaUrl: string) =>
+            (TIPOS_DE_DOC as readonly string[]).includes(tipo) ? salvarDocumento(sb, quem.parceiro, tipo as TipoDeDoc, mediaUrl) : Promise.resolve({ error: "unknown document type" }),
+        }
+      : {}),
+  };
+  const sobreQuem =
+    quem.tipo === "parceiro"
+      ? `Partner in our system: ${quem.parceiro.contact_name ?? quem.parceiro.company_name ?? "unknown name"}${quem.parceiro.company_name ? ` (${quem.parceiro.company_name})` : ""}, ${quem.parceiro.trade ?? "trade not set"}, account status ${quem.parceiro.status}.`
+      : quem.tipo === "cliente"
+        ? `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. They may be asking about a booking: use get_my_bookings.`
+        : undefined;
+
+  const r = await pensar(
+    paraFalas(sessaoAtual(msgs)),
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas },
+    chamarSite,
+    await catalogo(),
+  );
 
   if (r.resposta) await enviarTexto(conversa.id, r.resposta);
 
-  const leadId = await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
-  const mudancas: Record<string, unknown> = { atualizado_em: new Date().toISOString(), lead_id: leadId };
+  // Parceiro não é lead de venda.
+  const leadId =
+    quem.tipo === "parceiro"
+      ? ((estado?.lead_id as string | null) ?? null)
+      : await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
+  const mudancas: Record<string, unknown> = {
+    atualizado_em: new Date().toISOString(),
+    lead_id: leadId,
+    tipo: quem.tipo,
+    partner_id: quem.tipo === "parceiro" ? quem.parceiro.id : null,
+    client_id: quem.tipo === "cliente" ? quem.cliente.id : null,
+  };
+  // Zendesk: separa parceiro de cliente na primeira mensagem e preenche o perfil quando a reserva traz os dados.
+  // Refaz enquanto o ticket da conversa não apareceu no Zendesk.
+  if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
+    const dados: DadosDoCliente = r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {};
+    const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
+    Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
+  }
   if (r.checkout)
     Object.assign(mudancas, {
       checkout_ref: r.checkout.ref,

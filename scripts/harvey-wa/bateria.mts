@@ -15,7 +15,7 @@ const SITE = process.env.HARVEY_WA_SITE_DIR || `${process.env.HOME}/master-websi
 const { handleAgent, catalog } = await import(`${SITE}/server/b2c/agent.js`);
 const { b2cServerEnv } = await import(`${SITE}/server/b2c/env.js`);
 const { pensar } = await import("../../src/lib/harvey-wa/cerebro");
-type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string };
+type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; midia?: string };
 
 delete process.env.HARVEY_BANK_DETAILS; // usa os dados das faturas
 const env = b2cServerEnv();
@@ -39,7 +39,7 @@ const site = async (corpo: Record<string, unknown>) => {
   return handleAgent(corpo, chave);
 };
 
-const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[], r: { passou: string | null; link: boolean }) => string[] }> = {
+const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cliente: string[]; checar: (t: string, f: string[], r: { passou: string | null; link: boolean }) => string[] }> = {
   eot: {
     cliente: [
       "Hi, how much for an end of tenancy clean?",
@@ -126,6 +126,25 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
     cliente: ["Hi, how much for a deep clean? 1 bed in SW4, 1 bathroom", "ok I'd like to book please"],
     checar: (t, f, r) => [r.link && "gerou link sem dia livre", !r.passou && "sem dia livre, não passou pra equipe", /see(ing)? (live )?dates|system|tool/i.test(t) && "falou de sistema"].filter(Boolean) as string[],
   },
+  parceiro_docs: {
+    quem: "parceiro",
+    sobre: "Partner in our system: Dan Clarke (DC Cleaning Ltd), Cleaner, account status onboarding.",
+    cliente: ["hi mate, what do I still need to send to start getting jobs?", "[image sent]"],
+    checar: (t, f) =>
+      [
+        !f.includes("get_my_account") && "não consultou a conta",
+        !/insurance/i.test(t) && "não disse que falta o seguro",
+        !f.includes("save_document") && "não salvou o documento",
+        !/approved/i.test(t) && "não confirmou o documento",
+        !/partners\.getfixfy\.com/.test(t) && "não mandou pro portal depois de ativar",
+      ].filter(Boolean) as string[],
+  },
+  cliente_update: {
+    quem: "cliente",
+    sobre: "Existing customer in our system: Laura Mills. They may be asking about a booking: use get_my_bookings.",
+    cliente: ["Hi, what time is the cleaner coming on Friday?"],
+    checar: (t, f) => [!f.includes("get_my_bookings") && "não consultou as reservas", !/9|nine/i.test(t) && "não disse a janela de chegada", /£\d/.test(t) && !/balance|pay/i.test(t) && "falou de preço sem motivo"].filter(Boolean) as string[],
+  },
   pessoa: {
     cliente: ["can I speak to a real person please"],
     checar: (t, f, r) => [!r.passou && "não passou pra equipe"].filter(Boolean) as string[],
@@ -134,6 +153,26 @@ const CASOS: Record<string, { cliente: string[]; checar: (t: string, f: string[]
     cliente: ["how much for a deep clean", "stop messaging me"],
     checar: (t) => [/£\d/.test(t.split("\n").slice(-1)[0] || "") && "vendeu depois do stop"].filter(Boolean) as string[],
   },
+};
+
+// O OS de mentira: um parceiro sem seguro e uma cliente com limpeza na sexta.
+const CONTAS = {
+  reservas: async () => ({
+    encontrado: true,
+    reservas: [{ ref: "JOB-9001", service: "End of Tenancy Clean", address: "Flat 2, 10 Rye Lane, SE15", day: "Fri 2 Oct", arrival: "9 am to 12 pm", status: "confirmed, professional assigned", professional: "Ana", price: 266, balanceDue: null, payLink: null }],
+  }),
+  situacaoDoParceiro: async () => ({
+    name: "Dan Clarke",
+    accountStatus: "onboarding",
+    canReceiveJobs: false,
+    documents: [{ doc: "ID", ok: true }, { doc: "Right to work", ok: true }, { doc: "Insurance", ok: false }],
+    missingToActivate: ["Insurance"],
+    waitingReview: [],
+    expired: [],
+    upcomingJobs: [],
+    portal: "https://partners.getfixfy.com",
+  }),
+  salvarDocumento: async (tipo: string) => ({ aprovado: true, documento: tipo === "insurance" ? "Public Liability Insurance" : tipo, motivo: null, ativacao: { ativado: true, email: { ok: true, sentTo: "dan@example.com" } } }),
 };
 
 // "semvaga" só faz sentido com a capacidade ligada: roda quando pedido pelo nome.
@@ -149,10 +188,10 @@ for (const nome of escolhidos) {
   let link = false;
   const linhas: string[] = [`\n=== ${nome}`];
   for (const msg of caso.cliente) {
-    conversa.push({ papel: "cliente", texto: msg });
+    conversa.push(msg === "[image sent]" ? { papel: "cliente", texto: msg, midia: "https://example.test/doc.jpg" } : { papel: "cliente", texto: msg });
     linhas.push(`  👤 ${msg}`);
     const t0 = Date.now();
-    const r = await pensar(conversa, { telefone: "+447700900123", nomeNoWhatsApp: "Test", campanha: "teste" }, site, cat);
+    const r = await pensar(conversa, { telefone: "+447700900123", nomeNoWhatsApp: "Test", campanha: "teste", quem: caso.quem, sobreQuem: caso.sobre, contas: CONTAS }, site, cat);
     ferramentas.push(...r.ferramentas);
     if (r.passarParaEquipe) passou = r.passarParaEquipe;
     if (r.checkout) link = true;
