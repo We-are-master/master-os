@@ -72,6 +72,7 @@ export type MensagemSc = {
   received: string;
   author: { type: "user" | "business"; displayName?: string; userId?: string };
   content: { type: string; text?: string; mediaUrl?: string; altText?: string };
+  source?: { type?: string };
 };
 
 /** As últimas mensagens da conversa (cliente, Harvey e equipe), da mais velha para a mais nova. */
@@ -80,13 +81,24 @@ export async function historico(conversationId: string, limite = 40): Promise<Me
   return (r.messages ?? []).slice(-limite);
 }
 
-/** O telefone do WhatsApp da pessoa (o `externalId` do cliente whatsapp). */
+/**
+ * O telefone do WhatsApp da pessoa. Desde 2026 a Meta manda um id próprio no
+ * `externalId` ("GB.1234…", o BSUID), e o número de verdade fica em
+ * `additionalIdentifiers` (phoneNumber) ou em `raw.from`.
+ */
 export async function telefoneDoUsuario(userId: string): Promise<string | null> {
   try {
-    const r = await sc<{ clients: Array<{ type: string; externalId?: string; displayName?: string }> }>(`/users/${userId}/clients`);
+    const r = await sc<{
+      clients: Array<{ type: string; externalId?: string; raw?: { from?: string }; additionalIdentifiers?: Array<{ key: string; value: string }> }>;
+    }>(`/users/${userId}/clients`);
     const wa = (r.clients ?? []).find((c) => c.type === "whatsapp");
-    const bruto = wa?.externalId || wa?.displayName || "";
-    const digitos = bruto.replace(/\D/g, "");
+    if (!wa) return null;
+    const candidatos = [
+      wa.additionalIdentifiers?.find((i) => i.key === "phoneNumber")?.value,
+      wa.raw?.from,
+      /^\+?\d{10,15}$/.test(wa.externalId ?? "") ? wa.externalId : null,
+    ];
+    const digitos = (candidatos.find((c) => c && /\d{10,15}/.test(c.replace(/\D/g, ""))) ?? "").replace(/\D/g, "");
     return digitos ? `+${digitos}` : null;
   } catch {
     return null;

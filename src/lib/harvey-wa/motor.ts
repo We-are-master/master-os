@@ -54,6 +54,11 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const msg = evento.payload.message;
   if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
   if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) return "ignorado: conversa com a equipe";
+  // Só WhatsApp. O chat do site (web) e qualquer outro canal seguem o fluxo de sempre.
+  if (msg.source?.type !== "whatsapp") {
+    await seguirFluxoPadrao(conversa.id).catch(() => {});
+    return `ignorado: canal ${msg.source?.type ?? "desconhecido"}`;
+  }
 
   const sb = createServiceClient();
   // Trava: a Sunshine reenvia o evento quando a resposta demora.
