@@ -9,7 +9,8 @@
  */
 
 const NOME_DO_HARVEY = "Harvey";
-export const INTEGRACAO_HARVEY = "harvey";
+// Teste antes do merge: o servidor local responde por uma integração própria ("harvey-teste").
+export const INTEGRACAO_HARVEY = process.env.HARVEY_WA_INTEGRACAO?.trim() || "harvey";
 export const INTEGRACAO_EQUIPE = "zd-agentWorkspace";
 
 function config() {

@@ -21,6 +21,8 @@ import { chamarSite } from "./site";
 import { enviarTexto, historico } from "./sunshine";
 
 const DEGRAUS_H = [1, 4, 20];
+/** Teste: HARVEY_WA_CHASE_ESCALA=0.05 vira 3 min, 12 min e 1h. */
+const escala = () => Number(process.env.HARVEY_WA_CHASE_ESCALA) || 1;
 const JANELA_H = 23;
 
 function horaEmLondres(d: Date): number {
@@ -50,7 +52,10 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     if (c.checkout_method === "bank" && !c.sinal_recebido_em && !c.liberado_em) continue;
     const horas = (agora.getTime() - new Date(c.cliente_em as string).getTime()) / 3_600_000;
     const n = (c.chases as number) + 1;
-    if (horas < DEGRAUS_H[n - 1]) continue;
+    if (horas < DEGRAUS_H[n - 1] * escala()) continue;
+    // Com a lista de teste ligada, só quem está nela recebe chase (igual à resposta).
+    const lista = (process.env.HARVEY_WA_SO_ESTES ?? "").split(",").map((t) => t.replace(/\D/g, "")).filter(Boolean);
+    if (lista.length && !lista.includes(String(c.phone ?? "").replace(/\D/g, ""))) continue;
     out.olhados++;
 
     const msgs = sessaoAtual(await historico(c.conversation_id as string));
