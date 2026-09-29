@@ -47,6 +47,21 @@ function paraFalas(msgs: MensagemSc[]): Fala[] {
     .filter((f): f is Fala => f !== null);
 }
 
+/**
+ * Só a conversa de agora: quem volta depois de 6h parado começa do zero, com
+ * apresentação nova. Sem isto um pedido velho sem resposta (ou uma passagem
+ * para a equipe de outro dia) contaminava o "hi there" seguinte.
+ */
+const PAUSA_QUE_ENCERRA_MS = 6 * 3_600_000;
+export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
+  for (let i = msgs.length - 1; i > 0; i--) {
+    const agora = Date.parse(msgs[i].received ?? "");
+    const antes = Date.parse(msgs[i - 1].received ?? "");
+    if (agora && antes && agora - antes > PAUSA_QUE_ENCERRA_MS) return msgs.slice(i);
+  }
+  return msgs;
+}
+
 /** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
 export async function processarEvento(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
@@ -89,7 +104,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
-  const r = await pensar(paraFalas(msgs), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1" }, chamarSite, await catalogo());
+  const r = await pensar(paraFalas(sessaoAtual(msgs)), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1" }, chamarSite, await catalogo());
 
   if (r.resposta) await enviarTexto(conversa.id, r.resposta);
 
