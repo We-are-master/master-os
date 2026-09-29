@@ -2622,7 +2622,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <ExpandingSearch
                     value={search}
                     onChange={setSearch}
-                    placeholder="Search partners…"
+                    placeholder="Name, email, phone, postcode…"
                     className="ml-auto"
                   />
                   <ToolbarIconButton icon={Filter} label="Filter" />
