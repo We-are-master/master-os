@@ -29,6 +29,10 @@ export type Contexto = {
   /** Uma linha sobre a pessoa, do OS (nome, status do parceiro). */
   sobreQuem?: string;
   contas?: Contas;
+  /** Chase: a pessoa parou de responder; este é o lembrete n (1 a 3). */
+  chase?: number;
+  /** Horas desde a última mensagem da pessoa (para o chase). */
+  horasSemResposta?: number;
   /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
   ultimaMidia?: string | null;
 };
@@ -229,7 +233,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   ]
     .filter(Boolean)
     .join(" ");
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro() : promptDoHarvey(catalogo)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro() : promptDoHarvey(catalogo)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
 
   for (let volta = 0; volta < 6; volta++) {
     const m = await openai(msgs, parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE);
@@ -237,6 +241,10 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
       r.resposta = m.content ? limparTexto(m.content) : null;
+      if (ctx.chase && (!r.resposta || /\bNO_CHASE\b/.test(r.resposta))) {
+        r.resposta = null;
+        return r;
+      }
       // Primeira resposta da conversa sempre se apresenta (dono, 29/09/2026):
       // não fica só na instrução, que o modelo às vezes esquece.
       const jaFalou = conversa.some((f) => f.papel !== "cliente");
@@ -269,6 +277,20 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   }
   r.passarParaEquipe = r.passarParaEquipe ?? "Harvey could not finish his reply (too many tool calls)";
   return r;
+}
+
+/**
+ * O lembrete para quem parou de responder: curto, do que ficou pendente, sem
+ * repetir a conversa. Sem nada pendente (já pagou, disse tchau, passou para a
+ * equipe), o modelo responde NO_CHASE e nada sai.
+ */
+function instrucaoDeChase(n: number, horas: number): string {
+  return `
+
+# Follow up (this is not a reply)
+
+They have not replied for about ${Math.max(1, Math.round(horas))} hour${horas >= 1.5 ? "s" : ""}. Write follow up ${n} of 3: one short, friendly line about what is still pending, the way a person would nudge a mate. Pick up exactly where the conversation stopped (the question you asked, the price, the day you are holding, the payment link) and make it easy to answer. If a payment link was sent, it expires after an hour: offer a fresh one, or create it if you have everything. Do not restate the price or anything already said, and do not quote again: ask the pending question again in fresh words ("Still keen on Thursday or Friday morning?"). Never pressure, never invent urgency.${n === 3 ? " This is the last one: say you'll leave it with them and they can message any time." : ""}
+If nothing is pending (they said thanks or goodbye, already paid, said no, asked to stop, or it was handed to the team), reply exactly NO_CHASE.`;
 }
 
 /** Mesmo com o esquema, o modelo às vezes manda um serviço solto: vira lista. */

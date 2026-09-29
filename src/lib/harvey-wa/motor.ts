@@ -28,7 +28,7 @@ type EventoSc = {
 };
 
 let catalogoEmCache: { em: number; dados: unknown } | null = null;
-async function catalogo() {
+export async function catalogo() {
   if (catalogoEmCache && Date.now() - catalogoEmCache.em < 10 * 60_000) return catalogoEmCache.dados;
   const { status, data } = await chamarSite({ action: "catalog" });
   if (status !== 200) throw new Error(`catálogo do site: ${status}`);
@@ -40,7 +40,7 @@ function listaDeTeste(): string[] {
   return (process.env.HARVEY_WA_SO_ESTES ?? "").split(",").map((s) => s.replace(/\D/g, "")).filter(Boolean);
 }
 
-function paraFalas(msgs: MensagemSc[]): Fala[] {
+export function paraFalas(msgs: MensagemSc[]): Fala[] {
   return msgs
     .map((m): Fala | null => {
       const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
@@ -49,6 +49,37 @@ function paraFalas(msgs: MensagemSc[]): Fala[] {
       return { papel: m.author.displayName === "Harvey" ? "harvey" : "equipe", texto };
     })
     .filter((f): f is Fala => f !== null);
+}
+
+/**
+ * Quem é a pessoa e o que o Harvey já sabe dela antes de responder: parceiro
+ * (status e documentos pela ferramenta) ou cliente, com as reservas já na mão
+ * para saber se é job feito, job marcado ou pedido novo sem precisar perguntar.
+ */
+export async function contextoDaPessoa(sb: ReturnType<typeof createServiceClient>, telefone: string | null) {
+  const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
+  const contas: Contas = {
+    reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    ...(quem.tipo === "parceiro"
+      ? {
+          situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
+          salvarDocumento: (tipo: string, mediaUrl: string) =>
+            (TIPOS_DE_DOC as readonly string[]).includes(tipo) ? salvarDocumento(sb, quem.parceiro, tipo as TipoDeDoc, mediaUrl) : Promise.resolve({ error: "unknown document type" }),
+        }
+      : {}),
+  };
+  let sobreQuem: string | undefined;
+  if (quem.tipo === "parceiro") {
+    const p = quem.parceiro;
+    sobreQuem = `Partner in our system: ${p.contact_name ?? p.company_name ?? "unknown name"}${p.company_name ? ` (${p.company_name})` : ""}, ${p.trade ?? "trade not set"}, account status ${p.status}.`;
+  } else if (quem.tipo === "cliente") {
+    const reservas = await contas.reservas(null).catch(() => null);
+    sobreQuem =
+      `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. ` +
+      `Their bookings (recent and upcoming): ${JSON.stringify((reservas as { reservas?: unknown[] } | null)?.reservas ?? [])}. ` +
+      "Use this to understand what they are messaging about: a job that is coming up (confirm the details), a job already done (thank them; any problem or complaint goes to the team), a balance to pay (send the link), or something new (sell as usual). If it is not clear, ask one short question.";
+  }
+  return { quem, contas, sobreQuem };
 }
 
 /**
@@ -108,23 +139,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
-  const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
-  const contas: Contas = {
-    reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
-    ...(quem.tipo === "parceiro"
-      ? {
-          situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
-          salvarDocumento: (tipo: string, mediaUrl: string) =>
-            (TIPOS_DE_DOC as readonly string[]).includes(tipo) ? salvarDocumento(sb, quem.parceiro, tipo as TipoDeDoc, mediaUrl) : Promise.resolve({ error: "unknown document type" }),
-        }
-      : {}),
-  };
-  const sobreQuem =
-    quem.tipo === "parceiro"
-      ? `Partner in our system: ${quem.parceiro.contact_name ?? quem.parceiro.company_name ?? "unknown name"}${quem.parceiro.company_name ? ` (${quem.parceiro.company_name})` : ""}, ${quem.parceiro.trade ?? "trade not set"}, account status ${quem.parceiro.status}.`
-      : quem.tipo === "cliente"
-        ? `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. They may be asking about a booking: use get_my_bookings.`
-        : undefined;
+  const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone);
 
   const r = await pensar(
     paraFalas(sessaoAtual(msgs)),
@@ -142,6 +157,9 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
       : await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
   const mudancas: Record<string, unknown> = {
     atualizado_em: new Date().toISOString(),
+    // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
+    cliente_em: msg.received ?? new Date().toISOString(),
+    ...(r.resposta ? { harvey_em: new Date().toISOString(), chases: 0 } : {}),
     lead_id: leadId,
     tipo: quem.tipo,
     partner_id: quem.tipo === "parceiro" ? quem.parceiro.id : null,
@@ -224,6 +242,8 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
   const sb = createServiceClient();
   const { data } = await sb.from("harvey_wa_conversas").select("conversation_id, checkout_deposit").eq("email", email.toLowerCase()).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
   if (!data) return false;
+  // Pagou: nada mais a cobrar.
+  await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;

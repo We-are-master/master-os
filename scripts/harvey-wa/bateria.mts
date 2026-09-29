@@ -179,8 +179,30 @@ const CONTAS = {
   salvarDocumento: async (tipo: string) => ({ aprovado: true, documento: tipo === "insurance" ? "Public Liability Insurance" : tipo, motivo: null, ativacao: { ativado: true, email: { ok: true, sentTo: "dan@example.com" } } }),
 };
 
+// Chase: a conversa parou e o Harvey escreve (ou não) o lembrete.
+const CHASES: Array<{ nome: string; conversa: Fala[]; deveMandar: boolean }> = [
+  {
+    nome: "chase_link",
+    deveMandar: true,
+    conversa: [
+      { papel: "cliente", texto: "how much is a deep clean for a 2 bed flat in E17, 1 bathroom" },
+      { papel: "harvey", texto: "Hi there, I'm Harvey and I'll be looking after you. A 2 bed deep clean with 1 bathroom in E17 is £254, fixed. I have Thursday or Friday morning free, which suits you?" },
+    ],
+  },
+  {
+    nome: "chase_tchau",
+    deveMandar: false,
+    conversa: [
+      { papel: "cliente", texto: "ok thanks, I'll think about it and come back to you" },
+      { papel: "harvey", texto: "No worries, speak soon." },
+      { papel: "cliente", texto: "stop messaging me please" },
+      { papel: "harvey", texto: "Understood, I won't message again." },
+    ],
+  },
+];
+
 // "semvaga" só faz sentido com a capacidade ligada: roda quando pedido pelo nome.
-const escolhidos = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(CASOS).filter((c) => c !== "semvaga");
+const escolhidos = process.argv.slice(2).length ? process.argv.slice(2).filter((c) => c in CASOS) : Object.keys(CASOS).filter((c) => c !== "semvaga");
 const cat = catalog();
 let falhas = 0;
 const relatorio: string[] = [];
@@ -218,6 +240,15 @@ for (const nome of escolhidos) {
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
   console.log(linhas.join("\n"));
   relatorio.push(...linhas);
+}
+for (const c of CHASES.filter((c) => !process.argv.slice(2).length || process.argv.includes(c.nome))) {
+  const r = await pensar(c.conversa, { telefone: "+447700900123", nomeNoWhatsApp: "Test", campanha: "teste", chase: 1, horasSemResposta: 1.2, contas: CONTAS }, site, cat);
+  const ok = c.deveMandar ? !!r.resposta && r.resposta.length < 240 && !/I['’]m Harvey/.test(r.resposta) && !/£\d/.test(r.resposta) : !r.resposta;
+  const linha = `\n=== ${c.nome}\n  🤖 ${r.resposta ?? "(nada: NO_CHASE)"}\n  ${ok ? "✅ ok" : "❌ chase errado"}`;
+  console.log(linha);
+  relatorio.push(linha);
+  escolhidos.push(c.nome);
+  if (!ok) falhas++;
 }
 console.log(`\n${escolhidos.length - falhas}/${escolhidos.length} passaram`);
 writeFileSync(new URL("./ultima-bateria.txt", import.meta.url), relatorio.join("\n") + `\n\n${escolhidos.length - falhas}/${escolhidos.length} passaram\n`);
