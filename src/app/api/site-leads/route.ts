@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiKeyAllowed } from "@/lib/contacts-ingest";
 import { registrarPagamento, registrarPasso } from "@/lib/site-leads/core";
+import { avisarPagamentoNoWhatsApp } from "@/lib/harvey-wa/motor";
 import { registrarFunil } from "@/lib/site-leads/funil";
 
 export const dynamic = "force-dynamic";
@@ -47,7 +48,9 @@ export async function POST(req: NextRequest) {
       total: typeof body.total === "number" ? body.total : null,
       promoCode: typeof body.promoCode === "string" ? body.promoCode : null,
     });
-    return NextResponse.json(r, { status: r.ok ? 200 : 400 });
+    // Reserva que o Harvey vendeu no WhatsApp: ele confirma lá também.
+    const whatsapp = await avisarPagamentoNoWhatsApp(String(body.email ?? ""), typeof body.bookingRef === "string" ? body.bookingRef : null).catch(() => false);
+    return NextResponse.json({ ...r, whatsapp }, { status: r.ok ? 200 : 400 });
   }
 
   if (body.event === "step") {
