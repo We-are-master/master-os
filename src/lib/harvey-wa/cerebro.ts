@@ -14,12 +14,29 @@ export type Contexto = {
   telefone: string | null;
   nomeNoWhatsApp: string | null;
   campanha?: string;
+  /** Preenchido pelo pensar(): o cliente já escolheu cartão ou transferência? */
+  escolheuPagamento?: boolean;
 };
 
 export type Resultado = {
   resposta: string | null;
   passarParaEquipe: string | null;
-  checkout: { ref: string; url: string; total: number; deposit: boolean; email: string; nome: string; servico: string; postcode: string } | null;
+  checkout: {
+    ref: string;
+    /** Link do Stripe (cartão); vazio na transferência. */
+    url: string;
+    metodo: "card" | "bank";
+    total: number;
+    deposit: boolean;
+    /** Os 50% que seguram a vaga. */
+    sinal: number;
+    /** Jobs que nasceram no OS (só na transferência: no cartão nascem quando paga). */
+    jobIds: string[];
+    email: string;
+    nome: string;
+    servico: string;
+    postcode: string;
+  } | null;
   cotacao: { servico: string; total: number; postcode: string | null } | null;
   ferramentas: string[];
 };
@@ -80,7 +97,7 @@ const FERRAMENTAS = [
     function: {
       name: "create_payment_link",
       description:
-        "Creates the secure Stripe payment link for the booking. Only when every field is agreed with the customer, including whether they pay in full or 50% (deposit). Never call it before they chose. Paying it creates the booking; deposit=true charges 50% now and the rest after the job.",
+        "Takes the 50% deposit that secures the booking. method=card creates the secure Stripe link for the deposit (paying it creates the booking). method=bank books the slot as awaiting a bank transfer and returns the bank details, the amount and the reference; the slot is held for 24 hours. Only when every field is agreed, including card or bank. Never call it before they chose.",
       parameters: {
         type: "object",
         properties: {
@@ -98,9 +115,9 @@ const FERRAMENTAS = [
           addressLine2: { type: "string", description: "flat or unit, if any" },
           notes: { type: "string", description: "anything the team should know, in English" },
           promoCode: { type: "string" },
-          deposit: { type: "boolean" },
+          method: { type: "string", enum: ["card", "bank"], description: "card = Stripe link, bank = bank transfer" },
         },
-        required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1", "deposit"],
+        required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1", "method"],
       },
     },
   },
@@ -146,6 +163,7 @@ function limparTexto(t: string): string {
 
 export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSite, catalogo: unknown): Promise<Resultado> {
   const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [] };
+  ctx = { ...ctx, escolheuPagamento: escolheuPagamento(conversa) };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
@@ -160,6 +178,12 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
       r.resposta = m.content ? limparTexto(m.content) : null;
+      // Primeira resposta da conversa sempre se apresenta (dono, 29/09/2026):
+      // não fica só na instrução, que o modelo às vezes esquece.
+      const jaFalou = conversa.some((f) => f.papel !== "cliente");
+      if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
+        r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
+      }
       return r;
     }
     for (const c of chamadas) {
@@ -205,6 +229,8 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };
   }
   if (nome === "create_payment_link") {
+    // O modelo às vezes pula a pergunta e manda o link direto: sem escolha, não sai.
+    if (!ctx.escolheuPagamento) return { error: "They have not chosen yet. Do not send a link or bank details: ask whether they want to pay the 50% deposit by card payment link or bank transfer." };
     const nomeDaPessoa = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim();
     const booking = {
       selection: a.selection,
@@ -219,21 +245,46 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       address: { line1: a.addressLine1, line2: a.addressLine2 ?? "" },
       promoCode: a.promoCode || undefined,
     };
-    const { status, data } = await site({ action: "checkout", booking, deposit: a.deposit === true, campaign: ctx.campanha || "wa_v1" });
+    const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
+    // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
+    if (a.method === "bank") {
+      const banco = process.env.HARVEY_BANK_DETAILS?.trim();
+      if (!banco) return { error: "bank transfer is not available right now: offer the card link instead" };
+      const { status, data } = await site({ action: "bank", booking, campaign: ctx.campanha || "wa_v1" });
+      if (status !== 200 || typeof data.ref !== "string") return { error: data.error || `could not book it (${status})`, errors: data.errors };
+      const total = Number(data.total);
+      const sinal = Number(data.deposit);
+      const jobs = (data.jobs as Array<{ id: string }> | undefined) ?? [];
+      r.checkout = { ...comum, ref: data.ref, url: "", metodo: "bank", total, sinal, jobIds: jobs.map((j) => j.id) };
+      return {
+        ref: data.ref,
+        total,
+        payNow: sinal,
+        payLater: Math.round((total - sinal) * 100) / 100,
+        bankDetails: banco,
+        note: "The booking is recorded and waiting for the deposit. In this reply: the booking in one line, then Fixfy's bank details exactly as given (they are ours and safe to share), the amount to send now (payNow) and the reference (ref) to put on the transfer. Say you are holding the slot for 24 hours and it is confirmed as soon as the deposit lands; the rest is paid after the job. Nothing else is needed from them.",
+      };
+    }
+    const { status, data } = await site({ action: "checkout", booking, deposit: true, campaign: ctx.campanha || "wa_v1" });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
-    r.checkout = {
-      ref: String(data.ref),
-      url: data.url,
-      total: Number(data.total),
-      deposit: a.deposit === true,
-      email: String(a.email),
-      nome: nomeDaPessoa,
-      servico: r.cotacao?.servico ?? "",
-      postcode: String(a.postcode ?? ""),
-    };
-    return { url: data.url, ref: data.ref, total: data.total, payNow: data.payNow ?? data.total, payLater: data.payLater ?? 0, note: "Send this exact link. It expires in 1 hour; if they need longer, create a new one." };
+    const total = Number(data.total);
+    const sinal = Number(data.payNow ?? total);
+    r.checkout = { ...comum, ref: String(data.ref), url: data.url, metodo: "card", total, sinal, jobIds: [] };
+    return { url: data.url, ref: data.ref, total, payNow: sinal, payLater: data.payLater ?? 0, note: "Send this exact link. It expires in 1 hour; if they need longer, create a new one." };
   }
   return { error: `unknown tool ${nome}` };
+}
+
+/**
+ * O cliente escolheu como pagar o sinal? Vale se a última mensagem dele fala
+ * de cartão/transferência, ou se responde à pergunta do Harvey sobre isso.
+ */
+function escolheuPagamento(conversa: Fala[]): boolean {
+  const i = conversa.map((f) => f.papel).lastIndexOf("cliente");
+  if (i < 0) return false;
+  if (/\b(card|bank|transfer|link|stripe|bacs|apple pay|google pay)\b/i.test(conversa[i].texto)) return true;
+  const antes = conversa.slice(0, i).reverse().find((f) => f.papel !== "cliente");
+  return !!antes && /\bcard\b[\s\S]*\bbank\b|\bbank\b[\s\S]*\bcard\b/i.test(antes.texto);
 }
 
 /** O checkout do site exige telefone do Reino Unido: +447… vira 07…. */

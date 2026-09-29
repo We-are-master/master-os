@@ -703,6 +703,22 @@ async function ciclo(): Promise<void> {
     console.error(`[harvey] vigia de ofertas morreu: ${err}`);
   }
 
+  // Reservas do Harvey no WhatsApp por transferência: confirma o sinal que a
+  // equipe registrou, lembra em 18h e libera a vaga em 23h30 sem depósito.
+  try {
+    const { varrerTransferencias } = await import("../../src/lib/harvey-wa/transferencia");
+    const rt = await varrerTransferencias();
+    if (rt.pendentes > 0) {
+      console.log(
+        `[harvey] transferências (${rt.armado ? "ARMADO" : "ensaio"}): ${rt.pendentes} pendente(s), ` +
+          `${rt.recebidos} sinal(is), ${rt.lembrados} lembrete(s), ${rt.liberados} liberada(s)`,
+      );
+      for (const d of rt.detalhes) console.log(`[harvey]   ${d}`);
+    }
+  } catch (err) {
+    console.error(`[harvey] vigia de transferências morreu: ${err}`);
+  }
+
   // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
   // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
   try {
