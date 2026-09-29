@@ -1,6 +1,6 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
 import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
-import { ARCHIVED_REASON, ONBOARDING_HIDDEN_REASONS, PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
+import { ARCHIVED_REASON, PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
 import type { Partner } from "@/types/database";
 import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 import {
@@ -148,10 +148,8 @@ async function listPartnersLegacy(
     if (params.status === "inactive") {
       query = query.in("status", ["inactive", "on_break"]);
     } else if (params.status === "onboarding") {
-      // Only partners who confirmed their email code AND started (rates or a document).
-      query = query
-        .in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES])
-        .not("partner_status_reasons", "ov", `{${ONBOARDING_HIDDEN_REASONS.join(",")}}`);
+      // Every signup in the funnel shows up here, verified email or not.
+      query = query.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
     } else {
       query = query.eq("status", params.status);
     }
@@ -187,9 +185,7 @@ async function listPartnersLegacy(
       if (params.status === "inactive") {
         fallback = fallback.in("status", ["inactive", "on_break"]);
       } else if (params.status === "onboarding") {
-        fallback = fallback
-          .in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES])
-          .not("partner_status_reasons", "ov", `{${ONBOARDING_HIDDEN_REASONS.join(",")}}`);
+        fallback = fallback.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
       } else {
         fallback = fallback.eq("status", params.status);
       }

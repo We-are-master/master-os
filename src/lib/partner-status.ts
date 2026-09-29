@@ -12,20 +12,20 @@ export const PARTNER_REASON_CODES = [
 export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
 
 /**
- * Set by the trade portal signup until the partner types the 6-digit email code
- * (removed by /api/auth/verify-otp). Partners carrying it stay out of the Onboarding tab.
+ * Written by the trade portal signup while it still asked for a 6-digit email code.
+ * The portal dropped that step on 28/09/2026, so nothing clears it any more: it is a
+ * label on old rows, and it does **not** hide the partner from the Onboarding tab.
+ * It used to, and 17 real signups from 24-28/09 sat invisible in the Directory because
+ * of it, with documents already on file.
  */
 export const EMAIL_UNVERIFIED_REASON = "email_unverified";
 
 /**
  * Set by the trade portal when the partner row is born; cleared on the first rate card
- * save or document upload. Together with EMAIL_UNVERIFIED_REASON it keeps signups that
- * never really started out of the Onboarding tab.
+ * save or document upload. Same as above: a label, not a filter. A signup that stopped
+ * at step one is still a signup, and someone has to see it to chase it.
  */
 export const ONBOARDING_NOT_STARTED_REASON = "onboarding_not_started";
-
-/** Any of these hides a partner from the Onboarding tab (list and count). */
-export const ONBOARDING_HIDDEN_REASONS = [EMAIL_UNVERIFIED_REASON, ONBOARDING_NOT_STARTED_REASON] as const;
 
 /**
  * Archived: test accounts and duplicates that must disappear from every Directory tab and

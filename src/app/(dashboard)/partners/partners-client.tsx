@@ -105,7 +105,6 @@ import {
 } from "@/lib/partner-required-docs";
 import {
   ARCHIVED_REASON,
-  ONBOARDING_HIDDEN_REASONS,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -1496,17 +1495,6 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           .select("id", { count: "exact", head: true })
           .lt("compliance_score", 50),
       ]);
-      // The Onboarding tab hides portal signups that did not confirm their email code or never
-      // started (no rates, no document). Archived ones are taken off below, so skip them here.
-      const { data: hiddenOnboarding } = await supabase
-        .from("partners")
-        .select("status, partner_status_reasons")
-        .in("status", ["onboarding", "needs_attention"])
-        .overlaps("partner_status_reasons", [...ONBOARDING_HIDDEN_REASONS]);
-      for (const row of (hiddenOnboarding ?? []) as Array<{ status: string; partner_status_reasons: string[] | null }>) {
-        if ((row.partner_status_reasons ?? []).includes(ARCHIVED_REASON)) continue;
-        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
-      }
       // Archived partners (tests, duplicates) leave every tab and the total.
       const { data: archivedRows } = await supabase
         .from("partners")
