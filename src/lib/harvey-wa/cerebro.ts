@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { promptDoHarvey } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 
@@ -248,8 +249,8 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
     if (a.method === "bank") {
-      const banco = process.env.HARVEY_BANK_DETAILS?.trim();
-      if (!banco) return { error: "bank transfer is not available right now: offer the card link instead" };
+      // Os mesmos dados das faturas; HARVEY_BANK_DETAILS só se um dia quiser outra conta.
+      const banco = process.env.HARVEY_BANK_DETAILS?.trim() || FIXFY_CLIENT_BANK_DETAIL_ROWS.filter((l) => l.label !== "IBAN").map((l) => `${l.label}: ${l.value}`).join("\n");
       const { status, data } = await site({ action: "bank", booking, campaign: ctx.campanha || "wa_v1" });
       if (status !== 200 || typeof data.ref !== "string") return { error: data.error || `could not book it (${status})`, errors: data.errors };
       const total = Number(data.total);
