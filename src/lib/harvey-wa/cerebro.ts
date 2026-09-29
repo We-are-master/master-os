@@ -243,6 +243,11 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }
+      // Já se apresentou nesta conversa: nunca de novo.
+      if (r.resposta && jaFalou) {
+        const sem = r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*I['’]m Harvey[^.!?]*[.!?]\s*/i, "").trim();
+        if (sem) r.resposta = sem.charAt(0).toUpperCase() + sem.slice(1);
+      }
       return r;
     }
     for (const c of chamadas) {

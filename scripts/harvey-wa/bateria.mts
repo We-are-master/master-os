@@ -145,6 +145,10 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
     cliente: ["Hi, what time is the cleaner coming on Friday?"],
     checar: (t, f) => [!f.includes("get_my_bookings") && "não consultou as reservas", !/9|nine/i.test(t) && "não disse a janela de chegada", /£\d/.test(t) && !/balance|pay/i.test(t) && "falou de preço sem motivo"].filter(Boolean) as string[],
   },
+  sem_servico: {
+    cliente: ["I want to book a job for tomorrow"],
+    checar: (t, f) => [f.includes("get_available_dates") && "ofereceu dia sem saber o serviço", /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/.test(t) && "falou dia antes do serviço", !/\?/.test(t) && "não perguntou o que é"].filter(Boolean) as string[],
+  },
   pessoa: {
     cliente: ["can I speak to a real person please"],
     checar: (t, f, r) => [!r.passou && "não passou pra equipe"].filter(Boolean) as string[],
@@ -203,6 +207,8 @@ for (const nome of escolhidos) {
   const textoHarvey = conversa.filter((f) => f.papel === "harvey").map((f) => f.texto).join("\n");
   const problemas = caso.checar(textoHarvey, ferramentas, { passou, link });
   if (/[—–]/.test(textoHarvey)) problemas.push("usou travessão");
+  if (/get in on the day[^\n]*(letting agent|key safe|concierge)/i.test(textoHarvey)) problemas.push("pergunta de acesso com menu de opções");
+  if ((textoHarvey.match(/(hi|hey|hello)( there)?,? I['’]m Harvey/gi) ?? []).length > 1) problemas.push("se apresentou duas vezes");
   if ((textoHarvey.match(/Harvey/g) ?? []).length > 1 && nome !== "bot") problemas.push("repetiu o nome");
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
   if (nome !== "reclamacao" && nome !== "stop" && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
