@@ -23,14 +23,25 @@ import { assumirConversa, conversaDoTicket, devolverConversa } from "@/lib/harve
 
 export const dynamic = "force-dynamic";
 
-function autorizado(req: NextRequest): boolean {
+/**
+ * Confere o token. Quando recusa, diz o motivo (sem mostrar nenhuma senha) para
+ * dar para achar o problema pela tela do Zendesk: variável ausente no deploy,
+ * Zendesk sem mandar a senha, ou senhas diferentes (com o tamanho de cada uma).
+ */
+function recusa(req: NextRequest): NextResponse | null {
   // trim: o `openssl rand -hex 32 | pbcopy` leva uma quebra de linha que a Vercel guarda e o Zendesk não.
   const esperado = (process.env.HARVEY_WA_ZENDESK_APP_TOKEN ?? "").trim();
   const veio = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-  if (!esperado || !veio) return false;
-  const a = Buffer.from(veio);
-  const b = Buffer.from(esperado);
-  return a.length === b.length && timingSafeEqual(a, b);
+  let motivo: string | null = null;
+  if (!esperado) motivo = "HARVEY_WA_ZENDESK_APP_TOKEN is not set on this deployment";
+  else if (!veio) motivo = "Zendesk sent no token";
+  else if (veio.includes("{{")) motivo = "Zendesk did not fill in the token (secure setting missing)";
+  else {
+    const a = Buffer.from(veio);
+    const b = Buffer.from(esperado);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) motivo = `Token does not match (Zendesk ${a.length} chars, Vercel ${b.length} chars)`;
+  }
+  return motivo ? NextResponse.json({ error: `Unauthorized: ${motivo}` }, { status: 401 }) : null;
 }
 
 async function situacao(ticket: number) {
@@ -60,7 +71,8 @@ async function lista() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!autorizado(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const negado = recusa(req);
+  if (negado) return negado;
   try {
     if (req.nextUrl.searchParams.get("lista")) return NextResponse.json(await lista());
     const ticket = numeroDoTicket(req.nextUrl.searchParams.get("ticket"));
@@ -73,7 +85,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!autorizado(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const negado = recusa(req);
+  if (negado) return negado;
   const corpo = (await req.json().catch(() => ({}))) as { ticket?: unknown; conversationId?: string; acao?: string; agente?: string };
   const quem = String(corpo.agente ?? "").trim().slice(0, 80) || "team";
   try {

@@ -82,7 +82,7 @@
   function carregar() {
     return pedir({ url: OS + "?lista=1", type: "GET" })
       .then(desenhar)
-      .catch(function (e) { app.innerHTML = '<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ").</p>"; });
+      .catch(function (e) { app.innerHTML = '<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ")" + (e && e.responseJSON && e.responseJSON.error ? "<br>" + texto(e.responseJSON.error) : "") + ".</p>"; });
   }
 
   function agir(ev) {
