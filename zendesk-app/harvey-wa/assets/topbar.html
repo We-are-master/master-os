@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 12px; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #2f3941; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  .pausa { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 4px; background: #f8f9f9; margin-bottom: 12px; }
+  .pausa.pausado { background: #fff7ed; border: 1px solid #fed7aa; }
+  .linha { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #e9ebed; }
+  .ponto { width: 10px; height: 10px; border-radius: 50%; background: #c2c8cc; flex: none; }
+  .harvey .ponto { background: #ed4b00; }
+  .equipe .ponto { background: #038153; }
+  .quem { flex: 1; min-width: 0; }
+  .nome { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { color: #68737d; font-size: 12px; }
+  .grupo { color: #68737d; font-size: 12px; font-weight: 600; text-transform: uppercase; margin: 12px 0 2px; }
+  .vazio { color: #68737d; }
+  .erro { color: #cc3340; margin: 8px 0; }
+  button { padding: 5px 10px; border-radius: 4px; border: 1px solid #ed4b00; background: #ed4b00; color: #fff; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  button.secundario { background: #fff; color: #ed4b00; }
+  button:disabled { opacity: .6; cursor: default; }
+</style>
+</head>
+<body>
+<h1>Harvey on WhatsApp</h1>
+<div id="app"><p class="vazio">Loading...</p></div>
+<script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
+<script>
+  // Barra superior: aparece em qualquer tela, inclusive nos tickets travados do
+  // Harvey (onde o Zendesk esconde a barra lateral). Lista as conversas dos
+  // últimos 3 dias com Take over / Give back e o interruptor geral de pausa.
+  var OS = "https://app.getfixfy.com/api/harvey-wa/zendesk-app";
+  var client = ZAFClient.init();
+  var app = document.getElementById("app");
+  var agente = "team";
+  var erro = "";
+
+  function pedir(opcoes) {
+    return client.request(Object.assign({
+      secure: true,
+      headers: { Authorization: "Bearer {{setting.api_token}}" },
+      contentType: "application/json",
+      dataType: "json"
+    }, opcoes));
+  }
+
+  function texto(s) { var d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+
+  function quando(iso) {
+    return new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function linha(c) {
+    var comHarvey = c.estado === "harvey";
+    var quem = c.tipo === "parceiro" ? "Partner" : "Customer";
+    return '<div class="linha ' + (comHarvey ? "harvey" : "equipe") + '"><span class="ponto"></span>' +
+      '<div class="quem"><div class="nome">' + texto(c.name || c.phone || "WhatsApp") + "</div>" +
+      '<div class="sub">' + texto((c.phone || "") + " · " + quem + " · " + quando(c.atualizado_em)) + "</div></div>" +
+      (comHarvey
+        ? '<button data-id="' + texto(c.conversation_id) + '" data-acao="assumir">Take over</button>'
+        : '<button class="secundario" data-id="' + texto(c.conversation_id) + '" data-acao="devolver">Give back</button>') +
+      "</div>";
+  }
+
+  function desenhar(s) {
+    var harvey = s.conversas.filter(function (c) { return c.estado === "harvey"; });
+    var equipe = s.conversas.filter(function (c) { return c.estado !== "harvey"; });
+    var html = (erro ? '<p class="erro">' + texto(erro) + "</p>" : "") +
+      '<div class="pausa' + (s.pausado ? " pausado" : "") + '"><span>' +
+      (s.pausado ? "<b>Harvey is paused.</b> Every new message goes to the team." : "Harvey is <b>on</b>.") +
+      '</span><button id="pausa" class="' + (s.pausado ? "" : "secundario") + '" data-acao="' + (s.pausado ? "ligar" : "pausar") + '">' +
+      (s.pausado ? "Turn on" : "Pause Harvey") + "</button></div>" +
+      '<div class="grupo">With Harvey (' + harvey.length + ")</div>" +
+      (harvey.length ? harvey.map(linha).join("") : '<p class="vazio">Nobody right now.</p>') +
+      '<div class="grupo">With the team (' + equipe.length + ")</div>" +
+      (equipe.length ? equipe.map(linha).join("") : '<p class="vazio">Nobody right now.</p>');
+    app.innerHTML = html;
+    Array.prototype.forEach.call(app.querySelectorAll("button"), function (b) { b.onclick = agir; });
+  }
+
+  function carregar() {
+    return pedir({ url: OS + "?lista=1", type: "GET" })
+      .then(desenhar)
+      .catch(function (e) { app.innerHTML = '<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ").</p>"; });
+  }
+
+  function agir(ev) {
+    var b = ev.currentTarget;
+    var acao = b.getAttribute("data-acao");
+    // Pausar vale para todas as conversas: pede um segundo clique (o iframe do Zendesk pode bloquear confirm()).
+    if (acao === "pausar" && !b.getAttribute("data-certeza")) {
+      b.setAttribute("data-certeza", "1");
+      b.textContent = "Click again to pause all";
+      return;
+    }
+    b.disabled = true;
+    var corpo = { acao: acao, agente: agente };
+    if (b.getAttribute("data-id")) corpo.conversationId = b.getAttribute("data-id");
+    pedir({ url: OS, type: "POST", data: JSON.stringify(corpo) })
+      .then(function () {
+        erro = "";
+        var aviso = { assumir: "You have this chat now. If the ticket is still locked, refresh it.", devolver: "Harvey is back on this chat.", pausar: "Harvey is paused.", ligar: "Harvey is on again." }[acao];
+        client.invoke("notify", aviso);
+      })
+      .catch(function (e) { erro = (e && e.responseJSON && e.responseJSON.error) || "Something went wrong"; })
+      .then(carregar);
+  }
+
+  client.on("app.registered", function () {
+    client.get("currentUser.name").then(function (r) { agente = r["currentUser.name"] || "team"; });
+    carregar();
+  });
+  // Atualiza sempre que o agente abre o painel.
+  client.on("pane.activated", carregar);
+</script>
+</body>
+</html>
