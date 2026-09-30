@@ -66,12 +66,9 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
     ],
     checar: (t, f, r) =>
       [
-        !r.link && "não reservou",
-        !/06913415/.test(t) && "não mandou os dados do banco",
-        !/FX-TESTE2/.test(t) && "não mandou a referência",
-        !/133/.test(t) && "não disse o sinal de £133",
-        !/24 ?h|24 hours|tomorrow/i.test(t) && "não disse que segura 24h",
-        !/12345678|06913415/.test(t.split(/bank transfer/i).slice(-1)[0] ?? "") && "não mandou o banco depois do pedido",
+        !r.passou && "não passou para a equipe",
+        /12345678|06913415|sort code/i.test(t) && "mandou dados do banco (só cartão agora)",
+        !/team/i.test(t.split(/bank transfer/i).slice(-1)[0] ?? "") && "não disse que a equipe resolve",
       ].filter(Boolean) as string[],
   },
   deep: {

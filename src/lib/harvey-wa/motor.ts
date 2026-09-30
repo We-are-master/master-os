@@ -15,7 +15,7 @@ import { pensar, type Contas, type Fala } from "./cerebro";
 import { quemE, type Identidade } from "./identidade";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { classificarNoZendesk, type DadosDoCliente } from "./zendesk-wa";
+import { classificarNoZendesk, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
@@ -188,6 +188,11 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     });
   if (r.passarParaEquipe) {
     await passarParaEquipe(conversa.id, r.passarParaEquipe);
+    const nota = [`Harvey handed this WhatsApp conversation to the team.`, `Why: ${r.passarParaEquipe}`, r.notaParaEquipe ? `\nWhat Harvey already has:\n${r.notaParaEquipe}` : null, r.cotacao ? `\nLast quote: ${r.cotacao.servico}, £${r.cotacao.total}${r.cotacao.postcode ? `, ${r.cotacao.postcode}` : ""}` : null]
+      .filter(Boolean)
+      .join("\n");
+    const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);

@@ -5,7 +5,6 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
-import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 
@@ -58,6 +57,8 @@ export type Resultado = {
   } | null;
   cotacao: { servico: string; total: number; postcode: string | null } | null;
   ferramentas: string[];
+  /** O que o Harvey já sabe, para a nota interna do ticket quando passa para a equipe. */
+  notaParaEquipe?: string | null;
   /** Documentos de parceiro gravados nesta resposta (para o log). */
   documentos: unknown[];
 };
@@ -118,7 +119,7 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "create_payment_link",
       description:
-        "Takes the 50% deposit that secures the booking. method=card creates the secure Stripe link for the deposit (paying it creates the booking). method=bank books the slot as awaiting a bank transfer and returns the bank details, the amount and the reference; the slot is held for 24 hours. Only when every field is agreed, including card or bank. Never call it before they chose.",
+        "Creates the secure Stripe card link for the 50% deposit that secures the booking. Paying it creates the booking and they get the confirmation straight away. Only when every field is agreed.",
       parameters: {
         type: "object",
         properties: {
@@ -136,9 +137,8 @@ const FERRAMENTAS_CLIENTE = [
           addressLine2: { type: "string", description: "flat or unit, if any" },
           notes: { type: "string", description: "anything the team should know, in English" },
           promoCode: { type: "string" },
-          method: { type: "string", enum: ["card", "bank"], description: "card = Stripe link, bank = bank transfer" },
         },
-        required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1", "method"],
+        required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1"],
       },
     },
   },
@@ -146,8 +146,15 @@ const FERRAMENTAS_CLIENTE = [
     type: "function",
     function: {
       name: "hand_off_to_team",
-      description: "Pass the conversation to a person from the team. Use it for complaints, existing bookings, requests for a person, anything outside the catalogue or anything you do not know.",
-      parameters: { type: "object", properties: { reason: { type: "string", description: "one line in English: what is needed and why" } }, required: ["reason"] },
+      description: "Pass the conversation to a person from the team. Use it for complaints, existing bookings, requests for a person, paying by bank transfer, anything outside the catalogue or anything you do not know. What you write goes into an internal note on the ticket.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "one line in English: what is needed and why" },
+          details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
+        },
+        required: ["reason"],
+      },
     },
   },
   {
@@ -186,7 +193,14 @@ const FERRAMENTAS_PARCEIRO = [
     function: {
       name: "hand_off_to_team",
       description: "Pass the conversation to a person from the team: payments and self-bills, disputes, cancelling or moving a job, anything you cannot answer.",
-      parameters: { type: "object", properties: { reason: { type: "string", description: "one line in English: what is needed and why" } }, required: ["reason"] },
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "one line in English: what is needed and why" },
+          details: { type: "string", description: "what you know that helps the team, in English" },
+        },
+        required: ["reason"],
+      },
     },
   },
 ] as const;
@@ -230,7 +244,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
     ctx.sobreQuem ?? null,
-    ctx.pagamento === "bank" ? "They asked to pay the deposit by bank transfer: use method bank." : null,
+    ctx.pagamento === "bank" ? "They asked to pay by bank transfer: we only take card online, so hand off to the team with every booking detail." : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -334,6 +348,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   if (nome === "get_available_dates") return (await site({ action: "slots", services: Array.isArray(a.services) ? a.services : [] })).data;
   if (nome === "hand_off_to_team") {
     r.passarParaEquipe = String(a.reason || "Harvey asked for a person");
+    r.notaParaEquipe = typeof a.details === "string" ? a.details : null;
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };
   }
   if (nome === "create_payment_link") {
@@ -354,26 +369,6 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     };
     const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
-    // Cartão é o padrão (a Stripe confirma sozinha); transferência só quando a pessoa pediu.
-    a.method = ctx.pagamento === "bank" ? "bank" : "card";
-    if (a.method === "bank") {
-      // Os mesmos dados das faturas; HARVEY_BANK_DETAILS só se um dia quiser outra conta.
-      const banco = process.env.HARVEY_BANK_DETAILS?.trim() || FIXFY_CLIENT_BANK_DETAIL_ROWS.filter((l) => l.label !== "IBAN").map((l) => `${l.label}: ${l.value}`).join("\n");
-      const { status, data } = await site({ action: "bank", booking, campaign: ctx.campanha || "wa_v1" });
-      if (status !== 200 || typeof data.ref !== "string") return { error: data.error || `could not book it (${status})`, errors: data.errors };
-      const total = Number(data.total);
-      const sinal = Number(data.deposit);
-      const jobs = (data.jobs as Array<{ id: string }> | undefined) ?? [];
-      r.checkout = { ...comum, ref: data.ref, url: "", metodo: "bank", total, sinal, jobIds: jobs.map((j) => j.id) };
-      return {
-        ref: data.ref,
-        total,
-        payNow: sinal,
-        payLater: Math.round((total - sinal) * 100) / 100,
-        bankDetails: banco,
-        note: "The booking is recorded and waiting for the deposit. In this reply: the booking in one line, then Fixfy's bank details exactly as given (they are ours and safe to share), the amount to send now (payNow) and the reference (ref) to put on the transfer. Say you are holding the slot for 24 hours and it is confirmed as soon as the deposit lands; the rest is paid after the job. Nothing else is needed from them.",
-      };
-    }
     const { status, data } = await site({ action: "checkout", booking, deposit: true, campaign: ctx.campanha || "wa_v1" });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
     const total = Number(data.total);

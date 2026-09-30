@@ -129,3 +129,24 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
   if (ticket) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
   return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}`;
 }
+
+/**
+ * Nota interna no ticket da conversa quando o Harvey passa para a equipe: o
+ * motivo e tudo que ele já sabe, para ninguém perguntar de novo ao cliente.
+ * O ticket pode demorar uns segundos a aparecer depois da passagem.
+ */
+export async function notaInternaNaConversa(telefone: string | null, texto: string): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
+  const u = await usuarioPeloTelefone(telefone);
+  if (!u) return "usuário não achado";
+  for (let tentativa = 0; tentativa < 4; tentativa++) {
+    const ticket = await ticketDaConversa(u.id);
+    if (ticket) {
+      await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
+      await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_passou"] } });
+      return `nota no ticket ${ticket}`;
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  return "ticket não apareceu";
+}
