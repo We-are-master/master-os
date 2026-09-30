@@ -16,6 +16,8 @@ import { quemE, type Identidade } from "./identidade";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
+import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
+import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
@@ -139,11 +141,20 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
+  // De qual anúncio veio: a mensagem pronta do anúncio é a 1ª do cliente. Conversa longa
+  // (a 1ª saiu do histórico) usa o que ficou gravado no lead.
+  const primeiraDoCliente = msgs.find((m) => m.author.type === "user");
+  const leadExistente = (estado?.lead_id as string | null) ?? null;
+  const origem =
+    origemDaConversa(primeiraDoCliente?.content.text) ??
+    (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
+    ORIGEM_PADRAO;
+
   const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone);
 
   const r = await pensar(
     paraFalas(sessaoAtual(msgs)),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas },
     chamarSite,
     await catalogo(),
   );
@@ -152,9 +163,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
 
   // Parceiro não é lead de venda.
   const leadId =
-    quem.tipo === "parceiro"
-      ? ((estado?.lead_id as string | null) ?? null)
-      : await registrarLead(sb, { conversationId: conversa.id, leadId: (estado?.lead_id as string | null) ?? null, telefone, nome: msg.author.displayName ?? null, r });
+    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, r });
   const mudancas: Record<string, unknown> = {
     atualizado_em: new Date().toISOString(),
     // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
@@ -196,6 +205,10 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
+
+  // Veio de anúncio: a Meta fica sabendo do lead (1ª cotação) e do checkout (link ou banco).
+  if (r.cotacao) await mandarEventoWhatsApp(sb, { telefone, evento: "LeadSubmitted", chave: conversa.id }).catch((e) => console.error("[harvey-wa] meta lead", e));
+  if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
   return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
 
@@ -206,7 +219,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
  */
 async function registrarLead(
   sb: ReturnType<typeof createServiceClient>,
-  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; r: Awaited<ReturnType<typeof pensar>> },
+  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; origem: Origem; r: Awaited<ReturnType<typeof pensar>> },
 ): Promise<string | null> {
   const agora = new Date().toISOString();
   const campos: Record<string, unknown> = { last_activity_at: agora, updated_at: agora };
@@ -228,8 +241,13 @@ async function registrarLead(
         status: (campos.status as string) ?? "new",
         step_reached: (campos.step_reached as number) ?? 1,
         sequence_state: "none",
-        source: { utm_source: "whatsapp", utm_medium: "chat", utm_campaign: "wa_v1" },
-        tags: ["harvey-wa"],
+        source: {
+          utm_source: "whatsapp",
+          utm_medium: a.origem.conteudo ? "paid_social" : "chat",
+          utm_campaign: a.origem.campanha,
+          ...(a.origem.conteudo ? { utm_content: a.origem.conteudo } : {}),
+        },
+        tags: a.origem.conteudo ? ["harvey-wa", "wa-ads"] : ["harvey-wa"],
         selection: {},
       })
       .select("id")
@@ -245,10 +263,18 @@ async function registrarLead(
 /** O site avisou que pagou (pelo e-mail): o Harvey confirma no WhatsApp da pessoa. */
 export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: string | null): Promise<boolean> {
   const sb = createServiceClient();
-  const { data } = await sb.from("harvey_wa_conversas").select("conversation_id, checkout_deposit, phone").eq("email", email.toLowerCase()).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
+  const { data } = await sb
+    .from("harvey_wa_conversas")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone")
+    .eq("email", email.toLowerCase())
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (!data) return false;
   // Pagou: nada mais a cobrar.
   await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
+  const ref = bookingRef ?? (data.checkout_ref as string | null);
+  if (ref) await mandarEventoWhatsApp(sb, { telefone: data.phone as string | null, evento: "Purchase", chave: ref, valor: data.checkout_total as number | null }).catch((e) => console.error("[harvey-wa] meta compra", e));
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;

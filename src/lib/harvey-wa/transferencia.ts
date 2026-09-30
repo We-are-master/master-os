@@ -20,6 +20,7 @@ import { cancelJobFromZendeskWebhook } from "@/lib/office-job-cancel-from-zendes
 import { ensureAndDispatchAutoAssignInvites } from "@/lib/auto-assign-job-invites";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { registrarPagamento } from "@/lib/site-leads/core";
+import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { enviarTexto } from "./sunshine";
 
 const LEMBRAR_EM_H = 18;
@@ -27,6 +28,7 @@ const LIBERAR_EM_H = 23.5;
 
 type Pendente = {
   conversation_id: string;
+  phone: string | null;
   email: string | null;
   checkout_ref: string | null;
   checkout_total: number | null;
@@ -49,7 +51,7 @@ export async function varrerTransferencias(
   const out: ResultadoTransferencias = { armado, pendentes: 0, recebidos: 0, lembrados: 0, liberados: 0, detalhes: [] };
   const { data, error } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, email, checkout_ref, checkout_total, checkout_sinal, checkout_at, job_ids, lembrado_em")
+    .select("conversation_id, phone, email, checkout_ref, checkout_total, checkout_sinal, checkout_at, job_ids, lembrado_em")
     .eq("checkout_method", "bank")
     .is("sinal_recebido_em", null)
     .is("liberado_em", null)
@@ -81,6 +83,7 @@ export async function varrerTransferencias(
         `Your deposit has landed, thank you. You're booked in (${ref})${resto > 0 ? `, and the other ${gbp(resto)} is paid after the job` : ""}. I'll be in touch with the details before the day.`,
       ).catch((e) => console.error("[harvey-wa] transferência: aviso de sinal", ref, e));
       if (p.email) await registrarPagamento({ email: p.email, jobId: p.job_ids[0], bookingRef: ref, total: Number(p.checkout_total ?? 0), promoCode: null }).catch(() => {});
+      await mandarEventoWhatsApp(sb, { telefone: p.phone, evento: "Purchase", chave: ref, valor: p.checkout_total, agora }).catch((e) => console.error("[harvey-wa] meta compra", ref, e));
       if (process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
         for (const id of p.job_ids) await despachar(sb, id).catch((e) => console.error("[harvey-wa] transferência: despacho", id, e));
       }
