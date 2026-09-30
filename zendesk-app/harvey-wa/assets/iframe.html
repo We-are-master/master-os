@@ -66,7 +66,7 @@
   function carregar(erro) {
     return pedir({ url: OS + "?ticket=" + ticketId, type: "GET" })
       .then(function (s) { desenhar(s, erro); })
-      .catch(function (e) { mostrar('<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ').</p>'); });
+      .catch(function (e) { mostrar('<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ")" + (e && e.responseJSON && e.responseJSON.error ? "<br>" + texto(e.responseJSON.error) : "") + '.</p>'); });
   }
 
   function agir(ev) {
