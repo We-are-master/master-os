@@ -1,0 +1,29 @@
+{
+  "name": "Harvey WhatsApp",
+  "author": {
+    "name": "Fixfy",
+    "email": "hello@getfixfy.com",
+    "url": "https://getfixfy.com"
+  },
+  "defaultLocale": "en",
+  "private": true,
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "assets/iframe.html",
+        "flexible": true
+      }
+    }
+  },
+  "version": "1.0.0",
+  "frameworkVersion": "2.0",
+  "domainWhitelist": ["app.getfixfy.com"],
+  "parameters": [
+    {
+      "name": "api_token",
+      "type": "text",
+      "secure": true,
+      "required": true
+    }
+  ]
+}
