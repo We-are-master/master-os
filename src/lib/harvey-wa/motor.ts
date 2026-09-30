@@ -12,6 +12,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Fala } from "./cerebro";
+import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
@@ -124,6 +125,10 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
+
+  // Veio de anúncio: a Meta fica sabendo do lead (1ª cotação) e do checkout (link ou banco).
+  if (r.cotacao) await mandarEventoWhatsApp(sb, { telefone, evento: "LeadSubmitted", chave: conversa.id }).catch((e) => console.error("[harvey-wa] meta lead", e));
+  if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
   return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
 
@@ -178,8 +183,16 @@ async function registrarLead(
 /** O site avisou que pagou (pelo e-mail): o Harvey confirma no WhatsApp da pessoa. */
 export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: string | null): Promise<boolean> {
   const sb = createServiceClient();
-  const { data } = await sb.from("harvey_wa_conversas").select("conversation_id, checkout_deposit").eq("email", email.toLowerCase()).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
+  const { data } = await sb
+    .from("harvey_wa_conversas")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone")
+    .eq("email", email.toLowerCase())
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (!data) return false;
+  const ref = bookingRef ?? (data.checkout_ref as string | null);
+  if (ref) await mandarEventoWhatsApp(sb, { telefone: data.phone as string | null, evento: "Purchase", chave: ref, valor: data.checkout_total as number | null }).catch((e) => console.error("[harvey-wa] meta compra", e));
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;

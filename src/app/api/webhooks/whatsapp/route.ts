@@ -7,6 +7,9 @@
  *   Stop        "Stop promotions" (botão do template) ou STOP/UNSUBSCRIBE
  *               digitado. Bloqueia o número na hora, em whatsapp_suppressions.
  *   resposta    carimba `replied_at` no último toque de marketing do número.
+ *   anúncio     mensagem que veio de anúncio de WhatsApp traz `referral.ctwa_clid`:
+ *               vai para `wa_cliques_anuncio`, e a venda volta à Meta com ele
+ *               (src/lib/meta/eventos-whatsapp.ts).
  *   status      delivered/read/failed carimbam o toque pelo id da mensagem.
  *               Falha de "número sem WhatsApp" (131026) bloqueia como invalid,
  *               senão a próxima campanha tenta de novo.
@@ -21,6 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ehPedidoDeSaida } from "@/lib/marketing/whatsapp";
+import { cliqueDaMensagem } from "@/lib/meta/eventos-whatsapp";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,11 +49,13 @@ function assinaturaOk(corpo: string, cabecalho: string | null): boolean {
 }
 
 type Mensagem = {
+  id?: string;
   from?: string;
   type?: string;
   text?: { body?: string };
   button?: { text?: string; payload?: string };
   interactive?: { button_reply?: { title?: string } };
+  referral?: { ctwa_clid?: string; source_id?: string; source_type?: string; headline?: string; source_url?: string };
 };
 type Status = { id?: string; status?: string; recipient_id?: string; errors?: { code?: number }[] };
 
@@ -79,6 +85,16 @@ export async function POST(req: NextRequest) {
         const phone = String(m.from ?? "").replace(/\D/g, "");
         if (!phone) continue;
         const texto = m.button?.text ?? m.button?.payload ?? m.interactive?.button_reply?.title ?? m.text?.body;
+
+        // Veio de anúncio de WhatsApp: guarda o id do clique para a venda voltar à Meta.
+        const clique = cliqueDaMensagem(m);
+        if (clique) {
+          const { error } = await sb.from("wa_cliques_anuncio").upsert(
+            { phone, ctwa_clid: clique.ctwaClid, ad_id: clique.adId, headline: clique.headline, source_url: clique.sourceUrl, message_id: m.id ?? null },
+            { onConflict: "message_id", ignoreDuplicates: true },
+          );
+          if (error) console.error("[whatsapp-webhook] clique de anúncio", phone, error.message);
+        }
 
         if (ehPedidoDeSaida(texto)) {
           await sb
