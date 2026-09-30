@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
-import { devolverAoHarvey, passarParaEquipe } from "@/lib/harvey-wa/sunshine";
+import { assumirConversa, devolverConversa } from "@/lib/harvey-wa/controle";
 
 export const dynamic = "force-dynamic";
 
@@ -36,13 +36,11 @@ export async function POST(req: NextRequest) {
   if (!id) return NextResponse.json({ error: "conversationId is required" }, { status: 400 });
   try {
     if (corpo.acao === "assumir") {
-      await passarParaEquipe(id, `${quem} took over from the OS`);
-      await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: agora, motivo_passagem: `${quem} took over`, chases: 3, atualizado_em: agora }).eq("conversation_id", id);
+      await assumirConversa(sb, id, quem, "the OS");
       return NextResponse.json({ ok: true, estado: "equipe" });
     }
     if (corpo.acao === "devolver") {
-      await devolverAoHarvey(id);
-      await sb.from("harvey_wa_conversas").update({ estado: "harvey", passou_em: null, motivo_passagem: null, chases: 3, atualizado_em: agora }).eq("conversation_id", id);
+      await devolverConversa(sb, id);
       return NextResponse.json({ ok: true, estado: "harvey" });
     }
   } catch (e) {

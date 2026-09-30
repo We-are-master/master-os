@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; padding: 12px; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #2f3941; }
+  .estado { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+  .ponto { width: 10px; height: 10px; border-radius: 50%; background: #c2c8cc; flex: none; }
+  .harvey .ponto { background: #ed4b00; }
+  .equipe .ponto { background: #038153; }
+  .nota { color: #68737d; margin: 0 0 10px; }
+  .aviso { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 4px; padding: 6px 8px; margin: 0 0 10px; }
+  .erro { color: #cc3340; margin: 8px 0 0; }
+  button { width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #ed4b00; background: #ed4b00; color: #fff; font-weight: 600; cursor: pointer; }
+  button.secundario { background: #fff; color: #ed4b00; }
+  button:disabled { opacity: .6; cursor: default; }
+</style>
+</head>
+<body>
+<div id="app"><p class="nota">Loading...</p></div>
+<script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
+<script>
+  // App da barra lateral do ticket: com quem está a conversa do WhatsApp e o
+  // botão de assumir ou devolver. Fala com o OS pelo proxy do Zendesk; o token
+  // é a configuração segura do app e nunca aparece aqui.
+  var OS = "https://app.getfixfy.com/api/harvey-wa/zendesk-app";
+  var client = ZAFClient.init();
+  var app = document.getElementById("app");
+  var ticketId = null;
+  var agente = "team";
+
+  function pedir(opcoes) {
+    return client.request(Object.assign({
+      secure: true,
+      headers: { Authorization: "Bearer {{setting.api_token}}" },
+      contentType: "application/json",
+      dataType: "json"
+    }, opcoes));
+  }
+
+  function ajustar() { client.invoke("resize", { width: "100%", height: (document.body.scrollHeight + 8) + "px" }); }
+
+  function mostrar(html) { app.innerHTML = html; ajustar(); }
+
+  function texto(s) { var d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+
+  function desenhar(s, erro) {
+    var pausa = s.pausado ? '<p class="aviso">Harvey is paused for every chat. Turn him back on in the OS (Harvey WhatsApp).</p>' : "";
+    var falha = erro ? '<p class="erro">' + texto(erro) + "</p>" : "";
+    if (!s.encontrada) {
+      mostrar('<div class="estado"><span class="ponto"></span>Not a Harvey chat</div><p class="nota">No Harvey WhatsApp conversation found for this ticket.</p>' + falha);
+      return;
+    }
+    if (s.estado === "harvey") {
+      mostrar(pausa + '<div class="estado harvey"><span class="ponto"></span>Harvey is handling this chat</div>' +
+        '<p class="nota">Take over to reply yourself. Harvey stops and the ticket unlocks.</p>' +
+        '<button id="botao" data-acao="assumir">Take over</button>' + falha);
+    } else {
+      mostrar(pausa + '<div class="estado equipe"><span class="ponto"></span>The team has this chat</div>' +
+        '<p class="nota">Harvey is out of this conversation. Give it back when you are done.</p>' +
+        '<button id="botao" class="secundario" data-acao="devolver">Give back to Harvey</button>' + falha);
+    }
+    document.getElementById("botao").onclick = agir;
+  }
+
+  function carregar(erro) {
+    return pedir({ url: OS + "?ticket=" + ticketId, type: "GET" })
+      .then(function (s) { desenhar(s, erro); })
+      .catch(function (e) { mostrar('<p class="erro">Could not reach the Fixfy OS (' + texto(String(e && e.status || "error")) + ').</p>'); });
+  }
+
+  function agir(ev) {
+    var botao = ev.currentTarget;
+    var acao = botao.getAttribute("data-acao");
+    botao.disabled = true;
+    botao.textContent = acao === "assumir" ? "Taking over..." : "Giving back...";
+    pedir({ url: OS, type: "POST", data: JSON.stringify({ ticket: ticketId, acao: acao, agente: agente }) })
+      .then(function () {
+        client.invoke("notify", acao === "assumir" ? "You have this chat now. If the reply box is still locked, refresh the page." : "Harvey is back on this chat.");
+        return carregar();
+      })
+      .catch(function (e) {
+        var msg = (e && e.responseJSON && e.responseJSON.error) || "Something went wrong";
+        return carregar(msg);
+      });
+  }
+
+  client.on("app.registered", function () {
+    Promise.all([client.get("ticket.id"), client.get("currentUser.name")]).then(function (r) {
+      ticketId = r[0]["ticket.id"];
+      agente = r[1]["currentUser.name"] || "team";
+      carregar();
+    });
+  });
+</script>
+</body>
+</html>
