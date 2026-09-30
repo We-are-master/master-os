@@ -1209,3 +1209,19 @@ function stripHtml(html: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** Chamada crua à API (busca de usuário, grupo, org): quem usa trata o JSON. */
+export async function zendeskApi<T = Record<string, unknown>>(
+  caminho: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+  const res = await fetch(`${baseUrl()}/${caminho.replace(/^\//, "")}`, {
+    method: init.method ?? "GET",
+    headers: { Authorization: authHeader(), "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Zendesk ${init.method ?? "GET"} ${caminho.split("?")[0]} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (res.status === 204 ? {} : await res.json()) as T;
+}

@@ -9,7 +9,8 @@
  */
 
 const NOME_DO_HARVEY = "Harvey";
-export const INTEGRACAO_HARVEY = "harvey";
+// Teste antes do merge: o servidor local responde por uma integração própria ("harvey-teste").
+export const INTEGRACAO_HARVEY = process.env.HARVEY_WA_INTEGRACAO?.trim() || "harvey";
 export const INTEGRACAO_EQUIPE = "zd-agentWorkspace";
 
 function config() {
@@ -103,4 +104,12 @@ export async function telefoneDoUsuario(userId: string): Promise<string | null> 
   } catch {
     return null;
   }
+}
+
+/** Baixa a foto/PDF que a pessoa mandou. A mídia da Sunshine pode pedir a mesma chave da API. */
+export async function baixarMidia(url: string): Promise<{ dados: Buffer; tipo: string }> {
+  let res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (res.status === 401 || res.status === 403) res = await fetch(url, { headers: { Authorization: config().auth }, signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`mídia ${res.status}`);
+  return { dados: Buffer.from(await res.arrayBuffer()), tipo: (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase() };
 }

@@ -76,6 +76,19 @@ export const ZD_STATUS_COMPLETED = 5679178036383;
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
 export const ZD_STATUS_CANCELLED = 5697338496671;
 
+// ─── WhatsApp (Harvey) ───────────────────────────────────────────────────────
+
+/** 🟩 WhatsApp — conversa de cliente no WhatsApp. Entra no ⚡ Action Required até
+ *  a equipe mover para Quote, Bidding, Unassigned etc. (dono, 30/09/2026). */
+export const ZD_STATUS_WHATSAPP = 5799929141919;
+
+/** 🟢 Partner — conversa de parceiro (grupo Partners), fora do Action Required. */
+export const ZD_STATUS_PARTNER = 5722749157407;
+
+/** 🆕 New e 🟡 Open: o ticket ainda não entrou em processo nenhum. */
+export const ZD_STATUS_NEW = 5679191543071;
+export const ZD_STATUS_OPEN = 5679178035743;
+
 // ─── Backwards-compatible aliases ────────────────────────────────────────────
 // Kept so existing imports don't break during the migration. New code should
 // use the lifecycle-named constants above.

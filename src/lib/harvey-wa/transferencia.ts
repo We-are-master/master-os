@@ -1,7 +1,7 @@
 /**
  * Reserva do Harvey por transferência bancária (29/09/2026): os jobs nascem no
  * OS aguardando o sinal de 50%, sem oferta a parceiro. Esta varredura roda no
- * ciclo do Harvey (scripts/harvey/poll.ts) e cuida do resto:
+ * ciclo da rota /api/cron/harvey-wa (n8n, 10 min) e cuida do resto:
  *
  *   sinal registrado em job_payments → confirma no WhatsApp, lead vira won e,
  *                                      com AUTO_ASSIGN_ALL_JOBS=1, a oferta sai
@@ -11,7 +11,7 @@
  * A liberação sai antes de 24h porque o WhatsApp só deixa mandar texto livre
  * até 24h depois da última mensagem do cliente.
  *
- * Só age com HARVEY_WA_LIGADO=1; sem ela, só conta o que faria.
+ * Roda pela rota /api/cron/harvey-wa. Só age com HARVEY_WA_LIGADO=1; sem ela, só conta o que faria.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -42,8 +42,12 @@ export type ResultadoTransferencias = { armado: boolean; pendentes: number; rece
 
 const gbp = (n: number | null) => `£${Number(n ?? 0).toFixed(2).replace(/\.00$/, "")}`;
 
-export async function varrerTransferencias(sb: SupabaseClient = createServiceClient(), agora = new Date()): Promise<ResultadoTransferencias> {
-  const armado = process.env.HARVEY_WA_LIGADO === "1";
+export async function varrerTransferencias(
+  sb: SupabaseClient = createServiceClient(),
+  agora = new Date(),
+  { aplicar = true }: { aplicar?: boolean } = {},
+): Promise<ResultadoTransferencias> {
+  const armado = aplicar && process.env.HARVEY_WA_LIGADO === "1";
   const out: ResultadoTransferencias = { armado, pendentes: 0, recebidos: 0, lembrados: 0, liberados: 0, detalhes: [] };
   const { data, error } = await sb
     .from("harvey_wa_conversas")

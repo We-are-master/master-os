@@ -11,11 +11,16 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { pensar, type Fala } from "./cerebro";
+import { pensar, type Contas, type Fala } from "./cerebro";
+import { quemE, type Identidade } from "./identidade";
+import { reservasDoCliente, situacaoDoParceiro } from "./contas";
+import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
+import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
 import { chamarSite } from "./site";
-import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
+import { pedirCotacao } from "./cotacao";
+import { baixarMidia, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -26,7 +31,7 @@ type EventoSc = {
 };
 
 let catalogoEmCache: { em: number; dados: unknown } | null = null;
-async function catalogo() {
+export async function catalogo() {
   if (catalogoEmCache && Date.now() - catalogoEmCache.em < 10 * 60_000) return catalogoEmCache.dados;
   const { status, data } = await chamarSite({ action: "catalog" });
   if (status !== 200) throw new Error(`catálogo do site: ${status}`);
@@ -38,15 +43,82 @@ function listaDeTeste(): string[] {
   return (process.env.HARVEY_WA_SO_ESTES ?? "").split(",").map((s) => s.replace(/\D/g, "")).filter(Boolean);
 }
 
-function paraFalas(msgs: MensagemSc[]): Fala[] {
+export function paraFalas(msgs: MensagemSc[]): Fala[] {
   return msgs
     .map((m): Fala | null => {
       const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
       if (!texto.trim()) return null;
-      if (m.author.type === "user") return { papel: "cliente", texto };
+      if (m.author.type === "user") return { papel: "cliente", texto, ...(m.content.mediaUrl ? { midia: m.content.mediaUrl } : {}) };
       return { papel: m.author.displayName === "Harvey" ? "harvey" : "equipe", texto };
     })
     .filter((f): f is Fala => f !== null);
+}
+
+/**
+ * Quem é a pessoa e o que o Harvey já sabe dela antes de responder: parceiro
+ * (status e documentos pela ferramenta) ou cliente, com as reservas já na mão
+ * para saber se é job feito, job marcado ou pedido novo sem precisar perguntar.
+ */
+export async function contextoDaPessoa(
+  sb: ReturnType<typeof createServiceClient>,
+  telefone: string | null,
+  extra: { nomeNoWhatsApp?: string | null; fotos?: string[] } = {},
+) {
+  const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
+  const contas: Contas = {
+    reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
+    ...(quem.tipo === "parceiro"
+      ? {
+          situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
+          salvarDocumento: (tipo: string, mediaUrl: string) =>
+            (TIPOS_DE_DOC as readonly string[]).includes(tipo) ? salvarDocumento(sb, quem.parceiro, tipo as TipoDeDoc, mediaUrl) : Promise.resolve({ error: "unknown document type" }),
+        }
+      : {}),
+  };
+  let sobreQuem: string | undefined;
+  if (quem.tipo === "parceiro") {
+    const p = quem.parceiro;
+    sobreQuem = `Partner in our system: ${p.contact_name ?? p.company_name ?? "unknown name"}${p.company_name ? ` (${p.company_name})` : ""}, ${p.trade ?? "trade not set"}, account status ${p.status}.`;
+  } else if (quem.tipo === "cliente") {
+    const reservas = await contas.reservas(null).catch(() => null);
+    sobreQuem =
+      `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. ` +
+      `Their bookings (recent and upcoming): ${JSON.stringify((reservas as { reservas?: unknown[] } | null)?.reservas ?? [])}. ` +
+      "Use this to understand what they are messaging about: a job that is coming up (confirm the details), a job already done (thank them; any problem or complaint goes to the team), a balance to pay (send the link), or something new (sell as usual). If it is not clear, ask one short question.";
+  }
+  return { quem, contas, sobreQuem };
+}
+
+/** Até 4 fotos (as mais recentes) que o cliente mandou nesta conversa, como data URL. */
+async function fotosDaConversa(sessao: MensagemSc[]): Promise<string[]> {
+  const urls = sessao.filter((m) => m.author.type === "user" && m.content.type === "image" && m.content.mediaUrl).map((m) => m.content.mediaUrl as string).slice(-4);
+  const fotos = await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const f = await baixarMidia(u);
+        return f.tipo.startsWith("image/") && f.dados.length < 8 * 1024 * 1024 ? `data:${f.tipo};base64,${f.dados.toString("base64")}` : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return fotos.filter((f): f is string => !!f);
+}
+
+/**
+ * Só a conversa de agora: quem volta depois de 6h parado começa do zero, com
+ * apresentação nova. Sem isto um pedido velho sem resposta (ou uma passagem
+ * para a equipe de outro dia) contaminava o "hi there" seguinte.
+ */
+const PAUSA_QUE_ENCERRA_MS = (Number(process.env.HARVEY_WA_SESSAO_MIN) || 360) * 60_000; // teste: HARVEY_WA_SESSAO_MIN=5
+export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
+  for (let i = msgs.length - 1; i > 0; i--) {
+    const agora = Date.parse(msgs[i].received ?? "");
+    const antes = Date.parse(msgs[i - 1].received ?? "");
+    if (agora && antes && agora - antes > PAUSA_QUE_ENCERRA_MS) return msgs.slice(i);
+  }
+  return msgs;
 }
 
 /** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
@@ -100,12 +172,40 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
     ORIGEM_PADRAO;
 
-  const r = await pensar(paraFalas(msgs), { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha }, chamarSite, await catalogo());
+  // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
+  const sessao = sessaoAtual(msgs);
+  const fotos = await fotosDaConversa(sessao);
+  const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
+
+  const r = await pensar(
+    paraFalas(sessao),
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos },
+    chamarSite,
+    await catalogo(),
+  );
 
   if (r.resposta) await enviarTexto(conversa.id, r.resposta);
 
-  const leadId = await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, r });
-  const mudancas: Record<string, unknown> = { atualizado_em: new Date().toISOString(), lead_id: leadId };
+  // Parceiro não é lead de venda.
+  const leadId =
+    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, r });
+  const mudancas: Record<string, unknown> = {
+    atualizado_em: new Date().toISOString(),
+    // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
+    cliente_em: msg.received ?? new Date().toISOString(),
+    ...(r.resposta ? { harvey_em: new Date().toISOString(), chases: 0 } : {}),
+    lead_id: leadId,
+    tipo: quem.tipo,
+    partner_id: quem.tipo === "parceiro" ? quem.parceiro.id : null,
+    client_id: quem.tipo === "cliente" ? quem.cliente.id : null,
+  };
+  // Zendesk: separa parceiro de cliente na primeira mensagem e preenche o perfil quando a reserva traz os dados.
+  // Refaz enquanto o ticket da conversa não apareceu no Zendesk.
+  if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
+    const dados: DadosDoCliente = r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {};
+    const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
+    Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
+  }
   if (r.checkout)
     Object.assign(mudancas, {
       checkout_ref: r.checkout.ref,
@@ -122,6 +222,11 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     });
   if (r.passarParaEquipe) {
     await passarParaEquipe(conversa.id, r.passarParaEquipe);
+    const nota = [`Harvey handed this WhatsApp conversation to the team.`, `Why: ${r.passarParaEquipe}`, r.notaParaEquipe ? `\nWhat Harvey already has:\n${r.notaParaEquipe}` : null, r.cotacao ? `\nLast quote: ${r.cotacao.servico}, £${r.cotacao.total}${r.cotacao.postcode ? `, ${r.cotacao.postcode}` : ""}` : null]
+      .filter(Boolean)
+      .join("\n");
+    const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
@@ -191,11 +296,16 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
     .limit(1)
     .maybeSingle();
   if (!data) return false;
+  // Pagou: nada mais a cobrar.
+  await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
   const ref = bookingRef ?? (data.checkout_ref as string | null);
   if (ref) await mandarEventoWhatsApp(sb, { telefone: data.phone as string | null, evento: "Purchase", chave: ref, valor: data.checkout_total as number | null }).catch((e) => console.error("[harvey-wa] meta compra", e));
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;
+  await fecharConversaPaga(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job has its own ticket; closing this WhatsApp conversation.`).catch((e) =>
+    console.error("[harvey-wa] fechar ticket pago", e),
+  );
   try {
     await enviarTexto(data.conversation_id as string, texto);
     return true;
