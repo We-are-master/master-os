@@ -40,6 +40,8 @@ export const NAVIGATION: NavGroup[] = [
       // Quem começou a reservar no site e não pagou (294). O /leads acima é outra
       // coisa (jobs oferecidos a parceiros) e fica escondido do menu.
       { label: "Leads", href: "/website-leads", icon: "user-circle", permission: "leads" },
+      // Quem o Harvey está atendendo no WhatsApp e o botão de assumir (o Zendesk trava o ticket dele).
+      { label: "Harvey", href: "/harvey-whatsapp", icon: "message-square", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
