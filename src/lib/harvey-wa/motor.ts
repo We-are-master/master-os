@@ -162,6 +162,13 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     await seguirFluxoPadrao(conversa.id);
     return "desligado: seguiu o fluxo padrão";
   }
+  // Pausa pela tela do OS (/harvey-whatsapp): tudo que chega vai para a equipe.
+  const { data: pausa } = await sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle();
+  if (pausa?.valor === true) {
+    await passarParaEquipe(conversa.id, "Harvey is paused");
+    if (estado) await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: "Harvey paused" }).eq("conversation_id", conversa.id);
+    return "pausado: foi para a equipe";
+  }
   const lista = listaDeTeste();
   if (lista.length && !lista.includes((telefone ?? "").replace(/\D/g, ""))) {
     await seguirFluxoPadrao(conversa.id);

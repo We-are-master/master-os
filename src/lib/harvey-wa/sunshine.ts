@@ -113,3 +113,8 @@ export async function baixarMidia(url: string): Promise<{ dados: Buffer; tipo: s
   if (!res.ok) throw new Error(`mídia ${res.status}`);
   return { dados: Buffer.from(await res.arrayBuffer()), tipo: (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase() };
 }
+
+/** Devolve a conversa ao Harvey (a equipe terminou e quer que ele volte a atender). */
+export async function devolverAoHarvey(conversationId: string) {
+  return sc(`/conversations/${conversationId}/passControl`, { method: "POST", body: { switchboardIntegration: INTEGRACAO_HARVEY } });
+}
