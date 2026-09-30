@@ -17,7 +17,7 @@ import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
-import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
+import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
 import { baixarMidia, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
@@ -178,12 +178,12 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
 
-  // De qual anúncio veio: a mensagem pronta do anúncio é a 1ª do cliente. Conversa longa
-  // (a 1ª saiu do histórico) usa o que ficou gravado no lead.
-  const primeiraDoCliente = msgs.find((m) => m.author.type === "user");
+  // De qual anúncio veio: a mensagem pronta de anúncio mais recente manda (quem já falou com a
+  // gente e depois clica num anúncio passa a contar para ele). Sem nenhuma no histórico, vale o lead.
   const leadExistente = (estado?.lead_id as string | null) ?? null;
+  const deAnuncio = origemMaisRecente(msgs.filter((m) => m.author.type === "user").map((m) => m.content.text));
   const origem =
-    origemDaConversa(primeiraDoCliente?.content.text) ??
+    deAnuncio ??
     (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
     ORIGEM_PADRAO;
 
@@ -203,7 +203,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
 
   // Parceiro não é lead de venda.
   const leadId =
-    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, r });
+    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, deAnuncio, r });
   const mudancas: Record<string, unknown> = {
     atualizado_em: new Date().toISOString(),
     // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
@@ -259,7 +259,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
  */
 async function registrarLead(
   sb: ReturnType<typeof createServiceClient>,
-  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; origem: Origem; r: Awaited<ReturnType<typeof pensar>> },
+  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; origem: Origem; deAnuncio: Origem | null; r: Awaited<ReturnType<typeof pensar>> },
 ): Promise<string | null> {
   const agora = new Date().toISOString();
   const campos: Record<string, unknown> = { last_activity_at: agora, updated_at: agora };
@@ -268,6 +268,15 @@ async function registrarLead(
   if (a.r.passarParaEquipe) campos.notes = `Harvey passed to the team: ${a.r.passarParaEquipe}`;
   try {
     if (a.leadId) {
+      // Lead antigo que voltou por um anúncio: passa a contar para esse anúncio.
+      if (a.deAnuncio?.conteudo) {
+        const { data: atual } = await sb.from("site_leads").select("source, tags").eq("id", a.leadId).maybeSingle();
+        const fonte = (atual?.source ?? {}) as Record<string, unknown>;
+        if (fonte.utm_content !== a.deAnuncio.conteudo) {
+          campos.source = { ...fonte, utm_source: "whatsapp", utm_medium: "paid_social", utm_campaign: a.deAnuncio.campanha, utm_content: a.deAnuncio.conteudo };
+          campos.tags = Array.from(new Set([...((atual?.tags as string[] | null) ?? []), "harvey-wa", "wa-ads"]));
+        }
+      }
       await sb.from("site_leads").update(campos).eq("id", a.leadId);
       return a.leadId;
     }

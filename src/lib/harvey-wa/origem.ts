@@ -22,11 +22,24 @@ const ANUNCIOS: Array<{ frase: RegExp; origem: Origem }> = [
   { frase: /\bpainter offer\b/i, origem: { campanha: "wa_maintenance", conteudo: "mt_paint" } },
 ];
 
-/** Olha só a primeira mensagem do cliente: é a que o anúncio escreveu. */
-export function origemDaConversa(primeiraDoCliente: string | null | undefined): Origem | null {
-  const texto = (primeiraDoCliente ?? "").trim();
+/** Uma mensagem do cliente é de anúncio se trouxer a frase da mensagem pronta. */
+export function origemDaConversa(textoDoCliente: string | null | undefined): Origem | null {
+  const texto = (textoDoCliente ?? "").trim();
   if (!texto) return null;
   return ANUNCIOS.find((a) => a.frase.test(texto))?.origem ?? null;
+}
+
+/**
+ * A mensagem de anúncio mais recente da conversa manda: quem já falou com a
+ * gente e depois clica num anúncio passa a contar para esse anúncio. Recebe os
+ * textos do cliente do mais velho para o mais novo.
+ */
+export function origemMaisRecente(textosDoCliente: Array<string | null | undefined>): Origem | null {
+  for (let i = textosDoCliente.length - 1; i >= 0; i--) {
+    const achou = origemDaConversa(textosDoCliente[i]);
+    if (achou) return achou;
+  }
+  return null;
 }
 
 /** A origem já gravada no lead (para conversa longa, quando a 1ª mensagem saiu do histórico). */

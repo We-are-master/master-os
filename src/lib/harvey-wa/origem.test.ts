@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { origemDaConversa, origemDoLead } from "./origem";
+import { origemDaConversa, origemDoLead, origemMaisRecente } from "./origem";
 
 test("mensagem pronta de cada anúncio vira conjunto e criativo", () => {
   assert.deepEqual(origemDaConversa("Hi there! Is the deep clean offer still available? (from £174)"), { campanha: "wa_cleaning", conteudo: "cl_deep" });
@@ -25,4 +25,17 @@ test("origem gravada no lead volta igual", () => {
   assert.deepEqual(origemDoLead({ utm_campaign: "wa_v1" }), { campanha: "wa_v1", conteudo: null });
   assert.equal(origemDoLead(null), null);
   assert.equal(origemDoLead({}), null);
+});
+
+test("a mensagem de anúncio mais recente manda", () => {
+  const conversa = [
+    "Hi, how much for a deep clean? 2 bed SW11",
+    "Hi there! Is the deep clean offer still available? (from £174)",
+    "ok thanks",
+    "Hi there! Is the handyman offer still available? (half day £180)",
+    "shelves and a door",
+  ];
+  assert.deepEqual(origemMaisRecente(conversa), { campanha: "wa_maintenance", conteudo: "mt_handyman" });
+  assert.equal(origemMaisRecente(["Hi, how much for a deep clean?", undefined, "ok"]), null);
+  assert.equal(origemMaisRecente([]), null);
 });
