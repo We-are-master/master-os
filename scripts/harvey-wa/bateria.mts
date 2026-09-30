@@ -39,6 +39,11 @@ const site = async (corpo: Record<string, unknown>) => {
   return handleAgent(corpo, chave);
 };
 
+// Foto de teste: mancha de infiltração num teto branco (desenhada, só para o modelo ver algo).
+const { default: sharp } = await import("sharp");
+const svgTeto = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="100%" height="100%" fill="#f2f0ea"/><ellipse cx="400" cy="280" rx="210" ry="150" fill="#b8925a" opacity="0.55"/><ellipse cx="410" cy="290" rx="140" ry="95" fill="#8a6435" opacity="0.6"/><ellipse cx="420" cy="300" rx="60" ry="40" fill="#5c3f1e" opacity="0.7"/><line x1="0" y1="560" x2="800" y2="560" stroke="#ccc" stroke-width="6"/></svg>`;
+const FOTO_TETO = `data:image/png;base64,${(await sharp(Buffer.from(svgTeto)).png().toBuffer()).toString("base64")}`;
+
 const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cliente: string[]; checar: (t: string, f: string[], r: { passou: string | null; link: boolean }) => string[] }> = {
   eot: {
     cliente: [
@@ -153,6 +158,15 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
         !r.link && "não fechou com o link",
       ].filter(Boolean) as string[],
   },
+  foto_cotacao: {
+    cliente: ["Hi, water is coming through my ceiling, can you sort it?", "[image sent]", "yes please, send me a quote", "SE15 4QN, Tom Hart, tom.hart@example.com"],
+    checar: (t, f, r) =>
+      [
+        !f.includes("request_quote") && "não pediu a cotação",
+        /£\d/.test(t) && "chutou preço",
+        !r.passou && "não passou para a equipe depois da cotação",
+      ].filter(Boolean) as string[],
+  },
   sem_servico: {
     cliente: ["I want to book a job for tomorrow"],
     checar: (t, f) => [f.includes("get_available_dates") && "ofereceu dia sem saber o serviço", /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/.test(t) && "falou dia antes do serviço", !/\?/.test(t) && "não perguntou o que é"].filter(Boolean) as string[],
@@ -201,6 +215,7 @@ const CONTAS = {
     upcomingJobs: [],
     portal: "https://partners.getfixfy.com",
   }),
+  pedirCotacao: async () => ({ reference: "QT-TESTE-1" }),
   salvarDocumento: async (tipo: string) => ({ aprovado: true, documento: tipo === "insurance" ? "Public Liability Insurance" : tipo, motivo: null, ativacao: { ativado: true, email: { ok: true, sentTo: "dan@example.com" } } }),
 };
 
@@ -242,7 +257,8 @@ for (const nome of escolhidos) {
     conversa.push(msg === "[image sent]" ? { papel: "cliente", texto: msg, midia: "https://example.test/doc.jpg" } : { papel: "cliente", texto: msg });
     linhas.push(`  👤 ${msg}`);
     const t0 = Date.now();
-    const r = await pensar(conversa, { telefone: "+447700900123", nomeNoWhatsApp: "Test", campanha: "teste", quem: caso.quem, sobreQuem: caso.sobre, contas: CONTAS }, site, cat);
+    const fotos = conversa.some((f) => f.midia) && !caso.quem ? [FOTO_TETO] : [];
+    const r = await pensar(conversa, { telefone: "+447700900123", nomeNoWhatsApp: "Test", campanha: "teste", quem: caso.quem, sobreQuem: caso.sobre, contas: CONTAS, fotos }, site, cat);
     ferramentas.push(...r.ferramentas);
     if (r.passarParaEquipe) passou = r.passarParaEquipe;
     if (r.checkout) link = true;

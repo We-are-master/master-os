@@ -13,6 +13,8 @@ export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** 
 /** O que o Harvey consulta e grava no OS. O motor liga no banco; a bateria usa de mentira. */
 export type Contas = {
   reservas: (email?: string | null) => Promise<unknown>;
+  /** Pedido de cotação no OS (com as fotos da conversa), ligado ao ticket do WhatsApp. */
+  pedirCotacao?: (pedido: { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string }) => Promise<unknown>;
   situacaoDoParceiro?: () => Promise<unknown>;
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
 };
@@ -32,6 +34,10 @@ export type Contexto = {
   chase?: number;
   /** Horas desde a última mensagem da pessoa (para o chase). */
   horasSemResposta?: number;
+  /** Preenchido pelo pensar(): tudo que o cliente escreveu (para conferir dado que o modelo diz ter recebido). */
+  textoDoCliente?: string;
+  /** As fotos que o cliente mandou nesta conversa (data URLs, as mais recentes), para o Harvey ver. */
+  fotos?: string[];
   /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
   ultimaMidia?: string | null;
 };
@@ -160,6 +166,26 @@ const FERRAMENTAS_CLIENTE = [
   {
     type: "function",
     function: {
+      name: "request_quote",
+      description:
+        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Then tell them the team will send the quote and hand off happens automatically.",
+      parameters: {
+        type: "object",
+        properties: {
+          service_type: { type: "string", description: "the trade, e.g. Plumbing, Electrical, Roofing, Cleaning" },
+          description: { type: "string", description: "the job in English, including what you saw in the photos" },
+          postcode: { type: "string" },
+          address: { type: "string", description: "house number and street, if they gave it" },
+          name: { type: "string" },
+          email: { type: "string" },
+        },
+        required: ["service_type", "description", "postcode"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_my_bookings",
       description: "Their existing bookings with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, and any balance to pay with its link. Use it whenever they ask about a booking they already have.",
       parameters: { type: "object", properties: { email: { type: "string", description: "only if they gave the email they booked with" } } },
@@ -206,16 +232,27 @@ const FERRAMENTAS_PARCEIRO = [
 ] as const;
 
 type MensagemOpenAi =
-  | { role: "system" | "user" | "assistant"; content: string | null; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
+  | { role: "system" | "user" | "assistant"; content: string | null | Array<Record<string, unknown>>; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
   | { role: "tool"; tool_call_id: string; content: string };
 
 async function openai(mensagens: MensagemOpenAi[], ferramentas: readonly unknown[]) {
+  // 429 de limite por minuto passa em segundos: espera e tenta de novo (até 3 vezes).
+  for (let tentativa = 0; ; tentativa++) {
+    const r = await openaiUmaVez(mensagens, ferramentas);
+    if (r !== "429") return r;
+    if (tentativa >= 2) throw new Error("OpenAI 429: rate limit");
+    await new Promise((ok) => setTimeout(ok, 4000 * (tentativa + 1)));
+  }
+}
+
+async function openaiUmaVez(mensagens: MensagemOpenAi[], ferramentas: readonly unknown[]) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: MODELO(), messages: mensagens, tools: ferramentas, reasoning_effort: "none" }),
     signal: AbortSignal.timeout(45_000),
   });
+  if (res.status === 429 && !/insufficient_quota/.test(await res.clone().text())) return "429" as const;
   if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const j = (await res.json()) as { choices: Array<{ message: MensagemOpenAi & { role: "assistant" } }> };
   return j.choices[0].message;
@@ -239,7 +276,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [], documentos: [] };
   const parceiro = ctx.quem === "parceiro";
   const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
-  ctx = { ...ctx, pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
+  ctx = { ...ctx, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
@@ -248,14 +285,17 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   ]
     .filter(Boolean)
     .join(" ");
+  const fotos = parceiro ? [] : (ctx.fotos ?? []).slice(-4);
   const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro() : promptDoHarvey(catalogo)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  // As fotos da conversa entram por último, para o Harvey olhar de verdade.
+  if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 
   for (let volta = 0; volta < 6; volta++) {
     const m = await openai(msgs, parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE);
     msgs.push(m);
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
-      r.resposta = m.content ? limparTexto(m.content) : null;
+      r.resposta = typeof m.content === "string" && m.content ? limparTexto(m.content) : null;
       if (ctx.chase && (!r.resposta || /\bNO_CHASE\b/.test(r.resposta))) {
         r.resposta = null;
         return r;
@@ -273,7 +313,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }
       // Disse que vai chamar alguém sem chamar a ferramenta: a passagem acontece do mesmo jeito.
-      if (r.resposta && !r.passarParaEquipe && /\b(grab|get|getting|bring in)\b[^.]{0,20}\b(someone|a person|the team)\b/i.test(r.resposta)) {
+      if (r.resposta && !r.passarParaEquipe && !/\?\s*$/.test(r.resposta) && /\b(I['’]ll|I will|let me|I['’]m (going to|getting))\s+(grab|get|bring in)\s+(someone|a person|the team|someone from the team)\b/i.test(r.resposta)) {
         r.passarParaEquipe = "Harvey said he would get the team (no tool call): check the conversation";
       }
       // Já se apresentou nesta conversa: nunca de novo.
@@ -335,6 +375,26 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const linhas = (data.lines as Array<{ label: string }> | undefined) ?? [];
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
+  }
+  if (nome === "request_quote") {
+    if (!ctx.contas?.pedirCotacao) return { error: "not available" };
+    // O postcode tem que ter vindo do cliente, não da imaginação do modelo.
+    const pc = String(a.postcode ?? "").replace(/\s+/g, "").toUpperCase();
+    const disse = ctx.textoDoCliente?.replace(/\s+/g, "").toUpperCase() ?? "";
+    if (!pc || !disse.includes(pc.slice(0, Math.max(3, pc.length - 3)))) return { error: "Ask for their postcode first (they have not given it)." };
+    const q = (await ctx.contas.pedirCotacao({
+      serviceType: String(a.service_type ?? "General Maintenance"),
+      description: String(a.description ?? ""),
+      postcode: String(a.postcode ?? ""),
+      address: typeof a.address === "string" ? a.address : undefined,
+      name: typeof a.name === "string" ? a.name : undefined,
+      email: typeof a.email === "string" ? a.email : undefined,
+    })) as { reference?: string; error?: string };
+    if (q.reference) {
+      r.passarParaEquipe = `quote requested on WhatsApp: ${q.reference}`;
+      r.notaParaEquipe = `Quote ${q.reference} created in the OS with the photos.\nJob: ${a.description}\nPostcode: ${a.postcode}${a.address ? `\nAddress: ${a.address}` : ""}`;
+    }
+    return { ...q, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
   }
   if (nome === "get_my_bookings") return ctx.contas ? ctx.contas.reservas(typeof a.email === "string" ? a.email : null) : { error: "not available" };
   if (nome === "get_my_account") return ctx.contas?.situacaoDoParceiro ? ctx.contas.situacaoDoParceiro() : { error: "not available" };

@@ -19,7 +19,8 @@ import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type D
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { ORIGEM_PADRAO, origemDaConversa, origemDoLead, type Origem } from "./origem";
 import { chamarSite } from "./site";
-import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
+import { pedirCotacao } from "./cotacao";
+import { baixarMidia, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -58,10 +59,15 @@ export function paraFalas(msgs: MensagemSc[]): Fala[] {
  * (status e documentos pela ferramenta) ou cliente, com as reservas já na mão
  * para saber se é job feito, job marcado ou pedido novo sem precisar perguntar.
  */
-export async function contextoDaPessoa(sb: ReturnType<typeof createServiceClient>, telefone: string | null) {
+export async function contextoDaPessoa(
+  sb: ReturnType<typeof createServiceClient>,
+  telefone: string | null,
+  extra: { nomeNoWhatsApp?: string | null; fotos?: string[] } = {},
+) {
   const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
   const contas: Contas = {
     reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
@@ -82,6 +88,22 @@ export async function contextoDaPessoa(sb: ReturnType<typeof createServiceClient
       "Use this to understand what they are messaging about: a job that is coming up (confirm the details), a job already done (thank them; any problem or complaint goes to the team), a balance to pay (send the link), or something new (sell as usual). If it is not clear, ask one short question.";
   }
   return { quem, contas, sobreQuem };
+}
+
+/** Até 4 fotos (as mais recentes) que o cliente mandou nesta conversa, como data URL. */
+async function fotosDaConversa(sessao: MensagemSc[]): Promise<string[]> {
+  const urls = sessao.filter((m) => m.author.type === "user" && m.content.type === "image" && m.content.mediaUrl).map((m) => m.content.mediaUrl as string).slice(-4);
+  const fotos = await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const f = await baixarMidia(u);
+        return f.tipo.startsWith("image/") && f.dados.length < 8 * 1024 * 1024 ? `data:${f.tipo};base64,${f.dados.toString("base64")}` : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return fotos.filter((f): f is string => !!f);
 }
 
 /**
@@ -150,11 +172,14 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
     ORIGEM_PADRAO;
 
-  const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone);
+  // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
+  const sessao = sessaoAtual(msgs);
+  const fotos = await fotosDaConversa(sessao);
+  const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
 
   const r = await pensar(
-    paraFalas(sessaoAtual(msgs)),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas },
+    paraFalas(sessao),
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos },
     chamarSite,
     await catalogo(),
   );

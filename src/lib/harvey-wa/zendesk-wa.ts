@@ -178,3 +178,10 @@ export async function fecharConversaPaga(telefone: string | null, texto: string)
   await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { status: "solved", comment: { body: texto, public: false } } } });
   return `ticket ${ticket} fechado`;
 }
+
+/** O ticket aberto da conversa de WhatsApp de quem tem esse telefone. */
+export async function ticketPeloTelefone(telefone: string | null): Promise<number | null> {
+  if (!telefone || !isZendeskConfigured()) return null;
+  const u = await usuarioPeloTelefone(telefone);
+  return u ? ticketDaConversa(u.id) : null;
+}
