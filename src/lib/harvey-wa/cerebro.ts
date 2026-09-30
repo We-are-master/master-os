@@ -125,7 +125,7 @@ const FERRAMENTAS_CLIENTE = [
           selection: SELECAO,
           postcode: { type: "string" },
           date: { type: "string", description: "YYYY-MM-DD from get_available_dates" },
-          window: { type: "string", description: "window id from get_available_dates" },
+          window: { type: "string", enum: ["morning", "early_afternoon", "afternoon", "all_day"], description: "morning = 9am to 12pm, early_afternoon = 12pm to 3pm, afternoon = 3pm to 6pm, all_day = 9am to 6pm" },
           access: { type: "string", enum: ["meet", "agent", "keysafe", "concierge"] },
           accessNote: { type: "string" },
           parking: { type: "string", enum: ["free", "paid", "none"] },
@@ -252,6 +252,10 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }
+      // Disse que vai chamar alguém sem chamar a ferramenta: a passagem acontece do mesmo jeito.
+      if (r.resposta && !r.passarParaEquipe && /\b(grab|get|getting|bring in)\b[^.]{0,20}\b(someone|a person|the team)\b/i.test(r.resposta)) {
+        r.passarParaEquipe = "Harvey said he would get the team (no tool call): check the conversation";
+      }
       // Já se apresentou nesta conversa: nunca de novo.
       if (r.resposta && jaFalou) {
         const sem = r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*I['’]m Harvey[^.!?]*[.!?]\s*/i, "").trim();
@@ -273,6 +277,8 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       } catch (err) {
         saida = { error: err instanceof Error ? err.message : String(err) };
       }
+      // Erro de ferramenta sempre no log: é onde o Harvey "viaja" (teste de 29/09).
+      if (saida && typeof saida === "object" && "error" in saida) console.warn("[harvey-wa] ferramenta com erro", c.function.name, c.function.arguments.slice(0, 400), JSON.stringify(saida).slice(0, 300));
       msgs.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(saida).slice(0, 12_000) });
     }
   }
@@ -332,7 +338,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       selection: a.selection,
       postcode: a.postcode,
       date: a.date,
-      window: a.window,
+      window: janelaDoSite(a.window),
       access: a.access,
       accessNote: a.accessNote ?? "",
       parking: a.parking,
@@ -392,6 +398,21 @@ function escolhaDePagamento(conversa: Fala[]): "card" | "bank" | null {
     }
   });
   return escolha;
+}
+
+/**
+ * A janela no formato do site. O modelo não tem mais a lista da vez em que
+ * olhou as datas e chutava "am", "9-12", "09:00-12:00": o site recusava
+ * ("Choose an arrival time") e o Harvey inventava resposta (teste de 29/09).
+ */
+export function janelaDoSite(w: unknown): string {
+  const t = String(w ?? "").toLowerCase().replace(/\s+/g, "");
+  if (["morning", "early_afternoon", "afternoon", "all_day"].includes(t)) return t;
+  if (/all|day|9.*6|09.*18/.test(t)) return "all_day";
+  if (/early|^12|noon|12.*3|12.*15/.test(t)) return "early_afternoon";
+  if (/^(pm|afternoon)$|^3|^15|3.*6|15.*18/.test(t)) return "afternoon";
+  if (/am|morn|^9|^09|9.*12/.test(t)) return "morning";
+  return t;
 }
 
 /** O checkout do site exige telefone do Reino Unido: +447… vira 07…. */
