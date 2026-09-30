@@ -126,6 +126,21 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
+  // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
+  // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
+  if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && msg.author.displayName !== "Harvey") {
+    const sbEquipe = createServiceClient();
+    const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    if (est?.estado === "harvey") {
+      await sbEquipe
+        .from("harvey_wa_conversas")
+        .update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: `${msg.author.displayName} took over in Zendesk`, chases: 3 })
+        .eq("conversation_id", conversa.id);
+      if (conversa.activeSwitchboardIntegration?.name === INTEGRACAO_HARVEY) await passarParaEquipe(conversa.id, `${msg.author.displayName} took over`).catch(() => {});
+      return `equipe assumiu: ${msg.author.displayName}`;
+    }
+    return "ignorado: equipe já com a conversa";
+  }
   if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
   if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) return "ignorado: conversa com a equipe";
   // Só WhatsApp. O chat do site (web) e qualquer outro canal seguem o fluxo de sempre.
