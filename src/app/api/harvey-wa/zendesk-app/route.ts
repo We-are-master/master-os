@@ -24,8 +24,9 @@ import { assumirConversa, conversaDoTicket, devolverConversa } from "@/lib/harve
 export const dynamic = "force-dynamic";
 
 function autorizado(req: NextRequest): boolean {
-  const esperado = process.env.HARVEY_WA_ZENDESK_APP_TOKEN;
-  const veio = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  // trim: o `openssl rand -hex 32 | pbcopy` leva uma quebra de linha que a Vercel guarda e o Zendesk não.
+  const esperado = (process.env.HARVEY_WA_ZENDESK_APP_TOKEN ?? "").trim();
+  const veio = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!esperado || !veio) return false;
   const a = Buffer.from(veio);
   const b = Buffer.from(esperado);
