@@ -3,11 +3,11 @@
     "name": "Harvey WhatsApp",
     "short_description": "Take over a WhatsApp chat from Harvey, or give it back.",
     "long_description": "Shows whether Harvey (the Fixfy WhatsApp assistant) is handling the chat on this ticket. Take over moves the chat to the team and unlocks the ticket; Give back to Harvey hands it back.",
-    "installation_instructions": "Paste the token saved as HARVEY_WA_ZENDESK_APP_TOKEN in Vercel (master-os).",
+    "installation_instructions": "Paste the token saved as `HARVEY_WA_ZENDESK_APP_TOKEN` in Vercel (master-os).",
     "parameters": {
       "api_token": {
         "label": "Fixfy OS token",
-        "helpText": "The value of HARVEY_WA_ZENDESK_APP_TOKEN in Vercel. Stored securely by Zendesk, never shown to agents."
+        "helpText": "The value of `HARVEY_WA_ZENDESK_APP_TOKEN` in Vercel. Stored securely by Zendesk, never shown to agents."
       }
     }
   }
