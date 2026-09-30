@@ -145,6 +145,17 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
     cliente: ["Hi, what time is the cleaner coming on Friday?"],
     checar: (t, f) => [!f.includes("get_my_bookings") && "não consultou as reservas", !/9|nine/i.test(t) && "não disse a janela de chegada", /£\d/.test(t) && !/balance|pay/i.test(t) && "falou de preço sem motivo"].filter(Boolean) as string[],
   },
+  ordem_bagunçada: {
+    cliente: ["Card", "Deep clean 1 bed 1 bath, E17", "yes that's all", "Thursday 9-12", "7 Classon Close E17 4QS", "I'll be there", "free parking", "Victor Souza, victor.test@example.com"],
+    checar: (t, f, r) =>
+      [
+        (t.match(/card (payment )?link or bank/gi) ?? []).length > 0 && "perguntou cartão ou banco de novo",
+        (t.match(/£194/g) ?? []).length > 2 && "repetiu o preço",
+        /£232|£38/.test(t.split(/Classon Close/).slice(-1)[0] ?? "") && "pôs extra que o cliente não pediu",
+        !/£194/.test(t.split(/Classon Close/).slice(-1)[0] ?? "") && "total final diferente do aceito",
+        !r.link && "não fechou com o link",
+      ].filter(Boolean) as string[],
+  },
   sem_servico: {
     cliente: ["I want to book a job for tomorrow"],
     checar: (t, f) => [f.includes("get_available_dates") && "ofereceu dia sem saber o serviço", /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/.test(t) && "falou dia antes do serviço", !/\?/.test(t) && "não perguntou o que é"].filter(Boolean) as string[],

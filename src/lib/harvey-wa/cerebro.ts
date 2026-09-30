@@ -22,8 +22,8 @@ export type Contexto = {
   telefone: string | null;
   nomeNoWhatsApp: string | null;
   campanha?: string;
-  /** Preenchido pelo pensar(): o cliente já escolheu cartão ou transferência? */
-  escolheuPagamento?: boolean;
+  /** Preenchido pelo pensar(): o que o cliente escolheu para o sinal (vale a conversa toda). */
+  pagamento?: "card" | "bank" | null;
   /** Quem escreve: parceiro fala com o Harvey dos parceiros (documentos, jobs). */
   quem?: "parceiro" | "cliente" | "novo";
   /** Uma linha sobre a pessoa, do OS (nome, status do parceiro). */
@@ -225,11 +225,12 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [], documentos: [] };
   const parceiro = ctx.quem === "parceiro";
   const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
-  ctx = { ...ctx, escolheuPagamento: escolheuPagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
+  ctx = { ...ctx, pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
     ctx.sobreQuem ?? null,
+    ctx.pagamento ? `They already chose to pay the deposit by ${ctx.pagamento === "card" ? "card payment link" : "bank transfer"}: never ask again, use method ${ctx.pagamento}.` : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -325,7 +326,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   }
   if (nome === "create_payment_link") {
     // O modelo às vezes pula a pergunta e manda o link direto: sem escolha, não sai.
-    if (!ctx.escolheuPagamento) return { error: "They have not chosen yet. Do not send a link or bank details: ask whether they want to pay the 50% deposit by card payment link or bank transfer." };
+    if (!ctx.pagamento) return { error: "They have not chosen yet. Do not send a link or bank details: ask whether they want to pay the 50% deposit by card payment link or bank transfer." };
     const nomeDaPessoa = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim();
     const booking = {
       selection: a.selection,
@@ -342,6 +343,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     };
     const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
+    if (ctx.pagamento) a.method = ctx.pagamento;
     if (a.method === "bank") {
       // Os mesmos dados das faturas; HARVEY_BANK_DETAILS só se um dia quiser outra conta.
       const banco = process.env.HARVEY_BANK_DETAILS?.trim() || FIXFY_CLIENT_BANK_DETAIL_ROWS.filter((l) => l.label !== "IBAN").map((l) => `${l.label}: ${l.value}`).join("\n");
@@ -374,12 +376,22 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
  * O cliente escolheu como pagar o sinal? Vale se a última mensagem dele fala
  * de cartão/transferência, ou se responde à pergunta do Harvey sobre isso.
  */
-function escolheuPagamento(conversa: Fala[]): boolean {
-  const i = conversa.map((f) => f.papel).lastIndexOf("cliente");
-  if (i < 0) return false;
-  if (/\b(card|bank|transfer|link|stripe|bacs|apple pay|google pay)\b/i.test(conversa[i].texto)) return true;
-  const antes = conversa.slice(0, i).reverse().find((f) => f.papel !== "cliente");
-  return !!antes && /\bcard\b[\s\S]*\bbank\b|\bbank\b[\s\S]*\bcard\b/i.test(antes.texto);
+function escolhaDePagamento(conversa: Fala[]): "card" | "bank" | null {
+  // A escolha vale para a conversa toda (a mais recente manda): antes a trava
+  // só olhava a última mensagem e o Harvey perguntava "card or bank?" de novo
+  // a cada resposta (teste do dono, 29/09/2026).
+  let escolha: "card" | "bank" | null = null;
+  conversa.forEach((f, i) => {
+    if (f.papel !== "cliente") return;
+    if (/\b(bank|transfer|bacs)\b/i.test(f.texto)) escolha = "bank";
+    else if (/\b(card|link|stripe|apple pay|google pay)\b/i.test(f.texto)) escolha = "card";
+    else {
+      // Resposta curta logo depois da pergunta ("the first one", "yes"): vale a primeira opção citada.
+      const antes = conversa.slice(0, i).reverse().find((x) => x.papel !== "cliente");
+      if (antes && /\bcard\b[\s\S]*\bbank\b/i.test(antes.texto) && /^(the )?(first|1|link|yes|yeah|ok)\b/i.test(f.texto.trim())) escolha = "card";
+    }
+  });
+  return escolha;
 }
 
 /** O checkout do site exige telefone do Reino Unido: +447… vira 07…. */

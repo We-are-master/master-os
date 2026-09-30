@@ -87,7 +87,7 @@ export async function contextoDaPessoa(sb: ReturnType<typeof createServiceClient
  * apresentação nova. Sem isto um pedido velho sem resposta (ou uma passagem
  * para a equipe de outro dia) contaminava o "hi there" seguinte.
  */
-const PAUSA_QUE_ENCERRA_MS = 6 * 3_600_000;
+const PAUSA_QUE_ENCERRA_MS = (Number(process.env.HARVEY_WA_SESSAO_MIN) || 360) * 60_000; // teste: HARVEY_WA_SESSAO_MIN=5
 export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
   for (let i = msgs.length - 1; i > 0; i--) {
     const agora = Date.parse(msgs[i].received ?? "");
