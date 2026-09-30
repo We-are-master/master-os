@@ -13,6 +13,7 @@
 
 import { zendeskApi, isZendeskConfigured } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
+import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
 
 const GRUPO_PARCEIROS = "Partners";
@@ -59,6 +60,19 @@ async function usuarioPeloTelefone(telefone: string): Promise<UsuarioZd | null> 
   return users?.[0] ?? null;
 }
 
+/**
+ * Status do ticket da conversa: cliente 🟩 WhatsApp (Action Required), parceiro
+ * 🟢 Partner. Só troca quando ninguém mexeu ainda (New, Open ou o próprio):
+ * ticket que a equipe já passou para Quote, Bidding, Job etc. fica como está.
+ */
+async function statusDaConversa(ticket: number, alvo: number) {
+  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null } }>(`tickets/${ticket}.json`);
+  const livre = [ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, ZD_STATUS_PARTNER, null];
+  if (t.custom_status_id !== alvo && livre.includes(t.custom_status_id)) {
+    await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: alvo } } });
+  }
+}
+
 /** O ticket aberto da conversa de WhatsApp dessa pessoa. */
 async function ticketDaConversa(userId: number): Promise<number | null> {
   const r = await zendeskApi<{ results: Array<{ id: number }> }>(
@@ -100,6 +114,7 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
         method: "PUT",
         body: { ticket: { group_id: await grupoDosParceiros(), ...(org ? { organization_id: org } : {}) } },
       });
+      await statusDaConversa(ticket, ZD_STATUS_PARTNER);
       await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["partner", "harvey-wa"] } });
     }
     return `parceiro: usuário ${u.id}${ticket ? `, ticket ${ticket} no grupo Partners` : ""}`;
@@ -126,7 +141,10 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
   } catch {
     await zendeskApi(`users/${u.id}.json`, { method: "PUT", body: { user: corpo } });
   }
-  if (ticket) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
+  if (ticket) {
+    await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
+    await statusDaConversa(ticket, ZD_STATUS_WHATSAPP);
+  }
   return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}`;
 }
 
@@ -149,4 +167,14 @@ export async function notaInternaNaConversa(telefone: string | null, texto: stri
     await new Promise((r) => setTimeout(r, 2500));
   }
   return "ticket não apareceu";
+}
+
+/** Pagou o link: nota com a reserva e o ticket da conversa fecha (o job tem o ticket dele). */
+export async function fecharConversaPaga(telefone: string | null, texto: string): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
+  const u = await usuarioPeloTelefone(telefone);
+  const ticket = u ? await ticketDaConversa(u.id) : null;
+  if (!ticket) return "ticket não achado";
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { status: "solved", comment: { body: texto, public: false } } } });
+  return `ticket ${ticket} fechado`;
 }

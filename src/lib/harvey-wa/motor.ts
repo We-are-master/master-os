@@ -15,7 +15,7 @@ import { pensar, type Contas, type Fala } from "./cerebro";
 import { quemE, type Identidade } from "./identidade";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { classificarNoZendesk, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
+import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
 import { chamarSite } from "./site";
 import { digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
@@ -245,13 +245,16 @@ async function registrarLead(
 /** O site avisou que pagou (pelo e-mail): o Harvey confirma no WhatsApp da pessoa. */
 export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: string | null): Promise<boolean> {
   const sb = createServiceClient();
-  const { data } = await sb.from("harvey_wa_conversas").select("conversation_id, checkout_deposit").eq("email", email.toLowerCase()).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
+  const { data } = await sb.from("harvey_wa_conversas").select("conversation_id, checkout_deposit, phone").eq("email", email.toLowerCase()).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
   if (!data) return false;
   // Pagou: nada mais a cobrar.
   await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;
+  await fecharConversaPaga(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job has its own ticket; closing this WhatsApp conversation.`).catch((e) =>
+    console.error("[harvey-wa] fechar ticket pago", e),
+  );
   try {
     await enviarTexto(data.conversation_id as string, texto);
     return true;
