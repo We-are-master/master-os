@@ -14,14 +14,16 @@
  * Só sai evento de quem tem clique de anúncio nos últimos 7 dias. Nunca
  * derruba o fluxo: erro vai para o log e para `meta_eventos_wa`.
  *
- * Variáveis: META_WA_DATASET_ID (o dataset ligado à conta do WhatsApp),
- * META_CAPI_TOKEN (o mesmo do site) e WHATSAPP_WABA_ID. Sem elas, nada sai.
+ * Variáveis: META_WA_DATASET_ID (o dataset ligado à conta do WhatsApp; padrão
+ * Master PX, o mesmo do site), META_CAPI_TOKEN (sem ela, o WHATSAPP_TOKEN do
+ * "Conversions API System User", que enxerga o Master PX) e WHATSAPP_WABA_ID.
  * META_TEST_EVENT_CODE manda para "Test events" do Events Manager.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const GRAPH = "https://graph.facebook.com/v23.0";
+const MASTER_PX = "1555218078932742";
 const JANELA_DO_CLIQUE_DIAS = 7;
 
 export type EventoWa = "LeadSubmitted" | "InitiateCheckout" | "Purchase";
@@ -81,8 +83,8 @@ export async function mandarEventoWhatsApp(
   a: { telefone: string | null | undefined; evento: EventoWa; chave: string; valor?: number | null; agora?: Date },
   fazerFetch: typeof fetch = fetch,
 ): Promise<ResultadoEvento> {
-  const dataset = process.env.META_WA_DATASET_ID?.trim();
-  const token = process.env.META_CAPI_TOKEN?.trim();
+  const dataset = process.env.META_WA_DATASET_ID?.trim() || MASTER_PX;
+  const token = process.env.META_CAPI_TOKEN?.trim() || process.env.WHATSAPP_TOKEN?.trim();
   const waba = process.env.WHATSAPP_WABA_ID?.trim();
   const phone = soDigitos(a.telefone);
   if (!phone || !a.chave) return "sem clique";
@@ -99,7 +101,7 @@ export async function mandarEventoWhatsApp(
     .maybeSingle();
   if (!clique?.ctwa_clid) return "sem clique";
   if (!dataset || !token || !waba) {
-    console.error(`[meta-wa] ${a.evento} de ${a.chave} não saiu: falta META_WA_DATASET_ID, META_CAPI_TOKEN ou WHATSAPP_WABA_ID`);
+    console.error(`[meta-wa] ${a.evento} de ${a.chave} não saiu: falta token (META_CAPI_TOKEN/WHATSAPP_TOKEN) ou WHATSAPP_WABA_ID`);
     return "sem configuração";
   }
 
