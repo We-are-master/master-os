@@ -112,9 +112,22 @@ test("com clique e configuração, manda uma vez e trava a segunda", async () =>
   assert.equal(chamadas.length, 1, "não manda a mesma compra duas vezes");
 });
 
-test("sem as variáveis, não manda e avisa", async () => {
-  delete process.env.META_WA_DATASET_ID;
+test("sem token nenhum, não manda e avisa", async () => {
+  delete process.env.META_CAPI_TOKEN;
+  delete process.env.WHATSAPP_TOKEN;
   const { sb } = bancoFalso([{ phone: "447700900123", ctwa_clid: "CLID9", recebido_em: "2026-09-30T09:00:00Z" }]);
   const r = await mandarEventoWhatsApp(sb, { telefone: "447700900123", evento: "LeadSubmitted", chave: "conv1", agora: AGORA }, (async () => new Response("{}")) as typeof fetch);
   assert.equal(r, "sem configuração");
+});
+
+test("sem META_CAPI_TOKEN, usa o token do WhatsApp e o Master PX", async () => {
+  delete process.env.META_CAPI_TOKEN;
+  delete process.env.META_WA_DATASET_ID;
+  process.env.WHATSAPP_TOKEN = "WATOKEN";
+  process.env.WHATSAPP_WABA_ID = "W1";
+  const { sb } = bancoFalso([{ phone: "447700900123", ctwa_clid: "CLID9", recebido_em: "2026-09-30T09:00:00Z" }]);
+  let url = "";
+  const falsa = (async (u: string) => ((url = u), new Response("{}", { status: 200 }))) as typeof fetch;
+  assert.equal(await mandarEventoWhatsApp(sb, { telefone: "447700900123", evento: "LeadSubmitted", chave: "conv2", agora: AGORA }, falsa), "enviado");
+  assert.match(url, /\/1555218078932742\/events\?access_token=WATOKEN$/);
 });
