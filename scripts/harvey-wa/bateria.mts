@@ -51,7 +51,7 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
       "Sarah Jones, sarah.jones.test@example.com",
       "card link please",
     ],
-    checar: (t, f, r) => [!f.includes("get_quote") && "não chamou get_quote", !/£266/.test(t) && "não disse £266", !r.link && "não gerou link", !/133/.test(t) && "não falou dos £133 do depósito", !/bank|transfer/i.test(t) && "não ofereceu transferência"].filter(Boolean) as string[],
+    checar: (t, f, r) => [!f.includes("get_quote") && "não chamou get_quote", !/£266/.test(t) && "não disse £266", !r.link && "não gerou link", !/133/.test(t) && "não falou dos £133 do depósito"].filter(Boolean) as string[],
   },
   banco: {
     cliente: [
@@ -71,7 +71,7 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
         !/FX-TESTE2/.test(t) && "não mandou a referência",
         !/133/.test(t) && "não disse o sinal de £133",
         !/24 ?h|24 hours|tomorrow/i.test(t) && "não disse que segura 24h",
-        /checkout\.stripe\.com/.test(t) && "mandou link do cartão",
+        !/12345678|06913415/.test(t.split(/bank transfer/i).slice(-1)[0] ?? "") && "não mandou o banco depois do pedido",
       ].filter(Boolean) as string[],
   },
   deep: {
@@ -149,7 +149,7 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
     cliente: ["Card", "Deep clean 1 bed 1 bath, E17", "yes that's all", "Thursday 9-12", "7 Classon Close E17 4QS", "I'll be there", "free parking", "Victor Souza, victor.test@example.com"],
     checar: (t, f, r) =>
       [
-        (t.match(/card (payment )?link or bank/gi) ?? []).length > 0 && "perguntou cartão ou banco de novo",
+        /card (payment )?link or bank/i.test(t) && "perguntou cartão ou banco (cartão é o padrão)",
         (t.match(/£194/g) ?? []).length > 2 && "repetiu o preço",
         /£232|£38/.test(t.split(/Classon Close/).slice(-1)[0] ?? "") && "pôs extra que o cliente não pediu",
         !/£194/.test(t.split(/Classon Close/).slice(-1)[0] ?? "") && "total final diferente do aceito",
@@ -197,7 +197,7 @@ const CHASES: Array<{ nome: string; conversa: Fala[]; deveMandar: boolean }> = [
     deveMandar: true,
     conversa: [
       { papel: "cliente", texto: "how much is a deep clean for a 2 bed flat in E17, 1 bathroom" },
-      { papel: "harvey", texto: "Hi there, I'm Harvey and I'll be looking after you. A 2 bed deep clean with 1 bathroom in E17 is £254, fixed. I have Thursday or Friday morning free, which suits you?" },
+      { papel: "harvey", texto: "Hi there, I'm Harvey and I'll be looking after you. A 2 bed deep clean with 1 bathroom in E17 is £237, fixed. I have Thursday or Friday morning free, which suits you?" },
     ],
   },
   {

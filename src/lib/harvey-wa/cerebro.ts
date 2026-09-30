@@ -230,7 +230,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
     ctx.sobreQuem ?? null,
-    ctx.pagamento ? `They already chose to pay the deposit by ${ctx.pagamento === "card" ? "card payment link" : "bank transfer"}: never ask again, use method ${ctx.pagamento}.` : null,
+    ctx.pagamento === "bank" ? "They asked to pay the deposit by bank transfer: use method bank." : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -245,6 +245,12 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       if (ctx.chase && (!r.resposta || /\bNO_CHASE\b/.test(r.resposta))) {
         r.resposta = null;
         return r;
+      }
+      // Lembrete não repete preço já dito: tira a frase que traz um valor que já saiu.
+      if (ctx.chase && r.resposta) {
+        const ditos = new Set(conversa.filter((f) => f.papel !== "cliente").flatMap((f) => f.texto.match(/£\d+(?:\.\d+)?/g) ?? []));
+        const frases = r.resposta.split(/(?<=[.!?])\s+/).filter((fr) => !(fr.match(/£\d+(?:\.\d+)?/g) ?? []).some((v) => ditos.has(v)));
+        if (frases.length) r.resposta = frases.join(" ");
       }
       // Primeira resposta da conversa sempre se apresenta (dono, 29/09/2026):
       // não fica só na instrução, que o modelo às vezes esquece.
@@ -332,7 +338,6 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   }
   if (nome === "create_payment_link") {
     // O modelo às vezes pula a pergunta e manda o link direto: sem escolha, não sai.
-    if (!ctx.pagamento) return { error: "They have not chosen yet. Do not send a link or bank details: ask whether they want to pay the 50% deposit by card payment link or bank transfer." };
     const nomeDaPessoa = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim();
     const booking = {
       selection: a.selection,
@@ -349,7 +354,8 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     };
     const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
-    if (ctx.pagamento) a.method = ctx.pagamento;
+    // Cartão é o padrão (a Stripe confirma sozinha); transferência só quando a pessoa pediu.
+    a.method = ctx.pagamento === "bank" ? "bank" : "card";
     if (a.method === "bank") {
       // Os mesmos dados das faturas; HARVEY_BANK_DETAILS só se um dia quiser outra conta.
       const banco = process.env.HARVEY_BANK_DETAILS?.trim() || FIXFY_CLIENT_BANK_DETAIL_ROWS.filter((l) => l.label !== "IBAN").map((l) => `${l.label}: ${l.value}`).join("\n");
