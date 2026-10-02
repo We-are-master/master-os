@@ -37,6 +37,40 @@ import {
 import { PricingDeltaChip } from "@/components/pricing/pricing-delta-chip";
 
 /**
+ * One line for the drawer header: did the partner take our standard pay or set
+ * their own (onboarding "Your rates" step or an office override)?
+ */
+export function usePartnerRateCardSummary(partnerId: string | null): string {
+  const [summary, setSummary] = useState("Prices agreed with this partner");
+  useEffect(() => {
+    if (!partnerId) return;
+    let cancelled = false;
+    listPartnerServicePrices(partnerId)
+      .then((rows) => {
+        if (cancelled) return;
+        const own = rows.filter((r) => !r.use_standard);
+        if (own.length === 0) {
+          setSummary("Our standard rates");
+          return;
+        }
+        const names = own.map((r) => r.catalog_service_name).filter(Boolean) as string[];
+        setSummary(
+          names.length > 0 && names.length <= 2
+            ? `Own rates: ${names.join(", ")}`
+            : `Own rates on ${own.length} services`,
+        );
+      })
+      .catch(() => {
+        /* keep the neutral line */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [partnerId]);
+  return summary;
+}
+
+/**
  * Per-partner override of what we PAY this partner per catalog service.
  * Includes catalogue base + pricing preset / add-on rows when the service defines them.
  */
