@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  accountAllowsBelowStandard,
   buildPayDelta,
   buildSellDelta,
   catalogPartnerHourlyRate,
@@ -20,6 +21,38 @@ describe("resolveAccountSell", () => {
   });
   it("clamps below floor to floor", () => {
     assert.equal(resolveAccountSell(74.35, 70), 74.35);
+  });
+  it("keeps an agreed price below the floor when the account allows it", () => {
+    assert.equal(resolveAccountSell(360, 306, true), 306);
+  });
+  it("still returns the floor with no override, even when allowed", () => {
+    assert.equal(resolveAccountSell(360, null, true), 360);
+  });
+});
+
+describe("accountAllowsBelowStandard", () => {
+  it("is on only for a custom row with the switch", () => {
+    assert.equal(accountAllowsBelowStandard({ use_standard: false, allow_below_standard: true }), true);
+  });
+  it("is off when the row uses the standard", () => {
+    assert.equal(accountAllowsBelowStandard({ use_standard: true, allow_below_standard: true }), false);
+  });
+  it("is off without a row or without the switch", () => {
+    assert.equal(accountAllowsBelowStandard(null), false);
+    assert.equal(accountAllowsBelowStandard({ use_standard: false }), false);
+  });
+});
+
+describe("agreed price below the catalog", () => {
+  it("is valid only when allowed", () => {
+    assert.equal(isAccountSellValid(360, 306), false);
+    assert.equal(isAccountSellValid(360, 306, true), true);
+  });
+  it("labels the gap instead of saying at minimum", () => {
+    const d = buildSellDelta(360, 306, true);
+    assert.equal(d.valid, true);
+    assert.equal(d.delta, -54);
+    assert.equal(d.label, "−£54.00 below minimum");
   });
 });
 

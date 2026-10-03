@@ -5,6 +5,7 @@
 import { isValidUUID } from "@/lib/uuid";
 import { resolveCatalogLinePricing } from "@/lib/catalog-line-pricing";
 import {
+  accountAllowsBelowStandard,
   catalogPartnerHourlyRate,
   resolveAccountSell,
   resolvePartnerPay,
@@ -119,7 +120,7 @@ export function resolveWebhookFixedPricing(input: WebhookFixedPricingInput): Web
       input.accountOverride && !input.accountOverride.use_standard && input.accountOverride.fixed_price != null
         ? Number(input.accountOverride.fixed_price)
         : null;
-    clientPrice = resolveAccountSell(floor, custom);
+    clientPrice = resolveAccountSell(floor, custom, accountAllowsBelowStandard(input.accountOverride));
     if (!input.partnerCostSent) {
       const ceiling = Number(input.catalog.partner_cost) || 0;
       partnerCost = resolvePartnerPay(ceiling, null);
@@ -226,7 +227,7 @@ export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
             : null;
         const hourlyClientRate = input.hourlyClientRateSent
           ? input.hourlyClientRateFromBody
-          : resolveAccountSell(floorH, customClient);
+          : resolveAccountSell(floorH, customClient, accountAllowsBelowStandard(input.accountOverride));
         let hourlyPartnerRate = input.hourlyPartnerRateSent
           ? input.hourlyPartnerRateFromBody
           : resolved.partnerTotal / hours;
@@ -255,7 +256,7 @@ export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
       : null;
   const hourlyClientRate = input.hourlyClientRateSent
     ? input.hourlyClientRateFromBody
-    : resolveAccountSell(floorHourly, customClient);
+    : resolveAccountSell(floorHourly, customClient, accountAllowsBelowStandard(input.accountOverride));
 
   if (input.partnerOverride) {
     const pricing = resolveJobPricing({
@@ -302,7 +303,7 @@ export function resolveWebhookHourlyRates(input: {
       : null;
   let hourlyClientRate = input.hourlyClientRateSent
     ? input.hourlyClientRateFromBody
-    : resolveAccountSell(floorHourly, customClient);
+    : resolveAccountSell(floorHourly, customClient, accountAllowsBelowStandard(input.accountOverride));
 
   const ceilingHourly = catalogPartnerHourlyRate(
     input.catalog.partner_cost,

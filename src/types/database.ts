@@ -337,6 +337,8 @@ export interface AccountServicePrice {
   preset_overrides?: CatalogPresetOverridesMap | null;
   /** Per addon id overrides when use_standard = false. */
   addon_overrides?: CatalogAddonOverridesMap | null;
+  /** Preço combinado abaixo da tabela (mig 310): com a chave, o combinado vale mesmo menor que o catálogo. */
+  allow_below_standard?: boolean | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
