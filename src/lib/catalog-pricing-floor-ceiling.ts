@@ -13,6 +13,13 @@
  * `isPartnerPayValid` continua existindo e dizendo que passou do padrão. A
  * diferença é que agora isso é AVISO na tela (a margem que aparece na hora de
  * alocar), não um corte silencioso no valor.
+ *
+ * O piso da conta ganhou a mesma saída em 03/10/2026 (mig 310), mas só por
+ * escolha: a linha da conta com `allow_below_standard` diz que o preço foi
+ * combinado abaixo da tabela, e aí o combinado vale. Foi o caso da U R
+ * Certified, parceira de revenda que paga a lista de 04/09 enquanto a tabela
+ * subiu em 22/09. Sem a chave, o OS guardava £306 num EoT de 3 quartos e
+ * cobrava £360, o mesmo sumiço calado do teto.
  */
 
 export type PricingDeltaKind = "sell" | "pay";
@@ -26,10 +33,23 @@ export type PricingDelta = {
   valid: boolean;
 };
 
-export function resolveAccountSell(floor: number, override: number | null | undefined): number {
+export function resolveAccountSell(
+  floor: number,
+  override: number | null | undefined,
+  allowBelowStandard = false,
+): number {
   const f = finiteNonNeg(floor);
   if (override == null || !Number.isFinite(Number(override))) return f;
+  // Preço combinado abaixo da tabela: vale o combinado, como no lado do parceiro.
+  if (allowBelowStandard) return finiteNonNeg(Number(override));
   return Math.max(f, finiteNonNeg(Number(override)));
+}
+
+/** A linha da conta (account_service_prices) liberou preço abaixo da tabela? Mig 310. */
+export function accountAllowsBelowStandard(
+  override: { use_standard?: boolean | null; allow_below_standard?: boolean | null } | null | undefined,
+): boolean {
+  return Boolean(override && !override.use_standard && override.allow_below_standard);
 }
 
 export function resolvePartnerPay(ceiling: number, override: number | null | undefined): number {
@@ -39,8 +59,8 @@ export function resolvePartnerPay(ceiling: number, override: number | null | und
   return finiteNonNeg(Number(override));
 }
 
-export function isAccountSellValid(floor: number, rate: number): boolean {
-  return finiteNonNeg(rate) >= finiteNonNeg(floor);
+export function isAccountSellValid(floor: number, rate: number, allowBelowStandard = false): boolean {
+  return allowBelowStandard || finiteNonNeg(rate) >= finiteNonNeg(floor);
 }
 
 export function isPartnerPayValid(ceiling: number, rate: number): boolean {
@@ -51,7 +71,8 @@ export function sellDeltaLabel(floor: number, rate: number): string {
   const f = finiteNonNeg(floor);
   const r = finiteNonNeg(rate);
   const d = Math.round((r - f) * 100) / 100;
-  if (d <= 0) return "At minimum";
+  if (d < 0) return `−£${Math.abs(d).toFixed(2)} below minimum`;
+  if (d === 0) return "At minimum";
   return `+£${d.toFixed(2)} above minimum`;
 }
 
@@ -88,7 +109,7 @@ export function sellFromMargin(pay: number, marginPct: number): number | null {
   return Math.round((p / (1 - marginPct / 100)) * 100) / 100;
 }
 
-export function buildSellDelta(floor: number, rate: number): PricingDelta {
+export function buildSellDelta(floor: number, rate: number, allowBelowStandard = false): PricingDelta {
   const f = finiteNonNeg(floor);
   const r = finiteNonNeg(rate);
   return {
@@ -97,7 +118,7 @@ export function buildSellDelta(floor: number, rate: number): PricingDelta {
     rate: r,
     delta: Math.round((r - f) * 100) / 100,
     label: sellDeltaLabel(f, r),
-    valid: r >= f,
+    valid: isAccountSellValid(f, r, allowBelowStandard),
   };
 }
 

@@ -1404,7 +1404,7 @@ async function fetchAccountServiceOverride(
 ): Promise<AccountServicePrice | null> {
   const { data, error } = await supabase
     .from("account_service_prices")
-    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides")
+    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides, addon_overrides, allow_below_standard")
     .eq("account_id", accountId)
     .eq("catalog_service_id", catalogServiceId)
     .maybeSingle();

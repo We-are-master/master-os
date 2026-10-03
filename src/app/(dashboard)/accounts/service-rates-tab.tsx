@@ -84,9 +84,11 @@ export function AccountServiceRatesTabSection({
     return () => { cancelled = true; };
   }, [accountId, account.catalog_service_ids]);
 
-  async function persistRow(service: CatalogService) {
-    const draft = drafts[service.id];
-    if (!draft) return;
+  async function persistRow(service: CatalogService, patch?: Partial<RowDraft>) {
+    const base = drafts[service.id];
+    if (!base) return;
+    // Caixinha salva no mesmo clique: `drafts` aqui ainda é o de antes dele.
+    const draft = patch ? { ...base, ...patch } : base;
     if (!draft.use_standard) {
       const err = validateAccountDraft(service, draft);
       if (err) {
@@ -104,6 +106,7 @@ export function AccountServiceRatesTabSection({
       notes: draft.notes.trim() || null,
       preset_overrides: draft.use_standard ? {} : serializeItemOverrides(draft.preset_overrides),
       addon_overrides: draft.use_standard ? {} : serializeItemOverrides(draft.addon_overrides),
+      allow_below_standard: draft.use_standard ? false : draft.allow_below_standard,
     };
     try {
       const saved = await upsertAccountServicePrice(payload);
@@ -199,6 +202,7 @@ export function AccountServiceRatesTabSection({
               [service.id]: { ...(prev[service.id] ?? defaultDraft()), ...patch },
             }))}
             onCommit={() => persistRow(service)}
+            onCommitWith={(patch) => persistRow(service, patch)}
             onResetToStandard={() => resetToStandard(service)}
           />
         ))}
@@ -217,6 +221,7 @@ interface RowDraft {
   notes: string;
   preset_overrides: Record<string, ItemOverrideDraft>;
   addon_overrides: Record<string, ItemOverrideDraft>;
+  allow_below_standard: boolean;
 }
 
 function defaultDraft(): RowDraft {
@@ -228,6 +233,7 @@ function defaultDraft(): RowDraft {
     notes: "",
     preset_overrides: {},
     addon_overrides: {},
+    allow_below_standard: false,
   };
 }
 
@@ -259,6 +265,7 @@ function draftFromServiceAndOverride(service: CatalogService, override: AccountS
     notes: override?.notes ?? "",
     preset_overrides,
     addon_overrides,
+    allow_below_standard: override?.allow_below_standard ?? false,
   };
 }
 
@@ -288,12 +295,12 @@ function validateAccountDraft(service: CatalogService, draft: RowDraft): string 
   const isHourly = service.pricing_mode === "hourly";
   if (isHourly) {
     const rate = parseNumOrNull(draft.hourly_rate);
-    if (rate != null && !isAccountSellValid(Number(service.hourly_rate) || 0, rate)) {
+    if (rate != null && !isAccountSellValid(Number(service.hourly_rate) || 0, rate, draft.allow_below_standard)) {
       return `"${service.name}": hourly rate cannot be below catalog minimum (£${Number(service.hourly_rate) || 0}).`;
     }
   } else {
     const rate = parseNumOrNull(draft.fixed_price);
-    if (rate != null && !isAccountSellValid(Number(service.fixed_price) || 0, rate)) {
+    if (rate != null && !isAccountSellValid(Number(service.fixed_price) || 0, rate, draft.allow_below_standard)) {
       return `"${service.name}": fixed price cannot be below catalog minimum (£${Number(service.fixed_price) || 0}).`;
     }
   }
@@ -301,7 +308,7 @@ function validateAccountDraft(service: CatalogService, draft: RowDraft): string 
     const d = draft.preset_overrides[p.id];
     const floor = Number(p.fixed_price) || 0;
     const rate = d ? parseNumOrNull(d.fixed_price) : null;
-    if (rate != null && !isAccountSellValid(floor, rate)) {
+    if (rate != null && !isAccountSellValid(floor, rate, draft.allow_below_standard)) {
       return `"${p.label}": client price cannot be below minimum (£${floor}).`;
     }
   }
@@ -309,13 +316,14 @@ function validateAccountDraft(service: CatalogService, draft: RowDraft): string 
 }
 
 function ServiceRateRow({
-  service, override, draft, onDraftChange, onCommit, onResetToStandard,
+  service, override, draft, onDraftChange, onCommit, onCommitWith, onResetToStandard,
 }: {
   service: CatalogService;
   override: AccountServicePrice | null;
   draft: RowDraft;
   onDraftChange: (patch: Partial<RowDraft>) => void;
   onCommit: () => void;
+  onCommitWith: (patch: Partial<RowDraft>) => void;
   onResetToStandard: () => void;
 }) {
   const stackable = catalogHasStackableAddons(service);
@@ -326,7 +334,7 @@ function ServiceRateRow({
   const hasPersistedOverride = !!override && !override.use_standard;
   const sellFloor = isHourly ? Number(service.hourly_rate) || 0 : Number(service.fixed_price) || 0;
   const draftSellRate = isHourly ? parseNumOrNull(draft.hourly_rate) : parseNumOrNull(draft.fixed_price);
-  const sellDelta = isCustom && draftSellRate != null ? buildSellDelta(sellFloor, draftSellRate) : null;
+  const sellDelta = isCustom && draftSellRate != null ? buildSellDelta(sellFloor, draftSellRate, draft.allow_below_standard) : null;
   const draftPartnerCeiling = isHourly
     ? (Number(service.partner_cost) || 0) / Math.max(1, Number(service.default_hours) || 1)
     : Number(service.partner_cost) || 0;
@@ -382,12 +390,29 @@ function ServiceRateRow({
               onChange={(e) => {
                 onDraftChange({ use_standard: e.target.checked });
                 // Persist the toggle immediately so the badge & db are in sync.
-                queueMicrotask(onCommit);
+                onCommitWith({ use_standard: e.target.checked });
               }}
               className="h-3.5 w-3.5 rounded border-border-light"
             />
             Use standard
           </label>
+          {isCustom ? (
+            <label
+              className="flex items-center gap-1.5 cursor-pointer text-xs"
+              title="Agreed trade price: this account pays the prices below even when they are lower than the catalog standard."
+            >
+              <input
+                type="checkbox"
+                checked={draft.allow_below_standard}
+                onChange={(e) => {
+                  onDraftChange({ allow_below_standard: e.target.checked });
+                  onCommitWith({ allow_below_standard: e.target.checked });
+                }}
+                className="h-3.5 w-3.5 rounded border-border-light"
+              />
+              Allow below catalog
+            </label>
+          ) : null}
           {hasPersistedOverride ? (
             <Button
               variant="ghost"

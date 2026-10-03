@@ -27,6 +27,7 @@ import type {
   PartnerServicePrice,
 } from "@/types/database";
 import {
+  accountAllowsBelowStandard,
   catalogPartnerHourlyRate,
   resolveAccountSell,
   resolvePartnerPay,
@@ -61,31 +62,33 @@ export interface ResolvedJobPricing {
 
 function pickClientFixed(
   catalog: Pick<CatalogService, "fixed_price">,
-  override: Pick<AccountServicePrice, "use_standard" | "fixed_price"> | null,
+  override: Pick<AccountServicePrice, "use_standard" | "fixed_price" | "allow_below_standard"> | null,
 ): { value: number | null; source: PriceSource } {
   const floor = catalog.fixed_price ?? 0;
   const custom =
     override && !override.use_standard && override.fixed_price != null
       ? Number(override.fixed_price)
       : null;
-  const value = resolveAccountSell(floor, custom);
+  const value = resolveAccountSell(floor, custom, accountAllowsBelowStandard(override));
+  // Com preço combinado, abaixo da tabela também é custom.
   const source: PriceSource =
-    custom != null && value > floor ? "custom" : "standard";
+    custom != null && value !== floor ? "custom" : "standard";
   return { value: value > 0 ? value : null, source };
 }
 
 function pickClientHourly(
   catalog: Pick<CatalogService, "hourly_rate">,
-  override: Pick<AccountServicePrice, "use_standard" | "hourly_rate"> | null,
+  override: Pick<AccountServicePrice, "use_standard" | "hourly_rate" | "allow_below_standard"> | null,
 ): { value: number | null; source: PriceSource } {
   const floor = catalog.hourly_rate ?? 0;
   const custom =
     override && !override.use_standard && override.hourly_rate != null
       ? Number(override.hourly_rate)
       : null;
-  const value = resolveAccountSell(floor, custom);
+  const value = resolveAccountSell(floor, custom, accountAllowsBelowStandard(override));
+  // Com preço combinado, abaixo da tabela também é custom.
   const source: PriceSource =
-    custom != null && value > floor ? "custom" : "standard";
+    custom != null && value !== floor ? "custom" : "standard";
   return { value: value > 0 ? value : null, source };
 }
 
