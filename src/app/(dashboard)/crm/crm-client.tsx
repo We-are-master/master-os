@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  ArrowDown, ArrowUp, Building2, CalendarClock, Mail, Phone, Plus, Settings2, Trash2, Upload,
+  ArrowDown, ArrowUp, Building2, CalendarClock, Copy, Mail, Phone, PhoneCall, Plus, Settings2, Trash2, Upload,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { csvToCrmRows, type CrmCsvRow } from "@/lib/crm-csv";
+import { CALL_OUTCOMES, applyCallOutcome, isCallDue, isoDate, type CallOutcome } from "@/lib/crm-calls";
 import {
   createCrmDeal, createCrmStage, deleteCrmDeal, deleteCrmStage, importAccountsToCrm, importRowsToCrm,
   listAccountsForCrm, listCrmDeals, listCrmStages, moveCrmDeal, reorderCrmStages, updateCrmDeal, updateCrmStage,
@@ -41,9 +42,27 @@ const KIND_OPTIONS = [
   { value: "lost", label: "Lost" },
 ];
 const SEGMENTS = [
-  "Letting agent", "Property manager", "Block manager", "Student accommodation", "Housing provider",
-  "Facilities management", "Platform", "Certificates", "Other",
+  "Letting agent", "Property manager", "Block manager", "Short-let / Airbnb", "Student accommodation", "Build to rent",
+  "Housing provider", "Facilities management", "Developer / Builder", "Commercial / Office", "Platform", "Certificates",
+  "Public sector", "Other",
 ];
+/** Cards drawn per board column before "Show more": the lead column holds hundreds. */
+const BOARD_PAGE = 30;
+
+function telHref(phone: string) {
+  return `tel:${phone.replace(/[^\d+]/g, "")}`;
+}
+
+function siteHref(site: string) {
+  return /^https?:\/\//i.test(site) ? site : `https://${site}`;
+}
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text).then(
+    () => toast.success("Copied"),
+    () => toast.error("Could not copy"),
+  );
+}
 
 function dot(color: string) {
   return COLORS[color]?.dot ?? COLORS.slate.dot;
@@ -63,6 +82,8 @@ export function CrmClient() {
   const [view, setView] = useState<"board" | "list">("board");
   const [search, setSearch] = useState("");
   const [segment, setSegment] = useState("");
+  const [dueOnly, setDueOnly] = useState(false);
+  const [today] = useState(() => isoDate(new Date()));
   const [editing, setEditing] = useState<Draft | null>(null);
   const [stagesOpen, setStagesOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -90,17 +111,25 @@ export function CrmClient() {
     return [...all].sort();
   }, [deals]);
 
+  const stageById = useMemo(() => new Map(stages.map((s) => [s.id, s])), [stages]);
+  const isDue = useCallback((d: CrmDeal) => isCallDue(d, stageById.get(d.stage_id)?.kind, today), [stageById, today]);
+  const dueCount = useMemo(() => deals.filter(isDue).length, [deals, isDue]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return deals.filter((d) => {
+    const rows = deals.filter((d) => {
       if (segment && d.segment !== segment) return false;
+      if (dueOnly && !isDue(d)) return false;
       if (!q) return true;
-      return [d.company_name, d.contact_name, d.contact_email, d.segment, d.next_step, d.notes]
+      return [d.company_name, d.contact_name, d.contact_email, d.contact_phone, d.segment, d.next_step, d.notes]
         .some((v) => (v ?? "").toLowerCase().includes(q));
     });
-  }, [deals, search, segment]);
-
-  const stageById = useMemo(() => new Map(stages.map((s) => [s.id, s])), [stages]);
+    // Na fila de ligações, a mais atrasada primeiro e depois a ordem do quadro.
+    if (dueOnly) {
+      rows.sort((a, b) => (a.next_step_date ?? "").localeCompare(b.next_step_date ?? "") || a.position - b.position);
+    }
+    return rows;
+  }, [deals, search, segment, dueOnly, isDue]);
 
   const totals = useMemo(() => {
     let open = 0, openValue = 0, won = 0, wonValue = 0;
@@ -157,6 +186,7 @@ export function CrmClient() {
         <span><strong className="text-text-primary">{totals.open}</strong> in progress{totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo potential` : ""}</span>
         <span><strong className="text-text-primary">{totals.won}</strong> won{totals.wonValue > 0 ? ` · ${formatCurrency(totals.wonValue)}/mo` : ""}</span>
         <span><strong className="text-text-primary">{deals.length}</strong> companies in total</span>
+        <span><strong className={cn(dueCount > 0 ? "text-primary" : "text-text-primary")}>{dueCount}</strong> calls due today</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -166,6 +196,15 @@ export function CrmClient() {
           onChange={(id) => setView(id as "board" | "list")}
         />
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={dueOnly ? "primary" : "outline"}
+            icon={<PhoneCall className="h-4 w-4" />}
+            onClick={() => setDueOnly((v) => !v)}
+            aria-pressed={dueOnly}
+          >
+            Calls due · {dueCount}
+          </Button>
           <div className="w-56"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
           <div className="w-48">
             <Select
@@ -202,10 +241,18 @@ export function CrmClient() {
           onCardClick={(d) => setEditing({ ...d })}
           onCardDrop={(d, to) => moveTo(d, to)}
           pendingCardIds={pending}
-          renderCard={(d) => <DealCard deal={d} />}
+          pageSize={BOARD_PAGE}
+          renderCard={(d) => <DealCard deal={d} due={isDue(d)} />}
         />
       ) : (
-        <ListView deals={filtered} stages={stages} onOpen={(d) => setEditing({ ...d })} onMove={moveTo} />
+        <ListView
+          deals={filtered}
+          stages={stages}
+          isDue={isDue}
+          keepOrder={dueOnly}
+          onOpen={(d) => setEditing({ ...d })}
+          onMove={moveTo}
+        />
       )}
 
       {editing && (
@@ -242,7 +289,7 @@ export function CrmClient() {
   );
 }
 
-function DealCard({ deal }: { deal: CrmDeal }) {
+function DealCard({ deal, due }: { deal: CrmDeal; due: boolean }) {
   const value = money(deal.monthly_value);
   return (
     <div className="space-y-1.5 rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-shadow hover:shadow-md">
@@ -257,12 +304,18 @@ function DealCard({ deal }: { deal: CrmDeal }) {
         </div>
       )}
       {deal.next_step ? (
-        <p className="flex items-start gap-1 text-[11px] text-text-tertiary">
+        <p className={cn("flex items-start gap-1 text-[11px]", due ? "font-semibold text-primary" : "text-text-tertiary")}>
           <CalendarClock className="mt-px h-3 w-3 shrink-0" />
           <span className="min-w-0">
             {deal.next_step}
             {deal.next_step_date ? ` · ${formatDate(deal.next_step_date)}` : ""}
           </span>
+        </p>
+      ) : null}
+      {deal.contact_phone ? (
+        <p className="flex items-center gap-1 text-[11px] font-medium tabular-nums text-text-secondary">
+          <Phone className="h-3 w-3 shrink-0" />
+          {deal.contact_phone}
         </p>
       ) : null}
       {deal.contact_name ? <p className="truncate text-[11px] text-text-tertiary">{deal.contact_name}</p> : null}
@@ -271,63 +324,74 @@ function DealCard({ deal }: { deal: CrmDeal }) {
 }
 
 function ListView({
-  deals, stages, onOpen, onMove,
+  deals, stages, isDue, keepOrder, onOpen, onMove,
 }: {
   deals: CrmDeal[];
   stages: CrmStage[];
+  isDue: (d: CrmDeal) => boolean;
+  /** Keeps the order it was given (the call queue) instead of stage then name. */
+  keepOrder: boolean;
   onOpen: (d: CrmDeal) => void;
   onMove: (d: CrmDeal, stageId: string) => void;
 }) {
   const order = new Map(stages.map((s, i) => [s.id, i]));
-  const rows = [...deals].sort(
-    (a, b) => (order.get(a.stage_id) ?? 99) - (order.get(b.stage_id) ?? 99) || a.company_name.localeCompare(b.company_name),
+  const rows = keepOrder ? deals : [...deals].sort(
+    (a, b) => (order.get(a.stage_id) ?? 99) - (order.get(b.stage_id) ?? 99) || a.position - b.position,
   );
   const stageOptions = stages.map((s) => ({ value: s.id, label: s.name }));
   if (!rows.length) return <p className="py-10 text-center text-sm text-text-tertiary">No companies match this search.</p>;
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[860px] text-left text-[13px]">
+      <table className="w-full min-w-[1180px] text-left text-[13px]">
         <thead className="bg-surface-tertiary text-[11px] uppercase tracking-wide text-text-tertiary">
           <tr>
             <th className="px-3 py-2 font-semibold">Company</th>
+            <th className="px-3 py-2 font-semibold">Phone</th>
+            <th className="px-3 py-2 font-semibold">Next step</th>
             <th className="px-3 py-2 font-semibold">Stage</th>
             <th className="px-3 py-2 font-semibold">Segment</th>
             <th className="px-3 py-2 font-semibold">Contact</th>
             <th className="px-3 py-2 font-semibold">Value</th>
-            <th className="px-3 py-2 font-semibold">Next step</th>
             <th className="px-3 py-2 font-semibold">Updated</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((d) => (
             <tr key={d.id} className="border-t border-border hover:bg-surface-hover/50">
-              <td className="px-3 py-2">
+              <td className="min-w-[12rem] px-3 py-2">
                 <button type="button" className="text-left font-semibold text-text-primary hover:underline" onClick={() => onOpen(d)}>
                   {d.company_name}
                 </button>
               </td>
-              <td className="w-44 px-3 py-1.5">
-                <Select
-                  aria-label={`Stage of ${d.company_name}`}
-                  value={d.stage_id}
-                  onChange={(e) => onMove(d, e.target.value)}
-                  options={stageOptions}
-                  className="h-8 text-[12px]"
-                />
+              <td className="whitespace-nowrap px-3 py-2 tabular-nums">
+                {d.contact_phone ? (
+                  <a href={telHref(d.contact_phone)} className="font-medium text-text-primary hover:text-primary hover:underline">{d.contact_phone}</a>
+                ) : null}
+              </td>
+              <td className={cn("min-w-[15rem] px-3 py-2", isDue(d) ? "font-semibold text-primary" : "text-text-secondary")}>
+                {d.next_step ?? ""}
+                {d.next_step_date ? <span className={isDue(d) ? undefined : "text-text-tertiary"}> · {formatDate(d.next_step_date)}</span> : null}
+              </td>
+              <td className="px-3 py-1.5">
+                <div className="w-40">
+                  <Select
+                    aria-label={`Stage of ${d.company_name}`}
+                    value={d.stage_id}
+                    onChange={(e) => onMove(d, e.target.value)}
+                    options={stageOptions}
+                    className="h-8 text-[12px]"
+                  />
+                </div>
               </td>
               <td className="px-3 py-2 text-text-secondary">{d.segment ?? ""}</td>
               <td className="px-3 py-2 text-text-secondary">
-                <div className="min-w-0">
+                <div className="max-w-[14rem]">
                   {d.contact_name ? <div className="truncate">{d.contact_name}</div> : null}
                   {d.contact_email ? <div className="truncate text-[11px] text-text-tertiary">{d.contact_email}</div> : null}
                 </div>
               </td>
-              <td className="px-3 py-2 tabular-nums text-text-secondary">{money(d.monthly_value) ?? ""}</td>
-              <td className="px-3 py-2 text-text-secondary">
-                {d.next_step ?? ""}
-                {d.next_step_date ? <span className="text-text-tertiary"> · {formatDate(d.next_step_date)}</span> : null}
-              </td>
-              <td className="px-3 py-2 text-[12px] text-text-tertiary">{formatDate(d.updated_at)}</td>
+              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary">{money(d.monthly_value) ?? ""}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-[12px] text-text-tertiary">{formatDate(d.updated_at)}</td>
             </tr>
           ))}
         </tbody>
@@ -348,36 +412,51 @@ function DealDrawer({
   const [form, setForm] = useState<Draft>(draft);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [callNote, setCallNote] = useState("");
   const isNew = !draft.id;
   const set = (patch: Partial<Draft>) => setForm((f) => ({ ...f, ...patch }));
   const text = (v: string) => (v.trim() === "" ? null : v);
 
-  async function save() {
-    if (!form.company_name.trim()) { toast.error("Add the company name"); return; }
+  async function save(f: Draft = form, okMessage?: string) {
+    if (!f.company_name.trim()) { toast.error("Add the company name"); return; }
     setSaving(true);
     try {
       const payload = {
-        company_name: form.company_name.trim(),
-        stage_id: form.stage_id,
-        segment: form.segment ?? null,
-        contact_name: form.contact_name ?? null,
-        contact_email: form.contact_email ?? null,
-        contact_phone: form.contact_phone ?? null,
-        website: form.website ?? null,
-        monthly_value: form.monthly_value != null && Number(form.monthly_value) > 0 ? Number(form.monthly_value) : null,
-        next_step: form.next_step ?? null,
-        next_step_date: form.next_step_date || null,
-        notes: form.notes ?? null,
-        source: form.source ?? (isNew ? "Added by hand" : null),
+        company_name: f.company_name.trim(),
+        stage_id: f.stage_id,
+        segment: f.segment ?? null,
+        contact_name: f.contact_name ?? null,
+        contact_email: f.contact_email ?? null,
+        contact_phone: f.contact_phone ?? null,
+        website: f.website ?? null,
+        monthly_value: f.monthly_value != null && Number(f.monthly_value) > 0 ? Number(f.monthly_value) : null,
+        next_step: f.next_step ?? null,
+        next_step_date: f.next_step_date || null,
+        notes: f.notes ?? null,
+        source: f.source ?? (isNew ? "Added by hand" : null),
       };
       const saved = isNew ? await createCrmDeal(payload) : await updateCrmDeal(draft.id as string, payload);
-      toast.success(isNew ? "Lead added" : "Saved");
+      toast.success(okMessage ?? (isNew ? "Lead added" : "Saved"));
       onSaved(saved, isNew);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not save");
     } finally {
       setSaving(false);
     }
+  }
+
+  /** Grava o resultado da ligação junto com o que estiver editado na gaveta. */
+  function logCall(outcome: CallOutcome) {
+    const result = applyCallOutcome(
+      { stage_id: form.stage_id, notes: form.notes ?? null, next_step: form.next_step ?? null, next_step_date: form.next_step_date ?? null },
+      outcome, stages, new Date(), callNote,
+    );
+    const label = CALL_OUTCOMES.find((o) => o.id === outcome)?.label ?? outcome;
+    const stageName = result.stage_id !== form.stage_id ? stages.find((s) => s.id === result.stage_id)?.name : null;
+    const next = { ...form, ...result };
+    setForm(next);
+    save(next, [label, stageName ? `moved to ${stageName}` : null, result.next_step_date ? `next call ${formatDate(result.next_step_date)}` : null]
+      .filter(Boolean).join(" · "));
   }
 
   async function remove() {
@@ -404,7 +483,7 @@ function DealDrawer({
       title={isNew ? "New lead" : form.company_name || "Company"}
       subtitle={isNew ? "Add a company to the CRM" : form.source ?? undefined}
       footer={
-        <div className="flex w-full items-center justify-between gap-2">
+        <div className="flex w-full items-center justify-between gap-2 px-5 py-3">
           {!isNew ? (
             confirmDelete ? (
               <div className="flex items-center gap-2">
@@ -418,12 +497,60 @@ function DealDrawer({
           ) : <span />}
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : isNew ? "Add lead" : "Save"}</Button>
+            <Button size="sm" onClick={() => save()} disabled={saving}>{saving ? "Saving…" : isNew ? "Add lead" : "Save"}</Button>
           </div>
         </div>
       }
     >
-      <div className="space-y-4">
+      <div className="space-y-4 px-5 py-4">
+        {!isNew && (form.contact_phone || form.website) ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-surface-tertiary px-3 py-2.5 text-[13px]">
+            {form.contact_phone ? (
+              <span className="inline-flex items-center gap-1.5">
+                <a href={telHref(form.contact_phone)} className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-text-primary hover:text-primary">
+                  <PhoneCall className="h-4 w-4" />
+                  {form.contact_phone}
+                </a>
+                <button type="button" aria-label="Copy phone number" className="rounded p-0.5 text-text-tertiary hover:text-text-primary" onClick={() => copyText(form.contact_phone as string)}>
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ) : null}
+            {form.website ? (
+              <a href={siteHref(form.website)} target="_blank" rel="noreferrer" className="min-w-0 truncate text-text-secondary hover:text-primary hover:underline sm:ml-auto">
+                {form.website.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "")}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+        {!isNew ? (
+          <div className="space-y-2 rounded-xl border border-border p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Log this call</p>
+            <Input
+              id="crm-call-note"
+              aria-label="What they said"
+              value={callNote}
+              onChange={(e) => setCallNote(e.target.value)}
+              placeholder="What they said (optional)"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {CALL_OUTCOMES.map((o) => (
+                <Button
+                  key={o.id}
+                  size="sm"
+                  variant={o.id === "meeting" ? "primary" : o.id === "not_interested" ? "ghost" : "outline"}
+                  disabled={saving}
+                  onClick={() => logCall(o.id)}
+                >
+                  {o.label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-[11px] text-text-tertiary">
+              Each button writes the call at the top of the notes and sets the next step. No answer: next working day. Voicemail and Call back: 2 working days. Meeting booked moves to the next stage.
+            </p>
+          </div>
+        ) : null}
         <Field label="Company" htmlFor="crm-company">
           <Input id="crm-company" value={form.company_name} onChange={(e) => set({ company_name: e.target.value })} placeholder="Company name" autoFocus={isNew} />
         </Field>

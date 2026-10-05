@@ -28,6 +28,11 @@ interface KanbanBoardProps<T> {
   pendingCardIds?: ReadonlySet<string>;
   /** Full-height columns that scroll their own cards, like the Live View board. */
   fillHeight?: boolean;
+  /**
+   * Cards drawn per column before a "Show more" button. Long columns (hundreds
+   * of leads) otherwise take seconds to stagger in. Unset draws every card.
+   */
+  pageSize?: number;
   className?: string;
 }
 
@@ -41,9 +46,11 @@ export function KanbanBoard<T>({
   onCardDrop,
   pendingCardIds,
   fillHeight = false,
+  pageSize,
   className,
 }: KanbanBoardProps<T>) {
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
+  const [shownByColumn, setShownByColumn] = useState<Record<string, number>>({});
   const draggable = typeof onCardDrop === "function";
 
   const findItem = (id: string): { item: T; columnId: string } | null => {
@@ -65,6 +72,9 @@ export function KanbanBoard<T>({
     >
       {columns.map((column) => {
         const isDropTarget = dragOverColumnId === column.id;
+        const limit = pageSize ? (shownByColumn[column.id] ?? pageSize) : column.items.length;
+        const visibleItems = column.items.slice(0, limit);
+        const hiddenCount = column.items.length - visibleItems.length;
         return (
           <div
             key={column.id}
@@ -112,7 +122,7 @@ export function KanbanBoard<T>({
                   {isDropTarget ? "Drop here" : "Nothing here."}
                 </p>
               ) : (
-                column.items.map((item) => {
+                visibleItems.map((item) => {
                   const id = getCardId(item);
                   const pending = pendingCardIds?.has(id) ?? false;
                   return (
@@ -140,6 +150,15 @@ export function KanbanBoard<T>({
                   );
                 })
               )}
+              {hiddenCount > 0 && pageSize ? (
+                <button
+                  type="button"
+                  onClick={() => setShownByColumn((cur) => ({ ...cur, [column.id]: limit + pageSize }))}
+                  className="w-full rounded-lg border border-dashed border-border py-2 text-[12px] font-medium text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+                >
+                  Show {Math.min(hiddenCount, pageSize)} more ({hiddenCount} left)
+                </button>
+              ) : null}
             </motion.div>
           </div>
         );
