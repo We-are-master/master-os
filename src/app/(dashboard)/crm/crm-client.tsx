@@ -7,7 +7,7 @@ import {
   ArrowDown, ArrowUp, Building2, CalendarClock, Copy, List, Mail, Phone, PhoneCall, Plus, Settings2, SquareKanban, Trash2, Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
 import { Modal } from "@/components/ui/modal";
 import { Input, SearchInput } from "@/components/ui/input";
@@ -16,7 +16,10 @@ import { Tabs } from "@/components/ui/tabs";
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { csvToCrmRows, type CrmCsvRow } from "@/lib/crm-csv";
-import { CALL_OUTCOMES, applyCallOutcome, isCallDue, isoDate, type CallOutcome } from "@/lib/crm-calls";
+import {
+  CALL_FILTERS, CALL_OUTCOMES, applyCallOutcome, isCallDue, isoDate, matchesCallFilter, parseCallLog,
+  type CallEntry, type CallFilter, type CallOutcome,
+} from "@/lib/crm-calls";
 import {
   createCrmDeal, createCrmStage, deleteCrmDeal, deleteCrmStage, importAccountsToCrm, importRowsToCrm,
   listAccountsForCrm, listCrmDeals, listCrmStages, moveCrmDeal, reorderCrmStages, updateCrmDeal, updateCrmStage,
@@ -45,6 +48,29 @@ const SEGMENTS = [
   "Housing provider", "Facilities management", "Developer / Builder", "Commercial / Office", "Platform", "Certificates",
   "Public sector", "Other",
 ];
+const OUTCOME_VARIANT: Record<CallOutcome, BadgeVariant> = {
+  no_answer: "warning",
+  voicemail: "orange",
+  call_back: "info",
+  interested: "success",
+  meeting: "violet",
+  not_interested: "danger",
+};
+const outcomeLabel = (o: CallOutcome) => CALL_OUTCOMES.find((x) => x.id === o)?.label ?? o;
+
+type Calls = { entries: CallEntry[]; count: number; last: CallEntry | null };
+const NO_CALLS: Calls = { entries: [], count: 0, last: null };
+
+/** "today 10:42" ou "06/10 10:42". */
+function whenLabel(at: Date, today: string) {
+  const hm = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return isoDate(at) === today ? `today ${hm}` : `${at.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" })} ${hm}`;
+}
+
+function OutcomeBadge({ outcome }: { outcome: CallOutcome }) {
+  return <Badge size="sm" dot variant={OUTCOME_VARIANT[outcome]}>{outcomeLabel(outcome)}</Badge>;
+}
+
 /** Cards drawn per board column before "Show more": the lead column holds hundreds. */
 const BOARD_PAGE = 30;
 
@@ -82,6 +108,7 @@ export function CrmClient() {
   const [search, setSearch] = useState("");
   const [segment, setSegment] = useState("");
   const [dueOnly, setDueOnly] = useState(false);
+  const [callFilter, setCallFilter] = useState<CallFilter>("");
   const [today] = useState(() => isoDate(new Date()));
   const [editing, setEditing] = useState<Draft | null>(null);
   const [stagesOpen, setStagesOpen] = useState(false);
@@ -114,21 +141,49 @@ export function CrmClient() {
   const isDue = useCallback((d: CrmDeal) => isCallDue(d, stageById.get(d.stage_id)?.kind, today), [stageById, today]);
   const dueCount = useMemo(() => deals.filter(isDue).length, [deals, isDue]);
 
+  // Ligações lidas das notas de cada card (as linhas que o "Log this call" grava).
+  const callInfo = useMemo(() => {
+    const now = new Date();
+    return new Map(deals.map((d) => {
+      const entries = parseCallLog(d.notes, now);
+      return [d.id, { entries, count: entries.length, last: entries[0] ?? null } satisfies Calls];
+    }));
+  }, [deals]);
+  const callsOf = useCallback((d: CrmDeal) => callInfo.get(d.id) ?? NO_CALLS, [callInfo]);
+
+  // Placar de hoje: empresas que receberam ligação hoje, pelo último resultado do dia.
+  const todayStats = useMemo(() => {
+    const byOutcome = new Map<CallOutcome, number>();
+    let companies = 0, calls = 0;
+    for (const info of callInfo.values()) {
+      const todays = info.entries.filter((e) => e.day === today);
+      if (!todays.length) continue;
+      companies++;
+      calls += todays.length;
+      byOutcome.set(todays[0].outcome, (byOutcome.get(todays[0].outcome) ?? 0) + 1);
+    }
+    return { companies, calls, byOutcome };
+  }, [callInfo, today]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const rows = deals.filter((d) => {
       if (segment && d.segment !== segment) return false;
       if (dueOnly && !isDue(d)) return false;
+      if (callFilter && !matchesCallFilter(callsOf(d), callFilter, today)) return false;
       if (!q) return true;
-      return [d.company_name, d.contact_name, d.contact_email, d.contact_phone, d.segment, d.next_step, d.notes]
+      return [d.company_name, d.contact_name, d.contact_email, d.contact_phone, d.segment, d.next_step, d.notes, d.source]
         .some((v) => (v ?? "").toLowerCase().includes(q));
     });
     // Na fila de ligações, a mais atrasada primeiro e depois a ordem do quadro.
     if (dueOnly) {
       rows.sort((a, b) => (a.next_step_date ?? "").localeCompare(b.next_step_date ?? "") || a.position - b.position);
+    } else if (callFilter && callFilter !== "never") {
+      // Filtrando por ligação: a mais recente primeiro.
+      rows.sort((a, b) => (callsOf(b).last?.at.getTime() ?? 0) - (callsOf(a).last?.at.getTime() ?? 0));
     }
     return rows;
-  }, [deals, search, segment, dueOnly, isDue]);
+  }, [deals, search, segment, dueOnly, callFilter, isDue, callsOf, today]);
 
   const totals = useMemo(() => {
     let open = 0, openValue = 0, won = 0, wonValue = 0;
@@ -146,8 +201,12 @@ export function CrmClient() {
       title: s.name,
       color: dot(s.color),
       items: filtered.filter((d) => d.stage_id === s.id),
+      meta: (() => {
+        const called = filtered.filter((d) => d.stage_id === s.id && callsOf(d).count > 0).length;
+        return called ? `${called} called` : undefined;
+      })(),
     })),
-    [stages, filtered],
+    [stages, filtered, callsOf],
   );
 
   async function moveTo(deal: CrmDeal, stageId: string) {
@@ -180,19 +239,27 @@ export function CrmClient() {
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="mr-1 flex items-baseline gap-2">
           <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">CRM</h1>
-          <span className="whitespace-nowrap text-[12px] tabular-nums text-text-tertiary">
+          <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
             {deals.length} companies · {totals.won} won
             {totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo open` : ""}
           </span>
         </div>
         <ViewSwitch view={view} listCount={filtered.length} onChange={setView} />
-        <div className="w-56"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
-        <div className="w-44">
+        <div className="w-52"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
+        <div className="w-40">
           <Select
             aria-label="Filter by segment"
             value={segment}
             onChange={(e) => setSegment(e.target.value)}
             options={[{ value: "", label: "All segments" }, ...segmentsInUse.map((s) => ({ value: s, label: s }))]}
+          />
+        </div>
+        <div className="w-44">
+          <Select
+            aria-label="Filter by call result"
+            value={callFilter}
+            onChange={(e) => setCallFilter(e.target.value as CallFilter)}
+            options={CALL_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
           />
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -205,11 +272,56 @@ export function CrmClient() {
           >
             Calls due · {dueCount}
           </Button>
-          <Button variant="outline" size="sm" icon={<Upload className="h-4 w-4" />} onClick={() => setImportOpen(true)}>Import</Button>
-          <Button variant="outline" size="sm" icon={<Settings2 className="h-4 w-4" />} onClick={() => setStagesOpen(true)}>Stages</Button>
+          <Button variant="outline" size="icon" aria-label="Import" title="Import accounts or a CSV" onClick={() => setImportOpen(true)}>
+            <Upload className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" aria-label="Stages" title="Edit the stages" onClick={() => setStagesOpen(true)}>
+            <Settings2 className="h-4 w-4" />
+          </Button>
           <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => newDeal()}>New lead</Button>
         </div>
       </div>
+
+      {todayStats.companies > 0 || dueCount > 0 ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-[12px] text-text-secondary">
+          <span className="font-semibold text-text-primary">Today</span>
+          <button
+            type="button"
+            onClick={() => setDueOnly((v) => !v)}
+            className={cn(
+              "rounded-md px-2 py-0.5 font-medium ring-1 ring-inset transition-colors",
+              dueOnly ? "bg-primary text-white ring-primary" : "bg-card text-text-primary ring-border hover:bg-surface-hover",
+            )}
+          >
+            {dueCount} still to call
+          </button>
+          <span className="text-text-tertiary">·</span>
+          <button
+            type="button"
+            onClick={() => setCallFilter((f) => (f === "today" ? "" : "today"))}
+            className={cn("rounded-md px-1.5 py-0.5 hover:bg-surface-hover", callFilter === "today" && "bg-surface-tertiary font-semibold text-text-primary")}
+          >
+            {todayStats.companies} called{todayStats.calls > todayStats.companies ? ` (${todayStats.calls} calls)` : ""}
+          </button>
+          {CALL_OUTCOMES.filter((o) => todayStats.byOutcome.get(o.id)).map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              aria-pressed={callFilter === o.id}
+              onClick={() => setCallFilter((f) => (f === o.id ? "" : o.id))}
+              className={cn("inline-flex items-center gap-1 rounded-md p-0.5 transition-opacity", callFilter && callFilter !== o.id && "opacity-50 hover:opacity-100")}
+            >
+              <OutcomeBadge outcome={o.id} />
+              <span className="font-semibold tabular-nums text-text-primary">{todayStats.byOutcome.get(o.id)}</span>
+            </button>
+          ))}
+          {callFilter ? (
+            <button type="button" onClick={() => setCallFilter("")} className="ml-1 text-text-tertiary underline-offset-2 hover:text-text-primary hover:underline">
+              Clear filter
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {loadError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/30 dark:text-red-300">
@@ -239,14 +351,16 @@ export function CrmClient() {
           fillHeight
           className="gap-3 pb-1 lg:overflow-x-auto"
           columnClassName="w-80 lg:w-80 lg:flex-none border border-border bg-surface-tertiary/50 p-2.5"
-          renderCard={(d) => <DealCard deal={d} due={isDue(d)} />}
+          renderCard={(d) => <DealCard deal={d} due={isDue(d)} calls={callsOf(d)} today={today} />}
         />
       ) : (
         <ListView
           deals={filtered}
           stages={stages}
           isDue={isDue}
-          keepOrder={dueOnly}
+          callsOf={callsOf}
+          today={today}
+          keepOrder={dueOnly || (!!callFilter && callFilter !== "never")}
           onOpen={(d) => setEditing({ ...d })}
           onMove={moveTo}
         />
@@ -310,7 +424,7 @@ function ViewSwitch({ view, listCount, onChange }: { view: "board" | "list"; lis
   );
 }
 
-function DealCard({ deal, due }: { deal: CrmDeal; due: boolean }) {
+function DealCard({ deal, due, calls, today }: { deal: CrmDeal; due: boolean; calls: Calls; today: string }) {
   const value = money(deal.monthly_value);
   return (
     <div className="space-y-1.5 rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-shadow hover:shadow-md">
@@ -324,6 +438,18 @@ function DealCard({ deal, due }: { deal: CrmDeal; due: boolean }) {
           {value ? <span className="text-[11px] font-semibold text-text-secondary">{value}</span> : null}
         </div>
       )}
+      {calls.last ? (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-text-tertiary">
+            <OutcomeBadge outcome={calls.last.outcome} />
+            <span className="tabular-nums">
+              {whenLabel(calls.last.at, today)}
+              {calls.count > 1 ? ` · ${calls.count} calls` : ""}
+            </span>
+          </div>
+          {calls.last.note ? <p className="line-clamp-2 text-[11px] text-text-secondary">&ldquo;{calls.last.note}&rdquo;</p> : null}
+        </div>
+      ) : null}
       {deal.next_step ? (
         <p className={cn("flex items-start gap-1 text-[11px]", due ? "font-semibold text-primary" : "text-text-tertiary")}>
           <CalendarClock className="mt-px h-3 w-3 shrink-0" />
@@ -345,11 +471,13 @@ function DealCard({ deal, due }: { deal: CrmDeal; due: boolean }) {
 }
 
 function ListView({
-  deals, stages, isDue, keepOrder, onOpen, onMove,
+  deals, stages, isDue, callsOf, today, keepOrder, onOpen, onMove,
 }: {
   deals: CrmDeal[];
   stages: CrmStage[];
   isDue: (d: CrmDeal) => boolean;
+  callsOf: (d: CrmDeal) => Calls;
+  today: string;
   /** Keeps the order it was given (the call queue) instead of stage then name. */
   keepOrder: boolean;
   onOpen: (d: CrmDeal) => void;
@@ -363,12 +491,13 @@ function ListView({
   if (!rows.length) return <p className="py-10 text-center text-sm text-text-tertiary">No companies match this search.</p>;
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card">
-      <table className="w-full min-w-[1180px] text-left text-[13px]">
+      <table className="w-full min-w-[1360px] text-left text-[13px]">
         <thead className="sticky top-0 z-10 bg-surface-tertiary text-[11px] uppercase tracking-wide text-text-tertiary">
           <tr>
             <th className="px-3 py-2 font-semibold">Company</th>
             <th className="px-3 py-2 font-semibold">Phone</th>
             <th className="px-3 py-2 font-semibold">Next step</th>
+            <th className="px-3 py-2 font-semibold">Last call</th>
             <th className="px-3 py-2 font-semibold">Stage</th>
             <th className="px-3 py-2 font-semibold">Segment</th>
             <th className="px-3 py-2 font-semibold">Contact</th>
@@ -392,6 +521,18 @@ function ListView({
               <td className={cn("min-w-[15rem] px-3 py-2", isDue(d) ? "font-semibold text-primary" : "text-text-secondary")}>
                 {d.next_step ?? ""}
                 {d.next_step_date ? <span className={isDue(d) ? undefined : "text-text-tertiary"}> · {formatDate(d.next_step_date)}</span> : null}
+              </td>
+              <td className="min-w-[11rem] px-3 py-2 text-[12px] text-text-tertiary">
+                {(() => {
+                  const c = callsOf(d);
+                  if (!c.last) return <span>Not called yet</span>;
+                  return (
+                    <div className="space-y-0.5">
+                      <OutcomeBadge outcome={c.last.outcome} />
+                      <div className="tabular-nums">{whenLabel(c.last.at, today)}{c.count > 1 ? ` · ${c.count} calls` : ""}</div>
+                    </div>
+                  );
+                })()}
               </td>
               <td className="px-3 py-1.5">
                 <div className="w-40">
@@ -435,6 +576,7 @@ function DealDrawer({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [callNote, setCallNote] = useState("");
   const isNew = !draft.id;
+  const pastCalls = useMemo(() => parseCallLog(draft.notes, new Date()), [draft.notes]);
   const set = (patch: Partial<Draft>) => setForm((f) => ({ ...f, ...patch }));
   const text = (v: string) => (v.trim() === "" ? null : v);
 
@@ -546,7 +688,14 @@ function DealDrawer({
         ) : null}
         {!isNew ? (
           <div className="space-y-2 rounded-xl border border-border p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Log this call</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+              Log this call
+              {pastCalls.length ? (
+                <span className="ml-1 normal-case tracking-normal text-text-tertiary">
+                  · {pastCalls.length} so far, last: {outcomeLabel(pastCalls[0].outcome)} {pastCalls[0].at.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" })}
+                </span>
+              ) : null}
+            </p>
             <Input
               id="crm-call-note"
               aria-label="What they said"

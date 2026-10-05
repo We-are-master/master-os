@@ -41,6 +41,58 @@ export function isCallDue(deal: Pick<CrmDeal, "next_step_date">, stageKind: stri
   return !!deal.next_step_date && deal.next_step_date <= today && stageKind !== "lost";
 }
 
+export type CallEntry = { at: Date; day: string; outcome: CallOutcome; note: string | null };
+export type CallSummary = { count: number; last: CallEntry | null };
+
+const OUTCOME_BY_LABEL = new Map(CALL_OUTCOMES.map((o) => [o.label, o.id]));
+// Linha que o "Log this call" escreve: "06/10/2026 10:42 · No answer · nota". O ano
+// é opcional para aceitar as primeiras linhas, que saíram como "06/10 10:42".
+const CALL_LINE = new RegExp(
+  `^(\\d{2})/(\\d{2})(?:/(\\d{4}))? (\\d{2}):(\\d{2}) · (${CALL_OUTCOMES.map((o) => o.label).join("|")})(?: · (.*))?$`,
+);
+
+/** Ligações registradas nas notas, da mais nova para a mais antiga. */
+export function parseCallLog(notes: string | null | undefined, now: Date): CallEntry[] {
+  if (!notes) return [];
+  const out: CallEntry[] = [];
+  for (const raw of notes.split("\n")) {
+    const m = CALL_LINE.exec(raw.trim());
+    if (!m) continue;
+    const [, dd, mm, yyyy, hh, mi, label, note] = m;
+    let year = yyyy ? Number(yyyy) : now.getFullYear();
+    let at = new Date(year, Number(mm) - 1, Number(dd), Number(hh), Number(mi));
+    // Sem ano e caindo no futuro: é do ano passado.
+    if (!yyyy && at.getTime() > now.getTime() + 86_400_000) {
+      year -= 1;
+      at = new Date(year, Number(mm) - 1, Number(dd), Number(hh), Number(mi));
+    }
+    out.push({ at, day: isoDate(at), outcome: OUTCOME_BY_LABEL.get(label) as CallOutcome, note: note?.trim() || null });
+  }
+  return out.sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+export function summarizeCalls(notes: string | null | undefined, now: Date): CallSummary {
+  const calls = parseCallLog(notes, now);
+  return { count: calls.length, last: calls[0] ?? null };
+}
+
+/** Filtro de ligação: nunca ligou, ligou hoje ou o resultado da última ligação. */
+export type CallFilter = "" | "never" | "today" | CallOutcome;
+
+export const CALL_FILTERS: { value: CallFilter; label: string }[] = [
+  { value: "", label: "All calls" },
+  { value: "never", label: "Not called yet" },
+  { value: "today", label: "Called today" },
+  ...CALL_OUTCOMES.map((o) => ({ value: o.id as CallFilter, label: `Last call: ${o.label}` })),
+];
+
+export function matchesCallFilter(summary: CallSummary, filter: CallFilter, today: string): boolean {
+  if (!filter) return true;
+  if (filter === "never") return summary.count === 0;
+  if (filter === "today") return summary.last?.day === today;
+  return summary.last?.outcome === filter;
+}
+
 export type CallFields = Pick<CrmDeal, "stage_id" | "notes" | "next_step" | "next_step_date">;
 
 export function applyCallOutcome(
@@ -51,7 +103,7 @@ export function applyCallOutcome(
   note?: string,
 ): CallFields {
   const label = CALL_OUTCOMES.find((o) => o.id === outcome)?.label ?? outcome;
-  const stamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const stamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const line = [stamp, label, note?.trim()].filter(Boolean).join(" · ");
   const notes = deal.notes?.trim() ? `${line}\n${deal.notes}` : line;
   const ordered = [...stages].sort((a, b) => a.position - b.position);

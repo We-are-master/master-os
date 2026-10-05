@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { addBusinessDays, applyCallOutcome, isCallDue } from "./crm-calls";
+import { addBusinessDays, applyCallOutcome, isCallDue, matchesCallFilter, parseCallLog, summarizeCalls } from "./crm-calls";
 import type { CrmStage } from "@/types/database";
 
 const stage = (id: string, position: number, kind: CrmStage["kind"]): CrmStage => ({
@@ -24,7 +24,7 @@ describe("applyCallOutcome", () => {
 
   it("sem resposta: linha datada no topo e liga de novo no próximo dia útil", () => {
     const r = applyCallOutcome(base, "no_answer", STAGES, FRI, "  ");
-    assert.equal(r.notes, "09/10 16:05 · No answer\nIndependent agent in Hackney.");
+    assert.equal(r.notes, "09/10/2026 16:05 · No answer\nIndependent agent in Hackney.");
     assert.equal(r.next_step, "Call again");
     assert.equal(r.next_step_date, "2026-10-12");
     assert.equal(r.stage_id, "lead");
@@ -35,7 +35,7 @@ describe("applyCallOutcome", () => {
     assert.equal(r.stage_id, "scheduled");
     assert.equal(r.next_step, "Meeting");
     assert.equal(r.next_step_date, "2026-10-07");
-    assert.match(r.notes ?? "", /^06\/10 10:42 · Meeting booked · Thu 11am with Sarah\n/);
+    assert.match(r.notes ?? "", /^06\/10\/2026 10:42 · Meeting booked · Thu 11am with Sarah\n/);
   });
 
   it("retorno respeita a data futura que já estava marcada", () => {
@@ -54,7 +54,7 @@ describe("applyCallOutcome", () => {
   });
 
   it("nota vazia vira só a linha da ligação", () => {
-    assert.equal(applyCallOutcome({ ...base, notes: null }, "voicemail", STAGES, TUE).notes, "06/10 10:42 · Voicemail");
+    assert.equal(applyCallOutcome({ ...base, notes: null }, "voicemail", STAGES, TUE).notes, "06/10/2026 10:42 · Voicemail");
   });
 });
 
@@ -65,5 +65,49 @@ describe("isCallDue", () => {
     assert.equal(isCallDue({ next_step_date: "2026-10-07" }, "open", "2026-10-06"), false);
     assert.equal(isCallDue({ next_step_date: "2026-10-01" }, "lost", "2026-10-06"), false);
     assert.equal(isCallDue({ next_step_date: null }, "open", "2026-10-06"), false);
+  });
+});
+
+describe("parseCallLog e o filtro", () => {
+  const notes = [
+    "06/10/2026 15:20 · Call back · ask for Sarah",
+    "06/10/2026 10:42 · No answer",
+    "Independent agent in Hackney.",
+    "30/12 09:00 · Voicemail",
+    "Priority A. Not a call line · No answer",
+  ].join("\n");
+
+  it("lê só as linhas de ligação, da mais nova para a mais antiga, e acerta o ano que falta", () => {
+    const calls = parseCallLog(notes, TUE);
+    assert.deepEqual(calls.map((c) => [c.day, c.outcome, c.note]), [
+      ["2026-10-06", "call_back", "ask for Sarah"],
+      ["2026-10-06", "no_answer", null],
+      ["2025-12-30", "voicemail", null],
+    ]);
+  });
+
+  it("resume em quantidade e última ligação", () => {
+    const s = summarizeCalls(notes, TUE);
+    assert.equal(s.count, 3);
+    assert.equal(s.last?.outcome, "call_back");
+    assert.deepEqual(summarizeCalls("Just notes", TUE), { count: 0, last: null });
+  });
+
+  it("filtra por nunca ligou, ligou hoje e resultado da última ligação", () => {
+    const s = summarizeCalls(notes, TUE);
+    const none = summarizeCalls(null, TUE);
+    assert.equal(matchesCallFilter(s, "", "2026-10-06"), true);
+    assert.equal(matchesCallFilter(s, "today", "2026-10-06"), true);
+    assert.equal(matchesCallFilter(s, "today", "2026-10-07"), false);
+    assert.equal(matchesCallFilter(s, "call_back", "2026-10-06"), true);
+    assert.equal(matchesCallFilter(s, "no_answer", "2026-10-06"), false);
+    assert.equal(matchesCallFilter(none, "never", "2026-10-06"), true);
+    assert.equal(matchesCallFilter(s, "never", "2026-10-06"), false);
+  });
+
+  it("a linha que o botão grava é lida de volta", () => {
+    const r = applyCallOutcome({ stage_id: "lead", notes: null, next_step: null, next_step_date: null }, "interested", STAGES, TUE, "wants prices");
+    const last = summarizeCalls(r.notes, TUE).last;
+    assert.deepEqual([last?.day, last?.outcome, last?.note], ["2026-10-06", "interested", "wants prices"]);
   });
 });

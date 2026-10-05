@@ -10,6 +10,8 @@ export interface KanbanColumn<T> {
   title: string;
   color: string;
   items: T[];
+  /** Small summary on the right of the column header (e.g. "12 called"). */
+  meta?: React.ReactNode;
 }
 
 interface KanbanBoardProps<T> {
@@ -114,6 +116,7 @@ export function KanbanBoard<T>({
               <span className="rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10px] font-bold text-text-tertiary">
                 {column.items.length}
               </span>
+              {column.meta ? <div className="ml-auto min-w-0 truncate text-[11px] text-text-tertiary">{column.meta}</div> : null}
             </div>
             <motion.div
               variants={staggerContainer}
