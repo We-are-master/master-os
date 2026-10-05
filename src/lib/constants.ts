@@ -40,8 +40,6 @@ export const NAVIGATION: NavGroup[] = [
       // Quem começou a reservar no site e não pagou (294). O /leads acima é outra
       // coisa (jobs oferecidos a parceiros) e fica escondido do menu.
       { label: "Leads", href: "/website-leads", icon: "user-circle", permission: "leads" },
-      // Quem o Harvey está atendendo no WhatsApp e o botão de assumir (o Zendesk trava o ticket dele).
-      { label: "Harvey", href: "/harvey-whatsapp", icon: "message-square", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
@@ -50,6 +48,8 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Network",
     items: [
+      // Funil B2B (mig 311): contas e leads de empresa em quadro e lista.
+      { label: "CRM", href: "/crm", icon: "kanban", permission: "accounts" },
       { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Clients", href: "/clients", icon: "user-circle", permission: "accounts" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },
