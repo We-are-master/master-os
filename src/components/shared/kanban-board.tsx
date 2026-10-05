@@ -34,6 +34,8 @@ interface KanbanBoardProps<T> {
    */
   pageSize?: number;
   className?: string;
+  /** Extra classes for each column box (width, background, border). */
+  columnClassName?: string;
 }
 
 const DRAG_MIME = "text/kanban-card-id";
@@ -48,6 +50,7 @@ export function KanbanBoard<T>({
   fillHeight = false,
   pageSize,
   className,
+  columnClassName,
 }: KanbanBoardProps<T>) {
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [shownByColumn, setShownByColumn] = useState<Record<string, number>>({});
@@ -101,6 +104,7 @@ export function KanbanBoard<T>({
             className={cn(
               "w-72 flex-shrink-0 rounded-xl transition-colors",
               fillHeight && "flex min-h-0 flex-col lg:w-auto lg:min-w-0 lg:flex-1",
+              columnClassName,
               isDropTarget && "bg-primary/5 ring-2 ring-primary/30",
             )}
           >

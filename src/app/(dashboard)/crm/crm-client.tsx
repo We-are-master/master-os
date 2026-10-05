@@ -4,9 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  ArrowDown, ArrowUp, Building2, CalendarClock, Copy, Mail, Phone, PhoneCall, Plus, Settings2, Trash2, Upload,
+  ArrowDown, ArrowUp, Building2, CalendarClock, Copy, List, Mail, Phone, PhoneCall, Plus, Settings2, SquareKanban, Trash2, Upload,
 } from "lucide-react";
-import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Drawer } from "@/components/ui/drawer";
@@ -175,26 +174,27 @@ export function CrmClient() {
   const empty = !loading && !loadError && deals.length === 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
-      <PageHeader eyebrow="B2B" title="CRM" subtitle="Every B2B account and lead, from first contact to signed account.">
-        <Button variant="outline" size="sm" icon={<Upload className="h-4 w-4" />} onClick={() => setImportOpen(true)}>Import</Button>
-        <Button variant="outline" size="sm" icon={<Settings2 className="h-4 w-4" />} onClick={() => setStagesOpen(true)}>Stages</Button>
-        <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => newDeal()}>New lead</Button>
-      </PageHeader>
-
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-text-secondary">
-        <span><strong className="text-text-primary">{totals.open}</strong> in progress{totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo potential` : ""}</span>
-        <span><strong className="text-text-primary">{totals.won}</strong> won{totals.wonValue > 0 ? ` · ${formatCurrency(totals.wonValue)}/mo` : ""}</span>
-        <span><strong className="text-text-primary">{deals.length}</strong> companies in total</span>
-        <span><strong className={cn(dueCount > 0 ? "text-primary" : "text-text-primary")}>{dueCount}</strong> calls due today</span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          tabs={[{ id: "board", label: "Board" }, { id: "list", label: "List", count: filtered.length }]}
-          activeTab={view}
-          onChange={(id) => setView(id as "board" | "list")}
-        />
+    // Altura da tela inteira, colado no header (mesmo padrão da tela de Jobs):
+    // cada coluna do quadro rola sozinha.
+    <div className="-mt-2 flex h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] min-h-0 flex-col gap-3 overflow-hidden sm:-mt-3 lg:-mt-4 lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)]">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="mr-1 flex items-baseline gap-2">
+          <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">CRM</h1>
+          <span className="whitespace-nowrap text-[12px] tabular-nums text-text-tertiary">
+            {deals.length} companies · {totals.won} won
+            {totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo open` : ""}
+          </span>
+        </div>
+        <ViewSwitch view={view} listCount={filtered.length} onChange={setView} />
+        <div className="w-56"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
+        <div className="w-44">
+          <Select
+            aria-label="Filter by segment"
+            value={segment}
+            onChange={(e) => setSegment(e.target.value)}
+            options={[{ value: "", label: "All segments" }, ...segmentsInUse.map((s) => ({ value: s, label: s }))]}
+          />
+        </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             size="sm"
@@ -205,15 +205,9 @@ export function CrmClient() {
           >
             Calls due · {dueCount}
           </Button>
-          <div className="w-56"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
-          <div className="w-48">
-            <Select
-              aria-label="Filter by segment"
-              value={segment}
-              onChange={(e) => setSegment(e.target.value)}
-              options={[{ value: "", label: "All segments" }, ...segmentsInUse.map((s) => ({ value: s, label: s }))]}
-            />
-          </div>
+          <Button variant="outline" size="sm" icon={<Upload className="h-4 w-4" />} onClick={() => setImportOpen(true)}>Import</Button>
+          <Button variant="outline" size="sm" icon={<Settings2 className="h-4 w-4" />} onClick={() => setStagesOpen(true)}>Stages</Button>
+          <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => newDeal()}>New lead</Button>
         </div>
       </div>
 
@@ -242,6 +236,9 @@ export function CrmClient() {
           onCardDrop={(d, to) => moveTo(d, to)}
           pendingCardIds={pending}
           pageSize={BOARD_PAGE}
+          fillHeight
+          className="gap-3 pb-1 lg:overflow-x-auto"
+          columnClassName="w-80 lg:w-80 lg:flex-none border border-border bg-surface-tertiary/50 p-2.5"
           renderCard={(d) => <DealCard deal={d} due={isDue(d)} />}
         />
       ) : (
@@ -285,6 +282,30 @@ export function CrmClient() {
         stages={stages}
         onImported={load}
       />
+    </div>
+  );
+}
+
+function ViewSwitch({ view, listCount, onChange }: { view: "board" | "list"; listCount: number; onChange: (v: "board" | "list") => void }) {
+  const item = (v: "board" | "list", label: string, icon: React.ReactNode, count?: number) => (
+    <button
+      type="button"
+      aria-pressed={view === v}
+      onClick={() => onChange(v)}
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+        view === v ? "bg-surface-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+      )}
+    >
+      {icon}
+      {label}
+      {count != null ? <span className="tabular-nums text-text-tertiary">{count}</span> : null}
+    </button>
+  );
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+      {item("board", "Board", <SquareKanban className="h-3.5 w-3.5" />)}
+      {item("list", "List", <List className="h-3.5 w-3.5" />, listCount)}
     </div>
   );
 }
@@ -341,9 +362,9 @@ function ListView({
   const stageOptions = stages.map((s) => ({ value: s.id, label: s.name }));
   if (!rows.length) return <p className="py-10 text-center text-sm text-text-tertiary">No companies match this search.</p>;
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card">
       <table className="w-full min-w-[1180px] text-left text-[13px]">
-        <thead className="bg-surface-tertiary text-[11px] uppercase tracking-wide text-text-tertiary">
+        <thead className="sticky top-0 z-10 bg-surface-tertiary text-[11px] uppercase tracking-wide text-text-tertiary">
           <tr>
             <th className="px-3 py-2 font-semibold">Company</th>
             <th className="px-3 py-2 font-semibold">Phone</th>
