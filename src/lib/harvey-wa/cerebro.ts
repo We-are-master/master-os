@@ -97,7 +97,7 @@ const FERRAMENTAS_CLIENTE = [
     type: "function",
     function: {
       name: "get_quote",
-      description: "Exact fixed price (VAT included) for a selection of services, straight from the website price table. Also checks the postcode is covered. Call it every time before saying a price.",
+      description: "Exact fixed price (the professional's total price, nothing added on top) for a selection of services, straight from the website price table. Also checks the postcode is covered. Call it every time before saying a price.",
       parameters: {
         type: "object",
         properties: {
