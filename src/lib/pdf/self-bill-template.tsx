@@ -25,6 +25,21 @@ export interface SelfBillPdfLine {
   doneOn?: string;
   /** Archived / Lost / Cancelled — shown for audit when job no longer pays out. */
   payoutStateNote?: string | null;
+  /**
+   * Modelo de agente: "A" = Platform Booking (cliente da plataforma, Fixfy
+   * agente), "B" = Fixfy Client Work (self-billing). Ausente = B.
+   */
+  schedule?: "A" | "B";
+  /** Schedule A: preço que o cliente pagou (preço do profissional). */
+  customerPrice?: number;
+  /** Schedule A: comissão da Fixfy, com VAT incluído. */
+  commission?: number;
+  /** Schedule A: a conta deu negativa e a comissão foi zerada (revisar). */
+  commissionFlag?: boolean;
+  /** Schedule A: quanto faltou quando `commissionFlag`. */
+  commissionShortfall?: number;
+  /** Schedule A: promoção da Fixfy paga em nome do cliente (parte do preço, não muda o líquido). */
+  promotion?: number;
 }
 
 export interface SelfBillPdfData {
@@ -56,6 +71,8 @@ export interface SelfBillPdfData {
   logoUrl?: string;
   /** Wordmark branca oficial para o rodapé navy. */
   footerLogoUrl?: string;
+  /** Número da fatura de VAT da comissão que vai junto (Schedule A), quando já emitida. */
+  commissionInvoiceRef?: string | null;
   internalBreakdown?: {
     fixedPay: number;
     commissionAmount: number;
@@ -255,6 +272,9 @@ function SelfBillPageHeader({ logoUrl }: { logoUrl?: string }) {
 }
 
 export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
+  // Com alguma reserva da plataforma (Schedule A) o documento vira Payout
+  // Statement. Sem nenhuma, sai exatamente o self-bill de sempre.
+  if (data.lines.some((l) => l.schedule === "A")) return <PayoutStatementPDF data={data} />;
   const isVoided = data.payoutVoided === true;
   const lineSum = data.lines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
   const originalAmt =
@@ -401,6 +421,243 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
           )}
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
+            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com
+          </Text>
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+/* ─── Payout statement (modelo de agente) ───────────────────────────────── */
+
+const ps = StyleSheet.create({
+  aRef: { width: "13%" },
+  aDate: { width: "12%" },
+  aDesc: { width: "33%", paddingRight: 6 },
+  aNum: { width: "14%", textAlign: "right" },
+  partLabel: {
+    fontFamily: "Helvetica-Bold",
+    fontSize: 9,
+    letterSpacing: 1.6,
+    color: NAVY,
+    textTransform: "uppercase",
+    marginBottom: 2,
+    marginTop: 2,
+  },
+  partSub: { fontSize: 8.5, color: MUTED, marginBottom: 8, lineHeight: 1.35 },
+});
+
+/**
+ * Payout Statement (Invoicing and Payment Collection Agreement 2026-10-06,
+ * seção 8): Parte A = reservas da plataforma, cada job pelo valor cheio com a
+ * comissão da Fixfy e o líquido do parceiro; Parte B = trabalho B2B, que
+ * continua sendo self-billing invoice. O total é o mesmo `net_payout` de
+ * sempre: a comissão só explica de onde ele vem.
+ */
+function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
+  const isVoided = data.payoutVoided === true;
+  const aLines = data.lines.filter((l) => l.schedule === "A");
+  const bLines = data.lines.filter((l) => l.schedule !== "A");
+  const aTotal = aLines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
+  const bTotal = bLines.reduce((s, l) => s + l.partner_cost + l.materials_cost, 0);
+  const lineSum = aTotal + bTotal;
+  const originalAmt =
+    data.originalNetPayout != null && Number.isFinite(Number(data.originalNetPayout)) && Number(data.originalNetPayout) > 0
+      ? Number(data.originalNetPayout)
+      : lineSum > 0.01
+        ? lineSum
+        : data.jobValue + data.materials - data.commission;
+  const periodText =
+    data.weekStart && data.weekEnd ? `${fmtDate(data.weekStart)} to ${fmtDate(data.weekEnd)}` : data.period;
+  const showPayoutBanner = !isVoided && data.netPayout > 0.01;
+  const invoiceRef = data.commissionInvoiceRef?.trim();
+
+  return (
+    <Document>
+      <Page size="A4" style={styles.page}>
+        <SelfBillPageHeader logoUrl={data.logoUrl} />
+
+        <View style={styles.body}>
+          <Text style={styles.eyebrow}>Payout statement</Text>
+          <Text style={styles.headline}>Hi {firstNameOf(data.partnerName)},</Text>
+          <Text style={styles.intro}>
+            Your payout for the period is summarised below, job by job. Part A lists your Platform Bookings: you
+            supplied the service to the customer, and Fixfy collected the payment as your agent and deducted its
+            commission.
+            {bLines.length > 0 ? " Part B lists Fixfy Client Work, paid by self-billing invoice." : ""} Fixfy&apos;s
+            VAT invoice for its commission{invoiceRef ? ` (${invoiceRef})` : ""} comes with this statement. This
+            statement is a summary and is not itself a VAT invoice.
+          </Text>
+
+          {showPayoutBanner ? (
+            <View style={styles.paidBanner} wrap={false}>
+              <Text style={styles.paidEyebrow}>Payout</Text>
+              <Text style={styles.paidText}>
+                {fmtPlain(data.netPayout)} for {data.jobsCount} job{data.jobsCount === 1 ? "" : "s"} this period
+                {data.paymentDueDate ? ` · due ${fmtDate(data.paymentDueDate)}` : ""}
+              </Text>
+            </View>
+          ) : null}
+
+          {isVoided ? (
+            <View style={styles.voidBox} wrap={false}>
+              <Text style={styles.voidTitle}>Payout adjustment (no longer due)</Text>
+              <Text style={styles.voidRow}>Original amount: {fmtPlain(originalAmt)}</Text>
+              <Text style={styles.voidRow}>Payable amount: {fmtPlain(data.netPayout)}</Text>
+              <Text style={styles.voidRow}>Status: {data.partnerStatusLabel ?? data.status}</Text>
+              {data.payoutVoidReason ? <Text style={styles.voidReason}>Reason: {data.payoutVoidReason}</Text> : null}
+            </View>
+          ) : null}
+
+          <View style={styles.refBar} wrap={false}>
+            <View style={styles.refRow}>
+              <Text style={styles.refKey}>Statement Ref</Text>
+              <Text style={styles.refVal}>{data.reference}</Text>
+            </View>
+            <View style={invoiceRef || data.paymentDueDate ? styles.refRow : styles.refRowLast}>
+              <Text style={styles.refKey}>Period</Text>
+              <Text style={styles.refVal}>{periodText}</Text>
+            </View>
+            {invoiceRef ? (
+              <View style={data.paymentDueDate ? styles.refRow : styles.refRowLast}>
+                <Text style={styles.refKey}>Commission VAT invoice</Text>
+                <Text style={styles.refVal}>{invoiceRef}</Text>
+              </View>
+            ) : null}
+            {data.paymentDueDate ? (
+              <View style={styles.refRowLast}>
+                <Text style={styles.refKey}>Payment due</Text>
+                <Text style={styles.refVal}>{fmtDate(data.paymentDueDate)}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <Text style={ps.partLabel}>Part A · Platform Bookings</Text>
+          <Text style={ps.partSub}>
+            Customer price is your price for the job, including any Fixfy promotion that Fixfy paid on the
+            customer&apos;s behalf. Fixfy commission includes VAT. You receive the rest.
+          </Text>
+          <View style={{ marginBottom: 14 }}>
+            <View style={styles.tableHead} wrap={false} fixed>
+              <Text style={[styles.th, ps.aRef]}>Job</Text>
+              <Text style={[styles.th, ps.aDate]}>Date</Text>
+              <Text style={[styles.th, ps.aDesc]}>Type of work</Text>
+              <Text style={[styles.th, ps.aNum]}>Customer price</Text>
+              <Text style={[styles.th, ps.aNum]}>Commission</Text>
+              <Text style={[styles.th, ps.aNum]}>You receive</Text>
+            </View>
+            {aLines.map((line, i) => (
+              <View key={`a-${line.reference}-${i}`} style={styles.tableRow} wrap={false}>
+                <View style={ps.aRef}>
+                  <Text style={styles.cellText}>{line.reference}</Text>
+                  {line.payoutStateNote ? <Text style={styles.lineNote}>{line.payoutStateNote}</Text> : null}
+                </View>
+                <Text style={[styles.cellText, ps.aDate]}>{fmtDate(line.doneOn)}</Text>
+                <View style={ps.aDesc}>
+                  <Text style={styles.cellText}>{line.title}</Text>
+                  {line.property_address ? <Text style={styles.cellAddrText}>{line.property_address}</Text> : null}
+                </View>
+                <View style={ps.aNum}>
+                  <Text style={[styles.cellNumText, { textAlign: "right" }]}>
+                    {line.customerPrice != null ? fmtPlain(line.customerPrice) : ""}
+                  </Text>
+                  {(line.promotion ?? 0) > 0.005 ? (
+                    <Text style={[styles.lineNote, { textAlign: "right" }]}>
+                      incl. {fmtPlain(line.promotion ?? 0)} Fixfy promotion
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={[styles.cellNumText, ps.aNum]}>
+                  {line.commission != null ? fmtPlain(line.commission) : ""}
+                </Text>
+                <Text style={[styles.cellNumText, ps.aNum]}>{fmtPlain(line.partner_cost + line.materials_cost)}</Text>
+              </View>
+            ))}
+            <View style={styles.tableFoot} wrap={false}>
+              <Text style={styles.tfLabel}>Part A total</Text>
+              <Text style={styles.tfVal}>{fmtPlain(aTotal)}</Text>
+            </View>
+          </View>
+
+          {bLines.length > 0 ? (
+            <>
+              <Text style={ps.partLabel}>Part B · Fixfy Client Work · Self-billing invoice</Text>
+              <Text style={ps.partSub}>
+                Self-billing invoice {data.reference}, issued by Getfixfy Ltd on your behalf for the work below.
+              </Text>
+              <View style={{ marginBottom: 14 }}>
+                <View style={styles.tableHead} wrap={false} fixed>
+                  <Text style={[styles.th, styles.cellRef]}>Job</Text>
+                  <Text style={[styles.th, styles.cellDate]}>Date</Text>
+                  <Text style={[styles.th, styles.cellDesc]}>Type of work</Text>
+                  <Text style={[styles.th, styles.cellNum]}>Amount</Text>
+                </View>
+                {bLines.map((line, i) => (
+                  <View key={`b-${line.reference}-${i}`} style={styles.tableRow} wrap={false}>
+                    <View style={styles.cellRef}>
+                      <Text style={styles.cellText}>{line.reference}</Text>
+                      {line.payoutStateNote ? <Text style={styles.lineNote}>{line.payoutStateNote}</Text> : null}
+                    </View>
+                    <Text style={[styles.cellText, styles.cellDate]}>{fmtDate(line.doneOn)}</Text>
+                    <View style={styles.cellDesc}>
+                      <Text style={styles.cellText}>{line.title}</Text>
+                      {line.property_address ? <Text style={styles.cellAddrText}>{line.property_address}</Text> : null}
+                    </View>
+                    <Text style={[styles.cellNumText, styles.cellNum]}>{fmtPlain(line.partner_cost)}</Text>
+                  </View>
+                ))}
+                <View style={styles.tableFoot} wrap={false}>
+                  <Text style={styles.tfLabel}>Part B total</Text>
+                  <View style={styles.tfValRow}>
+                    <Text style={styles.tfVal}>{fmtPlain(bTotal)}</Text>
+                    <Text style={styles.tfVat}>inc VAT</Text>
+                  </View>
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          <View style={styles.card} wrap={false}>
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total payout</Text>
+              <Text style={styles.totalVal}>{fmtPlain(data.netPayout)}</Text>
+            </View>
+          </View>
+
+          <View style={styles.notice} wrap={false}>
+            <Text style={styles.noticeEyebrow}>About Platform Bookings (Part A)</Text>
+            <Text style={styles.noticeText}>
+              For each Platform Booking you supplied the service to the customer at your price. Getfixfy Ltd acted as
+              your agent and limited payment collection agent, holds the customer&apos;s payment for you and pays it
+              to you less its commission. The receipt to the customer was issued in your name. Fixfy&apos;s commission
+              includes VAT and is shown on its separate VAT invoice to you.
+            </Text>
+          </View>
+
+          {bLines.length > 0 ? (
+            <View style={styles.notice} wrap={false}>
+              <Text style={styles.noticeEyebrow}>About self-billing (Part B)</Text>
+              <Text style={styles.noticeText}>
+                Part B is issued under a self-billing arrangement in line with UK practice (including HMRC guidance
+                on self-billing, e.g. VAT Notice 700/62 where VAT applies). The partner named above is the supplier
+                for the supplies in Part B and must not issue a separate invoice for the same amounts. Where CIS or
+                VAT applies, each party remains responsible for their own returns and records. Retain this for your
+                records.
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <FixfyPdfFooterGuard />
+        <View style={styles.footer} fixed>
+          {data.footerLogoUrl ? (
+            <Image src={data.footerLogoUrl} style={styles.footerLogo} />
+          ) : (
+            <Text style={styles.footerWordmark}>Fixfy</Text>
+          )}
+          <Text style={styles.footerText}>
+            Getfixfy Ltd · Co. No. 15406523 · VAT No. 478 1027 82{"\n"}
             124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com
           </Text>
         </View>

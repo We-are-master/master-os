@@ -16,8 +16,15 @@ import {
 } from "@/lib/self-bill-payment-run";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
 import type { SelfBill } from "@/types/database";
+import { buildCommissionInvoiceLines, commissionFlagWarnings } from "@/lib/agent-model/commission-invoice";
+import {
+  issueCommissionVatInvoice,
+  renderCommissionVatInvoicePdf,
+} from "@/lib/agent-model/commission-invoice-server";
 
 type Skipped = { id: string; reference?: string; reason: string };
+/** Enviado, mas com algo para o escritório olhar (fatura de comissão, comissão zerada). */
+type Warning = { id: string; reference?: string; warning: string };
 
 /** `2026-08-03` → `3 Aug 2026`. O assunto é lido por gente em Londres. */
 function fmtSubjectDate(ymd?: string | null): string {
@@ -157,6 +164,7 @@ export async function POST(req: NextRequest) {
   const resend = new Resend(resendKey);
   const sentIds: string[] = [];
   const skipped: Skipped[] = [];
+  const warnings: Warning[] = [];
 
   for (const id of selfBillIds) {
     const sb = sbById.get(id);
@@ -210,6 +218,68 @@ export async function POST(req: NextRequest) {
       skipped.push({ id, reference: sb.reference, reason: pdfResult.error });
       continue;
     }
+    let documentBuffer = pdfResult.buffer;
+
+    /**
+     * Modelo de agente (Schedule A): o documento vira Payout Statement e vai
+     * junto a fatura de VAT da comissão da Fixfy, uma por payout (Invoicing and
+     * Payment Collection Agreement 2026-10-06, seções 6 e 8). Sem reserva da
+     * plataforma, nada disso existe e o envio é o de sempre. Se a fatura não
+     * puder ser emitida (migration 313 ausente, por exemplo), o payout sai
+     * mesmo assim e o problema volta em `warnings`.
+     */
+    const agent = pdfResult.agent;
+    const payoutStatement = Boolean(agent?.hasPlatformBookings);
+    let commissionInvoiceRef: string | null = null;
+    let commissionAttachment: { filename: string; content: Buffer; contentType: string } | null = null;
+    for (const w of commissionFlagWarnings(agent)) warnings.push({ id, reference: sb.reference, warning: w });
+    // Só documento com reserva da plataforma ganha a fatura. Documento só de B
+    // segue o envio de sempre, sem anexo novo (a Late-Withdrawal Fee de um
+    // parceiro só de B ainda não sai em fatura de VAT: pendência anotada no PR).
+    const commissionLines = payoutStatement ? buildCommissionInvoiceLines(agent) : [];
+    if (commissionLines.length > 0) {
+      const issued = await issueCommissionVatInvoice(supabase, {
+        selfBillId: id,
+        partnerId: sb.partner_id ?? null,
+        lines: commissionLines,
+      });
+      if ("error" in issued) {
+        warnings.push({
+          id,
+          reference: sb.reference,
+          warning: issued.missingTable
+            ? "Commission VAT invoice not attached: apply migration 313 (commission_vat_invoices)."
+            : `Commission VAT invoice not attached: ${issued.error}`,
+        });
+      } else {
+        commissionInvoiceRef = issued.invoice.reference;
+        if (issued.changed) {
+          warnings.push({
+            id,
+            reference: sb.reference,
+            warning: `Commission VAT invoice ${issued.invoice.reference} was issued earlier with different amounts and was resent unchanged. Issue a correction if the payout changed.`,
+          });
+        }
+        try {
+          const ciBuffer = await renderCommissionVatInvoicePdf(supabase, { sb, invoice: issued.invoice });
+          commissionAttachment = {
+            filename: `${issued.invoice.reference.replace(/[^\w.-]+/g, "_")}.pdf`,
+            content: ciBuffer,
+            contentType: "application/pdf",
+          };
+          // O statement passa a citar o número da fatura que vai junto.
+          const again = await renderSelfBillPdfBuffer(supabase, id, { commissionInvoiceRef });
+          if (!("error" in again)) documentBuffer = again.buffer;
+        } catch (e) {
+          console.error("[self-bills send-email] commission invoice render failed", id, e);
+          warnings.push({
+            id,
+            reference: sb.reference,
+            warning: `Commission VAT invoice ${issued.invoice.reference} could not be rendered and was not attached.`,
+          });
+        }
+      }
+    }
 
     const weekEndStr = sb.week_end?.trim() ?? "";
     const dueYmd =
@@ -232,18 +302,31 @@ export async function POST(req: NextRequest) {
        * duas datas cruas, que o parceiro lê como americanas, e sem dizer QUAL
        * documento é.
        */
-      subject: `Self-Billing ${sb.reference} | ${
-        sb.week_start && sb.week_end
-          ? `${fmtSubjectDate(sb.week_start)} — ${fmtSubjectDate(sb.week_end)}`
-          : (sb.week_label ?? sb.period ?? "weekly")
-      }`,
-      html: buildSelfBillEmailHtml(sb, dueYmd, { partnerName, companyName }),
+      subject: payoutStatement
+        ? `Payout statement ${sb.reference} | ${
+            sb.week_start && sb.week_end
+              ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
+              : (sb.week_label ?? sb.period ?? "this period")
+          }`
+        : `Self-Billing ${sb.reference} | ${
+            sb.week_start && sb.week_end
+              ? `${fmtSubjectDate(sb.week_start)} — ${fmtSubjectDate(sb.week_end)}`
+              : (sb.week_label ?? sb.period ?? "weekly")
+          }`,
+      html: buildSelfBillEmailHtml(sb, dueYmd, {
+        partnerName,
+        companyName,
+        payoutStatement: payoutStatement
+          ? { commissionInvoiceRef, hasClientWork: Boolean(agent?.hasClientWork) }
+          : null,
+      }),
       attachments: [
         {
           filename: `${safeName}.pdf`,
-          content: pdfResult.buffer,
+          content: documentBuffer,
           contentType: "application/pdf",
         },
+        ...(commissionAttachment ? [commissionAttachment] : []),
       ],
     });
 
@@ -336,6 +419,8 @@ export async function POST(req: NextRequest) {
         zendesk_ticket_url: run?.zendesk_ticket_url ?? null,
         zendesk_side_conversation_id: sideConvId,
         cycle_kind: run?.cycle_kind ?? cycleKind,
+        payout_statement: payoutStatement,
+        commission_vat_invoice: commissionAttachment ? commissionInvoiceRef : null,
       },
     });
 
@@ -346,5 +431,6 @@ export async function POST(req: NextRequest) {
     sent: sentIds.length,
     sentIds,
     skipped,
+    warnings,
   });
 }

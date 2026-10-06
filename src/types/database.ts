@@ -542,6 +542,12 @@ export interface Job {
   client_price: number;
   /** Add-ons / upsells on top of client_price (included in revenue & margin). */
   extras_amount?: number;
+  /**
+   * Promoção da Fixfy paga em nome do cliente (mig 313, modelo de agente).
+   * `client_price` fica cheio; o cliente deve client_price + extras − isto.
+   * Nunca reduz o repasse do parceiro nem a comissão. Ausente = 0.
+   */
+  promotion_amount?: number | null;
   partner_cost: number;
   /** Cumulative partner-side extras from "Add extra payout" (labour); Cash Out UI splits from cap. */
   partner_extras_amount?: number | null;

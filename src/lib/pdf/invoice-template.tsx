@@ -3,6 +3,7 @@ import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/render
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
+import type { AgentReceiptView } from "@/lib/agent-model/receipt-view";
 import {
   FIXFY_PDF_FOOTER_HEIGHT,
   FIXFY_PDF_NAVY,
@@ -41,6 +42,11 @@ export interface InvoicePdfData {
   amountDueNow?: number;
   /** % of base requested (for PDF note). */
   requestPercent?: number;
+  /**
+   * Schedule A (modelo de agente): recibo em nome do profissional, emitido pela
+   * Fixfy como agente dele. Ausente = Schedule B, documento de sempre.
+   */
+  agent?: AgentReceiptView;
 }
 
 const NAVY = FIXFY_PDF_NAVY;
@@ -241,6 +247,7 @@ function firstNameOf(name: string): string {
 }
 
 export function InvoicePDF({ data }: { data: InvoicePdfData }) {
+  if (data.agent) return <AgentReceiptPDF data={data} agent={data.agent} />;
   const isPaid = data.paid;
   const eyebrow = isPaid ? "PAYMENT RECEIPT" : "STATEMENT OF CHARGES";
   const intro = isPaid
@@ -360,7 +367,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
                 <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
               </View>
               <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Fixfy platform fee</Text>
+                <Text style={styles.lineLabel}>Fixfy management fee</Text>
                 <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
               </View>
               {data.partial && !isPaid ? (
@@ -414,8 +421,241 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           )}
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
-            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com{"\n"}
-            Fixfy operates as a disclosed platform connecting clients with independent trade providers.
+            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com
+          </Text>
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+/** £1,234.50 sem "inc VAT": no recibo de agente o VAT é do profissional, e só existe se ele for registrado. */
+function plainMoney(n: number): string {
+  return `£${(Number(n) || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Recibo de Schedule A (04-booking-copy, seção d).
+ *
+ * O documento é do profissional: "Receipt from {professional}", emitido pela
+ * Fixfy como agente. Sem "Fixfy platform fee", sem VAT da Fixfy, sem o quadro
+ * "Need a VAT invoice?" (a Fixfy não vende o serviço, então não fatura VAT
+ * dele). O VAT só aparece quando o profissional é registrado.
+ */
+function AgentReceiptPDF({ data, agent }: { data: InvoicePdfData; agent: AgentReceiptView }) {
+  const isPaid = data.paid;
+  const name = agent.professionalName;
+  const eyebrow = isPaid ? "Receipt" : "Statement of charges";
+  const heading = name ? `${isPaid ? "Receipt" : "Statement"} from ${name}` : isPaid ? "Receipt" : "Statement";
+  const intro = isPaid
+    ? `Your payment has been received. This receipt is issued in the name of ${agent.professionalLabel}, who carries out your job.`
+    : `Your job is complete. Below is the statement for the work carried out by ${agent.professionalLabel}.`;
+  const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
+  const requestedDue =
+    !isPaid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
+  const isPartialRequest =
+    !isPaid && data.amountDueNow != null && data.amountDueNow > 0.02 && Math.abs(data.amountDueNow - fullDue) > 0.02;
+  const totalLabel = isPaid
+    ? "Amount you paid"
+    : isPartialRequest
+      ? "Amount due now"
+      : data.partial
+        ? "Balance due"
+        : "Amount due";
+  const totalAmount = isPaid ? data.amount : requestedDue;
+  const showPriceSubtotal = agent.lines.length > 1 || agent.vatLine != null || agent.promotion > 0.02;
+
+  return (
+    <Document>
+      <Page size="A4" style={styles.page}>
+        <View style={styles.headerBand}>
+          {data.logoUrl ? <Image src={data.logoUrl} style={styles.headerLogo} /> : <Text style={styles.wordmark}>Fixfy</Text>}
+        </View>
+        <View style={styles.accentBar} />
+
+        <View style={styles.body}>
+          <KeepTogetherBlock minHeight={90} style={styles.hero}>
+            <Text style={styles.eyebrow}>{eyebrow}</Text>
+            <View style={styles.docTitle}>
+              <Text style={styles.docRef}>{heading}</Text>
+              <Text style={[styles.intro, { marginBottom: 6 }]}>{agent.issuerLine}</Text>
+            </View>
+            <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
+            <Text style={styles.intro}>{intro}</Text>
+          </KeepTogetherBlock>
+
+          {isPaid ? (
+            <KeepTogetherBlock minHeight={44} style={styles.paidNote}>
+              <Text style={styles.paidNoteText}>
+                Payment received: {plainMoney(data.amount)}
+                {data.paymentDate ? ` on ${data.paymentDate}` : ""}
+              </Text>
+            </KeepTogetherBlock>
+          ) : null}
+
+          <KeepTogetherBlock minHeight={72} style={[styles.refBar, styles.sectionGap]}>
+            <View style={styles.refRow}>
+              <Text style={styles.refKey}>{isPaid ? "Receipt number" : "Statement number"}</Text>
+              <Text style={styles.refVal}>{displayBillingReference(data.reference)}</Text>
+            </View>
+            <View style={styles.refRow}>
+              <Text style={styles.refKey}>Date</Text>
+              <Text style={styles.refVal}>{data.issueDate}</Text>
+            </View>
+            {isPaid ? (
+              data.paymentDate ? (
+                <View style={styles.refRow}>
+                  <Text style={styles.refKey}>Payment date</Text>
+                  <Text style={styles.refVal}>{data.paymentDate}</Text>
+                </View>
+              ) : null
+            ) : (
+              <View style={styles.refRow}>
+                <Text style={styles.refKey}>Due date</Text>
+                <Text style={styles.refValDue}>{data.dueDate}</Text>
+              </View>
+            )}
+            <View style={styles.refRowLast}>
+              <Text style={styles.refKey}>Booking reference</Text>
+              <Text style={styles.refVal}>{data.jobReference || displayBillingReference(data.reference)}</Text>
+            </View>
+          </KeepTogetherBlock>
+
+          <View style={styles.sectionGap} wrap={false}>
+            <Text style={styles.sectionLabel}>Service provided by</Text>
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardHeadText}>{name ?? "An independent, vetted professional"}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoKey}>Status</Text>
+                <Text style={styles.infoVal}>
+                  {name ? "Independent trader. Your contract for this job is with them." : "Named in your booking confirmation."}
+                </Text>
+              </View>
+              {agent.businessAddress ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>Address</Text>
+                  <Text style={styles.infoVal}>{agent.businessAddress}</Text>
+                </View>
+              ) : null}
+              {agent.vatNumber ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>VAT number</Text>
+                  <Text style={styles.infoVal}>{agent.vatNumber}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          <View style={styles.sectionGap} wrap={false}>
+            <Text style={styles.sectionLabel}>Job</Text>
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardHeadText}>{data.jobTitle}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoKey}>Customer</Text>
+                <Text style={styles.infoVal}>{data.clientName.trim() || "Customer"}</Text>
+              </View>
+              {data.propertyAddress ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>Address</Text>
+                  <Text style={styles.infoVal}>{data.propertyAddress}</Text>
+                </View>
+              ) : null}
+              {data.completionDate ? (
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <Text style={styles.infoKey}>Service date</Text>
+                  <Text style={styles.infoVal}>{data.completionDate}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          <KeepTogetherBlock minHeight={100} style={styles.sectionGap}>
+            <Text style={styles.sectionLabel}>Services</Text>
+            <View style={styles.card}>
+              {agent.lines.map((l, i) => (
+                <View key={`${l.label}-${i}`} style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>{l.label}</Text>
+                  <Text style={styles.lineVal}>{plainMoney(l.amount)}</Text>
+                </View>
+              ))}
+              {showPriceSubtotal ? (
+                <View style={styles.lineRow}>
+                  <Text style={[styles.lineLabel, { fontFamily: "Helvetica-Bold" }]}>
+                    {name ? `${name}'s price` : "Price"}
+                  </Text>
+                  <Text style={styles.lineVal}>{plainMoney(agent.professionalPrice)}</Text>
+                </View>
+              ) : null}
+              {agent.vatLine ? (
+                <View style={styles.lineRow}>
+                  <Text style={[styles.lineLabel, styles.infoValMuted]}>{agent.vatLine}</Text>
+                  <Text style={styles.lineVal}>{agent.vatAmount != null ? plainMoney(agent.vatAmount) : ""}</Text>
+                </View>
+              ) : null}
+              {agent.promotion > 0.02 ? (
+                <View style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>Fixfy promotion, paid by Fixfy on your behalf</Text>
+                  <Text style={styles.lineVal}>-{plainMoney(agent.promotion)}</Text>
+                </View>
+              ) : null}
+              {agent.partOfPrice ? (
+                <View style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>{isPaid ? "This receipt covers" : "This statement covers"}</Text>
+                  <Text style={styles.lineVal}>{plainMoney(agent.documentAmount)}</Text>
+                </View>
+              ) : null}
+              {data.partial && !isPaid ? (
+                <View style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>Already paid</Text>
+                  <Text style={styles.lineVal}>{plainMoney(data.paidAmount)}</Text>
+                </View>
+              ) : null}
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>{totalLabel}</Text>
+                <Text style={styles.totalVal}>{plainMoney(totalAmount)}</Text>
+              </View>
+            </View>
+          </KeepTogetherBlock>
+
+          {!isPaid ? (
+            <KeepTogetherBlock minHeight={140} style={styles.sectionGap}>
+              <Text style={styles.sectionLabel}>Pay by bank transfer</Text>
+              <View style={styles.refBar}>
+                {FIXFY_CLIENT_BANK_DETAIL_ROWS.map((row) => (
+                  <View key={row.label} style={styles.refRow}>
+                    <Text style={styles.refKey}>{row.label}</Text>
+                    <Text style={styles.refVal}>{row.value}</Text>
+                  </View>
+                ))}
+                <View style={styles.refRowLast}>
+                  <Text style={styles.refKey}>Payment reference</Text>
+                  <Text style={styles.refValDue}>{displayBillingReference(data.reference)}</Text>
+                </View>
+                <Text style={styles.bankNote}>
+                  Paid to GETFIXFY LTD (Fixfy) as payment collection agent for {agent.professionalLabel}. Use this reference so we can match your payment.
+                </Text>
+              </View>
+            </KeepTogetherBlock>
+          ) : null}
+
+          <KeepTogetherBlock minHeight={70} style={styles.vatNote}>
+            <Text style={styles.vatEyebrow}>Who you are booking with</Text>
+            <Text style={styles.vatText}>{agent.paymentNote}</Text>
+            <Text style={[styles.vatText, { marginTop: 4 }]}>{agent.bookingNote}</Text>
+          </KeepTogetherBlock>
+        </View>
+
+        <FixfyPdfFooterGuard />
+        <View style={styles.footer} fixed>
+          {data.logoUrl ? <Image src={data.logoUrl} style={styles.footerLogo} /> : <Text style={styles.footerWordmark}>Fixfy</Text>}
+          <Text style={styles.footerText}>
+            {agent.issuerLine}
+            {"\n"}
+            Questions: reply to your booking emails or write to hello@getfixfy.com · getfixfy.com
           </Text>
         </View>
       </Page>

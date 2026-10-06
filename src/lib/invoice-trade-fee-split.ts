@@ -18,6 +18,13 @@ function roundMoney(n: number): number {
 export type SplitInvoiceTradeFeeOptions = {
   /** Fallback % of job revenue when margin/commission cannot be derived. */
   defaultPlatformFeePct?: number;
+  /**
+   * Modelo de agente (06/10/2026). Em Schedule A ("Platform Booking") o valor
+   * inteiro é o preço do profissional: a comissão da Fixfy é cobrada DELE, nunca
+   * aparece para o cliente. Então não existe "platform fee" a separar.
+   * Ver `src/lib/agent-model/schedule.ts`. Omitido = Schedule B, como sempre.
+   */
+  schedule?: "A" | "B";
 };
 
 /**
@@ -30,6 +37,7 @@ export function splitInvoiceTradeAndFee(
   options?: SplitInvoiceTradeFeeOptions,
 ): { trade: number; fee: number } {
   const total = Math.max(0, roundMoney(chargedAmount));
+  if (options?.schedule === "A") return { trade: total, fee: 0 };
   if (!job || total <= 0) return { trade: total, fee: 0 };
 
   const jobRevenue = roundMoney(jobBillableRevenue(job));
@@ -53,7 +61,7 @@ export function splitInvoiceTradeAndFee(
   }
 
   const scale = total / jobRevenue;
-  let trade = roundMoney(fullJobTrade * scale);
+  const trade = roundMoney(fullJobTrade * scale);
   let fee = roundMoney(fullJobFee * scale);
   const drift = roundMoney(total - trade - fee);
   if (Math.abs(drift) > 0.01) {

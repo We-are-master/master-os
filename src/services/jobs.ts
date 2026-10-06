@@ -1,5 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import { limparScope } from "@/lib/scope-limpo";
+import { jobCustomerTotal } from "@/lib/job-financials";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice, listInvoicesLinkedToJob } from "./invoices";
@@ -641,7 +642,8 @@ export async function ensureDraftInvoiceForJob(
     return { invoiceId: job.invoice_id, invoice: (data as import("@/types/database").Invoice) ?? null };
   }
 
-  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  // O cliente deve preço + extras − promoção da Fixfy (mig 313): a fatura nunca cobra a promoção.
+  const billableTotal = jobCustomerTotal(job);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
 
@@ -840,7 +842,8 @@ export async function createJob(
    * "Review & approve" flow transitions it to `pending` (and optionally emails the PDF to the
    * client at that point).
    */
-  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  // O cliente deve preço + extras − promoção da Fixfy (mig 313): a fatura nunca cobra a promoção.
+  const billableTotal = jobCustomerTotal(job);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
 

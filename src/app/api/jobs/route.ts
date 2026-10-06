@@ -13,6 +13,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import {
   createTicket,
   setTicketRequester,
@@ -239,6 +240,13 @@ export const runtime  = "nodejs";
  *                                    //   booking with 3 services sends the
  *                                    //   split, not the whole basket).
  *     stripe_payment_intent_id?: string, // the charge, for reconciliation.
+ *     promotion_amount?: number,     // Fixfy promotion paid on the customer's
+ *                                    //   behalf (agent model, mig 313).
+ *                                    //   client_price stays the FULL price;
+ *                                    //   the customer owes client_price +
+ *                                    //   extras - promotion_amount. Stored on
+ *                                    //   jobs.promotion_amount (capped at the
+ *                                    //   price); never touches partner_cost.
  *     report_link?:     string       // Free-text URL where the office submits
  *                                    //   the customer-side report (Drive
  *                                    //   folder, Notion page, internal portal,
@@ -415,6 +423,15 @@ export async function POST(req: NextRequest) {
     return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
   })();
   const paymentIntentIn = str(body.stripe_payment_intent_id) || null;
+  /**
+   * Promoção da Fixfy (modelo de agente, mig 313): o site manda o preço CHEIO
+   * em client_price e o desconto aqui. Nunca negativa; o teto (o preço) é
+   * aplicado depois que o preço do job é resolvido.
+   */
+  const promotionAmountIn = (() => {
+    const n = num(body.promotion_amount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+  })();
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -1000,6 +1017,12 @@ export async function POST(req: NextRequest) {
   if (internalNotesIn) {
     jobRow.internal_notes = internalNotesIn;
   }
+  // Promoção da Fixfy: nunca maior que o preço que o cliente veria.
+  const promotionAmount =
+    rateType === "hourly" ? promotionAmountIn : Math.min(promotionAmountIn, Math.max(0, clientPrice));
+  if (promotionAmount > 0) {
+    jobRow.promotion_amount = promotionAmount;
+  }
   if (paymentStatusIn) {
     jobRow.payment_status = paymentStatusIn;
     jobRow.paid_at        = paidAtIn ?? new Date().toISOString();
@@ -1013,11 +1036,26 @@ export async function POST(req: NextRequest) {
       : aviso;
   }
 
-  const { data: inserted, error: insErr } = await supabase
+  let { data: inserted, error: insErr } = await supabase
     .from("jobs")
     .insert(jobRow)
     .select("id, reference, status")
     .single();
+  /**
+   * Sem a migration 313 a coluna `promotion_amount` não existe e o insert
+   * inteiro cairia. O job entra assim mesmo, com a promoção escrita na nota
+   * interna para ninguém cobrar o cliente por ela.
+   */
+  if (insErr && promotionAmount > 0 && isSupabaseMissingColumnError(insErr, "promotion_amount")) {
+    delete jobRow.promotion_amount;
+    const aviso = `FIXFY PROMOTION £${promotionAmount.toFixed(2)} paid on the customer's behalf: the customer owes the price less this (apply migration 313 to store it).`;
+    jobRow.internal_notes = jobRow.internal_notes ? `${aviso}\n${String(jobRow.internal_notes)}` : aviso;
+    ({ data: inserted, error: insErr } = await supabase
+      .from("jobs")
+      .insert(jobRow)
+      .select("id, reference, status")
+      .single());
+  }
   if (insErr || !inserted) {
     console.error("[api/jobs] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
@@ -1027,7 +1065,9 @@ export async function POST(req: NextRequest) {
   // pay link usa (job_payments). Sem isto o final check não via o pagamento e
   // o job caía em awaiting_payment cobrando de novo quem já pagou (29/09/2026).
   if (paymentStatusIn) {
-    const valorPago = paymentAmountIn ?? (paymentStatusIn === "paid" ? clientPrice : null);
+    // Pago por inteiro sem valor informado = preço menos a promoção da Fixfy.
+    const valorPago =
+      paymentAmountIn ?? (paymentStatusIn === "paid" ? Math.max(0, clientPrice - promotionAmount) : null);
     if (valorPago && valorPago > 0) {
       const { error: payErr } = await supabase.from("job_payments").insert({
         job_id: (inserted as { id: string }).id,

@@ -16,7 +16,8 @@
     "generate:school-pricing-pdf": "npx tsx scripts/generate-school-services-pricing-pdf.mts",
     "apply:zendesk-migrations": "node supabase/scripts/apply-zendesk-pricing-migrations.mjs",
     "test:stefane": "npx tsx --test src/lib/stefane/housekeep-api.test.ts src/lib/stefane/housekeep-report-form.test.ts src/lib/report-health.test.ts src/lib/report-template-housekeep.test.ts",
-    "harvey": "tsx scripts/harvey/poll.ts"
+    "harvey": "tsx scripts/harvey/poll.ts",
+    "test:agent-model": "npx tsx --test src/lib/agent-model/schedule.test.ts src/lib/agent-model/commission.test.ts src/lib/agent-model/receipt-view.test.ts src/lib/agent-model/promotion.test.ts src/lib/client-confirmation/professional-email.test.ts src/lib/invoice-trade-fee-split.test.ts src/lib/client-confirmation/send.test.ts"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-geocoder": "^5.1.2",

@@ -11,6 +11,7 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
+import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
@@ -87,7 +88,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
+      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -280,6 +281,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       {
         reportAttachmentCount: includeReport ? attachments.length : 0,
         missingReportNote: missingReportNote || undefined,
+        // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
+        agentParty: await loadAgentReceiptParty(admin, {
+          id: typeof j.id === "string" ? j.id : null,
+          client_id: clientId,
+          created_at: typeof j.created_at === "string" ? j.created_at : null,
+          partner_id: typeof j.partner_id === "string" ? j.partner_id : null,
+        }),
       },
     );
   } else {

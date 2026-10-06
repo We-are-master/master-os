@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
+import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
 import type { QuotePDFData, CompanyBranding } from "@/lib/pdf/quote-template";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 
@@ -138,6 +139,7 @@ async function buildPreview(req: NextRequest, payload?: {
             ? quote.scope.trim()
             : undefined,
       vatPercent: vatPercentPreview,
+      agentModel: (await resolveClientWorkSchedule(supabase, { clientId: qCid || null })) === "A",
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
@@ -149,6 +151,7 @@ async function buildPreview(req: NextRequest, payload?: {
       acceptUrl,
       rejectUrl,
       customMessage: customMessage || undefined,
+      agentModel: pdfData.agentModel,
       context: {
         propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
         postcode: (quote as { postcode?: string | null }).postcode ?? null,

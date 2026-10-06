@@ -40,6 +40,12 @@ export interface QuotePDFData {
   propertyAddress?: string;
   /** VAT rate used to back out subtotal/VAT from `totalValue`. Defaults to 20% if not provided. */
   vatPercent?: number;
+  /**
+   * Schedule A (modelo de agente, 06/10/2026): o preço é do profissional que
+   * vai fazer o job, e a Fixfy cota como agente dele. Sem separar VAT da
+   * Fixfy (ela não vende o serviço). Ausente/false = Schedule B, como sempre.
+   */
+  agentModel?: boolean;
 }
 
 export interface QuoteLineItem {
@@ -338,6 +344,7 @@ export function QuotePDF({
   data: QuotePDFData;
   branding?: CompanyBranding;
 }) {
+  const agent = data.agentModel === true;
   const vatPctRaw = Number(data.vatPercent);
   const vatPct = Number.isFinite(vatPctRaw) && vatPctRaw >= 0 ? vatPctRaw : 20;
   const grandTotal = Number(data.totalValue) || 0;
@@ -379,8 +386,9 @@ export function QuotePDF({
             <Text style={styles.eyebrow}>Your Quote</Text>
             <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
             <Text style={styles.intro}>
-              Thanks for the request. Please find your quote below. To accept, simply reply to the
-              email this quote was sent with and we&apos;ll schedule the work.
+              {agent
+                ? "Thanks for the request. Here is the price for your job. The work is carried out by a vetted independent professional, and Fixfy arranges the booking as their agent. To accept, reply to the email this quote was sent with."
+                : "Thanks for the request. Please find your quote below. To accept, simply reply to the email this quote was sent with and we'll schedule the work."}
             </Text>
           </KeepTogetherBlock>
 
@@ -437,20 +445,36 @@ export function QuotePDF({
                   <Text style={styles.priceAmount}>{formatCurrency(item.total)}</Text>
                 </View>
               ))}
-              <View style={styles.subRow} wrap={false}>
-                <Text style={styles.subLabel}>Subtotal (ex VAT)</Text>
-                <Text style={styles.subValue}>{formatCurrency(subtotal)}</Text>
-              </View>
-              <View style={styles.subRow} wrap={false}>
-                <Text style={styles.subLabel}>VAT ({vatPct}%)</Text>
-                <Text style={styles.subValue}>{formatCurrency(vat)}</Text>
-              </View>
+              {agent ? null : (
+                <>
+                  <View style={styles.subRow} wrap={false}>
+                    <Text style={styles.subLabel}>Subtotal (ex VAT)</Text>
+                    <Text style={styles.subValue}>{formatCurrency(subtotal)}</Text>
+                  </View>
+                  <View style={styles.subRow} wrap={false}>
+                    <Text style={styles.subLabel}>VAT ({vatPct}%)</Text>
+                    <Text style={styles.subValue}>{formatCurrency(vat)}</Text>
+                  </View>
+                </>
+              )}
               <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalLabel}>{agent ? "Total price" : "Total"}</Text>
                 <Text style={styles.totalAmount}>{formatCurrency(grandTotal)}</Text>
               </View>
             </View>
           </KeepTogetherBlock>
+
+          {agent ? (
+            <KeepTogetherBlock minHeight={52} style={[styles.helpCard, styles.sectionGap]}>
+              <Text style={styles.helpTitle}>Who does the work</Text>
+              <Text style={styles.helpText}>
+                This is the price of the independent, vetted professional who will carry out your job.
+                Your contract for the work is with them: GETFIXFY LTD (Fixfy) arranges the booking and
+                receives your payment as their agent. No Fixfy fee and no VAT added on top. If your
+                professional is VAT registered, their VAT is included and shown on your receipt.
+              </Text>
+            </KeepTogetherBlock>
+          ) : null}
 
           <KeepTogetherBlock minHeight={52} style={[styles.acceptNote, styles.sectionGap]}>
             <Text style={styles.acceptTitle}>How to Accept</Text>

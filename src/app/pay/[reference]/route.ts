@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { depositAmountFromPercent } from "@/lib/quote-deposit";
 import { valorFixoDoLink } from "@/lib/pay-link-amount";
+import { customerBalanceCap, loadJobPromotionAmount } from "@/lib/agent-model/promotion";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,7 +60,41 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       return htmlMessage("Invoice cancelled", "This invoice has been cancelled and can no longer be paid. Please contact Fixfy for an up-to-date invoice.", 410);
     }
 
-    const balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
+    let jobId = "";
+    let jobPrice: { client_price?: number | null; extras_amount?: number | null } | null = null;
+    if (inv.job_reference?.trim()) {
+      const { data: jobRow } = await admin
+        .from("jobs")
+        .select("id, client_price, extras_amount")
+        .eq("reference", inv.job_reference.trim())
+        .maybeSingle();
+      if (jobRow?.id) {
+        jobId = jobRow.id as string;
+        jobPrice = jobRow as { client_price?: number | null; extras_amount?: number | null };
+      }
+    }
+
+    let balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
+    /**
+     * Promoção da Fixfy (mig 313) nunca é cobrada do cliente.
+     *
+     * O saldo do link é o da fatura, mas fatura criada antes de a promoção
+     * existir no job (ou a preço cheio por engano) cobraria a promoção. Com
+     * promoção no job, o link nunca passa de preço + extras − promoção − o que
+     * já foi pago.
+     */
+    if (jobId && jobPrice) {
+      const promotion = await loadJobPromotionAmount(admin, jobId);
+      if (promotion > 0) {
+        const cap = customerBalanceCap({
+          clientPrice: jobPrice.client_price,
+          extrasAmount: jobPrice.extras_amount,
+          promotionAmount: promotion,
+          amountPaid: Number(inv.amount_paid ?? 0),
+        });
+        balance = Math.min(balance, cap);
+      }
+    }
     if (inv.status === "paid" || balance <= EPS) {
       return NextResponse.redirect(`${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`, 303);
     }
@@ -97,16 +132,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       if (amount < MIN_CHARGE_GBP) {
         return htmlMessage("Amount too small", "The amount due on this link is below the card payment minimum. Please contact Fixfy.", 400);
       }
-    }
-
-    let jobId = "";
-    if (inv.job_reference?.trim()) {
-      const { data: jobRow } = await admin
-        .from("jobs")
-        .select("id")
-        .eq("reference", inv.job_reference.trim())
-        .maybeSingle();
-      if (jobRow?.id) jobId = jobRow.id as string;
     }
 
     const metadata: Record<string, string> = {

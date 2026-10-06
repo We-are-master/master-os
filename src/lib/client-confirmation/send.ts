@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
+import { enviarEmailConfirmadoComProfissional } from "./professional-email";
 
 /**
  * Nome e idioma do template vivem em env, e não em constante, porque template
@@ -128,6 +129,20 @@ export async function enviarConfirmacaoDoCliente(
     return anotarPulo("no partner assigned yet: nothing to confirm to the client");
   }
 
+  /**
+   * Modelo de agente (Schedule A): o e-mail "Booking confirmed with
+   * {professional}" (04-booking-copy, C2) sai aqui, quando o parceiro entra.
+   * Não depende da política de WhatsApp da conta, por isso vem antes dela; e
+   * decide sozinho (modelo desligado, job B, sem e-mail ou já enviado = nada).
+   * Falha dele nunca derruba o WhatsApp.
+   */
+  try {
+    const email = await enviarEmailConfirmadoComProfissional(supabase, jobId, { simular: opcoes?.simular });
+    if (email.estado !== "pulado") console.log(`[confirmacao] ${jobId} e-mail do profissional: ${email.estado}`);
+  } catch (e) {
+    console.error(`[confirmacao] ${jobId} e-mail do profissional falhou:`, e);
+  }
+
   const clientId = typeof j.client_id === "string" ? j.client_id : null;
   if (!clientId) return anotarPulo("job has no client record");
 
@@ -175,6 +190,13 @@ export async function enviarConfirmacaoDoCliente(
     );
   }
 
+  /**
+   * TODO(agent-model): o template aprovado na Meta não tem o nome do
+   * profissional. Em Schedule A a confirmação deveria nomeá-lo (o contrato do
+   * cliente é com ele). O template novo, com 5 parâmetros, está no PR do modelo
+   * de agente para submeter à Meta; até ser aprovado, a chamada ao vivo fica
+   * exatamente esta, com 4 parâmetros. O e-mail C2 acima já nomeia o profissional.
+   */
   const parametros = [
     primeiroNome((c.full_name as string) ?? (j.client_name as string)),
     data,

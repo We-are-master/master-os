@@ -17,6 +17,7 @@ import { parseFrontendSetup, resolveInvoicePlatformFeePct } from "@/lib/frontend
 import { loadInvoicePdfData } from "@/lib/invoice-pdf-data";
 import { renderInvoicePdfBufferFromData } from "@/lib/render-invoice-pdf-buffer";
 import { canSendJobInvoiceEmail } from "@/lib/invoice-send-eligibility";
+import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { Account, Invoice, Job } from "@/types/database";
 
 export { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
@@ -173,9 +174,11 @@ export async function sendInvoiceEmail(
     request.percent < 100
       ? { amountDueNow: request.amountDueNow, requestPercent: request.percent }
       : undefined;
+  // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
+  const agentParty = await loadAgentReceiptParty(admin, job);
   const emailOpts = emailOptsBase
-    ? { ...emailOptsBase, tradeFeeOptions }
-    : { tradeFeeOptions };
+    ? { ...emailOptsBase, tradeFeeOptions, agentParty }
+    : { tradeFeeOptions, agentParty };
 
   const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOptsBase);
   if ("error" in pdfResult) {

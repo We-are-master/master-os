@@ -3,6 +3,8 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee } from "@/lib/invoice-trade-fee-split";
+import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
+import { buildAgentReceiptView } from "@/lib/agent-model/receipt-view";
 import { displayBillingReference } from "@/lib/billing-reference";
 import {
   parseFrontendSetup,
@@ -51,7 +53,7 @@ export async function loadInvoicePdfData(
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, partner_id, created_at, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -87,7 +89,22 @@ export async function loadInvoicePdfData(
   const companyRow = company as { logo_url?: string | null; frontend_setup?: unknown } | null;
   const setup = parseFrontendSetup(companyRow?.frontend_setup);
   const platformFeePct = resolveInvoicePlatformFeePct(setup);
-  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, { defaultPlatformFeePct: platformFeePct });
+  // Schedule A (modelo de agente): recibo em nome do profissional. Null = B, documento de sempre.
+  const agentParty = await loadAgentReceiptParty(admin, job);
+  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, {
+    defaultPlatformFeePct: platformFeePct,
+    schedule: agentParty ? "A" : "B",
+  });
+  const agent = agentParty
+    ? buildAgentReceiptView({
+        party: agentParty,
+        jobTitle: job?.title ?? inv.job_reference ?? "Service",
+        clientPrice: job?.client_price,
+        extrasAmount: job?.extras_amount,
+        invoiceAmount: invAmt,
+        paid,
+      })
+    : undefined;
 
   const logoSource =
     resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
@@ -95,7 +112,7 @@ export async function loadInvoicePdfData(
 
   return {
     reference: displayBillingReference(inv.reference),
-    documentTitle: paid ? "Payment Receipt" : "Statement of Charges",
+    documentTitle: agent ? (paid ? "Receipt" : "Statement of Charges") : paid ? "Payment Receipt" : "Statement of Charges",
     clientName: billing?.displayName ?? inv.client_name,
     jobTitle: job?.title ?? inv.job_reference ?? "Job",
     jobReference: inv.job_reference?.trim() ?? job?.reference ?? "",
@@ -118,5 +135,6 @@ export async function loadInvoicePdfData(
     logoUrl,
     amountDueNow: opts?.amountDueNow,
     requestPercent: opts?.requestPercent,
+    agent,
   };
 }

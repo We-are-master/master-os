@@ -20,11 +20,16 @@ import {
 } from "@/lib/pdf/resolve-logo-data-uri";
 import type { Job, SelfBill } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { agentModelEnabled, resolveWorkSchedules, type WorkSchedule } from "@/lib/agent-model/schedule";
+import { platformBookingCommission } from "@/lib/agent-model/commission";
+import { loadJobPromotionAmounts } from "@/lib/agent-model/promotion";
+import type { SelfBillAgentSummary } from "@/lib/agent-model/commission-invoice";
+import type { SelfBillPdfLine } from "@/lib/pdf/self-bill-template";
 
 /** A wordmark branca em `public/`, usada quando a busca remota não responde. */
 const SELF_BILL_LOCAL_LOGO = "logos/fixfy-wordmark-white-trim.png";
 
-async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<string | undefined> {
+export async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<string | undefined> {
   const { data: company } = await supabase
     .from("company_settings")
     .select("logo_url, frontend_setup")
@@ -54,7 +59,7 @@ async function resolveSelfBillPdfLogoUrl(supabase: SupabaseClient): Promise<stri
  * rodapé sairia invisível ou com halo. `fixfy-wordmark-white-trim.png` é a
  * versão oficial para fundo escuro.
  */
-async function resolveSelfBillFooterLogo(): Promise<string | undefined> {
+export async function resolveSelfBillFooterLogo(): Promise<string | undefined> {
   return (
     (await resolveLogoDataUri(`${appBaseUrl()}/logos/${SELF_BILL_LOCAL_LOGO.split("/").pop()}`)) ??
     readPublicLogoDataUri(SELF_BILL_LOCAL_LOGO) ??
@@ -65,7 +70,10 @@ async function resolveSelfBillFooterLogo(): Promise<string | undefined> {
 export async function renderSelfBillPdfBuffer(
   supabase: SupabaseClient,
   selfBillId: string,
-): Promise<{ buffer: Buffer; sb: SelfBill } | { error: string; status: number }> {
+  options?: { commissionInvoiceRef?: string | null },
+): Promise<
+  { buffer: Buffer; sb: SelfBill; agent: SelfBillAgentSummary | null } | { error: string; status: number }
+> {
   const { data: sbRow, error } = await supabase.from("self_bills").select("*").eq("id", selfBillId).single();
   if (error || !sbRow) {
     return { error: "Self-bill not found", status: 404 };
@@ -75,7 +83,7 @@ export async function renderSelfBillPdfBuffer(
   const jobsFull = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, partner_cost, materials_cost, property_address, scheduled_date, status, deleted_at, partner_cancelled_at, cancellation_fee_partner_gbp, partner_cancellation_fee, partner_cancellation_compensation_gbp",
+      "id, reference, title, partner_cost, materials_cost, property_address, scheduled_date, status, deleted_at, partner_cancelled_at, cancellation_fee_partner_gbp, partner_cancellation_fee, partner_cancellation_compensation_gbp, client_id, client_price, extras_amount, created_at",
     )
     .eq("self_bill_id", selfBillId)
     .order("reference", { ascending: true });
@@ -94,7 +102,31 @@ export async function renderSelfBillPdfBuffer(
     return { error: "Could not load jobs for self-bill", status: 500 };
   }
 
-  const lines = (jobs ?? []).flatMap((j: Record<string, unknown>) => {
+  /**
+   * Modelo de agente: Schedule A ou B por job. Folha interna nunca entra, e
+   * com o modelo desligado tudo é B e o documento sai como sempre.
+   */
+  const agentOn = agentModelEnabled() && sb.bill_origin !== "internal";
+  const scheduleByJob: Map<string, WorkSchedule> = agentOn
+    ? await resolveWorkSchedules(
+        supabase,
+        (jobs ?? []).map((j) => ({
+          id: String(j.id ?? ""),
+          client_id: (j.client_id as string | null | undefined) ?? null,
+          created_at: (j.created_at as string | null | undefined) ?? null,
+        })),
+      )
+    : new Map();
+  const lateWithdrawalFees: SelfBillAgentSummary["lateWithdrawalFees"] = [];
+  // Promoção da Fixfy por job (mig 313): aparece na Parte A, nunca muda o líquido.
+  const promotionByJob: Map<string, number> = agentOn
+    ? await loadJobPromotionAmounts(
+        supabase,
+        (jobs ?? []).filter((j) => scheduleByJob.get(String(j.id ?? "")) === "A").map((j) => String(j.id ?? "")),
+      )
+    : new Map();
+
+  const lines: SelfBillPdfLine[] = (jobs ?? []).flatMap((j: Record<string, unknown>): SelfBillPdfLine[] => {
     const row = j as Pick<
       Job,
       | "id"
@@ -112,6 +144,14 @@ export async function renderSelfBillPdfBuffer(
     >;
     const note = selfBillJobPayoutStateLabel(row);
     const feeLine = selfBillJobCancellationFeeLine(row);
+    const schedule: WorkSchedule = scheduleByJob.get(String(j.id ?? "")) ?? "B";
+    if (agentOn && feeLine?.kind === "clawback") {
+      lateWithdrawalFees.push({
+        reference: String(j.reference ?? ""),
+        doneOn: j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
+        amount: Math.abs(feeLine.signedAmount),
+      });
+    }
     /**
      * `sozinha` = o job não aparece por si só, então esta linha é tudo o que o
      * parceiro vai ver dele, e precisa carregar o endereço e a data. Quando
@@ -129,6 +169,7 @@ export async function renderSelfBillPdfBuffer(
             doneOn:
               sozinha && j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
             payoutStateNote: feeLine.kind === "clawback" ? "Clawback" : "Compensation",
+            schedule,
           }
         : null;
 
@@ -173,7 +214,29 @@ export async function renderSelfBillPdfBuffer(
       // reconhece o job pelo dia, nunca por um identificador de 36 caracteres.
       doneOn: j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : undefined,
       payoutStateNote: note ?? undefined,
+      schedule,
     };
+
+    /**
+     * Schedule A: o job aparece pelo valor cheio (preço do cliente), com a
+     * comissão da Fixfy e o líquido do parceiro. O líquido é EXATAMENTE o que a
+     * linha já pagava: a comissão é conta para o documento, nunca muda payout.
+     */
+    if (schedule === "A") {
+      const c = platformBookingCommission({
+        clientPrice: Number(j.client_price) || 0,
+        extrasAmount: Number(j.extras_amount) || 0,
+        partnerCost: Number(j.partner_cost) || 0,
+        materialsCost: Number(j.materials_cost) || 0,
+      });
+      Object.assign(base, {
+        customerPrice: c.customerPrice,
+        commission: c.commission,
+        commissionFlag: c.flagged,
+        commissionShortfall: c.shortfall,
+        promotion: promotionByJob.get(String(j.id ?? "")) ?? 0,
+      });
+    }
 
     const embaixo = montarLinhaDeTaxa(false);
     return embaixo ? [base, embaixo] : [base];
@@ -192,24 +255,44 @@ export async function renderSelfBillPdfBuffer(
     const parentIds = [...new Set(visitPayoutLines.map((l) => l.jobId))];
     const { data: parents } = await supabase
       .from("jobs")
-      .select("id, reference, property_address")
+      .select("id, reference, property_address, client_id, created_at")
       .in("id", parentIds);
-    const parentById = new Map(
-      ((parents ?? []) as { id: string; reference: string | null; property_address: string | null }[])
-        .map((p) => [p.id, p]),
-    );
+    type ParentRow = {
+      id: string;
+      reference: string | null;
+      property_address: string | null;
+      client_id?: string | null;
+      created_at?: string | null;
+    };
+    const parentById = new Map(((parents ?? []) as ParentRow[]).map((p) => [p.id, p]));
+    const parentSchedule: Map<string, WorkSchedule> = agentOn
+      ? await resolveWorkSchedules(
+          supabase,
+          ((parents ?? []) as ParentRow[]).map((p) => ({
+            id: p.id,
+            client_id: p.client_id ?? null,
+            created_at: p.created_at ?? null,
+          })),
+        )
+      : new Map();
     const { data: visitRows } = await supabase
       .from("job_visits")
-      .select("id, scheduled_date, completed_at, scope")
+      .select("id, scheduled_date, completed_at, scope, client_price")
       .in("id", visitPayoutLines.map((l) => l.id));
     const visitById = new Map(
-      ((visitRows ?? []) as { id: string; scheduled_date: string | null; completed_at: string | null; scope: string | null }[])
-        .map((v) => [v.id, v]),
+      ((visitRows ?? []) as {
+        id: string;
+        scheduled_date: string | null;
+        completed_at: string | null;
+        scope: string | null;
+        client_price?: number | null;
+      }[]).map((v) => [v.id, v]),
     );
     for (const l of visitPayoutLines) {
       const parent = parentById.get(l.jobId);
       const v = visitById.get(l.id);
-      lines.push({
+      const visitSchedule: WorkSchedule = parentSchedule.get(l.jobId) ?? "B";
+      const visitLine: SelfBillPdfLine = {
         reference: `${parent?.reference ?? ""} · Visit ${l.visitIndex ?? ""}`.trim(),
         title: v?.scope?.trim() || "Extra visit",
         partner_cost: l.labour + l.materials,
@@ -217,7 +300,20 @@ export async function renderSelfBillPdfBuffer(
         property_address: parent?.property_address ?? undefined,
         doneOn: (v?.completed_at ?? v?.scheduled_date ?? "")?.slice(0, 10) || undefined,
         payoutStateNote: undefined,
-      });
+        schedule: visitSchedule,
+      };
+      if (visitSchedule === "A") {
+        const c = platformBookingCommission({
+          clientPrice: Number(v?.client_price) || 0,
+          partnerCost: l.labour,
+          materialsCost: l.materials,
+        });
+        visitLine.customerPrice = c.customerPrice;
+        visitLine.commission = c.commission;
+        visitLine.commissionFlag = c.flagged;
+        visitLine.commissionShortfall = c.shortfall;
+      }
+      lines.push(visitLine);
     }
   }
 
@@ -258,6 +354,26 @@ export async function renderSelfBillPdfBuffer(
         }))
       : lines;
 
+  const agent: SelfBillAgentSummary | null = agentOn
+    ? {
+        platformLines: lines
+          .filter((l) => l.schedule === "A" && l.customerPrice != null)
+          .map((l) => ({
+            reference: l.reference,
+            doneOn: l.doneOn,
+            title: l.title,
+            customerPrice: l.customerPrice ?? 0,
+            commission: l.commission ?? 0,
+            partnerNet: l.partner_cost,
+            flagged: l.commissionFlag === true,
+            shortfall: l.commissionShortfall ?? 0,
+          })),
+        lateWithdrawalFees,
+        hasPlatformBookings: lines.some((l) => l.schedule === "A"),
+        hasClientWork: lines.some((l) => l.schedule !== "A"),
+      }
+    : null;
+
   const logoUrl = await resolveSelfBillPdfLogoUrl(supabase);
   const footerLogoUrl = await resolveSelfBillFooterLogo();
 
@@ -287,9 +403,10 @@ export async function renderSelfBillPdfBuffer(
         internalBreakdown,
         logoUrl,
         footerLogoUrl,
+        commissionInvoiceRef: options?.commissionInvoiceRef ?? null,
       }}
     />,
   );
 
-  return { buffer: Buffer.from(buffer), sb };
+  return { buffer: Buffer.from(buffer), sb, agent };
 }
