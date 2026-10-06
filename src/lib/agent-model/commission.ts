@@ -74,3 +74,21 @@ export function vatFromInclusive(gross: number, ratePct: number = COMMISSION_VAT
   const vat = ratePct === 20 ? round2(g / 6) : round2(g - g / (1 + ratePct / 100));
   return { gross: g, vat, net: round2(g - vat), ratePct };
 }
+
+/**
+ * A comissão como porcentagem do preço do profissional (decisão do dono,
+ * 06/10/2026: o parceiro não vê a comissão em libras no payout statement).
+ * Uma casa decimal, como a Commission Schedule. Null sem preço.
+ */
+export function commissionPercentOfPrice(commission: number, customerPrice: number): number | null {
+  const price = Number(customerPrice) || 0;
+  if (price <= 0.005) return null;
+  return Math.round(((Number(commission) || 0) / price) * 1000) / 10;
+}
+
+/** `37.6%`, e `30%` quando a casa decimal é zero (o formato da Commission Schedule). */
+export function formatCommissionPercent(pct: number | null | undefined): string {
+  if (pct == null || !Number.isFinite(pct)) return "";
+  const r = Math.round(pct * 10) / 10;
+  return `${Number.isInteger(r) ? r.toFixed(0) : r.toFixed(1)}%`;
+}

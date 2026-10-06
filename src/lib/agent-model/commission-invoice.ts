@@ -7,7 +7,7 @@
  * contrato manda (Partner Agreement 2026-10-06, cláusula 8.3: vale para os
  * dois tipos de reserva e aparece na fatura de VAT da Fixfy).
  */
-import { COMMISSION_VAT_RATE_PCT, vatFromInclusive } from "./commission";
+import { COMMISSION_VAT_RATE_PCT, commissionPercentOfPrice, vatFromInclusive } from "./commission";
 
 export type CommissionInvoiceLine = {
   kind: "commission" | "late_withdrawal_fee";
@@ -17,6 +17,10 @@ export type CommissionInvoiceLine = {
   description: string;
   /** Valor com VAT incluído. */
   amount: number;
+  /** Comissão: porcentagem do preço do profissional (1 casa), mostrada ao lado do valor. */
+  percentOfPrice?: number | null;
+  /** Comissão: o preço do profissional sobre o qual a porcentagem incide. */
+  customerPrice?: number | null;
 };
 
 /**
@@ -56,6 +60,8 @@ export function buildCommissionInvoiceLines(summary: SelfBillAgentSummary | null
       date: l.doneOn ?? null,
       description: `Commission for arranging the booking and collecting payment: ${l.title}`.trim(),
       amount: round2(l.commission),
+      percentOfPrice: commissionPercentOfPrice(l.commission, l.customerPrice),
+      customerPrice: round2(l.customerPrice),
     });
   }
   for (const f of summary.lateWithdrawalFees) {

@@ -189,7 +189,7 @@ function buildPayoutStatementEmailHtml(
         <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
       </td></tr>
       <tr><td style="padding:0 40px 28px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">${attached} Nothing to do: it shows every job, with the customer price, Fixfy's commission and what you receive for your Platform Bookings.${partB}</p>
+        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">${attached} Nothing to do: it shows every job, with your price, Fixfy's commission as a percentage of it and what you receive for your Platform Bookings.${partB}</p>
       </td></tr>
 
       <tr><td style="padding:0 40px 24px 40px;">
