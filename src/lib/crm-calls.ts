@@ -1,0 +1,135 @@
+/**
+ * Registro de ligação do CRM B2B: cada resultado escreve uma linha datada no
+ * topo das notas e já marca o próximo passo (e a etapa, quando o resultado
+ * muda a etapa). As datas são do fuso de quem está ligando.
+ */
+
+import type { CrmDeal, CrmStage } from "@/types/database";
+
+export type CallOutcome = "no_answer" | "voicemail" | "call_back" | "interested" | "meeting" | "not_interested";
+
+export const CALL_OUTCOMES: { id: CallOutcome; label: string }[] = [
+  { id: "no_answer", label: "No answer" },
+  { id: "voicemail", label: "Voicemail" },
+  { id: "call_back", label: "Call back" },
+  { id: "interested", label: "Interested" },
+  { id: "meeting", label: "Meeting booked" },
+  { id: "not_interested", label: "Not interested" },
+];
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Data local no formato do banco (YYYY-MM-DD). */
+export function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** `n` dias úteis depois de `from` (pula sábado e domingo). */
+export function addBusinessDays(from: Date, n: number): string {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  let left = n;
+  while (left > 0) {
+    d.setDate(d.getDate() + 1);
+    const weekday = d.getDay();
+    if (weekday !== 0 && weekday !== 6) left--;
+  }
+  return isoDate(d);
+}
+
+/** Card para ligar hoje: tem data vencida ou de hoje e não está numa etapa de perdido. */
+export function isCallDue(deal: Pick<CrmDeal, "next_step_date">, stageKind: string | undefined, today: string): boolean {
+  return !!deal.next_step_date && deal.next_step_date <= today && stageKind !== "lost";
+}
+
+export type CallEntry = { at: Date; day: string; outcome: CallOutcome; note: string | null };
+export type CallSummary = { count: number; last: CallEntry | null };
+
+const OUTCOME_BY_LABEL = new Map(CALL_OUTCOMES.map((o) => [o.label, o.id]));
+// Linha que o "Log this call" escreve: "06/10/2026 10:42 · No answer · nota". O ano
+// é opcional para aceitar as primeiras linhas, que saíram como "06/10 10:42".
+const CALL_LINE = new RegExp(
+  `^(\\d{2})/(\\d{2})(?:/(\\d{4}))? (\\d{2}):(\\d{2}) · (${CALL_OUTCOMES.map((o) => o.label).join("|")})(?: · (.*))?$`,
+);
+
+/** Ligações registradas nas notas, da mais nova para a mais antiga. */
+export function parseCallLog(notes: string | null | undefined, now: Date): CallEntry[] {
+  if (!notes) return [];
+  const out: CallEntry[] = [];
+  for (const raw of notes.split("\n")) {
+    const m = CALL_LINE.exec(raw.trim());
+    if (!m) continue;
+    const [, dd, mm, yyyy, hh, mi, label, note] = m;
+    let year = yyyy ? Number(yyyy) : now.getFullYear();
+    let at = new Date(year, Number(mm) - 1, Number(dd), Number(hh), Number(mi));
+    // Sem ano e caindo no futuro: é do ano passado.
+    if (!yyyy && at.getTime() > now.getTime() + 86_400_000) {
+      year -= 1;
+      at = new Date(year, Number(mm) - 1, Number(dd), Number(hh), Number(mi));
+    }
+    out.push({ at, day: isoDate(at), outcome: OUTCOME_BY_LABEL.get(label) as CallOutcome, note: note?.trim() || null });
+  }
+  return out.sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+export function summarizeCalls(notes: string | null | undefined, now: Date): CallSummary {
+  const calls = parseCallLog(notes, now);
+  return { count: calls.length, last: calls[0] ?? null };
+}
+
+/** Filtro de ligação: nunca ligou, ligou hoje ou o resultado da última ligação. */
+export type CallFilter = "" | "never" | "today" | CallOutcome;
+
+export const CALL_FILTERS: { value: CallFilter; label: string }[] = [
+  { value: "", label: "All calls" },
+  { value: "never", label: "Not called yet" },
+  { value: "today", label: "Called today" },
+  ...CALL_OUTCOMES.map((o) => ({ value: o.id as CallFilter, label: `Last call: ${o.label}` })),
+];
+
+export function matchesCallFilter(summary: CallSummary, filter: CallFilter, today: string): boolean {
+  if (!filter) return true;
+  if (filter === "never") return summary.count === 0;
+  if (filter === "today") return summary.last?.day === today;
+  return summary.last?.outcome === filter;
+}
+
+export type CallFields = Pick<CrmDeal, "stage_id" | "notes" | "next_step" | "next_step_date">;
+
+export function applyCallOutcome(
+  deal: CallFields,
+  outcome: CallOutcome,
+  stages: CrmStage[],
+  now: Date,
+  note?: string,
+): CallFields {
+  const label = CALL_OUTCOMES.find((o) => o.id === outcome)?.label ?? outcome;
+  const stamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const line = [stamp, label, note?.trim()].filter(Boolean).join(" · ");
+  const notes = deal.notes?.trim() ? `${line}\n${deal.notes}` : line;
+  const ordered = [...stages].sort((a, b) => a.position - b.position);
+  const current = ordered.find((s) => s.id === deal.stage_id);
+  // Data que a pessoa já deixou marcada no futuro vale mais que o padrão.
+  const keepFuture = (fallback: string) =>
+    deal.next_step_date && deal.next_step_date > isoDate(now) ? deal.next_step_date : fallback;
+
+  switch (outcome) {
+    case "no_answer":
+      return { ...deal, notes, next_step: "Call again", next_step_date: addBusinessDays(now, 1) };
+    case "voicemail":
+      return { ...deal, notes, next_step: "Call again (left a voicemail)", next_step_date: addBusinessDays(now, 2) };
+    case "call_back":
+      return { ...deal, notes, next_step: "Call back", next_step_date: keepFuture(addBusinessDays(now, 2)) };
+    case "interested":
+      return { ...deal, notes, next_step: "Send the price list, then follow up", next_step_date: addBusinessDays(now, 1) };
+    case "meeting": {
+      const index = ordered.findIndex((s) => s.id === deal.stage_id);
+      const next = index >= 0 ? ordered.slice(index + 1).find((s) => s.kind === "open") : undefined;
+      return { ...deal, notes, stage_id: next?.id ?? deal.stage_id, next_step: "Meeting", next_step_date: keepFuture(addBusinessDays(now, 1)) };
+    }
+    case "not_interested": {
+      // Conta que já é cliente não vira "perdido" por uma ligação de reativação.
+      const lost = current?.kind === "won" ? undefined : ordered.find((s) => s.kind === "lost");
+      return { ...deal, notes, stage_id: lost?.id ?? deal.stage_id, next_step: null, next_step_date: null };
+    }
+  }
+}

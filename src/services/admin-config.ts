@@ -47,9 +47,10 @@ function relocateInboxItems(nav: NavGroup[]): NavGroup[] {
     .filter((g) => g.items.length > 0);
 }
 
-const PIPELINE_SIDEBAR_HREFS = new Set(["/pipelines/partners", "/pipelines/corporate"]);
+// O Harvey mora no app do Zendesk desde out/2026; a página /harvey-whatsapp continua no ar pelo link.
+const PIPELINE_SIDEBAR_HREFS = new Set(["/pipelines/partners", "/pipelines/corporate", "/harvey-whatsapp"]);
 
-/** Hide partner/corporate pipeline pages from the sidebar (routes remain reachable by URL). */
+/** Hide partner/corporate pipeline pages and the Harvey page from the sidebar (routes remain reachable by URL). */
 function removePipelineSidebarNav(nav: NavGroup[]): NavGroup[] {
   return nav
     .filter((g) => g.label !== "Pipeline")
@@ -321,6 +322,7 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Network",
     items: [
+      { label: "CRM", href: "/crm", icon: "kanban", permission: "accounts" },
       { label: "Accounts", href: "/accounts", icon: "building", permission: "accounts" },
       { label: "Clients", href: "/clients", icon: "user-circle", permission: "accounts" },
       { label: "Partners", href: "/partners", icon: "users", permission: "partners" },

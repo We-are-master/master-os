@@ -1557,3 +1557,41 @@ export interface AccountPpmPlan {
   updated_at: string;
   deleted_at?: string | null;
 }
+
+/** CRM B2B (mig 311): etapa do funil, editável pelo escritório. */
+export type CrmStageKind = "open" | "won" | "lost";
+
+export interface CrmStage {
+  id: string;
+  name: string;
+  position: number;
+  /** Chave de cor da paleta do CRM (slate, blue, amber, green, red, violet, orange, teal). */
+  color: string;
+  kind: CrmStageKind;
+  created_at: string;
+  updated_at: string;
+}
+
+/** CRM B2B (mig 311): uma empresa no funil, opcionalmente ligada a uma conta. */
+export interface CrmDeal {
+  id: string;
+  company_name: string;
+  stage_id: string;
+  account_id?: string | null;
+  segment?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  website?: string | null;
+  /** Valor estimado por mês, em libras. */
+  monthly_value?: number | null;
+  next_step?: string | null;
+  next_step_date?: string | null;
+  notes?: string | null;
+  source?: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
+  deleted_at?: string | null;
+}

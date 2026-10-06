@@ -10,6 +10,8 @@ export interface KanbanColumn<T> {
   title: string;
   color: string;
   items: T[];
+  /** Small summary on the right of the column header (e.g. "12 called"). */
+  meta?: React.ReactNode;
 }
 
 interface KanbanBoardProps<T> {
@@ -28,7 +30,14 @@ interface KanbanBoardProps<T> {
   pendingCardIds?: ReadonlySet<string>;
   /** Full-height columns that scroll their own cards, like the Live View board. */
   fillHeight?: boolean;
+  /**
+   * Cards drawn per column before a "Show more" button. Long columns (hundreds
+   * of leads) otherwise take seconds to stagger in. Unset draws every card.
+   */
+  pageSize?: number;
   className?: string;
+  /** Extra classes for each column box (width, background, border). */
+  columnClassName?: string;
 }
 
 const DRAG_MIME = "text/kanban-card-id";
@@ -41,9 +50,12 @@ export function KanbanBoard<T>({
   onCardDrop,
   pendingCardIds,
   fillHeight = false,
+  pageSize,
   className,
+  columnClassName,
 }: KanbanBoardProps<T>) {
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
+  const [shownByColumn, setShownByColumn] = useState<Record<string, number>>({});
   const draggable = typeof onCardDrop === "function";
 
   const findItem = (id: string): { item: T; columnId: string } | null => {
@@ -65,6 +77,9 @@ export function KanbanBoard<T>({
     >
       {columns.map((column) => {
         const isDropTarget = dragOverColumnId === column.id;
+        const limit = pageSize ? (shownByColumn[column.id] ?? pageSize) : column.items.length;
+        const visibleItems = column.items.slice(0, limit);
+        const hiddenCount = column.items.length - visibleItems.length;
         return (
           <div
             key={column.id}
@@ -91,6 +106,7 @@ export function KanbanBoard<T>({
             className={cn(
               "w-72 flex-shrink-0 rounded-xl transition-colors",
               fillHeight && "flex min-h-0 flex-col lg:w-auto lg:min-w-0 lg:flex-1",
+              columnClassName,
               isDropTarget && "bg-primary/5 ring-2 ring-primary/30",
             )}
           >
@@ -100,6 +116,7 @@ export function KanbanBoard<T>({
               <span className="rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10px] font-bold text-text-tertiary">
                 {column.items.length}
               </span>
+              {column.meta ? <div className="ml-auto min-w-0 truncate text-[11px] text-text-tertiary">{column.meta}</div> : null}
             </div>
             <motion.div
               variants={staggerContainer}
@@ -112,7 +129,7 @@ export function KanbanBoard<T>({
                   {isDropTarget ? "Drop here" : "Nothing here."}
                 </p>
               ) : (
-                column.items.map((item) => {
+                visibleItems.map((item) => {
                   const id = getCardId(item);
                   const pending = pendingCardIds?.has(id) ?? false;
                   return (
@@ -140,6 +157,15 @@ export function KanbanBoard<T>({
                   );
                 })
               )}
+              {hiddenCount > 0 && pageSize ? (
+                <button
+                  type="button"
+                  onClick={() => setShownByColumn((cur) => ({ ...cur, [column.id]: limit + pageSize }))}
+                  className="w-full rounded-lg border border-dashed border-border py-2 text-[12px] font-medium text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+                >
+                  Show {Math.min(hiddenCount, pageSize)} more ({hiddenCount} left)
+                </button>
+              ) : null}
             </motion.div>
           </div>
         );
