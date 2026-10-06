@@ -99,10 +99,10 @@
             </td>
           </tr>
 
-          <tr>
+          {{professional_block}}<tr>
             <td class="px" style="padding:0 40px 8px 40px;">
               <p style="margin:0 0 12px 0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">
-                JOB COMPLETED
+                {{job_section_label}}
               </p>
             </td>
           </tr>
@@ -150,40 +150,14 @@
           <tr>
             <td class="px" style="padding:0 40px 8px 40px;">
               <p style="margin:0 0 12px 0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">
-                PAYMENT BREAKDOWN
+                {{breakdown_section_label}}
               </p>
             </td>
           </tr>
           <tr>
             <td class="px" style="padding:0 40px 12px 40px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;">
-                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Trade services</p>
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Performed by the assigned trade provider</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{trade_amount}}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Fixfy platform fee</p>
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Coordination, vetting &amp; quality assurance</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{fixfy_fee}}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-                {{amount_paid_row}}
+{{charges_rows}}                {{amount_paid_row}}
                 <tr>
                   <td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:16px 20px;">
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -204,24 +178,7 @@
 
           {{bank_details_block}}
 
-          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">
-                      Need a VAT invoice?
-                    </p>
-                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">
-                      Request one at <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a>.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <tr>
+{{vat_box_block}}          <tr>
             <td class="px" style="padding:0 40px 32px 40px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;">
                 <tr>

@@ -9,6 +9,11 @@ import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTrad
 import { displayBillingReference } from "@/lib/billing-reference";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { invoicePayLinkForClient } from "@/lib/pay-link-url";
+import {
+  buildAgentReceiptView,
+  type AgentReceiptParty,
+  type AgentReceiptView,
+} from "@/lib/agent-model/receipt-view";
 
 export type InvoiceClientEmailContext = {
   clientName: string;
@@ -32,6 +37,11 @@ export type InvoiceEmailOptions = {
   requestPercent?: number;
   /** Statement trade/fee split options (platform fee % fallback). */
   tradeFeeOptions?: SplitInvoiceTradeFeeOptions;
+  /**
+   * Schedule A (modelo de agente): o profissional em nome de quem o recibo sai.
+   * Vem de `loadAgentReceiptParty`. Ausente = Schedule B, e-mail de sempre.
+   */
+  agentParty?: AgentReceiptParty | null;
 };
 
 const PAID_INTRO =
@@ -40,6 +50,60 @@ const UNPAID_INTRO =
   "Your job is complete. Please find your statement of charges below — payment details are included.";
 const PARTIAL_INTRO =
   "We've received a partial payment. The remaining balance is shown below.";
+
+
+/**
+ * Schedule B: as duas linhas de sempre ("Trade services" + "Fixfy platform
+ * fee"), tiradas do HTML para o template aceitar também o recibo de agente.
+ * Texto idêntico ao que estava no arquivo: B não muda.
+ */
+const B_CHARGES_ROWS = `                <tr>
+                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle">
+                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Trade services</p>
+                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Performed by the assigned trade provider</p>
+                        </td>
+                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{trade_amount}}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle">
+                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Fixfy platform fee</p>
+                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Coordination, vetting &amp; quality assurance</p>
+                        </td>
+                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{fixfy_fee}}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+`;
+
+/** Schedule B: o quadro "Need a VAT invoice?" de sempre. */
+const B_VAT_BOX = `          <tr>
+            <td class="px" style="padding:0 40px 24px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">
+                      Need a VAT invoice?
+                    </p>
+                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">
+                      Request one at <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a>.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+`;
 
 let cachedTemplate: string | null = null;
 
@@ -195,7 +259,7 @@ function buildPayNowBlock(paymentLinkUrl: string): string {
  * by bank transfer as an alternative to the Stripe link. Hidden on paid
  * receipts (no need to repeat).
  */
-function buildBankDetailsBlock(): string {
+function buildBankDetailsBlock(heading = "Or pay by bank transfer"): string {
   const rowsHtml = FIXFY_CLIENT_BANK_DETAIL_ROWS
     .map(
       (r) => `
@@ -212,7 +276,7 @@ function buildBankDetailsBlock(): string {
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:6px;">
                 <tr>
                   <td style="padding:14px 18px;">
-                    <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">Or pay by bank transfer</p>
+                    <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(heading)}</p>
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
                     </table>
                     <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the statement reference as the payment reference so we can match it automatically.</p>
@@ -234,6 +298,126 @@ function buildReportNoticeBlock(count: number): string {
                     <p style="margin:0; font-size:13px; line-height:20px; color:#020040;">
                       Your final ${label} ${count === 1 ? "is" : "are"} attached to this email.
                     </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+}
+
+
+/** Uma linha da tabela de valores do recibo de agente. */
+function agentChargeRow(label: string, amount: string, sub?: string, muted = false): string {
+  const subHtml = sub
+    ? `
+                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">${escapeHtml(sub)}</p>`
+    : "";
+  return `
+                <tr>
+                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle">
+                          <p style="margin:0; font-size:14px; color:${muted ? "#4A4A55" : "#1A1A1A"};">${escapeHtml(label)}</p>${subHtml}
+                        </td>
+                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">${amount}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+}
+
+/**
+ * Schedule A: serviços pelo preço do profissional, VAT DELE (ou "No VAT
+ * charged"), promoção da Fixfy em linha própria. Nada de "platform fee".
+ */
+function buildAgentChargesRows(view: AgentReceiptView, paid: boolean): string {
+  const rows: string[] = view.lines.map((l) => agentChargeRow(l.label, `£${formatMoneyPlain(l.amount)}`));
+  if (view.lines.length > 1 || view.vatLine || view.promotion > 0.02) {
+    rows.push(
+      agentChargeRow(
+        view.professionalName ? `${view.professionalName}'s price` : "Price",
+        `£${formatMoneyPlain(view.professionalPrice)}`,
+      ),
+    );
+  }
+  if (view.vatLine) {
+    rows.push(
+      agentChargeRow(
+        view.vatLine,
+        view.vatAmount != null ? `£${formatMoneyPlain(view.vatAmount)}` : "",
+        view.vatNumber ? `VAT number ${view.vatNumber}` : undefined,
+        true,
+      ),
+    );
+  }
+  if (view.promotion > 0.02) {
+    rows.push(agentChargeRow("Fixfy promotion, paid by Fixfy on your behalf", `-£${formatMoneyPlain(view.promotion)}`));
+  }
+  if (view.partOfPrice) {
+    rows.push(
+      agentChargeRow(paid ? "This receipt covers" : "This statement covers", `£${formatMoneyPlain(view.documentAmount)}`),
+    );
+  }
+  return rows.join("");
+}
+
+/** Schedule A: o bloco "Your professional" (04-booking-copy, e-mail C2). */
+function buildProfessionalBlock(view: AgentReceiptView): string {
+  const name = view.professionalName;
+  const lines: string[] = [];
+  lines.push(
+    name
+      ? "Independent trader: they offer their services as a business, and your contract for this job is with them."
+      : "Your job is carried out by an independent, vetted professional, named in your booking confirmation.",
+  );
+  if (name && view.businessAddress) lines.push(`Business address: ${view.businessAddress}`);
+  if (name) {
+    lines.push(
+      view.vatNumber
+        ? `VAT: VAT registered, VAT number ${view.vatNumber}`
+        : "VAT: Not VAT registered, so no VAT is charged",
+    );
+  }
+  const body = lines
+    .map((l) => `<p style="margin:4px 0 0 0; font-size:13px; line-height:19px; color:#4A4A55;">${escapeHtml(l)}</p>`)
+    .join("");
+  return `
+          <tr>
+            <td class="px" style="padding:0 40px 8px 40px;">
+              <p style="margin:0 0 12px 0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">
+                YOUR PROFESSIONAL
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td class="px" style="padding:0 40px 24px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <p style="margin:0; font-size:16px; font-weight:700; color:#020040; line-height:22px;">${escapeHtml(name ?? "Your professional")}</p>
+                    ${body}
+                    <p style="margin:8px 0 0 0; font-size:12px; line-height:18px; color:#9A9AA8;">${escapeHtml(view.issuerLine)}.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+}
+
+/** Schedule A: no lugar do "Need a VAT invoice?", quem é quem e quem recebeu o pagamento. */
+function buildAgentNoticeBlock(view: AgentReceiptView): string {
+  return `
+          <tr>
+            <td class="px" style="padding:0 40px 24px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">
+                      Who you are booking with
+                    </p>
+                    <p style="margin:0 0 6px 0; padding:0; font-size:13px; line-height:19px; color:#020040;">${escapeHtml(view.paymentNote)}</p>
+                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">${escapeHtml(view.bookingNote)}</p>
                   </td>
                 </tr>
               </table>
@@ -278,7 +462,21 @@ export function buildInvoiceClientEmailHTML(
     options.amountDueNow > 0.02 &&
     Math.abs(amountDueNow - fullDue) > 0.02;
   const partial = !paid && paidAmt > 0.02;
-  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, options?.tradeFeeOptions);
+  // Schedule A (modelo de agente): recibo em nome do profissional; ausente = B.
+  const agentView = options?.agentParty
+    ? buildAgentReceiptView({
+        party: options.agentParty,
+        jobTitle: context.jobTitle,
+        clientPrice: job?.client_price,
+        extrasAmount: job?.extras_amount,
+        invoiceAmount: invAmt,
+        paid,
+      })
+    : null;
+  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, {
+    ...options?.tradeFeeOptions,
+    schedule: agentView ? "A" : options?.tradeFeeOptions?.schedule,
+  });
   const { street, outward } = splitAddressAndPostcode(context.propertyAddress, context.postcode);
   const quoteRef = context.quoteReference?.trim()
     ? refForTemplate(context.quoteReference, "QT")
@@ -310,18 +508,35 @@ export function buildInvoiceClientEmailHTML(
           </tr>`
       : "");
 
-  const documentEyebrow = paid ? "PAYMENT RECEIPT" : "STATEMENT OF CHARGES";
-  const pageTitle = paid ? "Payment Receipt" : "Statement of Charges";
-  const refLabel = paid ? "Receipt Ref" : "Statement Ref";
+  const documentEyebrow = agentView
+    ? paid
+      ? agentView.professionalName
+        ? `RECEIPT FROM ${agentView.professionalName.toUpperCase()}`
+        : "PAYMENT RECEIVED"
+      : "STATEMENT OF CHARGES"
+    : paid
+      ? "PAYMENT RECEIPT"
+      : "STATEMENT OF CHARGES";
+  const pageTitle = agentView ? (paid ? "Receipt" : "Statement of Charges") : paid ? "Payment Receipt" : "Statement of Charges";
+  const refLabel = paid ? (agentView ? "Receipt No." : "Receipt Ref") : "Statement Ref";
   const refValue = escapeHtml(billingRefDisplay);
 
+  const agentIntro = agentView
+    ? paid
+      ? `We've received your payment for the work below, on behalf of ${agentView.professionalLabel}. This receipt is issued in their name.`
+      : partial
+        ? `We've received a partial payment on behalf of ${agentView.professionalLabel}. The remaining balance is shown below.`
+        : `Your job is complete. Below is the statement for the work carried out by ${agentView.professionalLabel}. Payment details are included.`
+    : null;
   const intro = options?.customMessage?.trim()
     ? escapeHtml(options.customMessage.trim())
-    : paid
-      ? PAID_INTRO
-      : partial
-        ? PARTIAL_INTRO
-        : UNPAID_INTRO;
+    : agentIntro
+      ? escapeHtml(agentIntro)
+      : paid
+        ? PAID_INTRO
+        : partial
+          ? PARTIAL_INTRO
+          : UNPAID_INTRO;
 
   const dueDateRow = paid
     ? ""
@@ -367,13 +582,31 @@ export function buildInvoiceClientEmailHTML(
       ? `${payLinkBase.split("?")[0]}?pct=${requestPct}`
       : payLinkBase;
   const payNowBlock = payLink ? buildPayNowBlock(payLink) : "";
-  const bankDetailsBlock = paid ? "" : buildBankDetailsBlock();
+  const bankDetailsBlock = paid
+    ? ""
+    : agentView
+      ? buildBankDetailsBlock(`Or pay by bank transfer to Fixfy, as agent for ${agentView.professionalLabel}`)
+      : buildBankDetailsBlock();
 
-  const vatPrimary = paid
-    ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
-    : "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This statement covers the work completed below.";
+  /**
+   * O texto de "plataforma divulgada", alinhado aos termos de 06/10/2026.
+   *
+   * Em Schedule A a Fixfy não é plataforma que "conecta": é agente do
+   * profissional, que é com quem o cliente contratou, e recebe o pagamento em
+   * nome dele. Em B o texto antigo fica (B não mudou), mas ele não é renderizado
+   * pelo HTML: só existe para quem ler este builder.
+   */
+  const vatPrimary = agentView
+    ? agentView.bookingNote
+    : paid
+      ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
+      : "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This statement covers the work completed below.";
 
-  const preheader = paid
+  const preheader = agentView
+    ? paid
+      ? `Payment received: £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}, issued for ${agentView.professionalLabel}.`
+      : `Statement ${billingRefDisplay}: £${formatMoneyPlain(isPartialRequest ? amountDueNow : invAmt)} due for ${context.jobTitle}, work by ${agentView.professionalLabel}.`
+    : paid
     ? `Payment received — £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}.`
     : isPartialRequest
       ? `Statement ${billingRefDisplay} — £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
@@ -400,6 +633,11 @@ export function buildInvoiceClientEmailHTML(
   html = replaceAll(html, "property_address", escapeHtml(street));
   html = replaceAll(html, "property_postcode", escapeHtml(outward));
   html = replaceAll(html, "completion_date", escapeHtml(completionDate));
+  html = replaceAll(html, "professional_block", agentView ? buildProfessionalBlock(agentView) : "");
+  html = replaceAll(html, "job_section_label", agentView ? "JOB" : "JOB COMPLETED");
+  html = replaceAll(html, "breakdown_section_label", agentView ? "SERVICES" : "PAYMENT BREAKDOWN");
+  html = replaceAll(html, "charges_rows", agentView ? buildAgentChargesRows(agentView, paid) : B_CHARGES_ROWS);
+  html = replaceAll(html, "vat_box_block", agentView ? buildAgentNoticeBlock(agentView) : B_VAT_BOX);
   html = replaceAll(html, "trade_amount", formatMoneyPlain(trade));
   html = replaceAll(html, "fixfy_fee", formatMoneyPlain(fee));
   html = replaceAll(html, "amount_paid_row", amountPaidRow);

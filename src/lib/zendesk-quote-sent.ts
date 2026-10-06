@@ -33,6 +33,12 @@ interface QuoteSentArgs {
   /** Tokenised accept/reject links — when provided, rendered as CTA buttons. */
   acceptUrl?:      string;
   rejectUrl?:      string;
+  /**
+   * Schedule A (modelo de agente, 06/10/2026): o preço é do profissional e a
+   * Fixfy cota como agente dele. Troca o "All prices include VAT" (a Fixfy não
+   * cobra VAT do serviço) pela linha de agente. Ausente = Schedule B.
+   */
+  agentModel?:     boolean;
 }
 
 function escapeHtml(s: string): string {
@@ -177,7 +183,9 @@ export function buildQuoteSentHtml(args: QuoteSentArgs): string {
       `<div style="background:#020040;border-radius:10px;padding:22px;margin-bottom:16px;color:#fff;">` +
         totalHeader +
         breakdownBlock +
-        `<p style="margin:14px 0 0;font-size:11px;line-height:16px;color:rgba(255,255,255,0.4);">All prices include VAT.</p>` +
+        (args.agentModel
+          ? `<p style="margin:14px 0 0;font-size:11px;line-height:16px;color:rgba(255,255,255,0.64);">The price of the independent, vetted professional who will do your job. GETFIXFY LTD (Fixfy) arranges the booking and receives your payment as their agent. No Fixfy fee and no VAT added on top: if your professional is VAT registered, their VAT is included and shown on your receipt.</p>`
+          : `<p style="margin:14px 0 0;font-size:11px;line-height:16px;color:rgba(255,255,255,0.4);">All prices include VAT.</p>`) +
       `</div>` +
       detailsCard +
       validityBlock +

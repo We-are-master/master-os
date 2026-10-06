@@ -15,6 +15,7 @@ import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
+import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
 
 function nowMs() {
   return performance.now();
@@ -212,6 +213,11 @@ export async function POST(req: NextRequest) {
 
     const { data: settings } = settingsResult as { data: Record<string, unknown> | null };
 
+    // Schedule A (modelo de agente): cliente direto, preço do profissional, sem VAT da Fixfy.
+    // Modelo desligado ou cliente de conta de empresa = B, documento de sempre.
+    const agentModelQuote =
+      (await resolveClientWorkSchedule(supabase, { clientId: qCid || null })) === "A";
+
     const branding: CompanyBranding = settings
       ? {
           companyName: String(settings.company_name ?? ""),
@@ -276,6 +282,7 @@ export async function POST(req: NextRequest) {
           ? quote.property_address.trim()
           : undefined,
       vatPercent,
+      agentModel: agentModelQuote,
     };
 
     const safePdfData: QuotePDFData = {
@@ -429,6 +436,7 @@ export async function POST(req: NextRequest) {
           items:           lineItemsForPdf,
           acceptUrl,
           rejectUrl,
+          agentModel:      agentModelQuote,
         });
         await zdSendCustomerComment({
           ticketId:       zdTicketId!,
@@ -601,6 +609,7 @@ export async function POST(req: NextRequest) {
         acceptUrl,
         rejectUrl,
         customMessage,
+        agentModel: agentModelQuote,
         context: {
           propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
           postcode: (quote as { postcode?: string | null }).postcode ?? null,
