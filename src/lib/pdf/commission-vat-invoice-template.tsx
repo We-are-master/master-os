@@ -23,6 +23,7 @@ import {
 } from "@/lib/pdf/fixfy-pdf-layout";
 
 import type { CommissionInvoiceLine } from "@/lib/agent-model/commission-invoice";
+import { formatCommissionPercent } from "@/lib/agent-model/commission";
 
 export interface CommissionVatInvoicePdfData {
   /** FXC-000123, ou "DRAFT" antes de emitida. */
@@ -116,6 +117,7 @@ const styles = StyleSheet.create({
   cNum: { width: "20%", textAlign: "right" },
   cellText: { fontSize: 8.5, color: TEXT, lineHeight: 1.35 },
   cellNum: { fontSize: 8.5, color: NAVY },
+  cellSub: { fontSize: 7.5, color: MUTED, marginTop: 1.5, lineHeight: 1.35 },
 
   totals: { borderWidth: 1, borderColor: BORDER, borderTopWidth: 0, borderBottomLeftRadius: 6, borderBottomRightRadius: 6 },
   totRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: HAIRLINE },
@@ -230,7 +232,15 @@ export function CommissionVatInvoicePDF({ data }: { data: CommissionVatInvoicePd
             <View key={`${l.reference}-${i}`} style={styles.tableRow} wrap={false}>
               <Text style={[styles.cellText, styles.cRef]}>{l.reference}</Text>
               <Text style={[styles.cellText, styles.cDate]}>{fmtDate(l.date)}</Text>
-              <Text style={[styles.cellText, styles.cDesc]}>{l.description}</Text>
+              <View style={styles.cDesc}>
+                <Text style={styles.cellText}>{l.description}</Text>
+                {l.kind === "commission" && l.percentOfPrice != null ? (
+                  <Text style={styles.cellSub}>
+                    {formatCommissionPercent(l.percentOfPrice)} of your price
+                    {l.customerPrice != null ? ` of ${money(l.customerPrice)}` : ""}
+                  </Text>
+                ) : null}
+              </View>
               <Text style={[styles.cellNum, styles.cNum]}>{money(l.amount)}</Text>
             </View>
           ))}

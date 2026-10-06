@@ -66,3 +66,27 @@ describe("commission VAT invoice lines", () => {
     assert.match(w[0], /JOB-2/);
   });
 });
+
+describe("commission as a percentage of the partner's price (partners never see it in £)", () => {
+  it("one decimal, same rounding as the Commission Schedule", async () => {
+    const { commissionPercentOfPrice, formatCommissionPercent } = await import("./commission");
+    assert.equal(commissionPercentOfPrice(100, 266), 37.6); // 2 bed EoT
+    assert.equal(commissionPercentOfPrice(60, 200), 30); // studio EoT
+    assert.equal(commissionPercentOfPrice(10, 0), null);
+    assert.equal(formatCommissionPercent(37.6), "37.6%");
+    assert.equal(formatCommissionPercent(30), "30%");
+    assert.equal(formatCommissionPercent(null), "");
+  });
+
+  it("the VAT invoice keeps £ and carries the % next to each commission line", () => {
+    const lines = buildCommissionInvoiceLines({
+      platformLines: [{ reference: "JOB-1", title: "EoT", customerPrice: 266, commission: 100, partnerNet: 166, flagged: false, shortfall: 0 }],
+      lateWithdrawalFees: [],
+      hasPlatformBookings: true,
+      hasClientWork: false,
+    });
+    assert.equal(lines[0].amount, 100);
+    assert.equal(lines[0].percentOfPrice, 37.6);
+    assert.equal(lines[0].customerPrice, 266);
+  });
+});

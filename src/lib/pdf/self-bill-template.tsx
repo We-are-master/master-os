@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
+import { commissionPercentOfPrice, formatCommissionPercent } from "@/lib/agent-model/commission";
 import {
   FIXFY_PDF_FOOTER_HEIGHT,
   FIXFY_PDF_HEADER_LOGO_HEIGHT,
@@ -536,7 +537,8 @@ function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
           <Text style={ps.partLabel}>Part A · Platform Bookings</Text>
           <Text style={ps.partSub}>
             Customer price is your price for the job, including any Fixfy promotion that Fixfy paid on the
-            customer&apos;s behalf. Fixfy commission includes VAT. You receive the rest.
+            customer&apos;s behalf. Fixfy commission is a percentage of your price and includes VAT. You
+            receive the rest.
           </Text>
           <View style={{ marginBottom: 14 }}>
             <View style={styles.tableHead} wrap={false} fixed>
@@ -544,7 +546,7 @@ function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
               <Text style={[styles.th, ps.aDate]}>Date</Text>
               <Text style={[styles.th, ps.aDesc]}>Type of work</Text>
               <Text style={[styles.th, ps.aNum]}>Customer price</Text>
-              <Text style={[styles.th, ps.aNum]}>Commission</Text>
+              <Text style={[styles.th, ps.aNum]}>Fixfy commission</Text>
               <Text style={[styles.th, ps.aNum]}>You receive</Text>
             </View>
             {aLines.map((line, i) => (
@@ -568,8 +570,12 @@ function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
                     </Text>
                   ) : null}
                 </View>
+                {/* Em %, nunca em £: decisão do dono (06/10/2026). O valor em libras
+                    fica só na fatura de VAT da comissão, que a lei exige. */}
                 <Text style={[styles.cellNumText, ps.aNum]}>
-                  {line.commission != null ? fmtPlain(line.commission) : ""}
+                  {line.commission != null && line.customerPrice != null
+                    ? formatCommissionPercent(commissionPercentOfPrice(line.commission, line.customerPrice))
+                    : ""}
                 </Text>
                 <Text style={[styles.cellNumText, ps.aNum]}>{fmtPlain(line.partner_cost + line.materials_cost)}</Text>
               </View>
