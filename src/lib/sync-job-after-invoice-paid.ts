@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Job } from "@/types/database";
-import { customerCollectionsSatisfyBillable, jobBillableRevenue } from "@/lib/job-financials";
+import { customerCollectionsSatisfyBillable, jobCustomerTotal } from "@/lib/job-financials";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { invoiceAmountPaid } from "@/lib/invoice-balance";
@@ -85,7 +85,8 @@ export async function applyManualInvoicePaymentToJobLedger(
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")
     .reduce((s, p) => s + Number(p.amount), 0);
 
-  const billable = jobBillableRevenue(job);
+  // O que o cliente deve: preço + extras − promoção da Fixfy (mig 313).
+  const billable = jobCustomerTotal(job);
   const jobRemaining = Math.max(0, billable - customerTotal);
 
   let existingSource: unknown = null;

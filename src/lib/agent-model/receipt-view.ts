@@ -26,6 +26,11 @@ export type AgentReceiptParty = {
   businessAddress: string | null;
   /** VAT number do profissional, só quando ele é registrado. */
   vatNumber: string | null;
+  /**
+   * Promoção da Fixfy neste job (`jobs.promotion_amount`, mig 313), paga pela
+   * Fixfy em nome do cliente. Vem junto porque o carregador do recibo já lê o job.
+   */
+  promotionAmount?: number | null;
 };
 
 export type AgentReceiptLine = { label: string; amount: number };
@@ -90,10 +95,8 @@ export function buildAgentReceiptView(args: {
   invoiceAmount: number;
   paid: boolean;
   /**
-   * Promoção da Fixfy paga em nome do cliente.
-   * TODO(agent-model): o OS ainda não grava o valor da promoção do site
-   * (o checkout hoje baixa o preço da linha). Quando o site mandar o valor e
-   * o job tiver onde guardar, passar aqui e a linha aparece sozinha.
+   * Promoção da Fixfy paga em nome do cliente. Omitida = a do `party`
+   * (`jobs.promotion_amount`). O preço do profissional não muda com ela.
    */
   promotionAmount?: number | null;
 }): AgentReceiptView {
@@ -101,7 +104,7 @@ export function buildAgentReceiptView(args: {
   const label = name ?? GENERIC_PROFESSIONAL;
   const title = String(args.jobTitle ?? "").trim() || "Service";
   const invoiceAmount = round2(args.invoiceAmount);
-  const promotion = Math.max(0, round2(args.promotionAmount ?? 0));
+  const promotion = Math.max(0, round2(args.promotionAmount ?? args.party.promotionAmount ?? 0));
 
   const base = round2(args.clientPrice ?? 0);
   const extras = round2(args.extrasAmount ?? 0);

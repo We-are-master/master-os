@@ -53,9 +53,10 @@ const PARTIAL_INTRO =
 
 
 /**
- * Schedule B: as duas linhas de sempre ("Trade services" + "Fixfy platform
- * fee"), tiradas do HTML para o template aceitar também o recibo de agente.
- * Texto idêntico ao que estava no arquivo: B não muda.
+ * Schedule B: as duas linhas de sempre ("Trade services" + taxa da Fixfy),
+ * tiradas do HTML para o template aceitar também o recibo de agente. Em B a
+ * Fixfy vende como principal, então a taxa é "management fee", nunca
+ * "platform fee" (B não se diz plataforma nem agente).
  */
 const B_CHARGES_ROWS = `                <tr>
                   <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
@@ -75,7 +76,7 @@ const B_CHARGES_ROWS = `                <tr>
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Fixfy platform fee</p>
+                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Fixfy management fee</p>
                           <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Coordination, vetting &amp; quality assurance</p>
                         </td>
                         <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{fixfy_fee}}</td>
@@ -589,18 +590,18 @@ export function buildInvoiceClientEmailHTML(
       : buildBankDetailsBlock();
 
   /**
-   * O texto de "plataforma divulgada", alinhado aos termos de 06/10/2026.
+   * O texto de quem vende, alinhado aos termos de 06/10/2026.
    *
-   * Em Schedule A a Fixfy não é plataforma que "conecta": é agente do
-   * profissional, que é com quem o cliente contratou, e recebe o pagamento em
-   * nome dele. Em B o texto antigo fica (B não mudou), mas ele não é renderizado
-   * pelo HTML: só existe para quem ler este builder.
+   * Schedule A: a Fixfy é agente do profissional, que é com quem o cliente
+   * contratou, e recebe o pagamento em nome dele.
+   * Schedule B: venda da própria Getfixfy Ltd (principal). Nada de "plataforma
+   * divulgada" nem de agente: em B a Fixfy é quem vende o serviço.
    */
   const vatPrimary = agentView
     ? agentView.bookingNote
     : paid
-      ? "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This receipt confirms your full payment."
-      : "Fixfy operates as a disclosed platform connecting clients with independent trade providers. This statement covers the work completed below.";
+      ? "This receipt confirms your full payment to Getfixfy Ltd for the work below."
+      : "This statement from Getfixfy Ltd covers the work completed below.";
 
   const preheader = agentView
     ? paid

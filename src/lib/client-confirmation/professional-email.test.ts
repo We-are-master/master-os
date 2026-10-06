@@ -36,6 +36,12 @@ describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
     assert.match(m.text, /your contract for this job is with Sparkle Clean Ltd/);
   });
 
+  it("Fixfy promotion is its own line, paid by Fixfy on the customer's behalf", () => {
+    const m = buildProfessionalConfirmedEmail({ ...input, promotion: 26.6 });
+    assert.match(m.html, /Fixfy promotion, paid by Fixfy on your behalf/);
+    assert.match(m.text, /Fixfy promotion, paid by Fixfy on your behalf: -£26\.60/);
+  });
+
   it("no em or en dashes, and no Fixfy VAT number", () => {
     const m = buildProfessionalConfirmedEmail(input);
     for (const t of [m.subject, m.html, m.text]) {

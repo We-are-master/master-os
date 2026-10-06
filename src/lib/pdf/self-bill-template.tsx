@@ -38,6 +38,8 @@ export interface SelfBillPdfLine {
   commissionFlag?: boolean;
   /** Schedule A: quanto faltou quando `commissionFlag`. */
   commissionShortfall?: number;
+  /** Schedule A: promoção da Fixfy paga em nome do cliente (parte do preço, não muda o líquido). */
+  promotion?: number;
 }
 
 export interface SelfBillPdfData {
@@ -533,7 +535,8 @@ function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
 
           <Text style={ps.partLabel}>Part A · Platform Bookings</Text>
           <Text style={ps.partSub}>
-            Customer price is your price for the job. Fixfy commission includes VAT. You receive the rest.
+            Customer price is your price for the job, including any Fixfy promotion that Fixfy paid on the
+            customer&apos;s behalf. Fixfy commission includes VAT. You receive the rest.
           </Text>
           <View style={{ marginBottom: 14 }}>
             <View style={styles.tableHead} wrap={false} fixed>
@@ -555,9 +558,16 @@ function PayoutStatementPDF({ data }: { data: SelfBillPdfData }) {
                   <Text style={styles.cellText}>{line.title}</Text>
                   {line.property_address ? <Text style={styles.cellAddrText}>{line.property_address}</Text> : null}
                 </View>
-                <Text style={[styles.cellNumText, ps.aNum]}>
-                  {line.customerPrice != null ? fmtPlain(line.customerPrice) : ""}
-                </Text>
+                <View style={ps.aNum}>
+                  <Text style={[styles.cellNumText, { textAlign: "right" }]}>
+                    {line.customerPrice != null ? fmtPlain(line.customerPrice) : ""}
+                  </Text>
+                  {(line.promotion ?? 0) > 0.005 ? (
+                    <Text style={[styles.lineNote, { textAlign: "right" }]}>
+                      incl. {fmtPlain(line.promotion ?? 0)} Fixfy promotion
+                    </Text>
+                  ) : null}
+                </View>
                 <Text style={[styles.cellNumText, ps.aNum]}>
                   {line.commission != null ? fmtPlain(line.commission) : ""}
                 </Text>

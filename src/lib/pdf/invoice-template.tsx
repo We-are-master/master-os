@@ -367,7 +367,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
                 <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
               </View>
               <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Fixfy platform fee</Text>
+                <Text style={styles.lineLabel}>Fixfy management fee</Text>
                 <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
               </View>
               {data.partial && !isPaid ? (
@@ -421,8 +421,7 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           )}
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
-            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com{"\n"}
-            Fixfy operates as a disclosed platform connecting clients with independent trade providers.
+            124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com
           </Text>
         </View>
       </Page>

@@ -8,6 +8,24 @@ export function jobBillableRevenue(j: Pick<Job, "client_price" | "extras_amount"
   return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
 }
 
+/** Promoção da Fixfy no job (mig 313). Nunca negativa; ausente = 0. */
+export function jobPromotionAmount(j: Pick<Job, "promotion_amount">): number {
+  return Math.max(0, Number(j.promotion_amount ?? 0) || 0);
+}
+
+/**
+ * O que o CLIENTE deve pelo job: preço + extras − promoção da Fixfy.
+ *
+ * A promoção é paga pela Fixfy em nome do cliente (modelo de agente, 06/10/2026):
+ * o preço do profissional (`client_price`) fica cheio e o cliente nunca é
+ * cobrado pela promoção. Toda conta de "quanto falta o cliente pagar" (fatura,
+ * link /pay, fechamento financeiro) usa isto, não `jobBillableRevenue`, que
+ * continua sendo o preço cheio para receita e margem.
+ */
+export function jobCustomerTotal(j: Pick<Job, "client_price" | "extras_amount" | "promotion_amount">): number {
+  return Math.max(0, Math.round((jobBillableRevenue(j) - jobPromotionAmount(j)) * 100) / 100);
+}
+
 export function jobDirectCost(j: Pick<Job, "partner_cost" | "materials_cost">): number {
   return Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0);
 }
@@ -96,6 +114,7 @@ type JobCustomerBillableForCollections = Pick<
   | "job_type"
   | "client_price"
   | "extras_amount"
+  | "promotion_amount"
   | "customer_deposit"
   | "customer_final_payment"
   | "billed_hours"
@@ -113,7 +132,8 @@ type JobCustomerBillableForCollections = Pick<
  * Customer billable total aligned with the job detail finance card (max of ticket, scheduled total, hourly-derived client+extras).
  */
 export function jobCustomerBillableRevenueForCollections(j: JobCustomerBillableForCollections): number {
-  const base = jobBillableRevenue(j);
+  // Promoção da Fixfy sai do que o cliente deve (ver `jobCustomerTotal`).
+  const base = jobCustomerTotal(j);
   const scheduled = customerScheduledTotal(j as Job);
   if (j.job_type !== "hourly") {
     return Math.max(base, scheduled);
@@ -136,7 +156,7 @@ export function jobCustomerBillableRevenueForCollections(j: JobCustomerBillableF
     clientHourlyRate: clientRate,
     partnerHourlyRate: partnerRate,
   });
-  const hourlyClientPlusExtras = totals.clientTotal + Number(j.extras_amount ?? 0);
+  const hourlyClientPlusExtras = Math.max(0, totals.clientTotal + Number(j.extras_amount ?? 0) - jobPromotionAmount(j));
   return Math.max(base, scheduled, hourlyClientPlusExtras);
 }
 
@@ -157,7 +177,7 @@ export function canMarkJobCompletedFinancially(
   customerPayments: JobCompletionPaymentRow[],
   partnerPayments: JobCompletionPaymentRow[],
 ): { ok: boolean; message?: string } {
-  const billable = jobBillableRevenue(job);
+  const billable = jobCustomerTotal(job);
   const customerTotal = customerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
   const partnerTotal = sumPartnerRecordedPayoutsForCap(partnerPayments);
   const partnerDue = partnerPaymentCap(job);
@@ -180,7 +200,7 @@ export function canMarkJobCompletedFinancially(
 
 /** True when recorded customer deposit + final payments cover billable revenue (for finance-driven job close). */
 export function customerCollectionsSatisfyBillable(job: Job, customerPayments: JobCompletionPaymentRow[]): boolean {
-  const billable = jobBillableRevenue(job);
+  const billable = jobCustomerTotal(job);
   const eps = 0.01;
   if (billable <= eps) return true;
   const customerTotal = customerPayments.reduce((s, p) => s + Number(p.amount ?? 0), 0);

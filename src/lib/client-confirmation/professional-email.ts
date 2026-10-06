@@ -23,6 +23,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { agentModelEnabled, resolveJobWorkSchedule } from "@/lib/agent-model/schedule";
 import { receiptPartyFromPartner } from "@/lib/agent-model/receipt-party";
+import { loadJobPromotionAmount } from "@/lib/agent-model/promotion";
 import { invoiceCollectedAmount } from "@/lib/invoice-balance";
 import type { Invoice } from "@/types/database";
 import { mensagensAoClienteLigadas } from "./policy";
@@ -46,6 +47,8 @@ export type ConfirmedEmailInput = {
   professionalAddress: string | null;
   professionalVatNumber: string | null;
   lines: { label: string; amount: number }[];
+  /** Promoção da Fixfy paga em nome do cliente (0 = sem promoção). */
+  promotion?: number;
   amountPaid: number;
   balance: number;
   /** O que vai anexo, no nome do profissional: recibo (pago) ou extrato (sinal). Nulo = nada. */
@@ -148,6 +151,7 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
 
   const bookingRows = [
     ...i.lines.map((l) => row(l.label, gbp(l.amount))),
+    ...((i.promotion ?? 0) > 0.02 ? [row("Fixfy promotion, paid by Fixfy on your behalf", `-${gbp(i.promotion ?? 0)}`)] : []),
     ...(i.amountPaid > 0.02 ? [row(`Paid to GETFIXFY LTD (Fixfy), as agent for ${pro}`, gbp(i.amountPaid), true)] : []),
   ].join("");
   const bookingNotes = [
@@ -237,6 +241,7 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
     "",
     "YOUR BOOKING",
     ...i.lines.map((l) => `${l.label}: ${gbp(l.amount)}`),
+    ...((i.promotion ?? 0) > 0.02 ? [`Fixfy promotion, paid by Fixfy on your behalf: -${gbp(i.promotion ?? 0)}`] : []),
     ...(i.amountPaid > 0.02 ? [`Paid to GETFIXFY LTD (Fixfy), as agent for ${pro}: ${gbp(i.amountPaid)}`] : []),
     ...(i.balance > 0.02 ? [`Balance after the job, through Fixfy: ${gbp(i.balance)}`] : []),
     ...(i.attachmentKind ? [`Your ${i.attachmentKind}, in ${pro}'s name, is attached.`] : []),
@@ -357,7 +362,9 @@ export async function enviarEmailConfirmadoComProfissional(
     ...(extras > 0.02 ? [{ label: "Extras", amount: extras }] : []),
   ];
   const price = lines.reduce((s, l) => s + l.amount, 0);
-  const balance = Math.max(0, Math.round((price - amountPaid) * 100) / 100);
+  // A promoção da Fixfy nunca é cobrada do cliente (mig 313).
+  const promotion = Math.min(price, await loadJobPromotionAmount(supabase, jobId));
+  const balance = Math.max(0, Math.round((price - promotion - amountPaid) * 100) / 100);
   const firstName = String((cliente as { full_name?: string | null } | null)?.full_name ?? j.client_name ?? "")
     .trim()
     .split(/\s+/)[0] || "there";
@@ -406,6 +413,7 @@ export async function enviarEmailConfirmadoComProfissional(
     professionalAddress: party.businessAddress,
     professionalVatNumber: party.vatNumber,
     lines,
+    promotion,
     amountPaid,
     balance: amountPaid > 0.02 ? balance : 0,
     attachmentKind: attachments?.length ? (balance > 0.02 ? "statement" : "receipt") : null,

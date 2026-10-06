@@ -22,6 +22,7 @@ import type { Job, SelfBill } from "@/types/database";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { agentModelEnabled, resolveWorkSchedules, type WorkSchedule } from "@/lib/agent-model/schedule";
 import { platformBookingCommission } from "@/lib/agent-model/commission";
+import { loadJobPromotionAmounts } from "@/lib/agent-model/promotion";
 import type { SelfBillAgentSummary } from "@/lib/agent-model/commission-invoice";
 import type { SelfBillPdfLine } from "@/lib/pdf/self-bill-template";
 
@@ -117,6 +118,13 @@ export async function renderSelfBillPdfBuffer(
       )
     : new Map();
   const lateWithdrawalFees: SelfBillAgentSummary["lateWithdrawalFees"] = [];
+  // Promoção da Fixfy por job (mig 313): aparece na Parte A, nunca muda o líquido.
+  const promotionByJob: Map<string, number> = agentOn
+    ? await loadJobPromotionAmounts(
+        supabase,
+        (jobs ?? []).filter((j) => scheduleByJob.get(String(j.id ?? "")) === "A").map((j) => String(j.id ?? "")),
+      )
+    : new Map();
 
   const lines: SelfBillPdfLine[] = (jobs ?? []).flatMap((j: Record<string, unknown>): SelfBillPdfLine[] => {
     const row = j as Pick<
@@ -226,6 +234,7 @@ export async function renderSelfBillPdfBuffer(
         commission: c.commission,
         commissionFlag: c.flagged,
         commissionShortfall: c.shortfall,
+        promotion: promotionByJob.get(String(j.id ?? "")) ?? 0,
       });
     }
 

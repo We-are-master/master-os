@@ -1,5 +1,5 @@
--- 313 · Modelo de agente (Schedule A): numeração da fatura de comissão com VAT
--- e a trava do e-mail "confirmed with {professional}".
+-- 313 · Modelo de agente (Schedule A): numeração da fatura de comissão com VAT,
+-- a trava do e-mail "confirmed with {professional}" e a promoção da Fixfy no job.
 --
 -- 1) commission_vat_invoices: a Fixfy emite UMA fatura de VAT da comissão
 --    (e das Late-Withdrawal Fees) por payout statement, com número único e
@@ -12,6 +12,12 @@
 --    cliente com o nome do profissional (04-booking-copy, e-mail C2) sai uma
 --    vez por job. O código reivindica a coluna com update atômico em
 --    `.is(null)` antes de mandar; sem a coluna o e-mail simplesmente não sai.
+--
+-- 3) jobs.promotion_amount: promoção da Fixfy paga em nome do cliente
+--    (Commission Schedule 1.4, Invoicing Agreement 3.6). O preço do job
+--    (`client_price`) fica CHEIO; o cliente deve client_price + extras −
+--    promotion_amount. O site (PR #95) manda o valor em POST /api/jobs.
+--    O parceiro e a comissão não mudam com a promoção.
 --
 -- Nada aqui liga o modelo: quem liga é FIXFY_AGENT_MODEL=on no ambiente.
 -- Aplicar manualmente. Idempotente.
@@ -59,3 +65,13 @@ comment on column public.jobs.client_professional_email_sent_at is
   'Quando saiu ao cliente o e-mail "Booking confirmed with {professional}" (Schedule A). Trava de envio único.';
 comment on column public.jobs.client_professional_email_partner_id is
   'Parceiro nomeado no e-mail de confirmação. Se o job trocar de parceiro, o aviso de troca (C3) ainda é manual.';
+
+alter table public.jobs
+  add column if not exists promotion_amount numeric(12,2) not null default 0;
+
+alter table public.jobs drop constraint if exists jobs_promotion_amount_nonnegative;
+alter table public.jobs
+  add constraint jobs_promotion_amount_nonnegative check (promotion_amount >= 0);
+
+comment on column public.jobs.promotion_amount is
+  'Promoção da Fixfy paga em nome do cliente (Schedule A). client_price continua cheio; o cliente deve client_price + extras_amount - promotion_amount.';

@@ -177,7 +177,7 @@ import {
   shouldAutoAdvanceToFinalCheckAfterMerge,
 } from "@/lib/job-phases";
 import {
-  jobBillableRevenue,
+  jobCustomerTotal,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerCashOutDisplaySplit,
@@ -2060,7 +2060,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let rows = await listInvoicesLinkedToJob(j.reference, j.invoice_id);
       if (rows.length === 0 && !j.invoice_id && !autoInvoiceEnsureRef.current.has(j.id)) {
         autoInvoiceEnsureRef.current.add(j.id);
-        const amount = Math.max(0, jobBillableRevenue(j));
+        // O cliente deve preço + extras − promoção da Fixfy (mig 313).
+        const amount = jobCustomerTotal(j);
         if (amount > 0.01) {
           try {
             const inv = await createOrAppendJobInvoice(j, {
@@ -5651,7 +5652,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
         linked[0];
       const invoiceId = await createDocumentAsDraft("invoice", updated, {
-        amount: Math.max(0, jobBillableRevenue(updated)),
+        amount: jobCustomerTotal(updated),
         financeAnchorDate,
         dueDate: dueForAnchor,
       });
@@ -5672,7 +5673,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       try {
         if (invoiceId) {
           await finalizeDocument("invoice", invoiceId, {
-            amount: Math.max(0, jobBillableRevenue(updated)),
+            amount: jobCustomerTotal(updated),
             status: "pending",
             paid_date: undefined,
             collection_stage: "awaiting_final",
@@ -5706,7 +5707,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
     const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
     const paid = depositPaid + finalPaid;
-    const bill = jobBillableRevenue(updated);
+    // O cliente deve preço + extras − promoção da Fixfy (mig 313).
+    const bill = jobCustomerTotal(updated);
     const dueAfter = Math.max(0, bill - paid);
     if (dueAfter > 0.02) {
       await handleStatusChange(updated, "awaiting_payment");
@@ -5835,7 +5837,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
       const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
-      const billableForCollections = Math.max(jobBillableRevenue(current), customerScheduledTotal(current));
+      const billableForCollections = Math.max(jobCustomerTotal(current), customerScheduledTotal(current));
       const customerDue = Math.max(0, billableForCollections - (depositPaid + finalPaid));
       const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
@@ -5890,7 +5892,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       const [draftInvoiceId, draftSelfBillId] = await Promise.all([
         createDocumentAsDraft("invoice", current, {
-          amount: Math.max(customerDue, Math.max(0, jobBillableRevenue(current))),
+          amount: Math.max(customerDue, jobCustomerTotal(current)),
           financeAnchorDate,
           dueDate: invoiceDueYmd,
         }),

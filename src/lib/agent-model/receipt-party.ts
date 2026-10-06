@@ -7,6 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveJobWorkSchedule } from "./schedule";
 import type { AgentReceiptParty } from "./receipt-view";
+import { loadJobPromotionAmount } from "./promotion";
 
 export type JobForReceiptParty = {
   id?: string | null;
@@ -51,8 +52,11 @@ export async function loadAgentReceiptParty(
   });
   if (schedule !== "A") return null;
 
+  // Promoção da Fixfy no job (mig 313): linha própria no recibo. Sem a coluna = 0.
+  const promotionAmount = await loadJobPromotionAmount(supabase, String(job.id));
+
   const partnerId = String(job.partner_id ?? "").trim();
-  if (!partnerId) return receiptPartyFromPartner(null);
+  if (!partnerId) return { ...receiptPartyFromPartner(null), promotionAmount };
   const { data, error } = await supabase
     .from("partners")
     .select("company_name, contact_name, partner_address, vat_number, vat_registered")
@@ -60,9 +64,9 @@ export async function loadAgentReceiptParty(
     .maybeSingle();
   if (error) {
     console.error("[agent-model] partner lookup for receipt failed:", error.message);
-    return receiptPartyFromPartner(null);
+    return { ...receiptPartyFromPartner(null), promotionAmount };
   }
-  const party = receiptPartyFromPartner((data ?? null) as PartnerRow | null);
+  const party: AgentReceiptParty = { ...receiptPartyFromPartner((data ?? null) as PartnerRow | null), promotionAmount };
   if (party.professionalName && !party.businessAddress) {
     console.warn(`[agent-model] partner ${partnerId} has no business address: receipt shows the name only`);
   }

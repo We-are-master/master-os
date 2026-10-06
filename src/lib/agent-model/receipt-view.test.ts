@@ -61,3 +61,20 @@ describe("receiptPartyFromPartner", () => {
     assert.equal(receiptPartyFromPartner({ company_name: "", contact_name: "Ana" }).professionalName, "Ana");
   });
 });
+
+describe("Fixfy promotion on the Schedule A receipt", () => {
+  it("full price lines, separate promotion line, customer pays price minus promotion", () => {
+    const v = buildAgentReceiptView({
+      party: { ...party, promotionAmount: 34.2 },
+      jobTitle: "End of tenancy clean",
+      clientPrice: 266,
+      extrasAmount: 76,
+      invoiceAmount: 307.8,
+      paid: true,
+    });
+    assert.equal(v.professionalPrice, 342);
+    assert.equal(v.promotion, 34.2);
+    assert.equal(v.partOfPrice, false);
+    assert.equal(v.documentAmount, 307.8);
+  });
+});
