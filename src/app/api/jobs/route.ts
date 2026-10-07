@@ -35,6 +35,7 @@ import type {
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import { CONTA_DO_EXPRESS, expressLigado, mandarTemplateDoExpress } from "@/lib/harvey-wa/express";
 import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
@@ -1211,6 +1212,25 @@ export async function POST(req: NextRequest) {
       console.error("[api/jobs] customer message on existing ticket failed:", err);
       zendeskCorrections.push("customer_message_failed");
     }
+  }
+
+  // ─── Express do Checkatrade: boas-vindas no WhatsApp (07/10/2026) ─────
+  // Job da conta Checkatrade com telefone e ticket novo = Express que o Ruben
+  // aceitou. Sai o template pela linha do Zendesk e a nota vai no ticket do job;
+  // quando o cliente responde, o ticket do job vira a conversa. Desligado até
+  // HARVEY_WA_EXPRESS_ON=1. Esperado aqui (não `void`): na Vercel o que fica
+  // solto depois da resposta morre.
+  if (expressLigado() && createdZendeskTicketId && str(body.account_id) === CONTA_DO_EXPRESS()) {
+    const r = await mandarTemplateDoExpress(supabase, {
+      jobId: String(inserted.id),
+      referencia: String(inserted.reference ?? ""),
+      ticketId: createdZendeskTicketId,
+      nome: clientName,
+      telefone: clientPhone,
+      titulo: titleResolved,
+      dataIso: isoDate || null,
+    }).catch((e) => ({ kind: "falhou" as const, motivo: String(e) }));
+    if (r.kind === "falhou") zendeskCorrections.push("express_whatsapp_failed");
   }
 
   // ─── Zendesk dispatch (depois da resposta; idempotent) ───────────────
