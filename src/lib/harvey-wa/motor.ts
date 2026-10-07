@@ -12,7 +12,8 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
-import { quemE, type Identidade } from "./identidade";
+import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
+import { externalIdDoLead } from "./primeiro-contato";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { anotarPagamentoNaConversa, classificarNoZendesk, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
@@ -244,7 +245,12 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   // Zendesk: separa parceiro de cliente na primeira mensagem e preenche o perfil quando a reserva traz os dados.
   // Refaz enquanto o ticket da conversa não apareceu no Zendesk.
   if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
-    const dados: DadosDoCliente = r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {};
+    // Lead que recebeu o template: o ticket aberto no envio entra no da conversa.
+    const { data: leadWa } = telefone ? await sb.from("harvey_wa_leads").select("lead_externo").eq("chave", chaveDoTelefone(telefone)).maybeSingle() : { data: null };
+    const dados: DadosDoCliente = {
+      ...(r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {}),
+      ...(leadWa?.lead_externo ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo as string) } : {}),
+    };
     const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
   }

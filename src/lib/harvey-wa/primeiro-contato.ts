@@ -26,6 +26,7 @@ import { firstName, parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
 import { scApi, scNotificacao } from "./sunshine";
+import { zendeskApi } from "@/lib/zendesk";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -123,6 +124,8 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
       { chave: chaveDoTelefone(destino), telefone: destino, cliente_id: p.clienteId, lead_externo: p.leadExterno ?? null, servico: p.servico, notificacao, enviado_em: new Date().toISOString() },
       { onConflict: "chave" },
     );
+    // O ticket nasce agora, com o template dentro (como no respond.io); a resposta do cliente junta tudo nele.
+    await abrirTicketDoLead(sb, p, destino).catch((e) => console.error("[harvey-wa] ticket do lead", e));
     return { kind: "enviado", notificacao };
   } catch (e) {
     return { kind: "falhou", motivo: e instanceof Error ? e.message.slice(0, 240) : "falhou" };
@@ -166,4 +169,86 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
       leadExterno: brief.externalId ?? null,
     },
   };
+}
+
+
+/** O external_id do ticket do lead: o mesmo marcador das notas do OS. */
+export function externalIdDoLead(leadExterno: string): string {
+  return `checkatrade-lead:${leadExterno}`;
+}
+
+/**
+ * Nome padrão de ticket de lead (dono, 07/10/2026), igual ao dos leads da Meta:
+ * "<Origem> lead · <Serviço> · <Nome> · <Postcode>".
+ */
+export function assuntoDoLead(origem: string, servico: string, nome: string, postcode: string | null): string {
+  const s = servico.trim();
+  return [`${origem} lead`, s.charAt(0).toUpperCase() + s.slice(1), nome.trim() || "No name", postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
+}
+
+/**
+ * Abre o ticket do lead no Zendesk na hora do template, só com nota interna
+ * (nenhum e-mail sai: os gatilhos de criação pedem comentário público). Quando
+ * o cliente responde, o Harvey junta este ticket no do WhatsApp
+ * (juntarTicketDoLead). Já existe (reenvio): só acrescenta a nota.
+ */
+export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, destino: string, quando: Date = new Date()): Promise<number | null> {
+  if (!p.leadExterno) return null;
+  const { data: c } = await sb.from("clients").select("full_name,email,postcode,address,notes").eq("id", p.clienteId).maybeSingle();
+  const brief = parseLeadBrief({ id: p.clienteId, name: c?.full_name ?? null, phone: destino, email: c?.email ?? null, postcode: c?.postcode ?? null, address: c?.address ?? null, notes: c?.notes ?? null });
+  const nome = brief.name || p.nome;
+  const email = (brief.email ?? "").trim().toLowerCase();
+  const emailDoCliente = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !/@getfixfy\.com$/i.test(email) ? email : null;
+  const hora = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(quando);
+  const vars = variaveisDoTemplate(p);
+  const textoAprovado = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim();
+  const texto = textoAprovado ? vars.reduce((t, v, i) => t.split(`{{${i + 1}}}`).join(v), textoAprovado.replace(/\\n/g, "\n")) : null;
+  const template = process.env.HARVEY_WA_LEAD_TEMPLATE?.trim() ?? "";
+  const notaDoEnvio = [
+    `WhatsApp template sent automatically: ${template} (${process.env.HARVEY_WA_LEAD_TEMPLATE_LANG?.trim() || "en_GB"}), ${hora} London.`,
+    vars.map((v, i) => `Variable ${i + 1}: ${v}`).join(" · "),
+    texto ? `\n${texto}` : null,
+    "\nWhen they reply, Harvey picks up on WhatsApp and this ticket is merged into that conversation.",
+  ].filter(Boolean).join("\n");
+
+  const externalId = externalIdDoLead(p.leadExterno);
+  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
+  const aberto = tickets?.find((t) => !["solved", "closed"].includes(t.status));
+  if (aberto) {
+    await zendeskApi(`tickets/${aberto.id}.json`, { method: "PUT", body: { ticket: { comment: { body: notaDoEnvio, public: false } } } });
+    return aberto.id;
+  }
+  const ficha = [
+    "NEW CHECKATRADE LEAD",
+    "",
+    `Name: ${nome || "-"}`,
+    `Phone: ${destino}`,
+    `WhatsApp: https://wa.me/${destino.replace(/\D/g, "")}`,
+    `Email: ${email || "-"}`,
+    `Postcode: ${brief.postcode ?? "-"}`,
+    `Service: ${p.servico}`,
+    "",
+    "What they asked for:",
+    brief.enquiry ?? "(no message)",
+    "",
+    `OS contact: https://app.getfixfy.com/clients?clientId=${p.clienteId}`,
+    `Checkatrade lead id: ${p.leadExterno}`,
+    "",
+    notaDoEnvio,
+  ].join("\n");
+  const r = await zendeskApi<{ ticket: { id: number } }>("tickets.json", {
+    method: "POST",
+    body: {
+      ticket: {
+        subject: assuntoDoLead("Checkatrade", p.servico, nome, brief.postcode),
+        comment: { body: ficha, public: false },
+        requester: emailDoCliente ? { name: nome || "Checkatrade lead", email: emailDoCliente } : { name: "Fixfy Team", email: "team@getfixfy.com" },
+        priority: "high",
+        // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
+        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "ai_quote_draft"],
+        external_id: externalId,
+      },
+    },
+  });
+  return r.ticket?.id ?? null;
 }
