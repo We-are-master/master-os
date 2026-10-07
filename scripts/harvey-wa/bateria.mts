@@ -152,7 +152,7 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
     checar: (t, f) => [!f.includes("get_my_bookings") && "não consultou as reservas", !/9|nine/i.test(t) && "não disse a janela de chegada", /£\d/.test(t) && !/balance|pay/i.test(t) && "falou de preço sem motivo"].filter(Boolean) as string[],
   },
   ordem_bagunçada: {
-    cliente: ["Card", "Deep clean 1 bed 1 bath, E17", "yes that's all", "Thursday 9-12", "7 Classon Close E17 4QS", "I'll be there", "free parking", "Victor Souza, victor.test@example.com"],
+    cliente: ["Card", "Deep clean 1 bed 1 bath, E17", "yes that's all", "the first morning you have", "7 Classon Close E17 4QS", "I'll be there", "free parking", "Victor Souza, victor.test@example.com"],
     checar: (t, f, r) =>
       [
         /card (payment )?link or bank/i.test(t) && "perguntou cartão ou banco (cartão é o padrão)",
