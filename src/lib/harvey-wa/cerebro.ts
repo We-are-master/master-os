@@ -231,6 +231,39 @@ const FERRAMENTAS_PARCEIRO = [
   },
 ] as const;
 
+/** As palavras de uma frase, sem pontuação nem maiúscula (para comparar frases). */
+function palavras(frase: string): Set<string> {
+  return new Set(frase.toLowerCase().replace(/[’']/g, "").split(/[^a-z0-9£.]+/).map((w) => w.replace(/\.$/, "")).filter(Boolean));
+}
+
+/** Duas frases dizem a mesma coisa (≥ 60% das palavras em comum, frase de 5+ palavras)? */
+export function quaseIgual(a: string, b: string): boolean {
+  const x = palavras(a);
+  const y = palavras(b);
+  if (x.size < 5 || y.size < 5) return false;
+  let comum = 0;
+  for (const w of x) if (y.has(w)) comum++;
+  return comum / (x.size + y.size - comum) >= 0.6;
+}
+
+export function frasesDe(texto: string): string[] {
+  return texto.split(/(?<=[.!?])\s+|\n+/).map((f) => f.trim()).filter(Boolean);
+}
+
+/**
+ * Tira da resposta a frase que o Harvey já disse nesta conversa (dono, 07/10/2026:
+ * "ninguém compra de IA"; repetir o pacote inteiro a cada pergunta soa robô).
+ * Se sobraria nada, devolve a resposta como veio.
+ */
+export function semRepetir(resposta: string, jaDito: string[]): string {
+  const antes = jaDito.flatMap(frasesDe);
+  const valoresDitos = new Set(jaDito.join(" ").match(/£\d[\d,]*(?:\.\d+)?/g) ?? []);
+  // Link (um novo da Stripe) e valor que ainda não saiu (total novo) ficam sempre.
+  const fica = (f: string) => /https?:\/\//.test(f) || (f.match(/£\d[\d,]*(?:\.\d+)?/g) ?? []).some((v) => !valoresDitos.has(v));
+  const linhas = resposta.split(/\n+/).map((l) => frasesDe(l).filter((f) => fica(f) || !antes.some((d) => quaseIgual(f, d))).join(" ")).filter(Boolean);
+  return linhas.length ? linhas.join("\n\n") : resposta;
+}
+
 /** A resposta oferece um dia ("Friday is free", "I have Thursday or Friday available")? */
 export function ofereceDia(t: string): boolean {
   const dia = "(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day|tomorrow|this week|next week";
@@ -331,6 +364,8 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       if (r.resposta && !r.passarParaEquipe && !/\?\s*$/.test(r.resposta) && /\b(I['’]ll|I will|let me|I['’]m (going to|getting))\s+(grab|get|bring in)\s+(someone|a person|the team|someone from the team)\b/i.test(r.resposta)) {
         r.passarParaEquipe = "Harvey said he would get the team (no tool call): check the conversation";
       }
+      // O que já foi dito não se diz de novo (o "tools included, no call out fee" a cada resposta).
+      if (r.resposta && jaFalou && !ctx.chase) r.resposta = semRepetir(r.resposta, conversa.filter((f) => f.papel === "harvey").map((f) => f.texto));
       // Já se apresentou nesta conversa: nunca de novo.
       if (r.resposta && jaFalou) {
         const sem = r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*I['’]m Harvey[^.!?]*[.!?]\s*/i, "").trim();
