@@ -23,6 +23,7 @@ import {
   type TabelaDePrecos,
   type TipoDeDocumento,
 } from "@/lib/os-documentos";
+import { comoLista, paraSite, validarV2, type TabelaV2 } from "@/lib/tabela-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -62,12 +63,14 @@ export async function POST(req: NextRequest) {
     nota = `Restored version ${antiga.id}`;
   }
 
-  const erros = tipo === "tabela_de_precos" ? validarTabela(documento) : validarRegras(documento);
+  // Tabela: a lista (formato 2) tem de passar na régua dela E virar uma tabela que o site aceita.
+  const lista = tipo === "tabela_de_precos" ? comoLista(documento) : null;
+  const erros = lista ? [...validarV2(lista as TabelaV2), ...validarTabela(paraSite(lista))] : validarRegras(documento);
   if (erros.length) return NextResponse.json({ error: erros[0], erros }, { status: 400 });
 
-  if (tipo === "tabela_de_precos" && !corpo.confirmar) {
+  if (lista && !corpo.confirmar) {
     const atual = await versaoAtual<TabelaDePrecos>(r.sb, tipo);
-    const grandes = mudancasGrandes(atual?.documento ?? null, documento as TabelaDePrecos);
+    const grandes = mudancasGrandes(atual ? paraSite(comoLista(atual.documento)) : null, paraSite(lista));
     if (grandes.length) {
       return NextResponse.json({ error: "Some prices change by more than 30%. Confirm to save.", confirmar: grandes }, { status: 409 });
     }

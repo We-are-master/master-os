@@ -9,6 +9,7 @@ import { lerAjustes } from "@/lib/harvey-wa/ajustes";
 import { lerEdicoes } from "@/lib/harvey-wa/conhecimento";
 import { SECOES_CLIENTE, SECOES_PARCEIRO } from "@/lib/harvey-wa/prompt";
 import { versaoAtual, type TabelaDePrecos } from "@/lib/os-documentos";
+import { comoLista, paraSite } from "@/lib/tabela-v2";
 import { AgenteHarvey, type Catalogo } from "./agente-harvey";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export default async function HarveyAgentPage() {
     lerEdicoes(sb, "parceiro").catch(() => ({})),
     sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle(),
     versaoAtual<TabelaDePrecos>(sb, "tabela_de_precos")
-      .then((v) => (v ? paraCatalogo(v.documento) : null))
+      .then((v) => (v ? paraCatalogo(paraSite(comoLista(v.documento))) : null))
       .catch(() => null),
     lerAjustes(sb),
   ]);

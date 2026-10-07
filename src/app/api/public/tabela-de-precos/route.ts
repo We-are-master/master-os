@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { versaoEmVigor, type TabelaDePrecos } from "@/lib/os-documentos";
+import { versaoEmVigor } from "@/lib/os-documentos";
+import { comoLista, paraSite } from "@/lib/tabela-v2";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,10 +13,11 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
-    const v = await versaoEmVigor<TabelaDePrecos>(createServiceClient(), "tabela_de_precos");
+    const v = await versaoEmVigor<unknown>(createServiceClient(), "tabela_de_precos");
     if (!v) return NextResponse.json({ error: "No price list yet" }, { status: 404 });
     return NextResponse.json(
-      { versao: v.id, atualizado_em: v.criado_em, documento: v.documento },
+      // O site lê o formato 1; a lista (formato 2) é convertida aqui.
+      { versao: v.id, atualizado_em: v.criado_em, documento: paraSite(comoLista(v.documento)) },
       { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } },
     );
   } catch (err) {
