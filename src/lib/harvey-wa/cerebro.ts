@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 
@@ -328,7 +329,9 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
     .filter(Boolean)
     .join(" ");
   const fotos = parceiro ? [] : (ctx.fotos ?? []).slice(-4);
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro() : promptDoHarvey(catalogo)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  // O que a equipe editou na tela /agents/harvey (cache de 30 s).
+  const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogo, new Date(), edicoes)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 

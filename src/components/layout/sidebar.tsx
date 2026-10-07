@@ -42,6 +42,7 @@ import {
   GraduationCap,
   type LucideIcon,
   SquareKanban,
+  Bot,
 } from "lucide-react";
 
 const iconMap: Record<string, LucideIcon> = {
@@ -67,6 +68,7 @@ const iconMap: Record<string, LucideIcon> = {
   contact: ContactRound,
   "message-square": MessageSquare,
   kanban: SquareKanban,
+  bot: Bot,
   "mail-plus": MailPlus,
   "map-pin": MapPin,
   "graduation-cap": GraduationCap,
