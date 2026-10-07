@@ -39,8 +39,13 @@ const POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/;
  * both the text and its boundaries.
  */
 export async function readLeafFields(page: Page): Promise<string[]> {
-  const leaves = await page.locator(LEAF_TEXT_SELECTOR).allTextContents();
-  return leaves.map((t) => t.trim()).filter(Boolean);
+  const leaves = (await page.locator(LEAF_TEXT_SELECTOR).allTextContents().catch(() => [])).map((t) => t.trim()).filter(Boolean);
+  if (leaves.some((f) => POSTCODE_RE.test(f))) return leaves;
+  // 07/10/2026: o Checkatrade trocou o HTML e o testid dos leaves sumiu (lista
+  // vazia). Hoje o innerText do body traz o painel do lead, uma linha por
+  // campo, na mesma ordem: nome, "London, WC2H 9BD", telefone, e-mail.
+  const texto = await page.locator("body").innerText().catch(() => "");
+  return texto.split("\n").map((t) => t.trim()).filter(Boolean);
 }
 
 /**
@@ -70,8 +75,10 @@ export function parseLeadMessage(fields: string[]): string | undefined {
   const i = fields.indexOf("Message");
   if (i < 0) return undefined;
   // fields[i+1] is the timestamp ("24 May 26 15:48"); the body follows it.
-  const candidate = fields[i + 2] ?? fields[i + 1];
-  return candidate && candidate !== "Appointments" ? candidate : undefined;
+  // Pelo innerText (07/10/2026) cada parágrafo é uma linha: junta até "Appointments".
+  const fim = fields.indexOf("Appointments", i + 2);
+  const corpo = fields.slice(i + 2, fim > i ? fim : i + 3).join("\n").trim();
+  return corpo || undefined;
 }
 
 /** Contact details only exist AFTER "I'm interested" — absent on a New lead. */
@@ -113,11 +120,15 @@ export async function respondToLead(page: Page, opportunity: CheckatradeOpportun
   const before = await readLeafFields(page);
   const message = parseLeadMessage(before);
   const apptIdx = before.indexOf("Appointments");
+  // Pelo innerText (HTML de 07/10/2026) depois da nota vêm as iniciais, o nome e
+  // "Contact preference": para na primeira linha que já é do bloco do cliente.
+  const fimDaNota = (f: string) => /^[A-Z]{1,3}$/.test(f) || /Contact preference|On Checkatrade since|Not for me|I.m interested/i.test(f);
+  const depoisDaAgenda = apptIdx >= 0 ? before.slice(apptIdx + 1) : [];
+  const corte = depoisDaAgenda.findIndex(fimDaNota);
   const appointmentNote =
     apptIdx >= 0
-      ? before
-          .slice(apptIdx + 1)
-          .filter((f) => !POSTCODE_RE.test(f))
+      ? (corte >= 0 ? depoisDaAgenda.slice(0, corte) : depoisDaAgenda)
+          .filter((f) => !POSTCODE_RE.test(f) && f !== "Create")
           .slice(0, 8)
           .join(" ")
           .trim() || undefined
@@ -128,13 +139,18 @@ export async function respondToLead(page: Page, opportunity: CheckatradeOpportun
   // Only click if the button is still there — an already-"Interested" lead
   // won't show it, and re-clicking would just error and block re-processing
   // forever.
-  const interestedButton = page.locator(INTERESTED_BUTTON_SELECTOR);
+  // aria-label primeiro; se o HTML novo não tiver, o botão pelo nome acessível (07/10/2026).
+  let interestedButton = page.locator(INTERESTED_BUTTON_SELECTOR);
+  if (!(await interestedButton.isVisible({ timeout: 3_000 }).catch(() => false))) {
+    interestedButton = page.getByRole("button", { name: /I.m interested/i }).first();
+  }
   if (await interestedButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
     await interestedButton.click({ timeout: 10_000 });
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
   }
 
   // Contact details are revealed by the click above, so re-read the leaves.
+  await page.waitForTimeout(2_500);
   const after = await readLeafFields(page);
   const { phone, email } = parseLeadContact(after);
 

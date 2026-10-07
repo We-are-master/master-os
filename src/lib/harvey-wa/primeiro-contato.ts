@@ -26,6 +26,7 @@ import { firstName, parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
 import { scApi, scNotificacao } from "./sunshine";
+import { zendeskApi } from "@/lib/zendesk";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -86,7 +87,7 @@ export type PrimeiroContato = {
   leadExterno?: string | null;
 };
 
-export type ResultadoDoContato = { kind: "enviado"; notificacao: string | null } | { kind: "ja_falamos" } | { kind: "falhou"; motivo: string };
+export type ResultadoDoContato = { kind: "enviado"; notificacao: string | null; ticket: number | null } | { kind: "ja_falamos" } | { kind: "falhou"; motivo: string };
 
 /** Manda o template de primeiro contato para UM lead e registra. Nunca lança. */
 export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroContato): Promise<ResultadoDoContato> {
@@ -123,7 +124,9 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
       { chave: chaveDoTelefone(destino), telefone: destino, cliente_id: p.clienteId, lead_externo: p.leadExterno ?? null, servico: p.servico, notificacao, enviado_em: new Date().toISOString() },
       { onConflict: "chave" },
     );
-    return { kind: "enviado", notificacao };
+    // O ticket nasce agora, com o template dentro (como no respond.io); a resposta do cliente junta tudo nele.
+    const ticket = await abrirTicketDoLead(sb, p, destino).catch((e) => (console.error("[harvey-wa] ticket do lead", e), null));
+    return { kind: "enviado", notificacao, ticket };
   } catch (e) {
     return { kind: "falhou", motivo: e instanceof Error ? e.message.slice(0, 240) : "falhou" };
   }
@@ -166,4 +169,133 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
       leadExterno: brief.externalId ?? null,
     },
   };
+}
+
+
+/** O texto aprovado de cada template (Meta, conta do 020 4538 4668), para a nota do ticket. */
+const TEXTO_DOS_TEMPLATES: Record<string, { corpo: string; rodape?: string }> = {
+  checkatrade_request_received: {
+    corpo:
+      "Hi {{1}}, this is Fixfy. We've just received your Checkatrade request for {{2}}.\n\nCould you reply with a few photos of the job? That way we can give you an accurate price with no surprises. If you'd rather talk, just tell us a good time to call.",
+    rodape: "Fixfy · London",
+  },
+};
+
+/** O external_id do ticket do lead: o mesmo marcador das notas do OS. */
+export function externalIdDoLead(leadExterno: string): string {
+  return `checkatrade-lead:${leadExterno}`;
+}
+
+/**
+ * Nome padrão de ticket de lead (dono, 07/10/2026), igual ao dos leads da Meta:
+ * "<Origem> lead · <Serviço> · <Nome> · <Postcode>".
+ */
+export function assuntoDoLead(origem: string, servico: string, nome: string, postcode: string | null): string {
+  const s = servico.trim();
+  return [`${origem} lead`, s.charAt(0).toUpperCase() + s.slice(1), nome.trim() || "No name", postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
+}
+
+/**
+ * Abre o ticket do lead no Zendesk na hora do template, só com nota interna
+ * (nenhum e-mail sai: os gatilhos de criação pedem comentário público). Quando
+ * o cliente responde, o Harvey junta este ticket no do WhatsApp
+ * (juntarTicketDoLead). Já existe (reenvio): só acrescenta a nota.
+ */
+export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, destino: string, quando: Date = new Date()): Promise<number | null> {
+  if (!p.leadExterno) return null;
+  const { data: c } = await sb.from("clients").select("full_name,email,postcode,address,notes").eq("id", p.clienteId).maybeSingle();
+  const brief = parseLeadBrief({ id: p.clienteId, name: c?.full_name ?? null, phone: destino, email: c?.email ?? null, postcode: c?.postcode ?? null, address: c?.address ?? null, notes: c?.notes ?? null });
+  const nome = brief.name || p.nome;
+  const email = (brief.email ?? "").trim().toLowerCase();
+  const emailDoCliente = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !/@getfixfy\.com$/i.test(email) ? email : null;
+  const ligarAte = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" }).format(new Date(quando.getTime() + 2 * 3600_000));
+  const template = process.env.HARVEY_WA_LEAD_TEMPLATE?.trim() ?? "";
+  // A mensagem como o cliente lê no WhatsApp, com as variáveis já trocadas (formato do dono, 07/10/2026).
+  const vars = variaveisDoTemplate(p);
+  const doEnv = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim().replace(/\\n/g, "\n");
+  const molde = doEnv ? { corpo: doEnv } : TEXTO_DOS_TEMPLATES[template];
+  const troca = (t: string) => vars.reduce((acc, v, i) => acc.split(`{{${i + 1}}}`).join(v), t);
+  const notaDoEnvio = [
+    molde ? troca(molde.corpo) : `(WhatsApp template ${template}: ${vars.join(", ")})`,
+    "",
+    `Next action: awaiting reply on WhatsApp (Harvey answers and this ticket is merged into that conversation). No reply by ${ligarAte}: call the lead on ${destino}.`,
+    ...(molde?.rodape ? ["", molde.rodape] : []),
+  ].join("\n");
+
+  const externalId = externalIdDoLead(p.leadExterno);
+  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
+  const aberto = tickets?.find((t) => !["solved", "closed"].includes(t.status));
+  if (aberto) {
+    await zendeskApi(`tickets/${aberto.id}.json`, { method: "PUT", body: { ticket: { comment: { body: notaDoEnvio, public: false } } } });
+    return aberto.id;
+  }
+  const ficha = [
+    "NEW CHECKATRADE LEAD",
+    "",
+    `Name: ${nome || "-"}`,
+    `Phone: ${destino}`,
+    `WhatsApp: https://wa.me/${destino.replace(/\D/g, "")}`,
+    `Email: ${email || "-"}`,
+    `Postcode: ${brief.postcode ?? "-"}`,
+    `Service: ${p.servico}`,
+    "",
+    "What they asked for:",
+    brief.enquiry ?? "(no message)",
+    "",
+    `OS contact: https://app.getfixfy.com/clients?clientId=${p.clienteId}`,
+    `Checkatrade lead id: ${p.leadExterno}`,
+    "",
+    notaDoEnvio,
+  ].join("\n");
+  const r = await zendeskApi<{ ticket: { id: number } }>("tickets.json", {
+    method: "POST",
+    body: {
+      ticket: {
+        subject: assuntoDoLead("Checkatrade", p.servico, nome, brief.postcode),
+        comment: { body: ficha, public: false },
+        requester: emailDoCliente ? { name: nome || "Checkatrade lead", email: emailDoCliente } : { name: "Fixfy Team", email: "team@getfixfy.com" },
+        priority: "high",
+        // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
+        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "ai_quote_draft"],
+        external_id: externalId,
+      },
+    },
+  });
+  return r.ticket?.id ?? null;
+}
+
+
+/**
+ * O lead do Checkatrade também vira um LEAD no OS (tabela leads), na hora,
+ * sem publicar aos parceiros (published_at nulo: o lead é nosso até fechar).
+ * Uma vez por cliente. Devolve a referência (LD-...) ou null.
+ */
+export async function registrarLeadNoOs(sb: SupabaseClient, r: LinhaDeCliente, catalogo: CatalogService[], contaId: string | null): Promise<string | null> {
+  const brief = parseLeadBrief({ ...r, name: r.full_name });
+  if (!brief.externalId) return null;
+  const { data: ja } = await sb.from("leads").select("reference").eq("client_id", r.id).is("deleted_at", null).limit(1);
+  if (ja?.length) return (ja[0] as { reference: string }).reference;
+  const d = decideDispatch(brief, catalogo);
+  const servico = d.dispatch ? d.label : "handyman work";
+  const doCatalogo = catalogo.find((c) => c.name === "General Maintenance");
+  const urgente = /urgent|48 hours|emergency/i.test(r.notes ?? "");
+  const { data: ref } = await sb.rpc("next_lead_ref");
+  const { error } = await sb.from("leads").insert({
+    reference: String(ref),
+    name: brief.name || "Checkatrade lead",
+    email: brief.email,
+    phone: brief.phone,
+    address: r.address || (brief.postcode ? `London, ${brief.postcode}` : "London"),
+    city: "London",
+    postcode: brief.postcode,
+    urgency: urgente ? "high" : "medium",
+    scope: [`${servico.charAt(0).toUpperCase()}${servico.slice(1)}.`, brief.enquiry ? `Customer's request: "${brief.enquiry}"` : null, "First contact by WhatsApp (Harvey)."].filter(Boolean).join(" "),
+    status: "new",
+    client_id: r.id,
+    account_id: contaId,
+    catalog_service_id: doCatalogo?.id ?? null,
+    published_at: null,
+  });
+  if (error) throw new Error(`lead no OS: ${error.message}`);
+  return String(ref);
 }
