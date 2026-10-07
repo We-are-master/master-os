@@ -76,9 +76,9 @@ export function createMasterOsClient(cfg: RpaConfig) {
      * Express job enriches its customer's row with the postcode/address that
      * POST /api/jobs doesn't store.
      */
-    async upsertContact(contact: ContactPayload): Promise<MasterOsCreateResponse> {
+    async upsertContact(contact: ContactPayload, accountId: string = cfg.masterOs.accountId): Promise<MasterOsCreateResponse> {
       const res = await post(`${cfg.masterOs.baseUrl}/api/contacts/ingest`, cfg.env.masterOsLeadApiKey, {
-        account_id: cfg.masterOs.accountId,
+        account_id: accountId,
         contacts: [contact],
       });
       // The batch endpoint answers with a results array; normalise it to the
@@ -106,12 +106,13 @@ export function createMasterOsClient(cfg: RpaConfig) {
         // assunto nosso, não do job.
         notes: [
           payload.external_id ? `checkatrade-lead:${payload.external_id}` : null,
-          `Enquiry — ${payload.service_type}`,
+          `Enquiry · ${payload.service_type}`,
           payload.scope,
         ]
           .filter(Boolean)
           .join("\n\n"),
-      });
+      // O lead é contato NOSSO (conta Fixfy, dono 07/10/2026); o Express segue na conta Checkatrade.
+      }, process.env.MASTER_OS_LEAD_ACCOUNT_ID?.trim() || cfg.masterOs.accountId);
     },
 
     /**
