@@ -87,7 +87,7 @@ export type PrimeiroContato = {
   leadExterno?: string | null;
 };
 
-export type ResultadoDoContato = { kind: "enviado"; notificacao: string | null } | { kind: "ja_falamos" } | { kind: "falhou"; motivo: string };
+export type ResultadoDoContato = { kind: "enviado"; notificacao: string | null; ticket: number | null } | { kind: "ja_falamos" } | { kind: "falhou"; motivo: string };
 
 /** Manda o template de primeiro contato para UM lead e registra. Nunca lança. */
 export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroContato): Promise<ResultadoDoContato> {
@@ -125,8 +125,8 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
       { onConflict: "chave" },
     );
     // O ticket nasce agora, com o template dentro (como no respond.io); a resposta do cliente junta tudo nele.
-    await abrirTicketDoLead(sb, p, destino).catch((e) => console.error("[harvey-wa] ticket do lead", e));
-    return { kind: "enviado", notificacao };
+    const ticket = await abrirTicketDoLead(sb, p, destino).catch((e) => (console.error("[harvey-wa] ticket do lead", e), null));
+    return { kind: "enviado", notificacao, ticket };
   } catch (e) {
     return { kind: "falhou", motivo: e instanceof Error ? e.message.slice(0, 240) : "falhou" };
   }
@@ -173,12 +173,13 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
 
 
 /** O texto aprovado de cada template (Meta, conta do 020 4538 4668), para a nota do ticket. */
-const TEXTO_DOS_TEMPLATES: Record<string, string> = {
-  checkatrade_request_received:
-    "Hi {{1}}, this is Fixfy. We've just received your Checkatrade request for {{2}}.\n\nCould you reply with a few photos of the job? That way we can give you an accurate price with no surprises. If you'd rather talk, just tell us a good time to call.\n\nFixfy · London",
+const TEXTO_DOS_TEMPLATES: Record<string, { corpo: string; rodape?: string }> = {
+  checkatrade_request_received: {
+    corpo:
+      "Hi {{1}}, this is Fixfy. We've just received your Checkatrade request for {{2}}.\n\nCould you reply with a few photos of the job? That way we can give you an accurate price with no surprises. If you'd rather talk, just tell us a good time to call.",
+    rodape: "Fixfy · London",
+  },
 };
-
-const nomeCurto = (n: string) => (n && n !== "there" ? n : "the customer");
 
 /** O external_id do ticket do lead: o mesmo marcador das notas do OS. */
 export function externalIdDoLead(leadExterno: string): string {
@@ -207,19 +208,18 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
   const nome = brief.name || p.nome;
   const email = (brief.email ?? "").trim().toLowerCase();
   const emailDoCliente = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !/@getfixfy\.com$/i.test(email) ? email : null;
-  const hora = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(quando);
   const ligarAte = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" }).format(new Date(quando.getTime() + 2 * 3600_000));
   const template = process.env.HARVEY_WA_LEAD_TEMPLATE?.trim() ?? "";
-  // A mensagem como o cliente lê no WhatsApp, com as variáveis já trocadas.
+  // A mensagem como o cliente lê no WhatsApp, com as variáveis já trocadas (formato do dono, 07/10/2026).
   const vars = variaveisDoTemplate(p);
-  const molde = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim().replace(/\\n/g, "\n") || TEXTO_DOS_TEMPLATES[template] || null;
-  const mensagem = molde ? vars.reduce((t, v, i) => t.split(`{{${i + 1}}}`).join(v), molde) : `(template ${template}: ${vars.join(", ")})`;
+  const doEnv = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim().replace(/\\n/g, "\n");
+  const molde = doEnv ? { corpo: doEnv } : TEXTO_DOS_TEMPLATES[template];
+  const troca = (t: string) => vars.reduce((acc, v, i) => acc.split(`{{${i + 1}}}`).join(v), t);
   const notaDoEnvio = [
-    `WhatsApp sent automatically at ${hora} (London), template ${template}. What ${nomeCurto(p.nome)} received:`,
-    "",
-    mensagem.split("\n").map((l) => `> ${l}`).join("\n"),
+    molde ? troca(molde.corpo) : `(WhatsApp template ${template}: ${vars.join(", ")})`,
     "",
     `Next action: awaiting reply on WhatsApp (Harvey answers and this ticket is merged into that conversation). No reply by ${ligarAte}: call the lead on ${destino}.`,
+    ...(molde?.rodape ? ["", molde.rodape] : []),
   ].join("\n");
 
   const externalId = externalIdDoLead(p.leadExterno);
