@@ -143,6 +143,9 @@ export type DecisaoDoLead =
  */
 export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): DecisaoDoLead {
   const brief = parseLeadBrief({ ...r, name: r.full_name });
+  // Só lead do Checkatrade: o template fala "your Checkatrade request". Lead do
+  // site também chega com celular pelo ingest e não pode receber esse texto.
+  if (!brief.externalId) return { kind: "pular", motivo: "não é lead do Checkatrade" };
   const d = decideDispatch(brief, catalogo);
   if (!d.dispatch) return { kind: "pular", motivo: d.reason };
   return {

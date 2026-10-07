@@ -10,3 +10,9 @@ test("telefone vira +44 do jeito que o Sunshine quer", () => {
   assert.equal(telefoneE164("12345"), null);
   assert.equal(telefoneE164(null), null);
 });
+
+test("lead do site (sem marcador do Checkatrade) não recebe o template", async () => {
+  const { decidirLead } = await import("./primeiro-contato");
+  const d = decidirLead({ id: "x", full_name: "Sarah Jones", email: "s@x.com", phone: "07700900123", postcode: "NW5 1AB", address: null, notes: "Website lead" }, []);
+  assert.equal(d.kind, "pular");
+});
