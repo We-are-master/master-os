@@ -11,6 +11,7 @@
  * Grupo, org e campos de usuário são criados na primeira vez (idempotente).
  */
 
+import { createServiceClient } from "@/lib/supabase/service";
 import { zendeskApi, isZendeskConfigured } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
 import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP } from "@/lib/zendesk-statuses";
@@ -81,7 +82,32 @@ async function ticketDaConversa(userId: number): Promise<number | null> {
   return r.results?.[0]?.id ?? null;
 }
 
-export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null };
+/**
+ * Express: o cliente respondeu o template de boas-vindas. O ticket do job (aberto
+ * pelo OS quando o Ruben aceitou) entra no ticket do WhatsApp e o job passa a
+ * apontar para a conversa, para os avisos do job e a equipe ficarem num lugar só.
+ */
+export async function juntarTicketDoJob(ticketWa: number, j: { ticketId: number; jobId: string }): Promise<string> {
+  if (j.ticketId === ticketWa) return "";
+  const { ticket } = await zendeskApi<{ ticket: { status: string } }>(`tickets/${j.ticketId}.json`);
+  if (["solved", "closed"].includes(ticket?.status)) return "";
+  await zendeskApi(`tickets/${ticketWa}/merge.json`, {
+    method: "POST",
+    body: {
+      ids: [j.ticketId],
+      source_comment: `The customer replied on WhatsApp. This job continues in #${ticketWa}.`,
+      source_comment_is_public: false,
+      target_comment: `Job ticket #${j.ticketId} (Checkatrade Express) merged here. The job now points to this conversation.`,
+      target_comment_is_public: false,
+    },
+  });
+  const sb = createServiceClient();
+  await sb.from("jobs").update({ external_source: "zendesk", external_ref: String(ticketWa) }).eq("id", j.jobId).eq("external_ref", String(j.ticketId));
+  await sb.from("harvey_wa_leads").update({ ticket_id: ticketWa }).eq("job_id", j.jobId);
+  return `, job #${j.ticketId} juntado`;
+}
+
+export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null; ticketDoJob?: { ticketId: number; jobId: string } | null };
 
 /**
  * O cliente respondeu o template: o ticket do lead (aberto no envio, com a
@@ -168,6 +194,7 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
     await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
     await statusDaConversa(ticket, ZD_STATUS_WHATSAPP);
     if (dados.ticketDoLead) juntou = await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
+    if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   }
   return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}${juntou}`;
 }

@@ -212,6 +212,22 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
     cliente: ["Hi yes, it's the shelves and the curtain pole"],
     checar: (t, f) => [/I['’]m Harvey/i.test(t.split("\n").slice(1).join("\n")) && "se apresentou de novo", !/£180/.test(t) && "não cotou a meia diária (£180)", !f.includes("get_quote") && "não chamou get_quote", !/material|part/i.test(t) && "não avisou que material não está incluso"].filter(Boolean) as string[],
   },
+  // Express do Checkatrade (07/10/2026): o template de boas-vindas foi a primeira mensagem.
+  express_cliente: {
+    quem: "cliente",
+    abertura: "Hi Laura, this is Fixfy. We've accepted your Checkatrade booking for handyman work on Friday 2 October, and from now on we're looking after it for you.\n\nWe'll confirm your professional and arrival time here. If anything changes or you have a question, just reply to this message.",
+    sobre:
+      "Existing customer in our system: Laura Mills. This customer booked through Checkatrade Express and Fixfy accepted the job: JOB-9001, General Maintenance, on Friday 2 October, arrival 9 am to 12 pm, professional assigned. Our welcome template was the first message (you have already introduced Fixfy: do not introduce yourself again). The price is already agreed on Checkatrade: never quote or send a payment link for this job. Answer questions about it with get_my_bookings; changes, cancellations or anything you cannot answer go to the team.",
+    cliente: ["Thanks! What time will they arrive?"],
+    checar: (t, f, r) =>
+      [
+        !f.includes("get_my_bookings") && "não consultou a reserva",
+        /£\d/.test(t.split("\n").slice(3).join("\n")) && "falou preço num Express",
+        r.link && "mandou link de pagamento num Express",
+        /I['’]m Harvey/i.test(t.split("\n").slice(3).join("\n")) && "se apresentou de novo",
+        !/9|nine/i.test(t.split("\n").slice(3).join("\n")) && "não disse a janela de chegada",
+      ].filter(Boolean) as string[],
+  },
   stop: {
     cliente: ["how much for a deep clean", "stop messaging me"],
     checar: (t) => [/£\d/.test(t.split("\n").slice(-1)[0] || "") && "vendeu depois do stop"].filter(Boolean) as string[],

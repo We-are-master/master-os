@@ -14,6 +14,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
 import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
 import { externalIdDoLead } from "./primeiro-contato";
+import { contextoDoExpress } from "./express";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { anotarPagamentoNaConversa, classificarNoZendesk, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
@@ -240,7 +241,9 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
   const sessao = sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
-  const { quem, contas, sobreQuem } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
+  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
+  // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
+  const sobreQuem = [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null].filter(Boolean).join(" ") || undefined;
 
   const r = await pensar(
     paraFalas(sessao),
@@ -268,10 +271,12 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   // Refaz enquanto o ticket da conversa não apareceu no Zendesk.
   if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
     // Lead que recebeu o template: o ticket aberto no envio entra no da conversa.
-    const { data: leadWa } = telefone ? await sb.from("harvey_wa_leads").select("lead_externo").eq("chave", chaveDoTelefone(telefone)).maybeSingle() : { data: null };
+    const { data: leadWa } = telefone ? await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id").eq("chave", chaveDoTelefone(telefone)).maybeSingle() : { data: null };
     const dados: DadosDoCliente = {
       ...(r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {}),
       ...(leadWa?.lead_externo ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo as string) } : {}),
+      // Express: o ticket do job entra na conversa e o job passa a apontar para ela.
+      ...(leadWa?.job_id && leadWa?.ticket_id ? { ticketDoJob: { ticketId: Number(leadWa.ticket_id), jobId: String(leadWa.job_id) } } : {}),
     };
     const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
