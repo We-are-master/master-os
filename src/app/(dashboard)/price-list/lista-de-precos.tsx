@@ -83,12 +83,12 @@ export function ListaDePrecos({
   const mudou = JSON.stringify(t) !== JSON.stringify(inicial);
   const porCategoria = useMemo(() => CATEGORIAS.map((c) => ({ ...c, servicos: t.servicos.filter((s) => s.categoria === c.id) })).filter((c) => c.servicos.length), [t]);
 
-  function aplicar(s: ServicoV2, novo: boolean, ligarTamanhos: string[]) {
+  function aplicar(s: ServicoV2, novo: boolean, tamanhosNoSite: Record<string, boolean>) {
     setT((velho) => {
       const d = structuredClone(velho);
-      for (const id of ligarTamanhos) {
+      for (const [id, ligado] of Object.entries(tamanhosNoSite)) {
         const z = d.tamanhos.find((x) => x.id === id);
-        if (z) z.ativo = true;
+        if (z) z.ativo = ligado;
       }
       if (novo) d.servicos.push(s);
       else d.servicos = d.servicos.map((x) => (x.id === s.id ? s : x));
@@ -186,8 +186,6 @@ export function ListaDePrecos({
           Harvey only: the website cannot sell it by itself yet (per hour, call-out, week, month, other services, extras outside cleaning). Harvey quotes it and passes to the team to book.
         </p>
 
-        <RegrasDeLimpeza t={t} setT={setT} />
-
         <section className="rounded-xl border border-border-light bg-card p-4">
           <h2 className="font-medium text-text-primary">History</h2>
           <p className="mb-3 text-xs text-text-tertiary">Every save is a version. Restore puts an older version live again.</p>
@@ -274,7 +272,7 @@ function EditorDeServico({
   tabela: TabelaV2;
   tiposDeTrabalho: string[];
   onFechar: () => void;
-  onAplicar: (s: ServicoV2, novo: boolean, ligarTamanhos: string[]) => void;
+  onAplicar: (s: ServicoV2, novo: boolean, tamanhosNoSite: Record<string, boolean>) => void;
   onApagar: (id: string) => void;
 }) {
   const [s, setS] = useState<ServicoV2>(inicial);
@@ -284,11 +282,18 @@ function EditorDeServico({
   const categoria = CATEGORIAS.find((c) => c.id === s.categoria)!;
   const muda = (p: Partial<ServicoV2>) => setS((x) => ({ ...x, ...p }));
 
-  // Tamanhos que aparecem nas linhas: os ligados no site + os que já têm preço neste serviço.
-  const [extrasDeTamanho, setExtrasDeTamanho] = useState<string[]>([]);
-  const tamanhosVisiveis = tabela.tamanhos.filter((z) => z.ativo !== false || s.precosPorTamanho?.[z.id] != null || extrasDeTamanho.includes(z.id));
+  // Tamanhos nas linhas: os ligados no site + os que já têm preço aqui + os que você acabou de adicionar.
+  const [adicionados, setAdicionados] = useState<string[]>([]);
+  const [noSite, setNoSite] = useState<Record<string, boolean>>({});
+  const ligado = (id: string) => noSite[id] ?? tabela.tamanhos.find((z) => z.id === id)?.ativo !== false;
+  const tamanhosVisiveis = tabela.tamanhos.filter((z) => z.ativo !== false || s.precosPorTamanho?.[z.id] != null || adicionados.includes(z.id));
   const proximoTamanho = tabela.tamanhos.find((z) => !tamanhosVisiveis.includes(z));
-  const ligarTamanhos = tabela.tamanhos.filter((z) => z.ativo === false && typeof s.precosPorTamanho?.[z.id] === "number").map((z) => z.id);
+  const regras = s.regrasDeLimpeza ?? {
+    banheirosInclusos: tabela.limpeza.banheirosInclusos,
+    banheiroExtra: [...tabela.limpeza.banheiroExtra],
+    equipeDeDoisAPartir: tabela.limpeza.equipeDeDoisAPartir,
+  };
+  const mudaRegras = (r: Partial<typeof regras>) => muda({ regrasDeLimpeza: { ...regras, ...r } });
 
   const podeAvancar =
     passo === 1 ? s.nome.trim().length > 1 : passo === 2 ? Boolean(s.cobranca) : passo === 3 ? true : passo === 4 ? true : s.descricao.trim().length > 0 && s.osTitle.trim().length > 0;
@@ -318,8 +323,13 @@ function EditorDeServico({
   }
 
   function aplicar() {
-    const final: ServicoV2 = { ...s, id: s.id || novoId(s.nome), extras: temExtras ? s.extras : [] };
-    onAplicar(final, novo, ligarTamanhos);
+    const final: ServicoV2 = {
+      ...s,
+      id: s.id || novoId(s.nome),
+      extras: temExtras ? s.extras : [],
+      ...(s.categoria === "cleaning" ? { regrasDeLimpeza: regras } : {}),
+    };
+    onAplicar(final, novo, noSite);
   }
 
 
@@ -382,17 +392,66 @@ function EditorDeServico({
                   <span className="text-sm text-text-secondary">
                     {z.label}
                     {i === 0 ? <span className="ml-1 text-xs text-text-tertiary">(base price)</span> : null}
-                    {z.ativo === false ? <span className="ml-1 text-xs text-amber-700">(new size: turns on for the website)</span> : null}
+                    {z.ativo === false || noSite[z.id] !== undefined ? (
+                      <label className="ml-2 inline-flex items-center gap-1 text-xs text-text-tertiary">
+                        <input type="checkbox" checked={ligado(z.id)} onChange={(e) => setNoSite((x) => ({ ...x, [z.id]: e.target.checked }))} />
+                        show on website
+                      </label>
+                    ) : null}
                   </span>
                   <Num valor={s.precosPorTamanho?.[z.id]} placeholder="Quote" onChange={(v) => muda({ precosPorTamanho: { ...(s.precosPorTamanho ?? {}), [z.id]: v } })} />
                 </div>
               ))}
               {proximoTamanho ? (
-                <Button size="sm" variant="outline" onClick={() => setExtrasDeTamanho((x) => [...x, proximoTamanho.id])}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAdicionados((x) => [...x, proximoTamanho.id]);
+                    setNoSite((x) => ({ ...x, [proximoTamanho.id]: true }));
+                  }}
+                >
                   <Plus className="h-4 w-4" /> Add {proximoTamanho.label}
                 </Button>
               ) : null}
-              <p className="text-xs text-text-tertiary">Leave a size empty to show Quote. Bathrooms, extra bathrooms and team of two are in Cleaning rules below the list.</p>
+              <p className="text-xs text-text-tertiary">Leave a size empty to show Quote. A size shown on the website appears for every cleaning service (the ones without a price show Quote).</p>
+
+              <div className="space-y-2 rounded-lg border border-border-light p-3">
+                <p className="text-sm font-medium text-text-primary">Rules for this service</p>
+                <div className="grid grid-cols-[1fr_140px] items-center gap-2">
+                  <span className="text-sm text-text-secondary">Bathrooms included</span>
+                  <input type="number" min={1} className={`${CAMPO} text-right`} value={regras.banheirosInclusos} onChange={(e) => mudaRegras({ banheirosInclusos: Number(e.target.value) || 1 })} />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-sm text-text-secondary">Each extra bathroom</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {regras.banheiroExtra.map((v, i) => (
+                      <div key={i} className="w-28 space-y-0.5">
+                        <span className="text-[11px] text-text-tertiary">{i === regras.banheiroExtra.length - 1 ? `${regras.banheirosInclusos + i + 1}th and over` : `${regras.banheirosInclusos + i + 1}${["st", "nd", "rd"][regras.banheirosInclusos + i] ?? "th"} bathroom`}</span>
+                        <Num valor={v} onChange={(n) => mudaRegras({ banheiroExtra: regras.banheiroExtra.map((x, j) => (j === i ? n ?? 0 : x)) })} />
+                      </div>
+                    ))}
+                    <Button size="sm" variant="outline" onClick={() => mudaRegras({ banheiroExtra: [...regras.banheiroExtra, regras.banheiroExtra[regras.banheiroExtra.length - 1] ?? 40] })}>
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                    {regras.banheiroExtra.length > 1 ? (
+                      <Button size="sm" variant="outline" aria-label="Remove last" onClick={() => mudaRegras({ banheiroExtra: regras.banheiroExtra.slice(0, -1) })}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid grid-cols-[1fr_180px] items-center gap-2">
+                  <span className="text-sm text-text-secondary">Team of two from</span>
+                  <select className={CAMPO} value={regras.equipeDeDoisAPartir} onChange={(e) => mudaRegras({ equipeDeDoisAPartir: e.target.value })}>
+                    {tabela.tamanhos.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
           ) : s.cobranca === "pacotes" ? (
             <div className="space-y-2">
@@ -465,7 +524,7 @@ function EditorDeServico({
               >
                 <Plus className="h-4 w-4" /> Add extra
               </Button>
-              {s.categoria === "cleaning" ? <p className="text-xs text-text-tertiary">The website offers cleaning extras on every clean, so an extra must have the same price in every cleaning service.</p> : null}
+              <p className="text-xs text-text-tertiary">These extras belong to this service only.</p>
             </div>
           ) : null}
         </Passo>
@@ -552,57 +611,6 @@ function Passo({ n, titulo, visivel, children }: { n: number; titulo: string; vi
         {titulo}
       </h3>
       {children}
-    </section>
-  );
-}
-
-// ── tamanhos e regras de limpeza (valem para todos os serviços de limpeza) ──
-
-function RegrasDeLimpeza({ t, setT }: { t: TabelaV2; setT: React.Dispatch<React.SetStateAction<TabelaV2>> }) {
-  const muda = (fn: (d: TabelaV2) => void) =>
-    setT((v) => {
-      const d = structuredClone(v);
-      fn(d);
-      return d;
-    });
-  return (
-    <section className="space-y-3 rounded-xl border border-border-light bg-card p-4">
-      <div>
-        <h2 className="font-medium text-text-primary">Sizes and cleaning rules</h2>
-        <p className="text-xs text-text-tertiary">Sizes switched off do not show on the website. These rules apply to every cleaning service.</p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {t.tamanhos.map((z, i) => (
-          <label key={z.id} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${z.ativo !== false ? "border-primary/40 text-text-primary" : "border-border text-text-tertiary"}`}>
-            <input type="checkbox" checked={z.ativo !== false} onChange={(e) => muda((d) => void (d.tamanhos[i].ativo = e.target.checked))} />
-            {z.label}
-          </label>
-        ))}
-      </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <label className="space-y-1 text-sm text-text-secondary">
-          Bathrooms included
-          <input type="number" min={1} className={CAMPO} value={t.limpeza.banheirosInclusos} onChange={(e) => muda((d) => void (d.limpeza.banheirosInclusos = Number(e.target.value)))} />
-        </label>
-        <label className="space-y-1 text-sm text-text-secondary">
-          Each extra bathroom (2nd, 3rd, 4th+)
-          <div className="flex gap-2">
-            {t.limpeza.banheiroExtra.map((v, i) => (
-              <input key={i} inputMode="decimal" className={`${CAMPO} text-right`} value={v} onChange={(e) => muda((d) => void (d.limpeza.banheiroExtra[i] = Number(e.target.value.replace(/[^\d.]/g, "")) || 0))} />
-            ))}
-          </div>
-        </label>
-        <label className="space-y-1 text-sm text-text-secondary">
-          Team of two from
-          <select className={CAMPO} value={t.limpeza.equipeDeDoisAPartir} onChange={(e) => muda((d) => void (d.limpeza.equipeDeDoisAPartir = e.target.value))}>
-            {t.tamanhos.map((z) => (
-              <option key={z.id} value={z.id}>
-                {z.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
     </section>
   );
 }

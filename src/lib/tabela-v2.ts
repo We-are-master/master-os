@@ -19,6 +19,8 @@ export type TipoDePacote = "half_day" | "full_day" | "hours" | "per_hour" | "cal
 export type Pacote = { id: string; tipo: TipoDePacote; rotulo: string; detalhe: string; horas: number | null; preco: number };
 export type Extra = { id: string; rotulo: string; detalhe: string; preco: number; porUnidade: boolean; max?: number };
 
+export type RegrasDeLimpeza = { banheirosInclusos: number; banheiroExtra: number[]; equipeDeDoisAPartir: string };
+
 export type ServicoV2 = {
   id: string;
   nome: string;
@@ -34,6 +36,8 @@ export type ServicoV2 = {
   unidade?: string;
   maxUnidades?: number;
   extras: Extra[];
+  /** Limpeza: as regras DESTE serviço (dono, 07/10/2026: "cada um com o seu, não separado"). */
+  regrasDeLimpeza?: RegrasDeLimpeza;
   ativo: boolean;
   /** Textos curtos que só o site usa (botão, cabeçalho, validade do certificado). */
   site?: { short?: string; tiny?: string; hint?: string; valid?: string };
@@ -99,6 +103,7 @@ export function deV1(t: TabelaDePrecos): TabelaV2 {
           cobranca: "por_tamanho",
           precosPorTamanho: { ...k.prices },
           extras: structuredClone(extrasDeLimpeza),
+          regrasDeLimpeza: { banheirosInclusos: t.clean.includedBathrooms, banheiroExtra: [...t.clean.extraBathroomSteps], equipeDeDoisAPartir: t.clean.teamOfTwoFromSize },
           ativo: true,
           site: { short: k.short, tiny: k.tiny, hint: k.hint },
         }),
@@ -171,13 +176,19 @@ export function vaiProSite(s: ServicoV2): boolean {
   return false;
 }
 
+export function regrasDe(s: ServicoV2, t: TabelaV2): RegrasDeLimpeza {
+  return s.regrasDeLimpeza ?? { banheirosInclusos: t.limpeza.banheirosInclusos, banheiroExtra: t.limpeza.banheiroExtra, equipeDeDoisAPartir: t.limpeza.equipeDeDoisAPartir };
+}
+
+const extraParaSite = (e: Extra) => ({ id: e.id, label: e.rotulo, detail: e.detalhe, price: e.preco, ...(e.porUnidade ? { unit: "room", max: e.max ?? 8 } : {}) });
+
 export function paraSite(t: TabelaV2): TabelaDePrecos {
   const ativos = t.servicos.filter(vaiProSite);
   const limpeza = ativos.filter((s) => s.categoria === "cleaning");
+  const padrao = limpeza.find((s) => s.id === t.limpeza.padrao) ?? limpeza[0];
+  const regrasPadrao = padrao ? regrasDe(padrao, t) : { banheirosInclusos: t.limpeza.banheirosInclusos, banheiroExtra: t.limpeza.banheiroExtra, equipeDeDoisAPartir: t.limpeza.equipeDeDoisAPartir };
   const pintura = ativos.filter((s) => s.categoria === "painting");
   const reparo = ativos.find((s) => s.categoria === "handyman");
-  const extrasDeLimpeza = new Map<string, Extra>();
-  for (const s of limpeza) for (const e of s.extras) if (!extrasDeLimpeza.has(e.id)) extrasDeLimpeza.set(e.id, e);
   const material = pintura.flatMap((s) => s.extras).find((e) => e.id === "materials") ?? pintura.flatMap((s) => s.extras)[0];
   return {
     formato: 1,
@@ -188,13 +199,19 @@ export function paraSite(t: TabelaV2): TabelaDePrecos {
     clean: {
       id: "clean",
       verb: "Clean",
-      includedBathrooms: t.limpeza.banheirosInclusos,
+      // Os campos gerais são os do tipo padrão (o site antigo e quem não lê o tipo usam estes).
+      includedBathrooms: regrasPadrao.banheirosInclusos,
       ovenIncluded: true,
       productsIncluded: true,
-      teamOfTwoFromSize: t.limpeza.equipeDeDoisAPartir,
-      extraBathroomSteps: t.limpeza.banheiroExtra,
-      extras: [...extrasDeLimpeza.values()].map((e) => ({ id: e.id, label: e.rotulo, detail: e.detalhe, price: e.preco, ...(e.porUnidade ? { unit: "room", max: e.max ?? 8 } : {}) })),
+      teamOfTwoFromSize: regrasPadrao.equipeDeDoisAPartir,
+      extraBathroomSteps: regrasPadrao.banheiroExtra,
+      extras: (padrao?.extras ?? []).map(extraParaSite),
       kinds: limpeza.map((s) => ({
+        // As regras DE CADA tipo (o site#99 lê estas; sem elas, cai nas gerais acima).
+        includedBathrooms: regrasDe(s, t).banheirosInclusos,
+        extraBathroomSteps: regrasDe(s, t).banheiroExtra,
+        teamOfTwoFromSize: regrasDe(s, t).equipeDeDoisAPartir,
+        extras: s.extras.map(extraParaSite),
         id: s.id,
         name: s.nome,
         short: s.site?.short || s.nome,
@@ -286,14 +303,11 @@ export function validarV2(t: TabelaV2): string[] {
     for (const p of s.pacotes ?? []) if (!preco(p.preco) || !p.rotulo?.trim()) erros.push(`${s.nome}: "${p.rotulo || p.tipo}" needs a name and a price`);
     for (const e of s.extras) if (!preco(e.preco) || !e.rotulo?.trim()) erros.push(`${s.nome}: extra "${e.rotulo || "?"}" needs a name and a price`);
   }
-  // O site usa um preço só por extra de limpeza: o mesmo extra não pode ter dois preços.
-  const precoDoExtra = new Map<string, { preco: number; servico: string }>();
   for (const s of t.servicos.filter((x) => x.ativo && x.categoria === "cleaning")) {
-    for (const e of s.extras) {
-      const ja = precoDoExtra.get(e.rotulo.trim().toLowerCase());
-      if (ja && ja.preco !== e.preco) erros.push(`Cleaning extra "${e.rotulo}" is £${ja.preco} in ${ja.servico} and £${e.preco} in ${s.nome}: the website uses one price per extra`);
-      else precoDoExtra.set(e.rotulo.trim().toLowerCase(), { preco: e.preco, servico: s.nome });
-    }
+    const r = regrasDe(s, t);
+    if (!Number.isInteger(r.banheirosInclusos) || r.banheirosInclusos < 1) erros.push(`${s.nome}: bathrooms included must be 1 or more`);
+    if (!r.banheiroExtra.length || !r.banheiroExtra.every(preco)) erros.push(`${s.nome}: extra bathroom prices must be above £0`);
+    if (!t.tamanhos.some((z) => z.id === r.equipeDeDoisAPartir)) erros.push(`${s.nome}: team of two must start at one of the sizes`);
   }
   return erros;
 }
