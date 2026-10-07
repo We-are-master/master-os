@@ -49,7 +49,7 @@ const nomeDaCategoria = (c: Categoria) => CATEGORIAS.find((x) => x.id === c)?.no
 function resumoDoPreco(s: ServicoV2, t: TabelaV2): string {
   const gbp = (n: number | null | undefined) => (n == null ? "Quote" : `£${n}`);
   if (s.cobranca === "por_tamanho") {
-    const vals = t.tamanhos.map((z) => s.precosPorTamanho?.[z.id]).filter((v): v is number => typeof v === "number");
+    const vals = t.tamanhos.filter((z) => z.ativo !== false).map((z) => s.precosPorTamanho?.[z.id]).filter((v): v is number => typeof v === "number");
     return vals.length ? `from £${Math.min(...vals)} · ${vals.length} sizes` : "Quote";
   }
   if (s.cobranca === "pacotes") return (s.pacotes ?? []).map((p) => `${p.rotulo} ${gbp(p.preco)}`).join(" · ") || "No prices yet";
