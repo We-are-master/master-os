@@ -272,6 +272,20 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
   const [catalogIconLocked, setCatalogIconLocked] = useState(false);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
+  // Variações e extras que o site vende (o site lê os preços daqui, 07/10/2026).
+  const [noSite, setNoSite] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    void fetch("/api/services/website-items")
+      .then((r) => (r.ok ? r.json() : { ids: [] }))
+      .then((j: { ids?: string[] }) => setNoSite(new Set(j.ids ?? [])))
+      .catch(() => {});
+  }, []);
+  /** Item do site não sai daqui: o site perderia o preço (ele fica na última tabela boa). */
+  const protegido = (id: string, label: string) => {
+    if (!noSite.has(id)) return false;
+    toast.error(`"${label || "This item"}" is sold on the website. Change its price instead, or ask to take it off the website first.`);
+    return true;
+  };
   const [creatingCategory, setCreatingCategory] = useState(false);
 
   useEffect(() => {
@@ -497,6 +511,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       toast.error(addonBuild.message);
       return;
     }
+    // Item do site precisa continuar com preço acima de £0 (o site lê daqui).
+    for (const l of [...presetBuild.presets, ...addonBuild.addons] as Array<{ id: string; label: string; fixed_price?: number | null; hourly_rate?: number | null }>) {
+      if (noSite.has(l.id) && !((l.fixed_price ?? l.hourly_rate ?? 0) > 0)) {
+        toast.error(`"${l.label}" is sold on the website and needs a client price above £0.`);
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       await updateCatalogService(editRow.id, {
@@ -599,12 +620,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                     className="h-8 text-xs tabular-nums"
                   />
                 </div>
+                {noSite.has(arow.id) ? <SeloSite /> : null}
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-8 w-8 p-0 text-red-600 shrink-0"
-                  onClick={() => setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
+                  onClick={() => !protegido(arow.id, arow.label) && setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
                   aria-label="Remove additional"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -936,12 +958,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                             className="h-8 text-xs tabular-nums"
                           />
                         </div>
+                        {noSite.has(prow.id) ? <SeloSite /> : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 text-red-600 shrink-0"
-                          onClick={() => setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
+                          onClick={() => !protegido(prow.id, prow.label) && setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
                           aria-label="Remove base"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -1131,13 +1154,14 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                           {bandSeller > 0 ? ` (${bandMarginPct.toFixed(1)}%)` : ""}
                         </p>
                       </div>
-                      <div className="flex shrink-0 pt-5">
+                      <div className="flex shrink-0 items-center gap-1 pt-5">
+                        {noSite.has(prow.id) ? <SeloSite /> : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0 text-red-600"
-                          onClick={() => setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
+                          onClick={() => !protegido(prow.id, prow.label) && setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
                           aria-label="Remove band"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -1254,4 +1278,16 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
   );
 
   return { openCreate, openEdit, openDuplicate, modals };
+}
+
+/** "On website": este preço é o que o site e o Harvey cobram. */
+function SeloSite() {
+  return (
+    <span
+      title="The website, the checkout and Harvey use this price"
+      className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+    >
+      On website
+    </span>
+  );
 }

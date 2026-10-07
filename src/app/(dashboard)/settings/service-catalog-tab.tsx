@@ -1369,6 +1369,10 @@ export function ServiceCatalogTab() {
           <p className="text-sm text-text-secondary mt-0.5">
             Master list of types of work and default sell / partner pay.
           </p>
+          <p className="mt-1 text-xs text-text-tertiary">
+            This is the standard price list. Items marked On website are what the website, the checkout and Harvey charge and pay (updates within about a minute).
+            Accounts and partners with their own rates override these when a job is created.
+          </p>
         </div>
         {catalogView === "manage" ? (
           <Button size="sm" className="shrink-0" icon={<Plus className="h-3.5 w-3.5" />} onClick={openCreate}>

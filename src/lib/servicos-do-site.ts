@@ -184,6 +184,26 @@ export function gerarTabelaDoSite(layout: TabelaDePrecos, mapa: MapaDoSite, serv
   return { ...t, partnerPay: pp, fonte: "services" };
 }
 
+/** Os ids (preset ou addon) que o site usa: a tela de Services marca e protege. */
+export function idsNoSite(mapa: MapaDoSite): string[] {
+  const ids = new Set<string>();
+  const add = (r: Ref | null | undefined) => r && ids.add(r.id);
+  for (const k of Object.values(mapa.clean)) {
+    Object.values(k.tamanhos).forEach(add);
+    k.banheiros.forEach(add);
+    Object.values(k.extras).forEach(add);
+  }
+  Object.values(mapa.paint.opcoes).forEach(add);
+  add(mapa.paint.material);
+  Object.values(mapa.fix.pacotes).forEach(add);
+  add(mapa.fix.hora);
+  for (const c of Object.values(mapa.cert)) {
+    add(c.fixo);
+    Object.values(c.tamanhos ?? {}).forEach(add);
+  }
+  return [...ids];
+}
+
 // ── o que Services tem e o site não mostra ──────────────────────────────────
 
 export function foraDoSite(mapa: MapaDoSite, servicos: Servico[]): Array<{ servico: string; itens: string[] }> {
