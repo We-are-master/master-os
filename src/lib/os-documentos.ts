@@ -22,10 +22,26 @@ export type Precos = Record<string, number | null>;
 export type Tamanho = { id: string; label: string; short: string; tiny: string; ativo?: boolean };
 export type TipoDeLimpeza = { id: string; name: string; short: string; tiny: string; hint: string; detail: string; prices: Precos; osTitle: string };
 export type ExtraDeLimpeza = { id: string; label: string; detail: string; price: number; unit?: string; max?: number };
-export type OpcaoDePintura = { id: string; label: string; detail: string; price: number; unit?: string; max?: number };
-export type Pacote = { id: string; label: string; detail: string; minutes: number; price: number };
+export type OpcaoDePintura = { id: string; label: string; detail: string; price: number; unit?: string; max?: number; time?: string };
+export type Pacote = { id: string; label: string; detail: string; minutes: number; price: number; perHour?: boolean };
+/** Outra profissão no Fix do site (plumber, carpenter, electrician): título do OS e pacotes próprios. */
+export type Profissao = { id: string; label: string; detail?: string; osTitle: string; packages: Pacote[] };
+export type OpcaoDeCertificado = { id: string; label: string; price: number };
 export type Tarefa = { id: string; label: string; minutes: number };
-export type Certificado = { id: string; label: string; short: string; detail: string; valid: string; price?: number | null; prices?: Precos | null; osTitle: string };
+export type Certificado = {
+  id: string;
+  label: string;
+  short: string;
+  detail: string;
+  valid: string;
+  price?: number | null;
+  prices?: Precos | null;
+  /** O cliente escolhe uma (ex.: quantos aparelhos a gás). */
+  options?: OpcaoDeCertificado[];
+  /** Unidade a mais com quantidade (ex.: porta corta-fogo extra). */
+  extra?: { label: string; price: number; max?: number };
+  osTitle: string;
+};
 
 export type TabelaDePrecos = {
   formato: 1;
@@ -45,7 +61,7 @@ export type TabelaDePrecos = {
     kinds: TipoDeLimpeza[];
   };
   paint: { id: string; verb: string; name: string; osTitle: string; options: OpcaoDePintura[]; materials: { id: string; label: string; detail: string; price: number } };
-  fix: { id: string; verb: string; name: string; osTitle: string; packages: Pacote[]; toolsIncluded: boolean; tasks: Tarefa[] };
+  fix: { id: string; verb: string; name: string; osTitle: string; packages: Pacote[]; toolsIncluded: boolean; tasks: Tarefa[]; trades?: Profissao[] };
   cert: { id: string; verb: string; name: string; items: Certificado[] };
 };
 
@@ -114,6 +130,8 @@ export function validarTabela(d: unknown): string[] {
         const v = c.prices[s.id];
         if (v !== null && v !== undefined && !preco(v)) erros.push(`${c.label}: price for ${s.label} must be a number above £0 (or "Quote")`);
       }
+    } else if (c.options?.length) {
+      for (const o of c.options) if (!preco(o.price) || !texto(o.label)) erros.push(`${c.label}: option "${o.label || o.id}" needs a name and a price`);
     } else if (!preco(c.price)) erros.push(`${c.label} needs a price`);
   }
   return erros;

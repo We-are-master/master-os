@@ -89,12 +89,28 @@ const SELECAO = {
       type: "object",
       properties: {
         kind: { type: "string", enum: ["eot", "deep", "after"] },
-        extras: { type: "object", properties: { carpet: { type: "integer", description: "rooms" }, fridge: { type: "integer" }, windows: { type: "integer" }, balcony: { type: "integer" } } },
+        // Ids e quantidades vêm do catálogo (cleaning.kinds[].extras): a lista cresce pelo OS sem mexer aqui.
+        extras: { type: "object", additionalProperties: { type: "integer" }, description: "add-on id from the catalog → quantity (rooms, items) or 1" },
       },
     },
-    paint: { type: "object", properties: { option: { type: "string", enum: ["touchup", "rooms"] }, rooms: { type: "integer" }, materials: { type: "boolean" } } },
-    fix: { type: "object", properties: { tasks: { type: "array", items: { type: "string" } }, package: { type: "string", enum: ["half", "day"] } } },
-    cert: { type: "object", properties: { items: { type: "array", items: { type: "string", enum: ["gas", "eicr", "epc"] } } } },
+    paint: { type: "object", properties: { option: { type: "string", description: "painting.options id: touchup, rooms or day" }, rooms: { type: "integer" }, materials: { type: "boolean" } } },
+    fix: {
+      type: "object",
+      properties: {
+        trade: { type: "string", description: "handyman.trades id: handyman (default), plumber, carpenter or electrician" },
+        tasks: { type: "array", items: { type: "string" }, description: "handyman only" },
+        package: { type: "string", description: "package id of the trade: half, day or hour" },
+        hours: { type: "integer", minimum: 1, maximum: 8, description: "only for the hour package" },
+      },
+    },
+    cert: {
+      type: "object",
+      properties: {
+        items: { type: "array", items: { type: "string" }, description: "certificates[].id from the catalog" },
+        options: { type: "object", additionalProperties: { type: "string" }, description: "certificate id → option id, for certificates with options (gas appliances, fire risk property type, PAT items)" },
+        extra: { type: "object", additionalProperties: { type: "integer" }, description: "certificate id → extra units (extra fire doors, extra asbestos samples)" },
+      },
+    },
   },
   required: ["services"],
 } as const;
