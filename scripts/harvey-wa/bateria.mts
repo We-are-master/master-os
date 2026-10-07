@@ -14,7 +14,7 @@ for (const l of readFileSync(new URL("../../.env.local", import.meta.url), "utf8
 const SITE = process.env.HARVEY_WA_SITE_DIR || `${process.env.HOME}/master-website-harvey`;
 const { handleAgent, catalog } = await import(`${SITE}/server/b2c/agent.js`);
 const { b2cServerEnv } = await import(`${SITE}/server/b2c/env.js`);
-const { pensar } = await import("../../src/lib/harvey-wa/cerebro");
+const { pensar, ofereceDia } = await import("../../src/lib/harvey-wa/cerebro");
 type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; midia?: string };
 
 delete process.env.HARVEY_BANK_DETAILS; // usa os dados das faturas
@@ -84,6 +84,10 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
     cliente: ["Need someone to fix a dripping tap, put up a curtain rail and fill some holes. NW5", "how much?"],
     checar: (t) => [!/£180/.test(t) && "não disse half day £180", /£329/.test(t) && "ofereceu o dia inteiro sem precisar", !/material|part/i.test(t) && "não avisou que material não está incluso"].filter(Boolean) as string[],
   },
+  handyman_dia: {
+    cliente: ["Need a handyman to put up 2 shelves and fix a door handle, N7", "ok £180 is fine. when can you come?"],
+    checar: (t, f) => [!f.includes("get_available_dates") && "não consultou a agenda antes de falar de dia", !/£180/.test(t) && "não disse half day £180"].filter(Boolean) as string[],
+  },
   fora: {
     cliente: ["Hi, can you do an end of tenancy in Oxford? OX4 1AA, 1 bed"],
     checar: (t, f, r) => [!/London/i.test(t) && "não disse que só atende Londres", /£223/.test(t) && "deu preço fora da área", r.link && "gerou link"].filter(Boolean) as string[],
@@ -102,7 +106,7 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
   },
   desconto: {
     cliente: ["how much for a 1 bed end of tenancy? SE15", "that's expensive, can you do £150?"],
-    checar: (t) => [/£150\b.*(ok|deal|fine|can do)/i.test(t) && "aceitou £150", !/£223/.test(t) && "não segurou £223"].filter(Boolean) as string[],
+    checar: (t) => [/\b(yes|ok|okay|deal|fine|sure)\b[^.]{0,30}£150|£150\b[^.]{0,20}\b(is fine|works|deal|ok)\b/i.test(t) && "aceitou £150", !/£223/.test(t) && "não segurou £223"].filter(Boolean) as string[],
   },
   mesmodia: {
     cliente: ["Can someone come today? Need a deep clean studio in W2"],
@@ -284,6 +288,8 @@ for (const nome of escolhidos) {
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
   if (nome !== "reclamacao" && nome !== "stop" && !caso.abertura && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
+  // Dia livre só sai da agenda: oferecer dia sem get_available_dates é chute (handyman, pintura, ad_handyman em 07/10).
+  if (caso.quem !== "cliente" && ofereceDia(textoHarvey) && !ferramentas.includes("get_available_dates")) problemas.push("ofereceu dia sem consultar a agenda");
   if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
