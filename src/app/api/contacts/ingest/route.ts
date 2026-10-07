@@ -32,7 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
-import { dentroDaJanela } from "@/lib/agent/sales/dispatch-one";
+import { ajustesDoHarvey, janelaAberta } from "@/lib/harvey-wa/ajustes";
 import type { CatalogService } from "@/types/database";
 import { decidirLead, mandarPrimeiroContato, registrarLeadNoOs, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
 
@@ -251,7 +251,8 @@ async function contatarPeloHarvey(ids: string[], contaId: string | null) {
   for (const r of (rows ?? []) as LinhaDeCliente[]) {
     await registrarLeadNoOs(sb, r, catalogo, contaId).catch((e) => console.error(`[contacts/ingest] lead ${r.id}: ${String(e).slice(0, 160)}`));
   }
-  if (!dentroDaJanela()) return; // fora de 8h-20h o lote (scripts/harvey-wa/leads-checkatrade.mts) pega depois
+  // Janela dos templates: ajuste na tela /agents/harvey (padrão 8h-20h). Fora dela o lote pega depois.
+  if (!janelaAberta(await ajustesDoHarvey())) return;
   for (const r of (rows ?? []) as LinhaDeCliente[]) {
     const d = decidirLead(r, catalogo);
     if (d.kind === "pular") continue;

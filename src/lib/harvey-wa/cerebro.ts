@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { ajustesDoHarvey, catalogoComAjustes, instrucoesDosAjustes } from "./ajustes";
 import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
@@ -319,19 +320,25 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [], documentos: [] };
   const parceiro = ctx.quem === "parceiro";
   const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
+  const ajustes = await ajustesDoHarvey();
   ctx = { ...ctx, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
     ctx.sobreQuem ?? null,
-    ctx.pagamento === "bank" ? "They asked to pay by bank transfer: we only take card online, so hand off to the team with every booking detail." : null,
+    ctx.pagamento === "bank"
+      ? ajustes.transferencia === "so_cartao"
+        ? "They asked to pay by bank transfer: we only take the secure card link. Tell them kindly and carry on with the card link."
+        : "They asked to pay by bank transfer: we only take card online, so hand off to the team with every booking detail."
+      : null,
   ]
     .filter(Boolean)
     .join(" ");
   const fotos = parceiro ? [] : (ctx.fotos ?? []).slice(-4);
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogo, new Date(), edicoes)) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  const regras = parceiro ? "" : instrucoesDosAjustes(ajustes);
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes) + (regras ? `\n\n${regras}` : "")) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 

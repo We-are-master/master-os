@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
 import type { SecaoDoPrompt, PerfilDoHarvey } from "@/lib/harvey-wa/prompt";
 import type { EdicaoSalva } from "@/lib/harvey-wa/conhecimento";
+import type { AjustesDoHarvey } from "@/lib/harvey-wa/ajustes";
 
 type Precos = Record<string, number | null>;
 export type Catalogo = {
@@ -37,11 +38,13 @@ export type Catalogo = {
 const REGRAS_FIXAS = [
   "Prices come from the website price list, the same one the online checkout uses.",
   "Payment: 50% now by secure card link, 50% after the job. The link expires in 1 hour.",
-  "Bank transfer: Harvey passes the customer to the team with every booking detail.",
   "Days: only days the diary shows free. No same day, no Sundays.",
-  "London only. 5+ bedrooms and anything outside the catalogue go to the team for a quote.",
-  "Leads get the first WhatsApp only between 8am and 8pm London time.",
+  "London only.",
 ];
+
+type Ajustes = AjustesDoHarvey & { atualizado_em: string | null; atualizado_por: string | null };
+const HORAS = Array.from({ length: 25 }, (_, h) => h);
+const rotuloHora = (h: number) => (h === 0 ? "Midnight" : h === 12 ? "12pm" : h === 24 ? "Midnight (end)" : h < 12 ? `${h}am` : `${h - 12}pm`);
 
 const quando = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -63,11 +66,13 @@ export function AgenteHarvey({
   edicoes,
   pausado,
   catalogo,
+  ajustes,
 }: {
   secoes: Record<PerfilDoHarvey, SecaoDoPrompt[]>;
   edicoes: Record<PerfilDoHarvey, Record<string, EdicaoSalva>>;
   pausado: boolean;
   catalogo: Catalogo | null;
+  ajustes: Ajustes;
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<"cliente" | "parceiro" | "precos">("cliente");
@@ -102,8 +107,10 @@ export function AgenteHarvey({
           </div>
         </PageHeader>
 
+        <CartaoDeAjustes inicial={ajustes} onSalvo={() => router.refresh()} />
+
         <section className="rounded-xl border border-border-light bg-surface-secondary p-4">
-          <h2 className="mb-2 text-sm font-semibold text-text-primary">Fixed rules (set in code, not editable here)</h2>
+          <h2 className="mb-2 text-sm font-semibold text-text-primary">Fixed rules (shared with the website, set in code)</h2>
           <ul className="grid gap-1.5 text-sm text-text-secondary md:grid-cols-2">
             {REGRAS_FIXAS.map((r) => (
               <li key={r} className="flex gap-2">
@@ -333,5 +340,94 @@ function Lista({ itens }: { itens: Array<{ nome: string; detalhe: string; preco:
         </li>
       ))}
     </ul>
+  );
+}
+
+function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () => void }) {
+  const [a, setA] = useState<AjustesDoHarvey>({ janelaInicio: inicial.janelaInicio, janelaFim: inicial.janelaFim, cincoQuartos: inicial.cincoQuartos, transferencia: inicial.transferencia });
+  const [ocupado, setOcupado] = useState(false);
+  const mudou =
+    a.janelaInicio !== inicial.janelaInicio || a.janelaFim !== inicial.janelaFim || a.cincoQuartos !== inicial.cincoQuartos || a.transferencia !== inicial.transferencia;
+  const erro = a.janelaFim <= a.janelaInicio ? "The start hour must be before the end hour." : null;
+
+  async function salvarAjustes() {
+    setOcupado(true);
+    try {
+      const res = await fetch("/api/agents/harvey/ajustes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? `failed (${res.status})`);
+      toast.success("Settings saved: Harvey uses them within 30 seconds");
+      onSalvo();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  const SELECT = "h-9 rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary focus:border-primary focus:outline-none";
+  return (
+    <section className="space-y-4 rounded-xl border border-border-light bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-text-primary">Settings</h2>
+        <span className="text-xs text-text-tertiary">
+          {inicial.atualizado_em ? `Last changed by ${inicial.atualizado_por ?? "team"}, ${quando(inicial.atualizado_em)}` : "Default settings"}
+        </span>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <label className="space-y-1.5">
+          <span className="block text-sm font-medium text-text-primary">First WhatsApp to new leads</span>
+          <span className="block text-xs text-text-tertiary">Outside these hours the lead is saved and gets the message when the window opens.</span>
+          <div className="flex items-center gap-2">
+            <select className={SELECT} value={a.janelaInicio} onChange={(e) => setA({ ...a, janelaInicio: Number(e.target.value) })}>
+              {HORAS.slice(0, 24).map((h) => (
+                <option key={h} value={h}>
+                  {rotuloHora(h)}
+                </option>
+              ))}
+            </select>
+            <span className="text-sm text-text-tertiary">to</span>
+            <select className={SELECT} value={a.janelaFim} onChange={(e) => setA({ ...a, janelaFim: Number(e.target.value) })}>
+              {HORAS.slice(1).map((h) => (
+                <option key={h} value={h}>
+                  {rotuloHora(h)}
+                </option>
+              ))}
+            </select>
+          </div>
+          {erro ? <span className="block text-xs text-red-600">{erro}</span> : null}
+        </label>
+
+        <label className="space-y-1.5">
+          <span className="block text-sm font-medium text-text-primary">5+ bedroom cleans</span>
+          <span className="block text-xs text-text-tertiary">Big properties: price from photos with the team, or quote straight from the price list.</span>
+          <select className={`${SELECT} w-full`} value={a.cincoQuartos} onChange={(e) => setA({ ...a, cincoQuartos: e.target.value as AjustesDoHarvey["cincoQuartos"] })}>
+            <option value="equipe">Pass to the team for a photo quote</option>
+            <option value="tabela">Quote from the price list</option>
+          </select>
+        </label>
+
+        <label className="space-y-1.5">
+          <span className="block text-sm font-medium text-text-primary">Customer wants to pay by bank transfer</span>
+          <span className="block text-xs text-text-tertiary">Harvey always sends the card link first. This is what he does when they ask for a transfer.</span>
+          <select className={`${SELECT} w-full`} value={a.transferencia} onChange={(e) => setA({ ...a, transferencia: e.target.value as AjustesDoHarvey["transferencia"] })}>
+            <option value="equipe">Pass to the team with the booking details</option>
+            <option value="so_cartao">Card only: explain kindly and carry on</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={!mudou || !!erro} loading={ocupado} onClick={salvarAjustes}>
+          Save settings
+        </Button>
+        {mudou ? (
+          <Button size="sm" variant="outline" onClick={() => setA({ janelaInicio: inicial.janelaInicio, janelaFim: inicial.janelaFim, cincoQuartos: inicial.cincoQuartos, transferencia: inicial.transferencia })}>
+            Discard changes
+          </Button>
+        ) : null}
+      </div>
+    </section>
   );
 }
