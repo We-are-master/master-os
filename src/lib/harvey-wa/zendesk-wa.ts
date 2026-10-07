@@ -169,14 +169,17 @@ export async function notaInternaNaConversa(telefone: string | null, texto: stri
   return "ticket não apareceu";
 }
 
-/** Pagou o link: nota com a reserva e o ticket da conversa fecha (o job tem o ticket dele). */
-export async function fecharConversaPaga(telefone: string | null, texto: string): Promise<string> {
+/**
+ * Pagou o link: nota interna com a reserva. O ticket NÃO fecha: desde 07/10/2026
+ * o job pago nasce neste mesmo ticket (o site manda o id como ticket_id).
+ */
+export async function anotarPagamentoNaConversa(telefone: string | null, texto: string): Promise<string> {
   if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
   const u = await usuarioPeloTelefone(telefone);
   const ticket = u ? await ticketDaConversa(u.id) : null;
   if (!ticket) return "ticket não achado";
-  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { status: "solved", comment: { body: texto, public: false } } } });
-  return `ticket ${ticket} fechado`;
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
+  return `nota no ticket ${ticket}`;
 }
 
 /** O ticket aberto da conversa de WhatsApp de quem tem esse telefone. */
