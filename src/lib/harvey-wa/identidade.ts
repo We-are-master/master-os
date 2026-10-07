@@ -16,7 +16,7 @@ export type Parceiro = {
   trade: string | null;
   zendesk_organization_id: string | null;
 };
-export type Cliente = { id: string; full_name: string | null; email: string | null; phone: string | null; address: string | null; postcode: string | null };
+export type Cliente = { id: string; full_name: string | null; email: string | null; phone: string | null; address: string | null; postcode: string | null; notes?: string | null };
 export type Identidade = { tipo: "parceiro"; parceiro: Parceiro } | { tipo: "cliente"; cliente: Cliente } | { tipo: "novo" };
 
 export function chaveDoTelefone(tel: string | null | undefined): string {
@@ -46,7 +46,7 @@ export async function quemE(sb: SupabaseClient, telefone: string | null): Promis
   const ordem = ["active", "needs_attention", "onboarding", "on_break", "inactive"];
   const parceiro = parceiros.sort((a, b) => ordem.indexOf(a.status) - ordem.indexOf(b.status))[0];
   if (parceiro) return { tipo: "parceiro", parceiro };
-  const clientes = await candidatos<Cliente>(sb, "clients", "id, full_name, email, phone, address, postcode", chave);
+  const clientes = await candidatos<Cliente>(sb, "clients", "id, full_name, email, phone, address, postcode, notes", chave);
   if (clientes[0]) return { tipo: "cliente", cliente: clientes[0] };
   return { tipo: "novo" };
 }

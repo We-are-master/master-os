@@ -32,11 +32,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
-import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
-import { decideDispatch } from "@/lib/agent/sales/dispatch-gate";
-import { firstName } from "@/lib/agent/sales/lead-brief";
-import { despacharUm, dentroDaJanela, ContaBloqueada } from "@/lib/agent/sales/dispatch-one";
+import { dentroDaJanela } from "@/lib/agent/sales/dispatch-one";
 import type { CatalogService } from "@/types/database";
+import { decidirLead, mandarPrimeiroContato, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
 
 type ContactPayload = {
   name?: string | null;
@@ -228,13 +226,13 @@ export async function POST(req: NextRequest) {
   // mais que o mesmo lead vinte minutos depois.
   //
   // Nada aqui pode alterar o status devolvido. Se o despacho falhar, o contato
-  // continua gravado e o `sales-dispatch.mts` o pega na varredura seguinte, que
+  // continua gravado e o `scripts/harvey-wa/leads-checkatrade.mts` o pega na varredura seguinte, que
   // é justamente por que o lote continua existindo.
   const novos = results.filter((r) => r.action === "created").map((r) => r.id);
-  if (novos.length && process.env.RESPONDIO_DISPATCH_ON_INGEST === "1") {
-    void despacharNovos(novos).catch(() => {
-      // já logado lá dentro
-    });
+  // O primeiro contato sai pelo WhatsApp do Zendesk, como mensagem do Harvey
+  // (o respond.io saiu do ar). Desligado até HARVEY_WA_LEADS_ON_INGEST=1.
+  if (novos.length && process.env.HARVEY_WA_LEADS_ON_INGEST === "1" && templateDoLeadConfigurado()) {
+    void contatarPeloHarvey(novos).catch((e) => console.error(`[contacts/ingest] harvey: ${String(e).slice(0, 160)}`));
   }
 
   return NextResponse.json(
@@ -243,60 +241,17 @@ export async function POST(req: NextRequest) {
   );
 }
 
-/**
- * Manda o template para leads recém-criados, um a um.
- *
- * Roda solto, sem prender a resposta ao RPA: o RPA está no meio de um ciclo de
- * board disputando Express job contra o relógio, e não pode esperar por uma
- * chamada de WhatsApp.
- */
-async function despacharNovos(ids: string[]) {
-  const template = process.env.RESPONDIO_TEMPLATE_NAME;
-  if (!template) return;
-  if (!dentroDaJanela()) return;
-
+/** Primeiro contato do Harvey para os leads recém-criados (template pelo Zendesk). */
+async function contatarPeloHarvey(ids: string[]) {
+  if (!dentroDaJanela()) return; // fora de 8h-20h o lote (scripts/harvey-wa/leads-checkatrade.mts) pega depois
   const sb = createServiceClient();
-  const { data: catRows } = await sb
-    .from("service_catalog").select("*").is("deleted_at", null).eq("is_active", true);
-  const catalog = (catRows ?? []) as CatalogService[];
-
-  const { data: rows } = await sb
-    .from("clients")
-    .select("id,full_name,email,phone,postcode,address,notes")
-    .in("id", ids);
-
-  for (const r of rows ?? []) {
-    try {
-      const brief = parseLeadBrief({
-        id: r.id as string,
-        name: (r.full_name as string | null) ?? null,
-        email: r.email as string | null,
-        phone: r.phone as string | null,
-        postcode: r.postcode as string | null,
-        address: r.address as string | null,
-        notes: r.notes as string | null,
-      });
-      const d = decideDispatch(brief, catalog);
-      if (!d.dispatch) continue;
-
-      const res = await despacharUm(brief, d, firstName(brief.name) ?? "there", {
-        template,
-        languageCode: process.env.RESPONDIO_TEMPLATE_LANG ?? "en",
-        // 544116 = Whatsapp Business 07, o numero ativo desde 28/08/2026 (perfil
-        // Fixfy). O 539660 (…20) fica de reserva; trocar de numero e trocar
-        // este default OU o env RESPONDIO_CHANNEL_ID, que vence.
-        channelId: Number(process.env.RESPONDIO_CHANNEL_ID ?? 544116),
-        agentUserId: Number(process.env.RESPONDIO_AGENT_USER_ID ?? 1174769),
-      });
-      console.log(`[contacts/ingest] despacho ${brief.name}: ${res.kind}`);
-    } catch (err) {
-      // Conta bloqueada para tudo: continuar só queimaria os próximos leads
-      // com envios que não podem chegar.
-      if (err instanceof ContaBloqueada) {
-        console.error(`[contacts/ingest] conta bloqueada, despacho interrompido: ${err.message}`);
-        return;
-      }
-      console.error(`[contacts/ingest] despacho falhou: ${String(err).slice(0, 160)}`);
-    }
+  const { data: catRows } = await sb.from("service_catalog").select("*").is("deleted_at", null).eq("is_active", true);
+  const catalogo = (catRows ?? []) as CatalogService[];
+  const { data: rows } = await sb.from("clients").select("id,full_name,email,phone,postcode,address,notes").in("id", ids);
+  for (const r of (rows ?? []) as LinhaDeCliente[]) {
+    const d = decidirLead(r, catalogo);
+    if (d.kind === "pular") continue;
+    const res = await mandarPrimeiroContato(sb, d.contato);
+    console.log(`[contacts/ingest] harvey ${d.contato.nome}: ${res.kind}${res.kind === "falhou" ? ` (${res.motivo})` : ""}`);
   }
 }
