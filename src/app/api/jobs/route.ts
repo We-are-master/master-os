@@ -222,6 +222,9 @@ export const runtime  = "nodejs";
  *                                    //   HTML is kept as an internal note.
  *                                    //   Response carries customer_requester_set
  *                                    //   and customer_message_posted.
+ *                                    //   With ticket_id instead (the Harvey
+ *                                    //   WhatsApp conversation): the HTML is
+ *                                    //   only an internal note on that ticket.
  *     ticket_subject?:  string,      // with create_zendesk_ticket: subject the
  *                                    //   customer sees (the job reference is
  *                                    //   appended). Default "JOB · title · client".
@@ -1192,6 +1195,21 @@ export async function POST(req: NextRequest) {
     } else {
       console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
       zendeskCorrections.push("zendesk_ticket_create_failed");
+    }
+  } else if (ticketId && customerMessageHtmlIn) {
+    // Ticket que já existia (o da conversa do Harvey no WhatsApp, 07/10/2026):
+    // o solicitante já é o cliente e nada público sai daqui. A cópia da
+    // confirmação fica como nota interna, para a equipe ver no mesmo ticket.
+    try {
+      await zdUpdateTicket({
+        ticketId,
+        htmlBody: `<p><b>Booking confirmation${clientEmail ? ` emailed to the customer (${clientEmail})` : ""}:</b></p>${customerMessageHtmlIn}`,
+        publicComment: false,
+      });
+      customerMessagePosted = true;
+    } catch (err) {
+      console.error("[api/jobs] customer message on existing ticket failed:", err);
+      zendeskCorrections.push("customer_message_failed");
     }
   }
 

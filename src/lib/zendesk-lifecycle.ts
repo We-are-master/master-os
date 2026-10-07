@@ -23,6 +23,7 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
   getZendeskTicketId,
   getTicketRequester,
+  ticketDoWhatsApp,
   setTicketRequester,
   isZendeskConfigured,
   updateTicket as zdUpdateTicket,
@@ -212,7 +213,11 @@ export async function dispatchJobCreatedZendesk(args: {
   // has a real customer) and file it under the account's Zendesk organization.
   // Mirrors the quote send-pdf flow.
   const TEAM_REQUESTER = "team@getfixfy.com";
-  if (clientEmail.includes("@") && clientEmail.toLowerCase() !== TEAM_REQUESTER) {
+  // Job pago na conversa do Harvey usa o ticket do WhatsApp: lá o solicitante já
+  // é o cliente e comentário público sai no WhatsApp dele. A confirmação vira
+  // nota interna (dono, 07/10/2026) e o solicitante não muda.
+  const viaWhatsApp = await ticketDoWhatsApp(ticketId);
+  if (!viaWhatsApp && clientEmail.includes("@") && clientEmail.toLowerCase() !== TEAM_REQUESTER) {
     try {
       const cur = await getTicketRequester(ticketId);
       if (cur.ok && cur.requesterEmail === TEAM_REQUESTER) {
@@ -268,7 +273,7 @@ export async function dispatchJobCreatedZendesk(args: {
 
   let mainPosted = false;
   try {
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: true });
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !viaWhatsApp });
     mainPosted = true;
   } catch (err) {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
@@ -396,7 +401,8 @@ async function dispatchJobTerminalNotice(args: {
         });
 
   try {
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: true });
+    // Ticket do WhatsApp (job pago na conversa do Harvey): nota interna, como a confirmação.
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !(await ticketDoWhatsApp(ticketId)) });
   } catch (err) {
     return {
       ok: false,

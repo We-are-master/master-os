@@ -40,6 +40,8 @@ export type Contexto = {
   fotos?: string[];
   /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
   ultimaMidia?: string | null;
+  /** O ticket do Zendesk desta conversa: o job pago nasce nele (dono, 07/10/2026). */
+  ticketDaConversa?: () => Promise<number | null>;
 };
 
 export type Resultado = {
@@ -429,7 +431,9 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     };
     const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
-    const { status, data } = await site({ action: "checkout", booking, deposit: true, campaign: ctx.campanha || "wa_v1" });
+    // O ticket da conversa vai junto (Stripe → job): o job pago nasce nele, sem ticket novo.
+    const zendeskTicketId = await ctx.ticketDaConversa?.().catch(() => null);
+    const { status, data } = await site({ action: "checkout", booking, deposit: true, campaign: ctx.campanha || "wa_v1", ...(zendeskTicketId ? { zendeskTicketId } : {}) });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
     const total = Number(data.total);
     const sinal = Number(data.payNow ?? total);

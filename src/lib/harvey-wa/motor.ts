@@ -15,7 +15,7 @@ import { pensar, type Contas, type Fala } from "./cerebro";
 import { quemE, type Identidade } from "./identidade";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, classificarNoZendesk, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -221,7 +221,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
 
   const r = await pensar(
     paraFalas(sessao),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, ticketDaConversa: () => ticketPeloTelefone(telefone) },
     chamarSite,
     await catalogo(),
   );
@@ -354,8 +354,9 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
   const texto = data.checkout_deposit
     ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
     : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;
-  await fecharConversaPaga(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job has its own ticket; closing this WhatsApp conversation.`).catch((e) =>
-    console.error("[harvey-wa] fechar ticket pago", e),
+  // O job pago nasce neste mesmo ticket (dono, 07/10/2026): a conversa fica aberta, só a nota.
+  await anotarPagamentoNaConversa(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job is on this ticket.`).catch((e) =>
+    console.error("[harvey-wa] nota de pagamento", e),
   );
   try {
     await enviarTexto(data.conversation_id as string, texto);

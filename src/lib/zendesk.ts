@@ -437,7 +437,7 @@ export async function removeTicketTags(ticketId: string | number, tags: string[]
  */
 export async function getTicketRequester(
   ticketId: string | number,
-): Promise<{ ok: boolean; requesterId?: number; requesterEmail?: string; status?: number; error?: string }> {
+): Promise<{ ok: boolean; requesterId?: number; requesterEmail?: string; channel?: string; status?: number; error?: string }> {
   if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json?include=users`;
@@ -451,7 +451,7 @@ export async function getTicketRequester(
       return { ok: false, status: res.status, error: text.slice(0, 300) };
     }
     const json = (await res.json().catch(() => ({}))) as {
-      ticket?: { requester_id?: number };
+      ticket?: { requester_id?: number; via?: { channel?: string } };
       users?: Array<{ id?: number; email?: string }>;
     };
     const requesterId = json.ticket?.requester_id;
@@ -462,6 +462,7 @@ export async function getTicketRequester(
       status: res.status,
       requesterId,
       requesterEmail: match?.email ? match.email.trim().toLowerCase() : undefined,
+      channel: json.ticket?.via?.channel,
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
@@ -515,6 +516,16 @@ export type ZendeskTicketSnapshot = {
 };
 
 /** Load ticket subject + custom fields in one GET (job ingest / repair). */
+/**
+ * O ticket nasceu no WhatsApp (conversa do Harvey)? Comentário público ali vai
+ * para o WhatsApp do cliente, então os avisos do job viram nota interna
+ * (dono, 07/10/2026). Na dúvida (erro de leitura), responde false.
+ */
+export async function ticketDoWhatsApp(ticketId: string | number): Promise<boolean> {
+  const t = await getTicketRequester(ticketId);
+  return t.ok && t.channel === "whatsapp";
+}
+
 export async function getZendeskTicketSnapshot(
   ticketId: string | number,
 ): Promise<{ ok: boolean; ticket?: ZendeskTicketSnapshot; status?: number; error?: string }> {
