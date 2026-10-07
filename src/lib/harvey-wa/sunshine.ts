@@ -34,8 +34,25 @@ async function sc<T>(caminho: string, init: { method?: string; body?: unknown } 
   return (res.status === 204 ? {} : await res.json()) as T;
 }
 
-/** A chamada crua, para quem precisa de um endpoint que não tem função aqui (ex. notifications). */
+/** A chamada crua, para quem precisa de um endpoint que não tem função aqui. */
 export const scApi = sc;
+
+/**
+ * Template de WhatsApp para quem ainda não falou com a gente: só a v1.1 tem
+ * `/notifications` (a v2 devolve 404 route_not_found; primeiro envio real,
+ * 07/10/2026). Mesmo app e mesma chave; muda só a versão na rota.
+ */
+export async function scNotificacao<T>(body: unknown): Promise<T> {
+  const { base, auth } = config();
+  const res = await fetch(`${base.replace("/sc/v2/", "/sc/v1.1/")}/notifications`, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Sunshine v1.1 POST /notifications ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (await res.json()) as T;
+}
 
 export async function enviarTexto(conversationId: string, texto: string) {
   return sc(`/conversations/${conversationId}/messages`, {
