@@ -14,7 +14,7 @@ for (const l of readFileSync(new URL("../../.env.local", import.meta.url), "utf8
 const SITE = process.env.HARVEY_WA_SITE_DIR || `${process.env.HOME}/master-website-harvey`;
 const { handleAgent, catalog } = await import(`${SITE}/server/b2c/agent.js`);
 const { b2cServerEnv } = await import(`${SITE}/server/b2c/env.js`);
-const { pensar, ofereceDia } = await import("../../src/lib/harvey-wa/cerebro");
+const { pensar, ofereceDia, frasesDe, quaseIgual } = await import("../../src/lib/harvey-wa/cerebro");
 type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; midia?: string };
 
 delete process.env.HARVEY_BANK_DETAILS; // usa os dados das faturas
@@ -87,6 +87,14 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
   handyman_dia: {
     cliente: ["Need a handyman to put up 2 shelves and fix a door handle, N7", "ok £180 is fine. when can you come?"],
     checar: (t, f) => [!f.includes("get_available_dates") && "não consultou a agenda antes de falar de dia", !/£180/.test(t) && "não disse half day £180"].filter(Boolean) as string[],
+  },
+  // Pergunta o preço de novo: resposta curta e leve, sem recitar o pacote (dono, 07/10/2026).
+  preco_de_novo: {
+    cliente: ["Need a handyman to put up 2 shelves and fix a door handle, N7", "sorry how much was it again?"],
+    checar: (t) => {
+      const ultima = t.split("\n").filter(Boolean).slice(-1)[0] ?? "";
+      return [!/£180/.test(ultima) && "não repetiu o £180", ultima.length > 150 && `resposta longa (${ultima.length} letras)`, /call.?out|tools/i.test(ultima) && "recitou o pacote de novo"].filter(Boolean) as string[];
+    },
   },
   fora: {
     cliente: ["Hi, can you do an end of tenancy in Oxford? OX4 1AA, 1 bed"],
@@ -289,6 +297,12 @@ for (const nome of escolhidos) {
   if (nome !== "reclamacao" && nome !== "stop" && !caso.abertura && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
   // Dia livre só sai da agenda: oferecer dia sem get_available_dates é chute (handyman, pintura, ad_handyman em 07/10).
+  // Frase repetida entre mensagens do Harvey soa robô (link novo da Stripe não conta).
+  const falasHarvey = conversa.filter((f) => f.papel === "harvey").map((f) => frasesDe(f.texto).filter((fr) => !/https?:\/\//.test(fr)));
+  // Frase com valor novo em £ (o preço mudou com os banheiros) é informação nova, não repetição.
+  const valorNovo = (fr: string, antes: string[]) => (fr.match(/£\d[\d,]*(?:\.\d+)?/g) ?? []).some((v) => !antes.join(" ").includes(v));
+  const repetida = falasHarvey.flatMap((fs, i) => fs.filter((fr) => !valorNovo(fr, falasHarvey.slice(0, i).flat()) && falasHarvey.slice(0, i).flat().some((d) => quaseIgual(fr, d))))[0];
+  if (repetida) problemas.push(`repetiu frase: "${repetida.slice(0, 60)}"`);
   if (caso.quem !== "cliente" && ofereceDia(textoHarvey) && !ferramentas.includes("get_available_dates")) problemas.push("ofereceu dia sem consultar a agenda");
   if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
