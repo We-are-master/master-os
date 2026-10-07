@@ -263,3 +263,39 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
   });
   return r.ticket?.id ?? null;
 }
+
+
+/**
+ * O lead do Checkatrade também vira um LEAD no OS (tabela leads), na hora,
+ * sem publicar aos parceiros (published_at nulo: o lead é nosso até fechar).
+ * Uma vez por cliente. Devolve a referência (LD-...) ou null.
+ */
+export async function registrarLeadNoOs(sb: SupabaseClient, r: LinhaDeCliente, catalogo: CatalogService[], contaId: string | null): Promise<string | null> {
+  const brief = parseLeadBrief({ ...r, name: r.full_name });
+  if (!brief.externalId) return null;
+  const { data: ja } = await sb.from("leads").select("reference").eq("client_id", r.id).is("deleted_at", null).limit(1);
+  if (ja?.length) return (ja[0] as { reference: string }).reference;
+  const d = decideDispatch(brief, catalogo);
+  const servico = d.dispatch ? d.label : "handyman work";
+  const doCatalogo = catalogo.find((c) => c.name === "General Maintenance");
+  const urgente = /urgent|48 hours|emergency/i.test(r.notes ?? "");
+  const { data: ref } = await sb.rpc("next_lead_ref");
+  const { error } = await sb.from("leads").insert({
+    reference: String(ref),
+    name: brief.name || "Checkatrade lead",
+    email: brief.email,
+    phone: brief.phone,
+    address: r.address || (brief.postcode ? `London, ${brief.postcode}` : "London"),
+    city: "London",
+    postcode: brief.postcode,
+    urgency: urgente ? "high" : "medium",
+    scope: [`${servico.charAt(0).toUpperCase()}${servico.slice(1)}.`, brief.enquiry ? `Customer's request: "${brief.enquiry}"` : null, "First contact by WhatsApp (Harvey)."].filter(Boolean).join(" "),
+    status: "new",
+    client_id: r.id,
+    account_id: contaId,
+    catalog_service_id: doCatalogo?.id ?? null,
+    published_at: null,
+  });
+  if (error) throw new Error(`lead no OS: ${error.message}`);
+  return String(ref);
+}

@@ -34,7 +34,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
 import { dentroDaJanela } from "@/lib/agent/sales/dispatch-one";
 import type { CatalogService } from "@/types/database";
-import { decidirLead, mandarPrimeiroContato, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
+import { decidirLead, mandarPrimeiroContato, registrarLeadNoOs, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
 
 type ContactPayload = {
   name?: string | null;
@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
   // O primeiro contato sai pelo WhatsApp do Zendesk, como mensagem do Harvey
   // (o respond.io saiu do ar). Desligado até HARVEY_WA_LEADS_ON_INGEST=1.
   if (novos.length && process.env.HARVEY_WA_LEADS_ON_INGEST === "1" && templateDoLeadConfigurado()) {
-    void contatarPeloHarvey(novos).catch((e) => console.error(`[contacts/ingest] harvey: ${String(e).slice(0, 160)}`));
+    void contatarPeloHarvey(novos, body.account_id ?? null).catch((e) => console.error(`[contacts/ingest] harvey: ${String(e).slice(0, 160)}`));
   }
 
   return NextResponse.json(
@@ -242,12 +242,16 @@ export async function POST(req: NextRequest) {
 }
 
 /** Primeiro contato do Harvey para os leads recém-criados (template pelo Zendesk). */
-async function contatarPeloHarvey(ids: string[]) {
-  if (!dentroDaJanela()) return; // fora de 8h-20h o lote (scripts/harvey-wa/leads-checkatrade.mts) pega depois
+async function contatarPeloHarvey(ids: string[], contaId: string | null) {
   const sb = createServiceClient();
   const { data: catRows } = await sb.from("service_catalog").select("*").is("deleted_at", null).eq("is_active", true);
   const catalogo = (catRows ?? []) as CatalogService[];
   const { data: rows } = await sb.from("clients").select("id,full_name,email,phone,postcode,address,notes").in("id", ids);
+  // O lead entra na página Leads na hora, a qualquer hora (sem publicar aos parceiros).
+  for (const r of (rows ?? []) as LinhaDeCliente[]) {
+    await registrarLeadNoOs(sb, r, catalogo, contaId).catch((e) => console.error(`[contacts/ingest] lead ${r.id}: ${String(e).slice(0, 160)}`));
+  }
+  if (!dentroDaJanela()) return; // fora de 8h-20h o lote (scripts/harvey-wa/leads-checkatrade.mts) pega depois
   for (const r of (rows ?? []) as LinhaDeCliente[]) {
     const d = decidirLead(r, catalogo);
     if (d.kind === "pular") continue;
