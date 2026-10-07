@@ -81,7 +81,29 @@ async function ticketDaConversa(userId: number): Promise<number | null> {
   return r.results?.[0]?.id ?? null;
 }
 
-export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null };
+export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null };
+
+/**
+ * O cliente respondeu o template: o ticket do lead (aberto no envio, com a
+ * ficha e a nota do template) entra no ticket do WhatsApp. Merge do Zendesk:
+ * o do lead fecha e o histórico fica todo na conversa.
+ */
+export async function juntarTicketDoLead(ticketWa: number, externalId: string): Promise<string> {
+  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
+  const lead = tickets?.find((t) => t.id !== ticketWa && !["solved", "closed"].includes(t.status));
+  if (!lead) return "";
+  await zendeskApi(`tickets/${ticketWa}/merge.json`, {
+    method: "POST",
+    body: {
+      ids: [lead.id],
+      source_comment: `The customer replied on WhatsApp. Everything continues in #${ticketWa}.`,
+      source_comment_is_public: false,
+      target_comment: `Lead ticket #${lead.id} (first contact, template sent) merged here.`,
+      target_comment_is_public: false,
+    },
+  });
+  return `, lead #${lead.id} juntado`;
+}
 
 /**
  * Arruma a pessoa e o ticket da conversa no Zendesk. Devolve o que fez (para o
@@ -141,11 +163,13 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
   } catch {
     await zendeskApi(`users/${u.id}.json`, { method: "PUT", body: { user: corpo } });
   }
+  let juntou = "";
   if (ticket) {
     await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
     await statusDaConversa(ticket, ZD_STATUS_WHATSAPP);
+    if (dados.ticketDoLead) juntou = await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
   }
-  return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}`;
+  return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}${juntou}`;
 }
 
 /**
