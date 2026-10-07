@@ -24,7 +24,7 @@ for (const l of readFileSync(new URL("../../.env.local", import.meta.url), "utf8
 
 const { createServiceClient } = await import("../../src/lib/supabase/service");
 const { decidirLead, mandarPrimeiroContato, templateDoLeadConfigurado, jaFalamosComEle, telefoneE164 } = await import("../../src/lib/harvey-wa/primeiro-contato");
-const { dentroDaJanela } = await import("../../src/lib/agent/sales/dispatch-one");
+const { ajustesDoHarvey, janelaAberta } = await import("../../src/lib/harvey-wa/ajustes");
 
 const arg = (nome: string, padrao: number) => Number(process.argv.find((a) => a.startsWith(`--${nome}=`))?.split("=")[1] ?? padrao);
 const ENVIAR = process.argv.includes("--enviar");
@@ -36,8 +36,9 @@ if (ENVIAR && !templateDoLeadConfigurado()) {
   console.log("Falta HARVEY_WA_LEAD_TEMPLATE no .env.local (o nome do template aprovado).");
   process.exit(1);
 }
-if (ENVIAR && !dentroDaJanela()) {
-  console.log("Fora das 8h-20h de Londres: nada sai agora. Rode de novo de manhã.");
+const ajustes = await ajustesDoHarvey();
+if (ENVIAR && !janelaAberta(ajustes)) {
+  console.log(`Fora da janela (${ajustes.janelaInicio}h-${ajustes.janelaFim}h de Londres): nada sai agora.`);
   process.exit(0);
 }
 
