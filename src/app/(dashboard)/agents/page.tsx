@@ -71,6 +71,18 @@ export default async function AgentsPage() {
                   {ultimaEdicao ? `${quando(ultimaEdicao.atualizado_em as string)} · ${ultimaEdicao.atualizado_por ?? "team"}` : "Default"}
                 </td>
               </tr>
+              <tr className="border-t border-border-light hover:bg-surface-hover">
+                <td className="px-4 py-3">
+                  <Link href="/agents/rules" className="font-medium text-text-primary hover:underline">
+                    Rules
+                  </Link>
+                  <p className="text-xs text-text-tertiary">What every agent and the website follow, for customers, partners and accounts</p>
+                </td>
+                <td className="px-4 py-3 text-text-secondary">All agents · website</td>
+                <td className="px-4 py-3" colSpan={6}>
+                  <Link href="/agents/rules" className="text-primary hover:underline">Open rules</Link>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

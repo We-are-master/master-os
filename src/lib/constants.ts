@@ -33,8 +33,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
       { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
-      // O que vale para cliente, parceiro e conta: os agentes e o site leem daqui (07/10/2026).
-      { label: "Rules", href: "/rules", icon: "scale", permission: "dashboard" },
     ],
   },
   {
