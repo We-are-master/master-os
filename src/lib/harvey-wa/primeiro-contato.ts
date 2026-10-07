@@ -15,6 +15,8 @@
  *   HARVEY_WA_LEAD_TEMPLATE        nome do template aprovado (ex. checkatrade_lead_hello)
  *   HARVEY_WA_LEAD_TEMPLATE_LANG   idioma do template, padrão en_GB
  *   HARVEY_WA_TEMPLATE_NAMESPACE   só se o Zendesk pedir (WABA antiga)
+ *   HARVEY_WA_LEAD_TEMPLATE_VARS   as variáveis do template, na ordem (padrão "nome,servico";
+ *                                  o aprovado em 07/10/2026 chama pelo nome e o tipo de trabalho)
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -36,6 +38,13 @@ async function idDaIntegracaoWhatsApp(): Promise<string> {
   const wa = (r.integrations ?? []).find((i) => i.type === "whatsapp" && i.status !== "inactive");
   if (!wa) throw new Error("Nenhuma integração de WhatsApp ativa no Sunshine");
   return (integracaoWhatsApp = wa.id);
+}
+
+/** As variáveis na ordem do template. A Meta recusa se o número não bater com o aprovado. */
+export function variaveisDoTemplate(p: Pick<PrimeiroContato, "nome" | "servico" | "area">): string[] {
+  const valores: Record<string, string> = { nome: p.nome, servico: p.servico, area: p.area };
+  const ordem = (process.env.HARVEY_WA_LEAD_TEMPLATE_VARS?.trim() || "nome,servico").split(",").map((v) => v.trim());
+  return ordem.map((v) => valores[v]).filter((v): v is string => Boolean(v));
 }
 
 export function templateDoLeadConfigurado(): boolean {
@@ -103,7 +112,7 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
             components: [
               {
                 type: "body",
-                parameters: [p.nome, p.servico, p.area].map((text) => ({ type: "text", text })),
+                parameters: variaveisDoTemplate(p).map((text) => ({ type: "text", text })),
               },
             ],
           },
