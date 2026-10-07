@@ -25,7 +25,7 @@ import { areaDoTemplate } from "@/lib/agent/sales/dispatch-one";
 import { firstName, parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
-import { scApi } from "./sunshine";
+import { scApi, scNotificacao } from "./sunshine";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -96,29 +96,27 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
   if (!destino) return { kind: "falhou", motivo: `telefone inválido: ${p.telefone}` };
   try {
     if (await jaFalamosComEle(sb, destino)) return { kind: "ja_falamos" };
-    const namespace = process.env.HARVEY_WA_TEMPLATE_NAMESPACE?.trim();
-    const r = await scApi<{ notification?: { _id?: string; id?: string } }>("/notifications", {
-      method: "POST",
-      body: {
-        destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: destino },
-        author: { role: "appMaker" },
-        messageSchema: "whatsapp",
-        message: {
-          type: "template",
-          template: {
-            ...(namespace ? { namespace } : {}),
-            name: nomeDoTemplate,
-            language: { policy: "deterministic", code: process.env.HARVEY_WA_LEAD_TEMPLATE_LANG?.trim() || "en_GB" },
-            components: [
-              {
-                type: "body",
-                parameters: variaveisDoTemplate(p).map((text) => ({ type: "text", text })),
-              },
-            ],
-          },
+    // O namespace da conta de WhatsApp (o mesmo do n8n dos leads da Meta).
+    const namespace = process.env.HARVEY_WA_TEMPLATE_NAMESPACE?.trim() || "6ce5890e_770a_4be1_91db_7d34bc67e542";
+    const r = await scNotificacao<{ notification?: { _id?: string; id?: string } }>({
+      destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: destino },
+      author: { role: "appMaker" },
+      messageSchema: "whatsapp",
+      message: {
+        type: "template",
+        template: {
+          namespace,
+          name: nomeDoTemplate,
+          language: { policy: "deterministic", code: process.env.HARVEY_WA_LEAD_TEMPLATE_LANG?.trim() || "en_GB" },
+          components: [
+            {
+              type: "body",
+              parameters: variaveisDoTemplate(p).map((text) => ({ type: "text", text })),
+            },
+          ],
         },
-        metadata: { origem: "checkatrade", clienteId: p.clienteId, ...(p.leadExterno ? { leadExterno: p.leadExterno } : {}) },
       },
+      metadata: { origem: "checkatrade", clienteId: p.clienteId, ...(p.leadExterno ? { leadExterno: p.leadExterno } : {}) },
     });
     const notificacao = r.notification?._id ?? r.notification?.id ?? null;
     await sb.from("harvey_wa_leads").upsert(
