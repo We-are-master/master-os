@@ -9,6 +9,9 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
 import { createServiceClient } from "@/lib/supabase/service";
+import { historico, versaoAtual, type Regras } from "@/lib/os-documentos";
+import { cn } from "@/lib/utils";
+import { EditorDeRegras } from "./rules/editor-de-regras";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +22,46 @@ function seteDiasAtras(): string {
   return new Date(Date.now() - 7 * 86_400_000).toISOString();
 }
 
-export default async function AgentsPage() {
+/** Toggle Agents | Rules no topo da página (dono, 07/10/2026). */
+function Toggle({ view }: { view: "agents" | "rules" }) {
+  const item = (id: "agents" | "rules", label: string) => (
+    <Link
+      href={id === "agents" ? "/agents" : "/agents?view=rules"}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+        view === id ? "bg-card text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-primary",
+      )}
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <div className="inline-flex rounded-lg border border-border-light bg-surface-secondary p-0.5">
+      {item("agents", "Agents")}
+      {item("rules", "Rules")}
+    </div>
+  );
+}
+
+async function RulesView() {
+  const sb = createServiceClient();
+  const [atual, versoes] = await Promise.all([versaoAtual<Regras>(sb, "regras"), historico(sb, "regras")]);
+  if (!atual) return <p className="text-sm text-text-tertiary">No rules yet. Apply migration 316.</p>;
+  return <EditorDeRegras atual={atual} versoes={versoes} embedded />;
+}
+
+export default async function AgentsPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  const view = (await searchParams).view === "rules" ? "rules" : "agents";
+  if (view === "rules") {
+    return (
+      <div className="space-y-6 p-6">
+        <PageHeader title="Agents" subtitle="The AI agents working for Fixfy and the rules they follow.">
+          <Toggle view="rules" />
+        </PageHeader>
+        <RulesView />
+      </div>
+    );
+  }
   const sb = createServiceClient();
   const desde = seteDiasAtras();
   const [{ data: conversas }, { data: leads }, { data: config }] = await Promise.all([
@@ -38,7 +80,9 @@ export default async function AgentsPage() {
   return (
     <PageTransition>
       <div className="space-y-6 p-6">
-        <PageHeader title="Agents" subtitle="The AI agents working for Fixfy. Open one to see what it knows and change how it decides." />
+        <PageHeader title="Agents" subtitle="The AI agents working for Fixfy. Open one to see what it knows and change how it decides.">
+          <Toggle view="agents" />
+        </PageHeader>
         <div className="overflow-x-auto rounded-xl border border-border-light">
           <table className="w-full min-w-[960px] text-sm">
             <thead className="bg-surface-secondary text-left text-xs text-text-tertiary">
@@ -69,18 +113,6 @@ export default async function AgentsPage() {
                 <td className="px-4 py-3 text-right tabular-nums">{leads?.length ?? 0}</td>
                 <td className="px-4 py-3 text-text-secondary">
                   {ultimaEdicao ? `${quando(ultimaEdicao.atualizado_em as string)} · ${ultimaEdicao.atualizado_por ?? "team"}` : "Default"}
-                </td>
-              </tr>
-              <tr className="border-t border-border-light hover:bg-surface-hover">
-                <td className="px-4 py-3">
-                  <Link href="/agents/rules" className="font-medium text-text-primary hover:underline">
-                    Rules
-                  </Link>
-                  <p className="text-xs text-text-tertiary">What every agent and the website follow, for customers, partners and accounts</p>
-                </td>
-                <td className="px-4 py-3 text-text-secondary">All agents · website</td>
-                <td className="px-4 py-3" colSpan={6}>
-                  <Link href="/agents/rules" className="text-primary hover:underline">Open rules</Link>
                 </td>
               </tr>
             </tbody>

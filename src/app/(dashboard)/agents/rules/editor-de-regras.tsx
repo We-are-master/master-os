@@ -31,7 +31,7 @@ async function postar(corpo: Record<string, unknown>) {
 const idNovo = (titulo: string) =>
   `${titulo.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30) || "rule"}_${Math.random().toString(36).slice(2, 6)}`;
 
-export function EditorDeRegras({ atual, versoes }: { atual: Versao<Regras>; versoes: VersaoResumo[] }) {
+export function EditorDeRegras({ atual, versoes, embedded = false }: { atual: Versao<Regras>; versoes: VersaoResumo[]; embedded?: boolean }) {
   const router = useRouter();
   const [r, setR] = useState<Regras>(() => structuredClone(atual.documento));
   const [aba, setAba] = useState<PublicoDaRegra>("cliente");
@@ -72,12 +72,20 @@ export function EditorDeRegras({ atual, versoes }: { atual: Versao<Regras>; vers
     router.refresh();
   }
 
+  const versaoNoAr = <Badge variant="info">{`Live: version ${atual.id} · ${atual.criado_por ?? "system"}, ${quando(atual.criado_em)}`}</Badge>;
   return (
     <PageTransition>
-      <div className="space-y-6 p-6 pb-28">
-        <PageHeader title="Rules" subtitle="What applies to customers, partners and accounts. Agents read these before every reply; the website shows the customer ones.">
-          <Badge variant="info">{`Live: version ${atual.id} · ${atual.criado_por ?? "system"}, ${quando(atual.criado_em)}`}</Badge>
-        </PageHeader>
+      <div className={embedded ? "space-y-6 pb-28" : "space-y-6 p-6 pb-28"}>
+        {embedded ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-text-secondary">What applies to customers, partners and accounts. Agents read these before every reply; the website shows the customer ones.</p>
+            {versaoNoAr}
+          </div>
+        ) : (
+          <PageHeader title="Rules" subtitle="What applies to customers, partners and accounts. Agents read these before every reply; the website shows the customer ones.">
+            {versaoNoAr}
+          </PageHeader>
+        )}
 
         <Tabs
           tabs={PUBLICOS.map((p) => ({ id: p.id, label: p.titulo, count: (r.publicos[p.id] ?? []).length }))}
