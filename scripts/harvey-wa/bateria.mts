@@ -228,6 +228,19 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
         !/9|nine/i.test(t.split("\n").slice(3).join("\n")) && "não disse a janela de chegada",
       ].filter(Boolean) as string[],
   },
+  // Reserva abandonada no site (07/10/2026): respondeu o WhatsApp de retomada com o código de 10%.
+  site_retomada: {
+    quem: "cliente",
+    sobre:
+      "This person started booking on our website and did not finish: Deep clean at £237, postcode SW11 2AB, stopped at step 3 of 4. Name: Sarah Jones. Email: sarah.jones.test@example.com (use it for the payment link, do not ask again unless they want another). Our WhatsApp reminder was the first message in this chat (you have not introduced yourself yet: do it once, briefly, in your first reply). Their 10% code FIX10SARAH is valid: always pass it as promoCode in get_quote and create_payment_link, and say the price with the 10% off. Pick up exactly where they stopped: confirm the service and size in one line, then the day, then the rest, and close with the card link. Never start over from scratch.",
+    cliente: ["Hi, yes I still want it, is Friday possible?"],
+    checar: (t, f) =>
+      [
+        !f.includes("get_available_dates") && "não consultou a agenda",
+        /what (service|do you need)|which service|what needs doing/i.test(t) && "perguntou o serviço de novo",
+        !/10%|£213|213/i.test(t) && "não falou do desconto de 10%",
+      ].filter(Boolean) as string[],
+  },
   stop: {
     cliente: ["how much for a deep clean", "stop messaging me"],
     checar: (t) => [/£\d/.test(t.split("\n").slice(-1)[0] || "") && "vendeu depois do stop"].filter(Boolean) as string[],

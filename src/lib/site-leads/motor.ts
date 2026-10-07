@@ -47,6 +47,7 @@ import { unsubscribeUrl } from "@/lib/email/unsubscribe";
 import { NO_MARKETING_TAG } from "@/lib/contacts-ingest";
 import { isZendeskConfigured } from "@/lib/zendesk";
 import { sendTemplate, toWhatsAppNumber, WhatsAppError } from "@/lib/whatsapp/cloud";
+import { registrarRetomadaNoHarvey } from "@/lib/harvey-wa/site-lead";
 import { email1, email2, email3, type ReservaAbandonada, type EmailPronto } from "@/lib/emails/reserva-abandonada";
 import { dentroDaJanelaDeEnvio, folgaCumprida, NOME_DO_PASSO, type Passo } from "@/lib/site-leads/agenda";
 import {
@@ -574,7 +575,9 @@ async function tocarWhatsApp(ctx: Contexto, l: Lead, botaoUrl: number): Promise<
     await sb.from("marketing_touches").update({ provider_id: wamid }).eq("id", toque.id);
     await registrarAtividade(sb, l.id, "whatsapp", `WhatsApp sent with code ${codigo}`, { providerId: wamid, meta: { step: 4, template, promo: codigo } });
     await sb.from("site_leads").update({ sequence_state: "done", updated_at: agoraIso }).eq("id", l.id);
-    if (l.zendesk_ticket_id) await anotarNoTicket(l.zendesk_ticket_id, `WhatsApp sent (template ${template}, code ${codigo}).`);
+    if (l.zendesk_ticket_id) await anotarNoTicket(l.zendesk_ticket_id, `WhatsApp sent (template ${template}, code ${codigo}). If they reply, Harvey picks up on WhatsApp with this booking and code, and this ticket is merged into that conversation.`);
+    // A resposta cai no Harvey já sabendo o que a pessoa estava reservando (07/10/2026).
+    await registrarRetomadaNoHarvey(sb, { id: l.id, phone: fone, client_id: l.client_id as string | null, service_label: l.service_label as string | null, zendesk_ticket_id: l.zendesk_ticket_id as number | null });
   } catch (err) {
     res.erros.push(`${l.id} WhatsApp sent, but recording it failed: ${mensagem(err)}`);
   }
