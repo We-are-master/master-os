@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { ServicesPricingClient } from "./services-pricing-client";
 
 export default function ServicesPage() {
-  redirect("/settings?tab=services");
+  return <ServicesPricingClient />;
 }

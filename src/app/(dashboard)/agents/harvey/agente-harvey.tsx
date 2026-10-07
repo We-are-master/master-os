@@ -261,7 +261,7 @@ function TabelaDePrecos({ catalogo }: { catalogo: Catalogo | null }) {
     <div className="space-y-6">
       <p className="text-sm text-text-tertiary">
         What the website sells, with prices from Services (the website, the checkout and Harvey all use them).{" "}
-        <Link href="/settings?tab=services" className="font-medium text-primary hover:underline">
+        <Link href="/services" className="font-medium text-primary hover:underline">
           Edit in Services
         </Link>
       </p>
