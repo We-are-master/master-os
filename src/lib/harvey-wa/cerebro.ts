@@ -233,6 +233,13 @@ const FERRAMENTAS_PARCEIRO = [
   },
 ] as const;
 
+/** A resposta oferece um dia ("Friday is free", "I have Thursday or Friday available")? */
+export function ofereceDia(t: string): boolean {
+  const dia = "(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day|tomorrow|this week|next week";
+  const livre = "free|available|open|slots?|space|could do|can do|works for us";
+  return new RegExp(`\\b(?:${dia})\\b[^.?!\\n]{0,60}\\b(?:${livre})\\b|\\b(?:${livre})\\b[^.?!\\n]{0,40}\\b(?:${dia})\\b`, "i").test(t);
+}
+
 type MensagemOpenAi =
   | { role: "system" | "user" | "assistant"; content: string | null | Array<Record<string, unknown>>; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
   | { role: "tool"; tool_call_id: string; content: string };
@@ -292,12 +299,20 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 
+  let cobrouAgenda = false;
   for (let volta = 0; volta < 6; volta++) {
     const m = await openai(msgs, parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE);
     msgs.push(m);
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
       r.resposta = typeof m.content === "string" && m.content ? limparTexto(m.content) : null;
+      // Dia livre só sai da agenda (07/10/2026: handyman, pintura e ad_handyman
+      // ofereciam dia de cabeça). A instrução não bastou: volta uma vez e cobra.
+      if (r.resposta && !parceiro && !ctx.chase && !cobrouAgenda && ofereceDia(r.resposta) && !r.ferramentas.includes("get_available_dates") && !r.ferramentas.includes("get_my_bookings")) {
+        cobrouAgenda = true;
+        msgs.push({ role: "user", content: "[system] You named a day without calling get_available_dates. Do not send that. If they have the price and are ready for a day, call get_available_dates now and offer only days it returns. If not, rewrite your reply without naming any day." });
+        continue;
+      }
       if (ctx.chase && (!r.resposta || /\bNO_CHASE\b/.test(r.resposta))) {
         r.resposta = null;
         return r;
