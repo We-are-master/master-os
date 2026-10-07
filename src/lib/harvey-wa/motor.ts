@@ -22,7 +22,7 @@ import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
-import { baixarMidia, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
+import { baixarMidia, devolverAoHarvey, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -142,6 +142,22 @@ export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
   return msgs;
 }
 
+/**
+ * A conversa é de um lead que recebeu o nosso template e ninguém da equipe
+ * escreveu nela (só o template, sem nome de agente, e o próprio Harvey)?
+ */
+async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string | undefined): Promise<boolean> {
+  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+  if (!telefone) return false;
+  const sb = createServiceClient();
+  const { data: lead } = await sb.from("harvey_wa_leads").select("chave").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
+  if (!lead) return false;
+  const { data: estado } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  if (estado && estado.estado !== "harvey") return false;
+  const msgs = await historico(conversationId).catch(() => []);
+  return !msgs.some((m) => m.author.type === "business" && m.author.displayName && m.author.displayName !== "Harvey");
+}
+
 /** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
 export async function processarEvento(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
@@ -163,7 +179,13 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     return "ignorado: equipe já com a conversa";
   }
   if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
-  if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) return "ignorado: conversa com a equipe";
+  if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) {
+    // Conversa que nasceu do NOSSO template (lead do Checkatrade) cai com a equipe no
+    // Zendesk, e o Harvey nunca respondia (Kit Bransby, 07/10/2026). Se nenhuma pessoa
+    // da equipe escreveu ainda, o Harvey assume e segue.
+    if (!(await ehLeadDoTemplateSemEquipe(conversa.id, msg.author.userId))) return "ignorado: conversa com a equipe";
+    await devolverAoHarvey(conversa.id);
+  }
   // Só WhatsApp. O chat do site (web) e qualquer outro canal seguem o fluxo de sempre.
   if (msg.source?.type !== "whatsapp") {
     await seguirFluxoPadrao(conversa.id).catch(() => {});
