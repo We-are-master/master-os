@@ -36,7 +36,7 @@ export type Catalogo = {
 };
 
 const REGRAS_FIXAS = [
-  "Prices come from the website price list, the same one the online checkout uses.",
+  "Prices come from the OS price list, the same one the website and checkout use.",
   "Payment: 50% now by secure card link, 50% after the job. The link expires in 1 hour.",
   "Days: only days the diary shows free. No same day, no Sundays.",
   "London only.",
@@ -255,12 +255,15 @@ function Bloco({
 }
 
 function TabelaDePrecos({ catalogo }: { catalogo: Catalogo | null }) {
-  if (!catalogo) return <p className="text-sm text-text-tertiary">The website price list did not answer. Try again in a minute.</p>;
+  if (!catalogo) return <p className="text-sm text-text-tertiary">No price list in the OS yet.</p>;
   const tamanhos = catalogo.sizes;
   return (
     <div className="space-y-6">
       <p className="text-sm text-text-tertiary">
-        Live from the website price list. Harvey quotes exactly these prices. To change a price, change it on the website so the site and Harvey always charge the same.
+        The OS price list: the website, the checkout and Harvey all use it.{" "}
+        <Link href="/price-list" className="font-medium text-primary hover:underline">
+          Edit in Price list
+        </Link>
       </p>
 
       <Cartao titulo="Cleaning" nota={`Includes ${catalogo.cleaning.includedBathrooms} bathroom. Extra bathrooms: ${catalogo.cleaning.extraBathroomSteps.map((p) => `£${p}`).join(", ")}. Included: ${catalogo.cleaning.included.join(", ")}.`}>
@@ -344,10 +347,20 @@ function Lista({ itens }: { itens: Array<{ nome: string; detalhe: string; preco:
 }
 
 function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () => void }) {
-  const [a, setA] = useState<AjustesDoHarvey>({ janelaInicio: inicial.janelaInicio, janelaFim: inicial.janelaFim, cincoQuartos: inicial.cincoQuartos, transferencia: inicial.transferencia });
+  const base = (): AjustesDoHarvey => ({
+    janelaInicio: inicial.janelaInicio,
+    janelaFim: inicial.janelaFim,
+    cincoQuartos: inicial.cincoQuartos,
+    transferencia: inicial.transferencia,
+    acessos: { ...inicial.acessos },
+    pagamento: { ...inicial.pagamento },
+  });
+  const [a, setA] = useState<AjustesDoHarvey>(base);
   const [ocupado, setOcupado] = useState(false);
-  const mudou =
-    a.janelaInicio !== inicial.janelaInicio || a.janelaFim !== inicial.janelaFim || a.cincoQuartos !== inicial.cincoQuartos || a.transferencia !== inicial.transferencia;
+  const mudou = JSON.stringify(a) !== JSON.stringify(base());
+  const { pode, naoPode } = podeENaoPode(a);
+  const acesso = (k: keyof AjustesDoHarvey["acessos"], v: boolean) => setA({ ...a, acessos: { ...a.acessos, [k]: v } });
+  const pagar = (p: Partial<AjustesDoHarvey["pagamento"]>) => setA({ ...a, pagamento: { ...a.pagamento, ...p } });
   const erro = a.janelaFim <= a.janelaInicio ? "The start hour must be before the end hour." : null;
 
   async function salvarAjustes() {
@@ -373,6 +386,57 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
         <span className="text-xs text-text-tertiary">
           {inicial.atualizado_em ? `Last changed by ${inicial.atualizado_por ?? "team"}, ${quando(inicial.atualizado_em)}` : "Default settings"}
         </span>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <p className="mb-1 text-sm font-semibold text-emerald-900 dark:text-emerald-200">He can</p>
+          <ul className="space-y-0.5 text-sm text-emerald-900 dark:text-emerald-200">
+            {pode.map((x) => (
+              <li key={x}>{x}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/30">
+          <p className="mb-1 text-sm font-semibold text-red-900 dark:text-red-200">He cannot</p>
+          <ul className="space-y-0.5 text-sm text-red-900 dark:text-red-200">
+            {naoPode.map((x) => (
+              <li key={x}>{x}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-text-primary">Access to the OS</p>
+          <p className="text-xs text-text-tertiary">Each switch is a real tool. Off means he cannot use it and passes to the team instead.</p>
+          {(
+            [
+              ["precos", "Price list (quote prices)"],
+              ["agenda", "Diary (offer free days)"],
+              ["reservas", "Customer bookings"],
+              ["cotacao", "Photo quotes (request a quote)"],
+              ["parceiro", "Partner account and documents"],
+            ] as const
+          ).map(([k, rotulo]) => (
+            <Interruptor key={k} rotulo={rotulo} ligado={a.acessos[k]} onChange={(v) => acesso(k, v)} />
+          ))}
+        </div>
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-text-primary">Payments (Stripe)</p>
+          <p className="text-xs text-text-tertiary">How Harvey takes payment on WhatsApp. Prices always come from the price list.</p>
+          <Interruptor rotulo="Send Stripe card links" ligado={a.pagamento.link} onChange={(v) => pagar({ link: v })} />
+          <label className="flex items-center justify-between gap-3 text-sm text-text-secondary">
+            The card link asks for
+            <select className={SELECT} value={a.pagamento.modo} disabled={!a.pagamento.link} onChange={(e) => pagar({ modo: e.target.value as AjustesDoHarvey["pagamento"]["modo"] })}>
+              <option value="deposito">50% now, 50% after the job</option>
+              <option value="total">Full price now</option>
+              <option value="cliente">Customer chooses</option>
+            </select>
+          </label>
+          <Interruptor rotulo="Accept discount codes" ligado={a.pagamento.cupons} onChange={(v) => pagar({ cupons: v })} />
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -423,11 +487,47 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
           Save settings
         </Button>
         {mudou ? (
-          <Button size="sm" variant="outline" onClick={() => setA({ janelaInicio: inicial.janelaInicio, janelaFim: inicial.janelaFim, cincoQuartos: inicial.cincoQuartos, transferencia: inicial.transferencia })}>
+          <Button size="sm" variant="outline" onClick={() => setA(base())}>
             Discard changes
           </Button>
         ) : null}
       </div>
     </section>
   );
+}
+
+function Interruptor({ rotulo, ligado, onChange }: { rotulo: string; ligado: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-3 text-sm text-text-secondary">
+      {rotulo}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={ligado}
+        onClick={() => onChange(!ligado)}
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${ligado ? "bg-emerald-500" : "bg-border"}`}
+      >
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${ligado ? "left-[18px]" : "left-0.5"}`} />
+      </button>
+    </label>
+  );
+}
+
+/** O quadro do topo, gerado dos ajustes: nunca diz algo que ele não faz. */
+function podeENaoPode(a: AjustesDoHarvey): { pode: string[]; naoPode: string[] } {
+  const pode: string[] = [];
+  const naoPode: string[] = ["Give discounts or change prices", "Cancel or move bookings (the team does)", "Book same day or Sundays"];
+  (a.acessos.precos ? pode : naoPode).push("Quote from the price list");
+  (a.acessos.agenda ? pode : naoPode).push("Offer free days from the diary");
+  if (a.pagamento.link) {
+    pode.push(a.pagamento.modo === "total" ? "Send a Stripe link for the full price" : a.pagamento.modo === "cliente" ? "Send a Stripe link, 50% or full (customer chooses)" : "Send a Stripe link for 50% now");
+  } else naoPode.push("Send payment links (the team does)");
+  (a.acessos.reservas ? pode : naoPode).push("Tell customers about their bookings");
+  (a.acessos.cotacao ? pode : naoPode).push("Ask the team for a photo quote");
+  (a.acessos.parceiro ? pode : naoPode).push("Check and approve partner documents");
+  if (a.transferencia === "equipe") pode.push("Pass bank transfer requests to the team");
+  else naoPode.push("Take bank transfers (card only)");
+  (a.pagamento.cupons ? pode : naoPode).push(a.pagamento.cupons ? "Apply discount codes the customer gives" : "Apply discount codes");
+  if (a.cincoQuartos === "tabela") pode.push("Quote 5+ bedrooms from the price list");
+  return { pode, naoPode };
 }

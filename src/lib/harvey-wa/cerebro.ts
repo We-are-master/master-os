@@ -5,7 +5,8 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
-import { ajustesDoHarvey, catalogoComAjustes, instrucoesDosAjustes } from "./ajustes";
+import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
+import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
@@ -42,6 +43,8 @@ export type Contexto = {
   fotos?: string[];
   /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
   ultimaMidia?: string | null;
+  /** Preenchido pelo pensar(): os ajustes da tela /agents/harvey. */
+  ajustes?: AjustesDoHarvey;
   /** O ticket do Zendesk desta conversa: o job pago nasce nele (dono, 07/10/2026). */
   ticketDaConversa?: () => Promise<number | null>;
 };
@@ -147,6 +150,7 @@ const FERRAMENTAS_CLIENTE = [
           addressLine2: { type: "string", description: "flat or unit, if any" },
           notes: { type: "string", description: "anything the team should know, in English" },
           promoCode: { type: "string" },
+          pay_in_full: { type: "boolean", description: "true only if the payment settings let the customer choose and they asked to pay the full price now" },
         },
         required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1"],
       },
@@ -321,7 +325,11 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const parceiro = ctx.quem === "parceiro";
   const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
   const ajustes = await ajustesDoHarvey();
-  ctx = { ...ctx, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
+  // Acesso desligado na tela = ferramenta fora da lista: ele não tem como usar.
+  const ferramentas = (parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE).filter((f) => ferramentaLiberada(f.function.name, ajustes));
+  // As regras do OS (/rules): o que vale para este público, lido a cada 30 s.
+  const regrasDoOs = await textoDasRegras(parceiro ? "parceiro" : "cliente");
+  ctx = { ...ctx, ajustes, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
@@ -338,13 +346,13 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
   const regras = parceiro ? "" : instrucoesDosAjustes(ajustes);
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes) + (regras ? `\n\n${regras}` : "")) + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 
   let cobrouAgenda = false;
   for (let volta = 0; volta < 6; volta++) {
-    const m = await openai(msgs, parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE);
+    const m = await openai(msgs, ferramentas);
     msgs.push(m);
     const chamadas = m.tool_calls ?? [];
     if (!chamadas.length) {
@@ -433,7 +441,7 @@ function selecaoLimpa(sel: unknown): Record<string, unknown> {
 async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto, site: ChamadaAoSite, r: Resultado): Promise<unknown> {
   if ("selection" in a) a.selection = selecaoLimpa(a.selection);
   if (nome === "get_quote") {
-    const { data } = await site({ action: "quote", selection: a.selection, postcode: a.postcode, promoCode: a.promoCode });
+    const { data } = await site({ action: "quote", selection: a.selection, postcode: a.postcode, promoCode: ctx.ajustes?.pagamento.cupons === false ? undefined : a.promoCode });
     const linhas = (data.lines as Array<{ label: string }> | undefined) ?? [];
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
@@ -487,13 +495,16 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       notes: [a.notes, "Booked on WhatsApp with Harvey."].filter(Boolean).join(" "),
       contact: { firstName: a.firstName, lastName: a.lastName, email: a.email, phone: ukPhone(ctx.telefone) },
       address: { line1: a.addressLine1, line2: a.addressLine2 ?? "" },
-      promoCode: a.promoCode || undefined,
+      promoCode: ctx.ajustes?.pagamento.cupons === false ? undefined : a.promoCode || undefined,
     };
-    const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: true };
+    // Quanto cobra agora: ajuste da tela (50%, total, ou o cliente escolhe).
+    const modo = ctx.ajustes?.pagamento.modo ?? "deposito";
+    const deposito = !(modo === "total" || (modo === "cliente" && a.pay_in_full === true));
+    const comum = { email: String(a.email), nome: nomeDaPessoa, servico: r.cotacao?.servico ?? "", postcode: String(a.postcode ?? ""), deposit: deposito };
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
     // O ticket da conversa vai junto (Stripe → job): o job pago nasce nele, sem ticket novo.
     const zendeskTicketId = await ctx.ticketDaConversa?.().catch(() => null);
-    const { status, data } = await site({ action: "checkout", booking, deposit: true, campaign: ctx.campanha || "wa_v1", ...(zendeskTicketId ? { zendeskTicketId } : {}) });
+    const { status, data } = await site({ action: "checkout", booking, deposit: deposito, campaign: ctx.campanha || "wa_v1", ...(zendeskTicketId ? { zendeskTicketId } : {}) });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
     const total = Number(data.total);
     const sinal = Number(data.payNow ?? total);

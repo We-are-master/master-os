@@ -1,0 +1,30 @@
+{
+  "formato": 1,
+  "publicos": {
+    "cliente": [
+      { "id": "how_it_works", "titulo": "How Fixfy works", "texto": "Fixfy books the customer with a vetted independent professional in London. The professional carries out the job and the contract for the work is with them. Fixfy finds and books the professional, takes the payment as their agent and stays the customer's contact from start to finish." },
+      { "id": "payment", "titulo": "Payment", "texto": "Prices are fixed and include VAT where it applies: nothing is added on top. To confirm a booking the customer pays a 50% deposit by secure card link; the other 50% is paid after the job. The booking is only confirmed once the deposit is paid. We never take card details in a chat or by phone." },
+      { "id": "cancellation", "titulo": "Changes and cancellations", "texto": "Free changes or cancellation up to 48 hours before the booked day. Inside 48 hours, 50% of the price is charged and goes to the professional, who kept the slot free." },
+      { "id": "no_access", "titulo": "No access on the day", "texto": "If the professional cannot get in within 30 minutes of the start of the arrival window, it counts as a late cancellation." },
+      { "id": "guarantee", "titulo": "Guarantee", "texto": "Every job has a 7 day guarantee from the professional who did it: if something is not right, it is put right. Cleaning: a free re-clean of the missed areas reported within 7 days. Longer guarantees: painting and decorating 3 months, tiling 3 months, wall treatments 6 months, woodwork and structural work 6 months." },
+      { "id": "coverage", "titulo": "Where and when", "texto": "London only. No same day bookings and no Sundays: the earliest day is the next free day in the diary." },
+      { "id": "materials", "titulo": "Materials", "texto": "Handyman and repair work includes tools and no call out fee. Materials and parts are not included: the customer supplies them, or the professional quotes them at cost and only buys them with the customer's approval. Painting has an optional paint and materials pack." },
+      { "id": "complaints", "titulo": "Complaints", "texto": "We reply to every complaint within 2 working days and aim to resolve it within 14 days. Complaints always go to a person from the team, never handled by an agent alone." },
+      { "id": "big_jobs", "titulo": "Jobs outside the price list", "texto": "Anything not in the price list (5+ bedroom cleans unless the size is listed, leaks, renovations, bespoke work) gets a quote from the team, usually from photos." }
+    ],
+    "parceiro": [
+      { "id": "model", "titulo": "Working with Fixfy", "texto": "Partners are independent professionals. The customer's contract for the work is with the partner; Fixfy books the job and collects the payment as the partner's agent, keeping its commission." },
+      { "id": "documents", "titulo": "Documents to start", "texto": "To receive jobs a partner needs three documents approved: photo ID, public liability insurance and right to work. A British or Irish passport counts as both ID and right to work. Partners also sign the Contractor Service Agreement, the Terms of Use and the Self-Billing agreement in the partner app." },
+      { "id": "jobs", "titulo": "Getting jobs", "texto": "Job offers arrive in the partner portal (partners.getfixfy.com). Accepting, the day, the arrival window and the address all live there." },
+      { "id": "cancellation", "titulo": "Cancelling a job", "texto": "Cancelling an accepted job less than 24 hours before the start costs £50, deducted from the next self-bill." },
+      { "id": "reports", "titulo": "Reports and photos", "texto": "Every job ends with the report in the partner portal: before and after photos of each room or area worked on. The job is only paid once the report is complete." },
+      { "id": "pay", "titulo": "How partners are paid", "texto": "Fixfy issues one self-bill per partner per fortnight covering the completed jobs of that fortnight, and pays it on payday. Deductions (cancellation fees, adjustments) are listed on the self-bill." },
+      { "id": "conduct", "titulo": "On the job", "texto": "Arrive inside the arrival window, keep the customer informed through Fixfy, never take payment directly from the customer and never share their details." }
+    ],
+    "conta": [
+      { "id": "booking", "titulo": "Booking for an account", "texto": "Accounts (letting agents, landlords, property managers) book through their contact at Fixfy or by email. Each booking becomes a job in the OS under the account." },
+      { "id": "prices", "titulo": "Prices", "texto": "Accounts pay the price list unless a different rate is agreed on the account. Agreed rates live on the account page in the OS." },
+      { "id": "invoices", "titulo": "Invoices", "texto": "Invoices follow the payment terms set on the account. Completed jobs are confirmed to the account when the final check is done." }
+    ]
+  }
+}

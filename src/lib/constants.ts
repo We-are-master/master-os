@@ -33,6 +33,8 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
       { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
+      // O que vale para cliente, parceiro e conta: os agentes e o site leem daqui (07/10/2026).
+      { label: "Rules", href: "/rules", icon: "scale", permission: "dashboard" },
     ],
   },
   {
@@ -68,6 +70,8 @@ export const NAVIGATION: NavGroup[] = [
       // Services; este atalho existe porque cotar é rotina de Finance (dono,
       // 17/08/2026), e /services redireciona pra lá.
       { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
+      // A tabela que o site, o checkout e o Harvey usam, ao vivo (07/10/2026).
+      { label: "Price list", href: "/price-list", icon: "tag", permission: "service_catalog" },
       // Payouts (/payout) hidden for now — billing + expenses cover partner payments.
     ],
   },

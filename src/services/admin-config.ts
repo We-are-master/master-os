@@ -310,6 +310,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
       { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
+      // O que vale para cliente, parceiro e conta: os agentes e o site leem daqui (07/10/2026).
+      { label: "Rules", href: "/rules", icon: "scale", permission: "dashboard" },
     ],
   },
   {
@@ -340,6 +342,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
       // Finance (dono, 17/08/2026). O normalizeNavigation mescla este item em
       // navs já salvos porque ele entra no canônico daqui.
       { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
+      // A tabela que o site, o checkout e o Harvey usam, ao vivo (07/10/2026).
+      { label: "Price list", href: "/price-list", icon: "tag", permission: "service_catalog" },
     ],
   },
   {
