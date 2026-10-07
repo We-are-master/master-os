@@ -172,6 +172,14 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
 }
 
 
+/** O texto aprovado de cada template (Meta, conta do 020 4538 4668), para a nota do ticket. */
+const TEXTO_DOS_TEMPLATES: Record<string, string> = {
+  checkatrade_request_received:
+    "Hi {{1}}, this is Fixfy. We've just received your Checkatrade request for {{2}}.\n\nCould you reply with a few photos of the job? That way we can give you an accurate price with no surprises. If you'd rather talk, just tell us a good time to call.\n\nFixfy · London",
+};
+
+const nomeCurto = (n: string) => (n && n !== "there" ? n : "the customer");
+
 /** O external_id do ticket do lead: o mesmo marcador das notas do OS. */
 export function externalIdDoLead(leadExterno: string): string {
   return `checkatrade-lead:${leadExterno}`;
@@ -200,16 +208,19 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
   const email = (brief.email ?? "").trim().toLowerCase();
   const emailDoCliente = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !/@getfixfy\.com$/i.test(email) ? email : null;
   const hora = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(quando);
-  const vars = variaveisDoTemplate(p);
-  const textoAprovado = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim();
-  const texto = textoAprovado ? vars.reduce((t, v, i) => t.split(`{{${i + 1}}}`).join(v), textoAprovado.replace(/\\n/g, "\n")) : null;
+  const ligarAte = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" }).format(new Date(quando.getTime() + 2 * 3600_000));
   const template = process.env.HARVEY_WA_LEAD_TEMPLATE?.trim() ?? "";
+  // A mensagem como o cliente lê no WhatsApp, com as variáveis já trocadas.
+  const vars = variaveisDoTemplate(p);
+  const molde = process.env.HARVEY_WA_LEAD_TEMPLATE_TEXT?.trim().replace(/\\n/g, "\n") || TEXTO_DOS_TEMPLATES[template] || null;
+  const mensagem = molde ? vars.reduce((t, v, i) => t.split(`{{${i + 1}}}`).join(v), molde) : `(template ${template}: ${vars.join(", ")})`;
   const notaDoEnvio = [
-    `WhatsApp template sent automatically: ${template} (${process.env.HARVEY_WA_LEAD_TEMPLATE_LANG?.trim() || "en_GB"}), ${hora} London.`,
-    vars.map((v, i) => `Variable ${i + 1}: ${v}`).join(" · "),
-    texto ? `\n${texto}` : null,
-    "\nWhen they reply, Harvey picks up on WhatsApp and this ticket is merged into that conversation.",
-  ].filter(Boolean).join("\n");
+    `WhatsApp sent automatically at ${hora} (London), template ${template}. What ${nomeCurto(p.nome)} received:`,
+    "",
+    mensagem.split("\n").map((l) => `> ${l}`).join("\n"),
+    "",
+    `Next action: awaiting reply on WhatsApp (Harvey answers and this ticket is merged into that conversation). No reply by ${ligarAte}: call the lead on ${destino}.`,
+  ].join("\n");
 
   const externalId = externalIdDoLead(p.leadExterno);
   const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
