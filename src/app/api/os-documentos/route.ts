@@ -6,7 +6,7 @@
  *   POST { tipo, restaurar: <id> }                      salva de novo uma versão antiga
  *
  * Só admin e manager. Preço que muda mais de 30% de uma vez volta 409 com a
- * lista, e só passa com confirmar: true (erro de digitação vai direto ao site).
+ * Preços moram em Services: aqui a tabela não se salva mais (só o layout, por script).
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,16 +14,11 @@ import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   historico,
-  mudancasGrandes,
   salvarVersao,
   validarRegras,
-  validarTabela,
-  versaoAtual,
   versaoPorId,
-  type TabelaDePrecos,
   type TipoDeDocumento,
 } from "@/lib/os-documentos";
-import { comoLista, paraSite, validarV2, type TabelaV2 } from "@/lib/tabela-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -63,18 +58,10 @@ export async function POST(req: NextRequest) {
     nota = `Restored version ${antiga.id}`;
   }
 
-  // Tabela: a lista (formato 2) tem de passar na régua dela E virar uma tabela que o site aceita.
-  const lista = tipo === "tabela_de_precos" ? comoLista(documento) : null;
-  const erros = lista ? [...validarV2(lista as TabelaV2), ...validarTabela(paraSite(lista))] : validarRegras(documento);
+  // Preço mora em Services (07/10/2026): pela tela, só as regras.
+  if (tipo === "tabela_de_precos") return NextResponse.json({ error: "Prices live in Services now. Edit them there." }, { status: 400 });
+  const erros = validarRegras(documento);
   if (erros.length) return NextResponse.json({ error: erros[0], erros }, { status: 400 });
-
-  if (lista && !corpo.confirmar) {
-    const atual = await versaoAtual<TabelaDePrecos>(r.sb, tipo);
-    const grandes = mudancasGrandes(atual ? paraSite(comoLista(atual.documento)) : null, paraSite(lista));
-    if (grandes.length) {
-      return NextResponse.json({ error: "Some prices change by more than 30%. Confirm to save.", confirmar: grandes }, { status: 409 });
-    }
-  }
   const id = await salvarVersao(r.sb, tipo, documento, r.quem, nota);
   return NextResponse.json({ ok: true, versao: id });
 }

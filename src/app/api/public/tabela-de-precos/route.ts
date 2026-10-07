@@ -1,27 +1,36 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { versaoEmVigor } from "@/lib/os-documentos";
-import { comoLista, paraSite } from "@/lib/tabela-v2";
+import { versaoEmVigor, type TabelaDePrecos } from "@/lib/os-documentos";
+import { gerarTabelaDoSite, lerServicos, type MapaDoSite, type TabelaDoSite } from "@/lib/servicos-do-site";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+type Layout = { formato: 3; layout: TabelaDePrecos; mapa: MapaDoSite };
+let cache: { em: number; versao: number; tabela: TabelaDoSite } | null = null;
+
 /**
- * GET /api/public/tabela-de-precos: a tabela de preços em vigor, que o site
- * (vitrine e checkout) e o Harvey leem ao vivo. Sem login. O site guarda a
- * dele embutida como reserva, então erro aqui nunca para uma venda.
+ * GET /api/public/tabela-de-precos: a tabela que o site (vitrine e checkout) e
+ * o Harvey leem, GERADA de Services (preço cobrado e pago de cada item que o
+ * site já vende) com os textos do layout. Sem login. Cache de 60 s. Se Services
+ * não fecha com o mapa (item apagado, preço vazio), responde 503 e o site fica
+ * com a última tabela boa: nunca para uma venda.
  */
 export async function GET() {
   try {
-    const v = await versaoEmVigor<unknown>(createServiceClient(), "tabela_de_precos");
-    if (!v) return NextResponse.json({ error: "No price list yet" }, { status: 404 });
+    if (!cache || Date.now() - cache.em > 60_000) {
+      const sb = createServiceClient();
+      const v = await versaoEmVigor<Layout>(sb, "tabela_de_precos");
+      if (!v || v.documento.formato !== 3) return NextResponse.json({ error: "No site layout yet" }, { status: 404 });
+      const tabela = gerarTabelaDoSite(v.documento.layout, v.documento.mapa, await lerServicos(sb));
+      cache = { em: Date.now(), versao: v.id, tabela };
+    }
     return NextResponse.json(
-      // O site lê o formato 1; a lista (formato 2) é convertida aqui.
-      { versao: v.id, atualizado_em: v.criado_em, documento: paraSite(comoLista(v.documento)) },
+      { versao: cache.versao, atualizado_em: new Date(cache.em).toISOString(), documento: cache.tabela },
       { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } },
     );
   } catch (err) {
     console.error("[api/public/tabela-de-precos]", err);
-    return NextResponse.json({ error: "Could not load the price list" }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not build the price list" }, { status: 503 });
   }
 }

@@ -6,7 +6,7 @@
  */
 
 import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
-import { textoDasRegras, textoDosPrecosSoDoHarvey } from "./regras";
+import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
@@ -328,7 +328,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // Acesso desligado na tela = ferramenta fora da lista: ele não tem como usar.
   const ferramentas = (parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE).filter((f) => ferramentaLiberada(f.function.name, ajustes));
   // As regras do OS (/rules): o que vale para este público, lido a cada 30 s.
-  const regrasDoOs = [await textoDasRegras(parceiro ? "parceiro" : "cliente"), parceiro ? "" : await textoDosPrecosSoDoHarvey()].filter(Boolean).join("\n\n");
+  const regrasDoOs = await textoDasRegras(parceiro ? "parceiro" : "cliente");
   ctx = { ...ctx, ajustes, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,

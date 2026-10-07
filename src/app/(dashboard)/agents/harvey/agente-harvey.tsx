@@ -36,7 +36,7 @@ export type Catalogo = {
 };
 
 const REGRAS_FIXAS = [
-  "Prices come from the OS price list, the same one the website and checkout use.",
+  "Prices come from Services, the same ones the website and checkout use.",
   "Payment: 50% now by secure card link, 50% after the job. The link expires in 1 hour.",
   "Days: only days the diary shows free. No same day, no Sundays.",
   "London only.",
@@ -260,9 +260,9 @@ function TabelaDePrecos({ catalogo }: { catalogo: Catalogo | null }) {
   return (
     <div className="space-y-6">
       <p className="text-sm text-text-tertiary">
-        The OS price list: the website, the checkout and Harvey all use it.{" "}
-        <Link href="/price-list" className="font-medium text-primary hover:underline">
-          Edit in Price list
+        What the website sells, with prices from Services (the website, the checkout and Harvey all use them).{" "}
+        <Link href="/settings?tab=services" className="font-medium text-primary hover:underline">
+          Edit in Services
         </Link>
       </p>
 
