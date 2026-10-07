@@ -44,7 +44,7 @@ const { default: sharp } = await import("sharp");
 const svgTeto = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="100%" height="100%" fill="#f2f0ea"/><ellipse cx="400" cy="280" rx="210" ry="150" fill="#b8925a" opacity="0.55"/><ellipse cx="410" cy="290" rx="140" ry="95" fill="#8a6435" opacity="0.6"/><ellipse cx="420" cy="300" rx="60" ry="40" fill="#5c3f1e" opacity="0.7"/><line x1="0" y1="560" x2="800" y2="560" stroke="#ccc" stroke-width="6"/></svg>`;
 const FOTO_TETO = `data:image/png;base64,${(await sharp(Buffer.from(svgTeto)).png().toBuffer()).toString("base64")}`;
 
-const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cliente: string[]; checar: (t: string, f: string[], r: { passou: string | null; link: boolean }) => string[] }> = {
+const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abertura?: string; cliente: string[]; checar: (t: string, f: string[], r: { passou: string | null; link: boolean }) => string[] }> = {
   eot: {
     cliente: [
       "Hi, how much for an end of tenancy clean?",
@@ -192,6 +192,14 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; cli
     cliente: ["Hi there! Is the painter offer still available? (touch-ups £215)", "just touch ups before I move out, 1 bed in NW6"],
     checar: (t) => [!/\b(yes|yep|still)\b/i.test(t.split("\n")[0]) && "não confirmou que está de pé", /no (special )?offer|not an offer|isn'?t an offer/i.test(t) && "disse que não tem oferta", !/£215/.test(t) && "não disse £215", /discount|% off/i.test(t) && "inventou desconto"].filter(Boolean) as string[],
   },
+  checkatrade_lead: {
+    quem: "cliente",
+    abertura: "Hi Sarah, it's Harvey from Fixfy. We've got your Checkatrade request for handyman work in the NW5 area and we can help. Could you tell me a bit more about the job, or send a couple of photos? I'll come back with a fixed price.",
+    sobre:
+      'This person asked for a quote on Checkatrade and we messaged them first (our message is the first one in this chat, so you have already introduced yourself: do not say "I\'m Harvey" again). Name: Sarah Jones. Postcode: NW5 1AB. What they asked for, in their words: "Need 3 shelves put up and a curtain pole in the bedroom". Pick up from their request: if it fits the catalogue, ask only what is missing and quote; if it does not, offer a proper quote (request_quote).',
+    cliente: ["Hi yes, it's the shelves and the curtain pole"],
+    checar: (t, f) => [/I['’]m Harvey/i.test(t.split("\n").slice(1).join("\n")) && "se apresentou de novo", !/£180/.test(t) && "não cotou a meia diária (£180)", !f.includes("get_quote") && "não chamou get_quote", !/material|part/i.test(t) && "não avisou que material não está incluso"].filter(Boolean) as string[],
+  },
   stop: {
     cliente: ["how much for a deep clean", "stop messaging me"],
     checar: (t) => [/£\d/.test(t.split("\n").slice(-1)[0] || "") && "vendeu depois do stop"].filter(Boolean) as string[],
@@ -248,7 +256,7 @@ let falhas = 0;
 const relatorio: string[] = [];
 for (const nome of escolhidos) {
   const caso = CASOS[nome];
-  const conversa: Fala[] = [];
+  const conversa: Fala[] = caso.abertura ? [{ papel: "harvey", texto: caso.abertura }] : [];
   const ferramentas: string[] = [];
   let passou: string | null = null;
   let link = false;
@@ -274,7 +282,7 @@ for (const nome of escolhidos) {
   if ((textoHarvey.match(/(hi|hey|hello)( there)?,? I['’]m Harvey/gi) ?? []).length > 1) problemas.push("se apresentou duas vezes");
   if ((textoHarvey.match(/Harvey/g) ?? []).length > 1 && nome !== "bot") problemas.push("repetiu o nome");
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
-  if (nome !== "reclamacao" && nome !== "stop" && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
+  if (nome !== "reclamacao" && nome !== "stop" && !caso.abertura && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
   if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;

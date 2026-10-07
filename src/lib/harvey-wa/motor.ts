@@ -17,6 +17,7 @@ import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { classificarNoZendesk, fecharConversaPaga, notaInternaNaConversa, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
+import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
@@ -59,6 +60,18 @@ export function paraFalas(msgs: MensagemSc[]): Fala[] {
  * (status e documentos pela ferramenta) ou cliente, com as reservas já na mão
  * para saber se é job feito, job marcado ou pedido novo sem precisar perguntar.
  */
+/** O pedido que a pessoa fez no Checkatrade, para o Harvey continuar a conversa que o template abriu. */
+function pedidoDoCheckatrade(c: { id: string; full_name: string | null; phone: string | null; email: string | null; postcode: string | null; address: string | null; notes?: string | null }): string | null {
+  if (!/checkatrade-lead:/.test(c.notes ?? "")) return null;
+  const b = parseLeadBrief({ ...c, name: c.full_name, notes: c.notes ?? null });
+  return (
+    `This person asked for a quote on Checkatrade and we messaged them first (our message is the first one in this chat, so you have already introduced yourself: do not say "I'm Harvey" again). ` +
+    `Name: ${c.full_name ?? "unknown"}. Postcode: ${b.postcode ?? c.postcode ?? "unknown"}. ` +
+    `What they asked for, in their words: ${JSON.stringify(b.enquiry ?? "not given")}. ` +
+    "Pick up from their request: if it fits the catalogue, ask only what is missing and quote; if it does not, offer a proper quote (request_quote)."
+  );
+}
+
 export async function contextoDaPessoa(
   sb: ReturnType<typeof createServiceClient>,
   telefone: string | null,
@@ -82,6 +95,13 @@ export async function contextoDaPessoa(
     sobreQuem = `Partner in our system: ${p.contact_name ?? p.company_name ?? "unknown name"}${p.company_name ? ` (${p.company_name})` : ""}, ${p.trade ?? "trade not set"}, account status ${p.status}.`;
   } else if (quem.tipo === "cliente") {
     const reservas = await contas.reservas(null).catch(() => null);
+    const lista = (reservas as { reservas?: unknown[] } | null)?.reservas ?? [];
+    const pedido = pedidoDoCheckatrade(quem.cliente);
+    if (pedido && !lista.length) {
+      // Lead do Checkatrade que recebeu o nosso primeiro contato (primeiro-contato.ts).
+      sobreQuem = pedido;
+      return { quem, contas, sobreQuem };
+    }
     sobreQuem =
       `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. ` +
       `Their bookings (recent and upcoming): ${JSON.stringify((reservas as { reservas?: unknown[] } | null)?.reservas ?? [])}. ` +

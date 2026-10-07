@@ -34,6 +34,9 @@ async function sc<T>(caminho: string, init: { method?: string; body?: unknown } 
   return (res.status === 204 ? {} : await res.json()) as T;
 }
 
+/** A chamada crua, para quem precisa de um endpoint que não tem função aqui (ex. notifications). */
+export const scApi = sc;
+
 export async function enviarTexto(conversationId: string, texto: string) {
   return sc(`/conversations/${conversationId}/messages`, {
     method: "POST",
