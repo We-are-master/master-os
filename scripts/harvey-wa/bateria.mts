@@ -299,7 +299,9 @@ for (const nome of escolhidos) {
   // Dia livre só sai da agenda: oferecer dia sem get_available_dates é chute (handyman, pintura, ad_handyman em 07/10).
   // Frase repetida entre mensagens do Harvey soa robô (link novo da Stripe não conta).
   const falasHarvey = conversa.filter((f) => f.papel === "harvey").map((f) => frasesDe(f.texto).filter((fr) => !/https?:\/\//.test(fr)));
-  const repetida = falasHarvey.flatMap((fs, i) => fs.filter((fr) => falasHarvey.slice(0, i).flat().some((d) => quaseIgual(fr, d))))[0];
+  // Frase com valor novo em £ (o preço mudou com os banheiros) é informação nova, não repetição.
+  const valorNovo = (fr: string, antes: string[]) => (fr.match(/£\d[\d,]*(?:\.\d+)?/g) ?? []).some((v) => !antes.join(" ").includes(v));
+  const repetida = falasHarvey.flatMap((fs, i) => fs.filter((fr) => !valorNovo(fr, falasHarvey.slice(0, i).flat()) && falasHarvey.slice(0, i).flat().some((d) => quaseIgual(fr, d))))[0];
   if (repetida) problemas.push(`repetiu frase: "${repetida.slice(0, 60)}"`);
   if (caso.quem !== "cliente" && ofereceDia(textoHarvey) && !ferramentas.includes("get_available_dates")) problemas.push("ofereceu dia sem consultar a agenda");
   if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
