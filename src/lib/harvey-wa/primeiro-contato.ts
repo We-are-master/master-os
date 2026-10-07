@@ -12,8 +12,8 @@
  * Registro antes do envio tranca para sempre o lead cujo envio falhou.
  *
  * Ambiente (Vercel e .env.local da máquina dos scripts):
- *   HARVEY_WA_LEAD_TEMPLATE        nome do template aprovado (ex. checkatrade_lead_hello)
- *   HARVEY_WA_LEAD_TEMPLATE_LANG   idioma do template, padrão en_GB
+ *   HARVEY_WA_LEAD_TEMPLATE        nome do template aprovado: checkatrade_first_contact (07/10/2026)
+ *   HARVEY_WA_LEAD_TEMPLATE_LANG   idioma do template: "en" para o checkatrade_first_contact (padrão en_GB)
  *   HARVEY_WA_TEMPLATE_NAMESPACE   só se o Zendesk pedir (WABA antiga)
  *   HARVEY_WA_LEAD_TEMPLATE_VARS   as variáveis do template, na ordem (padrão "nome,servico";
  *                                  o aprovado em 07/10/2026 chama pelo nome e o tipo de trabalho)
