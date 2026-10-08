@@ -31,7 +31,7 @@ import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 let integracaoWhatsApp: string | null = null;
 
 /** O id da integração de WhatsApp do app no Sunshine (o número da Fixfy). */
-async function idDaIntegracaoWhatsApp(): Promise<string> {
+export async function idDaIntegracaoWhatsApp(): Promise<string> {
   if (integracaoWhatsApp) return integracaoWhatsApp;
   const fixo = process.env.HARVEY_WA_WHATSAPP_INTEGRATION_ID?.trim();
   if (fixo) return (integracaoWhatsApp = fixo);

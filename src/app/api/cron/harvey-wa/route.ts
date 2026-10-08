@@ -2,6 +2,7 @@
  * Varredura do Harvey no WhatsApp, a cada 10 min pelo n8n:
  *  - chase de quem parou de responder (src/lib/harvey-wa/chase.ts)
  *  - transferência aguardando o sinal: confirma, lembra e libera (transferencia.ts).
+ *  - lead que nunca respondeu o primeiro contato (followup-leads.ts).
  *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
@@ -15,6 +16,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { varrerChases } from "@/lib/harvey-wa/chase";
 import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
+import { varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,7 +42,9 @@ export async function GET(req: NextRequest) {
     const sb = createServiceClient();
     const chase = await varrerChases(sb, { aplicar: !ensaio });
     const transferencias = await varrerTransferencias(sb, new Date(), { aplicar: !ensaio });
-    return NextResponse.json({ ok: true, chase, transferencias });
+    // Lead que nunca respondeu o primeiro contato: lembrete 24h, ligar 48h, fecha 7d.
+    const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
+    return NextResponse.json({ ok: true, chase, transferencias, leads });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });
