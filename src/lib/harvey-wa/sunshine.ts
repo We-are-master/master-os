@@ -96,6 +96,12 @@ export type MensagemSc = {
   source?: { type?: string };
 };
 
+/** O cliente da conversa (quem não é o negócio): para achar o telefone quando a mensagem é nossa. */
+export async function usuarioDaConversa(conversationId: string): Promise<string | null> {
+  const r = await sc<{ participants?: Array<{ userId?: string }> }>(`/conversations/${conversationId}/participants`);
+  return r.participants?.find((p) => p.userId)?.userId ?? null;
+}
+
 /** As últimas mensagens da conversa (cliente, Harvey e equipe), da mais velha para a mais nova. */
 export async function historico(conversationId: string, limite = 40): Promise<MensagemSc[]> {
   const r = await sc<{ messages: MensagemSc[] }>(`/conversations/${conversationId}/messages`);

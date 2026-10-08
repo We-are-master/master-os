@@ -18,13 +18,13 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
-import { baixarMidia, devolverAoHarvey, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, type MensagemSc } from "./sunshine";
+import { baixarMidia, devolverAoHarvey, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -185,11 +185,27 @@ async function juntarTicketAnterior(userId: string | undefined): Promise<void> {
   if (feito.includes("juntado")) console.log("[harvey-wa] juntou ticket anterior:", feito);
 }
 
+/**
+ * 🔴 quando o cliente escreveu por último, 🟢 quando fomos nós. Vale a ÚLTIMA
+ * mensagem da conversa, não a do evento: o Harvey responde em segundos e os
+ * dois webhooks podem chegar fora de ordem.
+ */
+async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Promise<void> {
+  if (msg.author.type === "user" && msg.source?.type && msg.source.type !== "whatsapp") return;
+  const userId = msg.author.type === "user" ? msg.author.userId : await usuarioDaConversa(conversationId).catch(() => null);
+  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+  if (!telefone) return;
+  const ultima = (await historico(conversationId, 1).catch(() => [msg])).at(-1) ?? msg;
+  await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
+}
+
 /** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
 export async function processarEvento(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
+  // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
+  if (conversa?.id && msg) await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
   // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
   // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
   if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && msg.author.displayName !== "Harvey") {

@@ -12,7 +12,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { zendeskApi, isZendeskConfigured } from "@/lib/zendesk";
+import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
 import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
@@ -267,6 +267,33 @@ export async function juntarTicketsDaConversa(telefone: string, dados: Pick<Dado
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   return `ticket ${ticket}${juntou}`;
+}
+
+/**
+ * Reply status do ticket da conversa (campo do Zendesk, o mesmo dos tickets de
+ * e-mail): 🔴 reply_awaiting quando o cliente escreveu por último, 🟢
+ * reply_replied quando fomos nós (equipe, Harvey ou template). Os gatilhos do
+ * Zendesk não servem aqui: no WhatsApp quem escreve no ticket é o sistema (o
+ * bloco do chat transcript), então "role is end_user/agent" nunca casa (dono,
+ * 08/10/2026). A tag harvey_wa vai junto: é ela que segura o e-mail de cópia
+ * da conversa para o cliente (gatilho "Notify requester and CCs").
+ */
+export async function marcarReplyStatusNaConversa(telefone: string, valor: "reply_awaiting" | "reply_replied", esperarTicket: boolean): Promise<string> {
+  if (!isZendeskConfigured()) return "";
+  const u = await usuarioPeloTelefone(telefone);
+  if (!u) return "usuário não achado";
+  let ticket: number | null = null;
+  for (let tentativa = 0; tentativa < (esperarTicket ? 4 : 1) && !ticket; tentativa++) {
+    ticket = await ticketDaConversa(u.id);
+    if (!ticket && esperarTicket) await new Promise((r) => setTimeout(r, 2500));
+  }
+  if (!ticket) return "sem ticket";
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
+  if (atual !== valor) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor }] } } });
+  // PUT acrescenta (POST substituiria as tags da conversa).
+  if (!t.tags.includes("harvey_wa")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa"] } });
+  return `ticket ${ticket}: ${valor}`;
 }
 
 /**
