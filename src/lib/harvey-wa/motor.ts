@@ -18,7 +18,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -195,13 +195,20 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
   const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
   if (!telefone) return;
   const ultima = (await historico(conversationId, 1).catch(() => [msg])).at(-1) ?? msg;
-  await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
+  // O Harvey passou para a equipe ("let me grab someone"): a última fala é dele, mas a vez
+  // é NOSSA. Sem isto o ticket ficava 🟢 e voltava para a view Leads (Max, 08/10/2026).
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  const harveyPassou = est?.estado === "equipe" && ehDoHarvey(ultima);
+  await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" || harveyPassou ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
 }
 
 /** Botão de resposta rápida do template: vira nota no ticket com o que fazer. */
-const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[] }> = [
+const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[]; perdido?: boolean }> = [
   { re: /call me/i, nota: (tel) => `📞 The customer tapped "Call me back" on the WhatsApp template. Call them on ${tel}.`, tags: ["callback_requested"] },
-  { re: /photo/i, nota: () => `📷 The customer tapped "I'll send photos" on the WhatsApp template: photos are coming in this conversation.`, tags: ["photos_coming"] },
+  { re: /photo|send a list/i, nota: () => `📷 The customer tapped the "send photos" button on the WhatsApp template: photos are coming in this conversation.`, tags: ["photos_coming"] },
+  { re: /still need/i, nota: () => `✅ The customer tapped "Yes, still need it" on the check-in: the lead is still live.`, tags: ["lead_still_needed"] },
+  // Lead perdido: fecha o ticket de trabalho (dono, 08/10/2026).
+  { re: /no longer needed|not needed|don'?t need/i, nota: () => `Lost: the customer tapped "No longer needed" on the WhatsApp template. Solved as cancelled; it reopens by itself if they write again.`, tags: ["lead_lost"], perdido: true },
 ];
 
 async function anotarBotao(msg: MensagemSc): Promise<void> {
@@ -210,7 +217,12 @@ async function anotarBotao(msg: MensagemSc): Promise<void> {
   const telefone = await telefoneDoUsuario(msg.author.userId).catch(() => null);
   if (!telefone) return;
   const b = BOTOES.find((x) => x.re.test(botao));
-  await notaInternaNaConversa(telefone, b ? b.nota(telefone) : `The customer tapped "${botao}" on the WhatsApp template.`, ["harvey_wa", ...(b?.tags ?? [])]);
+  if (b?.perdido) {
+    console.log("[harvey-wa] lead perdido:", await encerrarLeadPerdido(telefone, b.nota(telefone)));
+    return;
+  }
+  // No ticket de trabalho: com o Harvey atendendo, o da conversa é "AI agent" e não aceita nota.
+  await notaNoTicketDeTrabalho(telefone, b ? b.nota(telefone) : `The customer tapped "${botao}" on the WhatsApp template.`, ["harvey_wa", ...(b?.tags ?? [])]);
 }
 
 /**
@@ -400,6 +412,8 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       .filter(Boolean)
       .join("\n");
     const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
+    if (/quote/i.test(r.passarParaEquipe)) await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
     console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
