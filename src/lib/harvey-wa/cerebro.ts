@@ -97,7 +97,7 @@ const SELECAO = {
     fix: {
       type: "object",
       properties: {
-        trade: { type: "string", description: "handyman.trades id: handyman (default), plumber, carpenter or electrician" },
+        trade: { type: "string", description: "handyman.trades id: handyman (default), plumber or carpenter" },
         tasks: { type: "array", items: { type: "string" }, description: "handyman only" },
         package: { type: "string", description: "package id of the trade: half, day or hour" },
         hours: { type: "integer", minimum: 1, maximum: 8, description: "only for the hour package" },
@@ -196,7 +196,7 @@ const FERRAMENTAS_CLIENTE = [
       parameters: {
         type: "object",
         properties: {
-          service_type: { type: "string", description: "the trade, e.g. Plumbing, Electrical, Roofing, Cleaning" },
+          service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Roofing, Cleaning" },
           description: { type: "string", description: "the job in English, including what you saw in the photos" },
           postcode: { type: "string" },
           address: { type: "string", description: "house number and street, if they gave it" },

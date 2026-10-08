@@ -9,7 +9,7 @@
  *
  * Fica de fora, de propósito: Regular Cleaning (por hora e recorrente, precisa
  * de fluxo próprio), Gardener (paga mais do que cobra), Builder (sem preço),
- * Commercial EPC (preço "a partir de"), Cleaning e Gas Safety Check (repetem
+ * Commercial EPC (preço "a partir de"), Electrician (a Fixfy não faz elétrica), Cleaning e Gas Safety Check (repetem
  * serviços que já estão no site), combinações "N bed · 2 bath" (o site cobra
  * banheiro como extra), Fire Risk por casa (sem repasse) e 6+ quartos.
  */
@@ -40,7 +40,6 @@ const ref = (nome: string, tipo: "preset" | "addon", re: RegExp): Ref => {
   if (!l) throw new Error(`${nome}: no ${tipo} matching ${re}`);
   return { servico: s.id, tipo, id: l.id };
 };
-const doServico = (nome: string): Ref => ({ servico: servico(nome).id, tipo: "servico", id: servico(nome).id });
 const semRepetir = <T extends { id: string }>(lista: T[], novos: T[]) => [...lista.filter((x) => !novos.some((n) => n.id === x.id)), ...novos];
 
 // ── limpeza: os extras de Services que o site ainda não tinha ───────────────
@@ -88,10 +87,10 @@ const pacotes = (...l: Array<typeof MEIA>) => l.map((p) => ({ ...p }));
 layout.fix.trades = [
   { id: "plumber", label: "Plumber", detail: "Leaks, taps, toilets, showers and radiators", osTitle: "Plumber", packages: pacotes(MEIA, DIARIA, POR_HORA) },
   { id: "carpenter", label: "Carpenter", detail: "Doors, skirting, shelves and fitted furniture", osTitle: "Carpenter", packages: pacotes(MEIA, DIARIA, POR_HORA) },
-  { id: "electrician", label: "Electrician", detail: "Sockets, lights, switches and faults", osTitle: "Electrician", packages: pacotes(POR_HORA) },
 ];
 const pacotesDe = (nome: string) => ({ half: ref(nome, "preset", /^half day/i), day: ref(nome, "preset", /^full day/i), hour: ref(nome, "preset", /^hourly/i) });
-mapa.fix.profissoes = { plumber: pacotesDe("Plumber"), carpenter: pacotesDe("Carpenter"), electrician: { hour: doServico("Electrician") } };
+// Sem eletricista (dono, 08/10/2026: "não estamos fazendo eletricidade").
+mapa.fix.profissoes = { plumber: pacotesDe("Plumber"), carpenter: pacotesDe("Carpenter") };
 
 // ── certificados ────────────────────────────────────────────────────────────
 const gas = layout.cert.items.find((c) => c.id === "gas")!;
