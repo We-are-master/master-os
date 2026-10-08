@@ -1028,8 +1028,12 @@ export async function POST(req: NextRequest) {
     jobRow.promotion_amount = promotionAmount;
   }
   if (paymentStatusIn) {
-    jobRow.payment_status = paymentStatusIn;
-    jobRow.paid_at        = paidAtIn ?? new Date().toISOString();
+    // Sinal (50%): `payment_status` só aceita unpaid/link_sent/paid/refunded no
+    // banco (jobs_payment_status_check); "partial" mora só em `finance_status`
+    // e o valor do sinal vai para job_payments logo abaixo. Gravar "partial"
+    // aqui derrubava TODA reserva com sinal (FX-56UC6M, 08/10/2026: 500).
+    jobRow.payment_status = paymentStatusIn === "partial" ? "unpaid" : paymentStatusIn;
+    if (paymentStatusIn === "paid") jobRow.paid_at = paidAtIn ?? new Date().toISOString();
     if (paymentAmountIn !== null) jobRow.payment_amount = paymentAmountIn;
     if (paymentIntentIn) jobRow.stripe_payment_intent_id = paymentIntentIn;
   }
