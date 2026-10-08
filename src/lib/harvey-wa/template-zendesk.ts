@@ -11,6 +11,7 @@
  */
 import { idDaIntegracaoWhatsApp, telefoneE164 } from "./primeiro-contato";
 import { scNotificacao } from "./sunshine";
+import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
 
 /** Mesmo namespace dos templates dos leads (a conta de WhatsApp do Zendesk). */
 const namespace = () =>
@@ -45,7 +46,28 @@ export async function enviarTemplatePeloZendesk(input: {
           : [],
       },
     },
-    metadata: { origem: "lembrete-24h" },
+    metadata: { origem: input.name },
   });
   return { messageId: r.notification?._id ?? r.notification?.id ?? "", to: destino };
+}
+
+/**
+ * Canal único das mensagens ao cliente (confirmação, remarcação, lembrete de
+ * véspera, feedback): o número do Zendesk por padrão; `CLIENT_WA_VIA=cloud`
+ * volta para a Cloud API direta.
+ */
+export const clientePelaCloud = () => process.env.CLIENT_WA_VIA?.trim() === "cloud";
+
+export function enviarAoCliente(input: Parameters<typeof sendTemplate>[0]): ReturnType<typeof sendTemplate> {
+  return clientePelaCloud() ? sendTemplate(input) : enviarTemplatePeloZendesk(input);
+}
+
+export function canalDoClienteConfigurado(): boolean {
+  return clientePelaCloud() ? whatsappConfigured() : zendeskWhatsAppConfigurado();
+}
+
+export function canalDoClienteFaltando(): string {
+  return clientePelaCloud()
+    ? "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)"
+    : "Zendesk WhatsApp is not configured (SUNSHINE_APP_ID, SUNSHINE_KEY_ID, SUNSHINE_KEY_SECRET)";
 }

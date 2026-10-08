@@ -26,26 +26,18 @@
  *   5. Só entre 09h e 20h de LONDRES: pedir feedback de madrugada é pedir
  *      nota baixa.
  *
- * Sai pelo mesmo número da confirmação (WHATSAPP_PHONE_NUMBER_ID — o
- * 07 desde 28/08), template `afterwork_feedback` (aprovado pela
- * Meta em 28/08, uma variável: o nome). Sem link no corpo: a resposta do
- * cliente cai na caixa do WhatsApp Business, onde o time já trabalha.
+ * Sai pelo número do Zendesk (020 4538 4668) desde 08/10/2026, como a
+ * confirmação e o lembrete: a Cloud API direta passou a devolver #200.
+ * Template `job_feedback` (aprovado lá, uma variável: o nome): "your job with
+ * Fixfy is complete. Was everything done to your satisfaction?". A resposta do
+ * cliente cai na conversa do Zendesk, onde a equipe e o Harvey já estão.
  *
- * ── ATENÇÃO: o template ainda é o texto errado para este momento ─────────
- *
- * `afterwork_feedback` diz "Before we close the job, could you please confirm
- * that everything has been completed to your satisfaction?" — texto de
- * aprovação PRÉ-fechamento, que é do `aprovacao-final-check.mts`. Sair daqui,
- * depois de PAGO, pergunta se pode fechar um job que já fechou.
- *
- * Consertar a trava faz a mensagem sair uma vez em vez de três; não a torna a
- * mensagem certa. Este sweep só deve voltar ao launchd quando tiver template
- * próprio ("como foi?"), aprovado na Meta. Até lá fica desagendado de
- * propósito — o `.plist` continua no disco.
+ * O `afterwork_feedback` antigo ("Before we close the job…") era texto de
+ * pré-fechamento e é do `aprovacao-final-check.mts`; não volta para cá.
  */
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "./load-env-local.mjs";
-import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
+import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
 import { decidirEnvio, mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
 
 loadEnvLocal();
@@ -73,8 +65,8 @@ if (ENVIAR_AGORA && !mensagensAoClienteLigadas()) {
   console.log("[feedback] CLIENT_MESSAGING_ENABLED não é 1: nada sai.");
   process.exit(0);
 }
-if (ENVIAR_AGORA && !whatsappConfigured()) {
-  throw new Error("WhatsApp não configurado (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID): sem canal, sem envio");
+if (ENVIAR_AGORA && !canalDoClienteConfigurado()) {
+  throw new Error(`${canalDoClienteFaltando()}: sem canal, sem envio`);
 }
 
 const desde = new Date(Date.now() - JANELA_HORAS * 3600e3).toISOString();
@@ -128,7 +120,7 @@ for (const j of candidatos) {
   try {
     // O template do feedback tem UMA variável ({{1}} = nome). Mandar mais do
     // que o corpo declara faz a Meta recusar o envio inteiro.
-    await sendTemplate({ to: decisao.telefone, name: TEMPLATE, language: IDIOMA, bodyParams: [primeiroNome] });
+    await enviarAoCliente({ to: decisao.telefone, name: TEMPLATE, language: IDIOMA, bodyParams: [primeiroNome] });
     /**
      * A trava grava ANTES de qualquer conferência de entrega: pedido de
      * feedback repetido irrita mais do que um perdido — na dúvida, não repete.
