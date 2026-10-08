@@ -44,41 +44,6 @@ async function orgDosClientes(): Promise<number> {
   return (cache.org = r.organization.id);
 }
 
-/**
- * A origem do lead sai do assunto e vai para a Organisation: o ticket fica na
- * org "🏢 Checkatrade" (dono, 08/10/2026: "não dividir a org").
- *
- * Cuidado: a org tem o gatilho "Auto-solve Checkatrade noise (mega catch-all)",
- * que RESOLVE todo ticket que NASCE nela. Por isso:
- *  - a pessoa entra na Checkatrade como org EXTRA; a padrão é a Fixfy Customers
- *    (ticket novo dela nasce na padrão e não é auto-resolvido);
- *  - o ticket só vai para a Checkatrade numa atualização, nunca na criação.
- */
-const ORG_CHECKATRADE = Number(process.env.ZENDESK_ORG_CHECKATRADE?.trim() || "5700930743967");
-
-async function membro(userId: number, organizationId: number, padrao: boolean): Promise<void> {
-  try {
-    await zendeskApi("organization_memberships.json", { method: "POST", body: { organization_membership: { user_id: userId, organization_id: organizationId, default: padrao } } });
-  } catch (e) {
-    // 422 = já é membro.
-    if (!String(e).includes("422")) throw e;
-  }
-}
-
-/** Ticket (que já existe) na org Checkatrade, com a pessoa tendo a Fixfy Customers de padrão. */
-export async function ticketNaOrgDeLeads(ticket: number, userId: number): Promise<void> {
-  const { user } = await zendeskApi<{ user: { organization_id: number | null; email: string | null } }>(`users/${userId}.json`);
-  // Nunca a nossa própria equipe (Fixfy Team é solicitante de lead sem e-mail).
-  if (/@getfixfy\.com$/i.test(user?.email ?? "")) return;
-  const clientes = await orgDosClientes();
-  if (!user?.organization_id || user.organization_id === ORG_CHECKATRADE) {
-    await membro(userId, clientes, true);
-    await zendeskApi(`users/${userId}.json`, { method: "PUT", body: { user: { organization_id: clientes } } });
-  }
-  await membro(userId, ORG_CHECKATRADE, false);
-  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { organization_id: ORG_CHECKATRADE } } });
-}
-
 async function camposDeUsuario() {
   if (cache.campos) return;
   const { user_fields } = await zendeskApi<{ user_fields: Array<{ key: string }> }>("user_fields.json");
@@ -179,9 +144,7 @@ async function herdarDoLead(ticketWa: number, lead: { subject: string; requester
   // PUT acrescenta (POST substituiria as tags da conversa).
   await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags } });
   // Job do Express: o solicitante pode ser a conta (Checkatrade), nunca juntar com o morador.
-  if (!juntarPessoa || !wa?.requester_id) return;
-  if (tags.includes("lead_checkatrade")) await ticketNaOrgDeLeads(ticketWa, wa.requester_id).catch((e) => console.error("[harvey-wa] org dos leads:", e));
-  if (wa.requester_id === lead.requester_id) return;
+  if (!juntarPessoa || !wa?.requester_id || wa.requester_id === lead.requester_id) return;
   const { user: doLead } = await zendeskApi<{ user: { id: number; name: string; email: string | null; role: string } }>(`users/${lead.requester_id}.json`);
   // Lead sem e-mail nasce com a Fixfy Team de solicitante: esse não se junta a ninguém.
   if (!doLead || doLead.role !== "end-user" || /@getfixfy\.com$/i.test(doLead.email ?? "")) return;

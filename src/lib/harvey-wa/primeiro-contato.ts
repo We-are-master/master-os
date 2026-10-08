@@ -26,7 +26,6 @@ import { firstName, parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
 import { scApi, scNotificacao } from "./sunshine";
-import { ticketNaOrgDeLeads } from "./zendesk-wa";
 import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 
 let integracaoWhatsApp: string | null = null;
@@ -191,7 +190,12 @@ export function externalIdDoLead(leadExterno: string): string {
  * Nome padrão de ticket de lead (dono, 07/10/2026), igual ao dos leads da Meta:
  * "<Origem> lead · <Serviço> · <Nome> · <Postcode>".
  */
-/** "Lead · Handyman work · Nome · Postcode". A origem fica na Organisation do ticket (dono, 08/10/2026). */
+/**
+ * "Lead · Handyman work · Nome · Postcode" (dono, 08/10/2026). A origem fica na
+ * tag (lead_checkatrade). Não vai para a org 🏢 Checkatrade: ela marca o Contact
+ * Type como B2B, um app do Zendesk devolve o ticket para a org padrão em segundos
+ * e o gatilho "mega catch-all" resolve sozinho todo ticket que nasce nela.
+ */
 export function assuntoDoLead(servico: string, nome: string, postcode: string | null): string {
   const s = servico.trim();
   return ["Lead", s.charAt(0).toUpperCase() + s.slice(1), nome.trim() || "No name", postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
@@ -265,12 +269,6 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
       },
     },
   });
-  // Origem na Organisation ("Checkatrade leads"), não no assunto. Sem e-mail o
-  // solicitante é a Fixfy Team: a org entra quando o ticket juntar com o do WhatsApp.
-  if (r.ticket?.id && emailDoCliente) {
-    const { ticket: t } = await zendeskApi<{ ticket: { requester_id: number } }>(`tickets/${r.ticket.id}.json`);
-    await ticketNaOrgDeLeads(r.ticket.id, t.requester_id).catch((e) => console.error("[harvey-wa] org dos leads", e));
-  }
   return r.ticket?.id ?? null;
 }
 
