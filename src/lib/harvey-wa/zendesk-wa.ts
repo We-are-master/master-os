@@ -300,6 +300,26 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
 }
 
 /**
+ * Grupo do ticket da conversa: "🤖 Harvey" enquanto ele atende, "Fixfy Support"
+ * quando está com a equipe (dono, 08/10/2026: ver na view quem está com o quê;
+ * Assignee pediria uma licença de agente). Nenhuma view, gatilho ou SLA usa grupo.
+ */
+const GRUPO_HARVEY = Number(process.env.ZENDESK_GROUP_HARVEY?.trim() || "6395023678879");
+const GRUPO_EQUIPE = Number(process.env.ZENDESK_GROUP_SUPPORT?.trim() || "5679178036639");
+
+export async function grupoDaConversa(telefone: string | null, comHarvey: boolean): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "";
+  const ticket = await ticketPeloTelefone(telefone);
+  if (!ticket) return "sem ticket";
+  const { ticket: t } = await zendeskApi<{ ticket: { group_id: number | null } }>(`tickets/${ticket}.json`);
+  const alvo = comHarvey ? GRUPO_HARVEY : GRUPO_EQUIPE;
+  // Só troca entre os dois: ticket que a equipe pôs em outro grupo (Partners etc.) fica.
+  if (t.group_id === alvo || (t.group_id && ![GRUPO_HARVEY, GRUPO_EQUIPE].includes(t.group_id))) return "";
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { group_id: alvo } } });
+  return `ticket ${ticket} → ${comHarvey ? "Harvey" : "Fixfy Support"}`;
+}
+
+/**
  * Conversa que começou direto no WhatsApp (anúncio, cliente que já tinha o
  * número): sem ticket anterior para herdar, o ticket fica "Conversation with
  * <nome>". Na primeira cotação ele ganha o assunto padrão. Só troca o assunto

@@ -18,7 +18,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -231,6 +231,9 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   }
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
+  // Grupo do ticket: 🤖 Harvey enquanto ele atende, Fixfy Support com a equipe (parceiro fica onde está).
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone").eq("conversation_id", conversa.id).maybeSingle();
+  if (est?.phone && est.tipo !== "parceiro") await grupoDaConversa(est.phone as string, est.estado === "harvey").catch((e) => console.error("[harvey-wa] grupo:", e));
 }
 
 /** Um evento da Sunshine: a resposta (ou a pausa) e depois a contabilidade no Zendesk. */
