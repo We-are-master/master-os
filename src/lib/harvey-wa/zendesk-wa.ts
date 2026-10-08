@@ -89,8 +89,9 @@ async function ticketDaConversa(userId: number): Promise<number | null> {
  */
 export async function juntarTicketDoJob(ticketWa: number, j: { ticketId: number; jobId: string }): Promise<string> {
   if (j.ticketId === ticketWa) return "";
-  const { ticket } = await zendeskApi<{ ticket: { status: string } }>(`tickets/${j.ticketId}.json`);
+  const { ticket } = await zendeskApi<{ ticket: { status: string; subject: string; requester_id: number } }>(`tickets/${j.ticketId}.json`);
   if (["solved", "closed"].includes(ticket?.status)) return "";
+  await herdarDoLead(ticketWa, ticket, ["harvey_wa", "checkatrade_express"], false).catch((e) => console.error("[harvey-wa] herdar do job:", e));
   await zendeskApi(`tickets/${ticketWa}/merge.json`, {
     method: "POST",
     body: {
@@ -110,8 +111,9 @@ export async function juntarTicketDoJob(ticketWa: number, j: { ticketId: number;
 /** Um ticket aberto antes da conversa (lead do site) entra no ticket do WhatsApp. */
 export async function juntarTicketAntigo(ticketWa: number, ticketId: number): Promise<string> {
   if (ticketId === ticketWa) return "";
-  const { ticket } = await zendeskApi<{ ticket: { status: string } }>(`tickets/${ticketId}.json`);
+  const { ticket } = await zendeskApi<{ ticket: { status: string; subject: string; requester_id: number } }>(`tickets/${ticketId}.json`);
   if (["solved", "closed"].includes(ticket?.status)) return "";
+  await herdarDoLead(ticketWa, ticket, ["harvey_wa", "website_lead"]).catch((e) => console.error("[harvey-wa] herdar do site:", e));
   await zendeskApi(`tickets/${ticketWa}/merge.json`, {
     method: "POST",
     body: {
@@ -127,13 +129,19 @@ export async function juntarTicketAntigo(ticketWa: number, ticketId: number): Pr
 
 export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null; ticketDoJob?: { ticketId: number; jobId: string } | null; ticketAntigo?: number | null };
 
-/** Assunto, prioridade, tags e pessoa do ticket do lead passam para o ticket da conversa. */
-async function herdarDoLead(ticketWa: number, lead: { subject: string; requester_id: number }): Promise<void> {
+/**
+ * Assunto, prioridade, tags e pessoa do ticket anterior (lead do Checkatrade,
+ * reserva do site, job do Express) passam para o ticket da conversa: o Zendesk
+ * o cria como "Conversation with <nome do WhatsApp>" e ele fica com o assunto
+ * padrão (dono, 08/10/2026).
+ */
+async function herdarDoLead(ticketWa: number, lead: { subject: string; requester_id: number }, tags: string[] = ["harvey_wa_lead", "lead_checkatrade"], juntarPessoa = true): Promise<void> {
   const { ticket: wa } = await zendeskApi<{ ticket: { requester_id: number } }>(`tickets/${ticketWa}.json`);
   await zendeskApi(`tickets/${ticketWa}.json`, { method: "PUT", body: { ticket: { subject: lead.subject, priority: "high" } } });
   // PUT acrescenta (POST substituiria as tags da conversa).
-  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa_lead", "lead_checkatrade"] } });
-  if (!wa?.requester_id || wa.requester_id === lead.requester_id) return;
+  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags } });
+  // Job do Express: o solicitante pode ser a conta (Checkatrade), nunca juntar com o morador.
+  if (!juntarPessoa || !wa?.requester_id || wa.requester_id === lead.requester_id) return;
   const { user: doLead } = await zendeskApi<{ user: { id: number; name: string; email: string | null; role: string } }>(`users/${lead.requester_id}.json`);
   // Lead sem e-mail nasce com a Fixfy Team de solicitante: esse não se junta a ninguém.
   if (!doLead || doLead.role !== "end-user" || /@getfixfy\.com$/i.test(doLead.email ?? "")) return;
@@ -259,6 +267,27 @@ export async function juntarTicketsDaConversa(telefone: string, dados: Pick<Dado
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   return `ticket ${ticket}${juntou}`;
+}
+
+/**
+ * Conversa que começou direto no WhatsApp (anúncio, cliente que já tinha o
+ * número): sem ticket anterior para herdar, o ticket fica "Conversation with
+ * <nome>". Na primeira cotação ele ganha o assunto padrão. Só troca o assunto
+ * que o Zendesk criou; assunto que alguém já mudou fica.
+ */
+export async function assuntoPadraoNaConversa(telefone: string | null, a: { origem: string; servico: string; nome: string | null; postcode: string | null }): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "";
+  const u = await usuarioPeloTelefone(telefone);
+  if (!u) return "";
+  const ticket = await ticketDaConversa(u.id);
+  if (!ticket) return "";
+  const { ticket: t } = await zendeskApi<{ ticket: { subject: string | null } }>(`tickets/${ticket}.json`);
+  if (t?.subject && !/^conversation with/i.test(t.subject.trim())) return "";
+  // "Plumber: half day + Gas safety certificate (CP12)" → "Plumber + Gas safety certificate (CP12)".
+  const s = a.servico.split(" + ").map((x) => x.split(":")[0].trim()).filter(Boolean).join(" + ");
+  const assunto = [`${a.origem} lead`, s.charAt(0).toUpperCase() + s.slice(1), a.nome?.trim() || u.name || "No name", a.postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { subject: assunto } } });
+  return `assunto: ${assunto}`;
 }
 
 /**

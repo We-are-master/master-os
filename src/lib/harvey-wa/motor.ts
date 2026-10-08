@@ -18,7 +18,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -336,6 +336,9 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
 
   // Veio de anúncio: a Meta fica sabendo do lead (1ª cotação) e do checkout (link ou banco).
   if (r.cotacao) await mandarEventoWhatsApp(sb, { telefone, evento: "LeadSubmitted", chave: conversa.id }).catch((e) => console.error("[harvey-wa] meta lead", e));
+  // Conversa sem ticket anterior: na primeira cotação o ticket sai de "Conversation with X" para o assunto padrão.
+  if (r.cotacao && quem.tipo !== "parceiro")
+    await assuntoPadraoNaConversa(telefone, { origem: deAnuncio ? "WhatsApp ad" : "WhatsApp", servico: r.cotacao.servico, nome: quem.tipo === "cliente" ? quem.cliente.full_name : (msg.author.displayName ?? null), postcode: r.cotacao.postcode }).catch((e) => console.error("[harvey-wa] assunto", e));
   if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
   return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
