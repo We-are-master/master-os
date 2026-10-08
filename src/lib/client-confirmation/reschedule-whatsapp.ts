@@ -11,7 +11,7 @@
  * vezes, porque cada aviso carrega uma data diferente.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
+import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
 import { decidirEnvio } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
@@ -71,7 +71,7 @@ export async function enviarRescheduleDoCliente(
     jaEnviadoEm: null,
   });
   if (!decisao.manda) return { estado: "pulado", motivo: decisao.motivo };
-  if (!whatsappConfigured()) return { estado: "pulado", motivo: "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)" };
+  if (!canalDoClienteConfigurado()) return { estado: "pulado", motivo: canalDoClienteFaltando() };
 
   const data = dataPorExtenso(job.scheduled_date ?? job.scheduled_start_at ?? null);
   const janela = janelaDeChegada(job.scheduled_start_at ?? null, job.scheduled_end_at ?? null);
@@ -85,7 +85,7 @@ export async function enviarRescheduleDoCliente(
   ];
 
   try {
-    const { messageId } = await sendTemplate({
+    const { messageId } = await enviarAoCliente({
       to: decisao.telefone,
       name: template(),
       language: idioma(),

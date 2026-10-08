@@ -11,7 +11,8 @@
  * alguém arrasta um card na tela do respond.io.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
+import type { sendTemplate } from "@/lib/whatsapp/cloud";
+import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { enviarEmailConfirmadoComProfissional } from "./professional-email";
 
@@ -177,8 +178,8 @@ export async function enviarConfirmacaoDoCliente(
   if (!decisao.manda) return anotarPulo(decisao.motivo);
 
   // Sem número configurado não se inventa remetente: vira pendência visível.
-  if (!whatsappConfigured()) {
-    return anotarPulo("WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)");
+  if (!canalDoClienteConfigurado()) {
+    return anotarPulo(canalDoClienteFaltando());
   }
 
   const data = dataPorExtenso((j.scheduled_date as string) ?? (j.scheduled_start_at as string));
@@ -208,7 +209,8 @@ export async function enviarConfirmacaoDoCliente(
     return { estado: "pulado", motivo: `dry run: would send ${template()} → ${parametros.join(" | ")}` };
   }
 
-  const enviar = opcoes?.enviar ?? sendTemplate;
+  // Pelo número do Zendesk desde 08/10/2026 (a Cloud API direta dava #200).
+  const enviar = opcoes?.enviar ?? enviarAoCliente;
 
   try {
     const { messageId } = await enviar({
