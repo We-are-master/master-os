@@ -315,7 +315,7 @@ export async function assuntoPadraoNaConversa(telefone: string | null, a: { orig
   if (t?.subject && !/^conversation with/i.test(t.subject.trim())) return "";
   // "Plumber: half day + Gas safety certificate (CP12)" → "Plumber + Gas safety certificate (CP12)".
   const s = a.servico.split(" + ").map((x) => x.split(":")[0].trim()).filter(Boolean).join(" + ");
-  const assunto = [`${a.origem} lead`, s.charAt(0).toUpperCase() + s.slice(1), a.nome?.trim() || u.name || "No name", a.postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
+  const assunto = ["Lead", s.charAt(0).toUpperCase() + s.slice(1), a.nome?.trim() || u.name || "No name", a.postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
   await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { subject: assunto } } });
   return `assunto: ${assunto}`;
 }

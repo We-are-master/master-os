@@ -190,9 +190,15 @@ export function externalIdDoLead(leadExterno: string): string {
  * Nome padrão de ticket de lead (dono, 07/10/2026), igual ao dos leads da Meta:
  * "<Origem> lead · <Serviço> · <Nome> · <Postcode>".
  */
-export function assuntoDoLead(origem: string, servico: string, nome: string, postcode: string | null): string {
+/**
+ * "Lead · Handyman work · Nome · Postcode" (dono, 08/10/2026). A origem fica na
+ * tag (lead_checkatrade). Não vai para a org 🏢 Checkatrade: ela marca o Contact
+ * Type como B2B, um app do Zendesk devolve o ticket para a org padrão em segundos
+ * e o gatilho "mega catch-all" resolve sozinho todo ticket que nasce nela.
+ */
+export function assuntoDoLead(servico: string, nome: string, postcode: string | null): string {
   const s = servico.trim();
-  return [`${origem} lead`, s.charAt(0).toUpperCase() + s.slice(1), nome.trim() || "No name", postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
+  return ["Lead", s.charAt(0).toUpperCase() + s.slice(1), nome.trim() || "No name", postcode?.trim().toUpperCase()].filter(Boolean).join(" · ");
 }
 
 /**
@@ -251,12 +257,14 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
     method: "POST",
     body: {
       ticket: {
-        subject: assuntoDoLead("Checkatrade", p.servico, nome, brief.postcode),
+        subject: assuntoDoLead(p.servico, nome, brief.postcode),
         comment: { body: ficha, public: false },
         requester: emailDoCliente ? { name: nome || "Checkatrade lead", email: emailDoCliente } : { name: "Fixfy Team", email: "team@getfixfy.com" },
         priority: "high",
         // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
-        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "ai_quote_draft"],
+        // lead_gen: fica na view 🎯 Leads até responder; o gatilho "Lead replied" tira a tag
+        // e o ticket vai para a Action Required (dono, 08/10/2026).
+        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "lead_gen", "ai_quote_draft"],
         external_id: externalId,
         // 🟢 Sent: o template já saiu, a vez é do cliente. Vira 🔴 quando ele responde (dono, 08/10/2026).
         custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],

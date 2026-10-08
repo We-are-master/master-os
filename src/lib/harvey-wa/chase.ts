@@ -18,7 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { pensar, type Fala } from "./cerebro";
 import { contextoDaPessoa, catalogo, paraFalas, sessaoAtual } from "./motor";
 import { chamarSite } from "./site";
-import { enviarTexto, historico } from "./sunshine";
+import { enviarTexto, historico, vozDaConversa } from "./sunshine";
 
 const DEGRAUS_H = [1, 4, 20];
 /** Teste: HARVEY_WA_CHASE_ESCALA=0.05 vira 3 min, 12 min e 1h. */
@@ -58,12 +58,14 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     if (lista.length && !lista.includes(String(c.phone ?? "").replace(/\D/g, ""))) continue;
     out.olhados++;
 
-    const msgs = sessaoAtual(await historico(c.conversation_id as string));
+    const todas = await historico(c.conversation_id as string);
+    const voz = vozDaConversa(todas);
+    const msgs = voz ? todas : sessaoAtual(todas);
     const ultima = msgs[msgs.length - 1];
     if (!ultima || ultima.author.type === "user") continue; // chegou mensagem e o motor ainda não viu
     const conversa: Fala[] = paraFalas(msgs);
     const { quem, contas, sobreQuem } = await contextoDaPessoa(sb as never, c.phone as string | null);
-    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas }, chamarSite, await catalogo());
+    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz }, chamarSite, await catalogo());
 
     if (!r.resposta) {
       out.semNada++;
@@ -74,7 +76,7 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     out.enviados++;
     out.detalhes.push(`${c.conversation_id}: chase ${n} (${horas.toFixed(1)}h): ${r.resposta.slice(0, 120)}`);
     if (!aplicar) continue;
-    await enviarTexto(c.conversation_id as string, r.resposta);
+    await enviarTexto(c.conversation_id as string, r.resposta, voz);
     const agoraIso = new Date().toISOString();
     await sb.from("harvey_wa_conversas").update({ chases: n, chase_em: agoraIso, harvey_em: agoraIso, atualizado_em: agoraIso }).eq("conversation_id", c.conversation_id);
   }

@@ -24,7 +24,7 @@ import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
-import { baixarMidia, devolverAoHarvey, digitando, enviarTexto, historico, INTEGRACAO_HARVEY, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -53,7 +53,7 @@ export function paraFalas(msgs: MensagemSc[]): Fala[] {
       const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
       if (!texto.trim()) return null;
       if (m.author.type === "user") return { papel: "cliente", texto, ...(m.content.mediaUrl ? { midia: m.content.mediaUrl } : {}) };
-      return { papel: m.author.displayName === "Harvey" ? "harvey" : "equipe", texto };
+      return { papel: ehDoHarvey(m) ? "harvey" : "equipe", texto };
     })
     .filter((f): f is Fala => f !== null);
 }
@@ -157,7 +157,7 @@ async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string 
   const { data: estado } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
   if (estado && estado.estado !== "harvey") return false;
   const msgs = await historico(conversationId).catch(() => []);
-  return !msgs.some((m) => m.author.type === "business" && m.author.displayName && m.author.displayName !== "Harvey");
+  return !msgs.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
 }
 
 type LeadWa = { lead_externo?: string | null; job_id?: string | null; ticket_id?: number | string | null; origem?: string | null } | null;
@@ -247,7 +247,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const msg = evento.payload.message;
   // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
   // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
-  if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && msg.author.displayName !== "Harvey") {
+  if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && !ehDoHarvey(msg)) {
     const sbEquipe = createServiceClient();
     const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
     if (est?.estado === "harvey") {
@@ -320,7 +320,10 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     ORIGEM_PADRAO;
 
   // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
-  const sessao = sessaoAtual(msgs);
+  // Conversa que a equipe começou: o Harvey continua no nome de quem falava e lê
+  // a conversa inteira (a sessão cortaria o que a equipe já combinou com o cliente).
+  const voz = vozDaConversa(msgs);
+  const sessao = voz ? msgs : sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
   const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
   // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
@@ -329,12 +332,21 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
 
   const r = await pensar(
     paraFalas(sessao),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, ticketDaConversa: () => ticketPeloTelefone(telefone) },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone) },
     chamarSite,
     await catalogo(),
   );
 
-  if (r.resposta) await enviarTexto(conversa.id, r.resposta);
+  // Nunca por cima de quem está escrevendo (dono, 08/10/2026): o Harvey leva uns
+  // segundos pensando. Se nesse meio tempo a conversa saiu dele ou alguém da
+  // equipe escreveu depois da mensagem do cliente, a resposta dele é descartada.
+  if (r.resposta) {
+    const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
+    const equipeEscreveu = depois.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
+    if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
+    await enviarTexto(conversa.id, r.resposta, voz);
+  }
 
   // Parceiro não é lead de venda.
   const leadId =
