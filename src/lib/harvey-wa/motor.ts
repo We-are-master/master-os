@@ -18,7 +18,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, classificarNoZendesk, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, classificarNoZendesk, juntarTicketsDaConversa, notaInternaNaConversa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -160,6 +160,31 @@ async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string 
   return !msgs.some((m) => m.author.type === "business" && m.author.displayName && m.author.displayName !== "Harvey");
 }
 
+type LeadWa = { lead_externo?: string | null; job_id?: string | null; ticket_id?: number | string | null; origem?: string | null } | null;
+
+/** Qual ticket anterior entra no da conversa: o do lead (Checkatrade), o do site ou o do job do Express. */
+function dadosDeJuncao(leadWa: LeadWa): Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob"> {
+  const doSite = leadWa?.origem === "site";
+  return {
+    ...(leadWa?.lead_externo && !doSite ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo) } : {}),
+    // Retomada do site: o ticket do lead do site entra na conversa (mesma junção do Express).
+    ...(doSite && leadWa?.ticket_id ? { ticketAntigo: Number(leadWa.ticket_id) } : {}),
+    // Express: o ticket do job entra na conversa e o job passa a apontar para ela.
+    ...(leadWa?.job_id && leadWa?.ticket_id ? { ticketDoJob: { ticketId: Number(leadWa.ticket_id), jobId: String(leadWa.job_id) } } : {}),
+  };
+}
+
+/** Só quem recebeu um template nosso tem ticket anterior; para o resto é uma leitura no banco. */
+async function juntarTicketAnterior(userId: string | undefined): Promise<void> {
+  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+  if (!telefone) return;
+  const sb = createServiceClient();
+  const { data: leadWa } = await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
+  if (!leadWa) return;
+  const feito = await juntarTicketsDaConversa(telefone, dadosDeJuncao(leadWa));
+  if (feito.includes("juntado")) console.log("[harvey-wa] juntou ticket anterior:", feito);
+}
+
 /** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
 export async function processarEvento(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
@@ -181,6 +206,9 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     return "ignorado: equipe já com a conversa";
   }
   if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
+  // O ticket que nasceu antes da conversa (lead, site, Express) entra no da
+  // conversa já na primeira resposta, com o Harvey ligado, pausado ou com a equipe.
+  await juntarTicketAnterior(msg.author.userId).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
   if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) {
     // Conversa que nasceu do NOSSO template (lead do Checkatrade) cai com a equipe no
     // Zendesk, e o Harvey nunca respondia (Kit Bransby, 07/10/2026). Se nenhuma pessoa
@@ -274,14 +302,9 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
     // Lead que recebeu o template: o ticket aberto no envio entra no da conversa.
     const { data: leadWa } = telefone ? await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle() : { data: null };
-    const doSite = leadWa?.origem === "site";
     const dados: DadosDoCliente = {
       ...(r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {}),
-      ...(leadWa?.lead_externo && !doSite ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo as string) } : {}),
-      // Retomada do site: o ticket do lead do site entra na conversa (mesma junção do Express).
-      ...(doSite && leadWa?.ticket_id ? { ticketAntigo: Number(leadWa.ticket_id) } : {}),
-      // Express: o ticket do job entra na conversa e o job passa a apontar para ela.
-      ...(leadWa?.job_id && leadWa?.ticket_id ? { ticketDoJob: { ticketId: Number(leadWa.ticket_id), jobId: String(leadWa.job_id) } } : {}),
+      ...dadosDeJuncao(leadWa),
     };
     const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });

@@ -127,15 +127,34 @@ export async function juntarTicketAntigo(ticketWa: number, ticketId: number): Pr
 
 export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null; ticketDoJob?: { ticketId: number; jobId: string } | null; ticketAntigo?: number | null };
 
+/** Assunto, prioridade, tags e pessoa do ticket do lead passam para o ticket da conversa. */
+async function herdarDoLead(ticketWa: number, lead: { subject: string; requester_id: number }): Promise<void> {
+  const { ticket: wa } = await zendeskApi<{ ticket: { requester_id: number } }>(`tickets/${ticketWa}.json`);
+  await zendeskApi(`tickets/${ticketWa}.json`, { method: "PUT", body: { ticket: { subject: lead.subject, priority: "high" } } });
+  // PUT acrescenta (POST substituiria as tags da conversa).
+  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa_lead", "lead_checkatrade"] } });
+  if (!wa?.requester_id || wa.requester_id === lead.requester_id) return;
+  const { user: doLead } = await zendeskApi<{ user: { id: number; name: string; email: string | null; role: string } }>(`users/${lead.requester_id}.json`);
+  // Lead sem e-mail nasce com a Fixfy Team de solicitante: esse não se junta a ninguém.
+  if (!doLead || doLead.role !== "end-user" || /@getfixfy\.com$/i.test(doLead.email ?? "")) return;
+  // A pessoa do lead (nome e e-mail do Checkatrade) e a do WhatsApp (telefone) viram uma só.
+  await zendeskApi(`users/${doLead.id}/merge.json`, { method: "PUT", body: { user: { id: wa.requester_id } } });
+  if (doLead.name) await zendeskApi(`users/${wa.requester_id}.json`, { method: "PUT", body: { user: { name: doLead.name } } });
+}
+
 /**
  * O cliente respondeu o template: o ticket do lead (aberto no envio, com a
  * ficha e a nota do template) entra no ticket do WhatsApp. Merge do Zendesk:
  * o do lead fecha e o histórico fica todo na conversa.
  */
 export async function juntarTicketDoLead(ticketWa: number, externalId: string): Promise<string> {
-  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
+  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string; subject: string; requester_id: number }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
   const lead = tickets?.find((t) => t.id !== ticketWa && !["solved", "closed"].includes(t.status));
   if (!lead) return "";
+  // O ticket da conversa vira o do lead (dono, 08/10/2026: "abre um completamente
+  // novo"): o Zendesk sempre cria um ticket para a conversa do WhatsApp, com o nome
+  // do perfil do WhatsApp. Ele herda o assunto, a prioridade, as tags e a pessoa do lead.
+  await herdarDoLead(ticketWa, lead).catch((e) => console.error("[harvey-wa] herdar do lead:", e));
   await zendeskApi(`tickets/${ticketWa}/merge.json`, {
     method: "POST",
     body: {
@@ -216,6 +235,30 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
     if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   }
   return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}${juntou}`;
+}
+
+/**
+ * Junta no ticket da conversa do WhatsApp o ticket que nasceu antes dela (lead
+ * do Checkatrade, reserva do site, job do Express). Roda em TODA mensagem do
+ * cliente, pausado ou não: antes só rodava depois de o Harvey responder, e com
+ * ele pausado (07/10/2026) cada resposta abria um ticket novo e o do lead ficava
+ * sozinho. O ticket da conversa pode demorar uns segundos a aparecer.
+ */
+export async function juntarTicketsDaConversa(telefone: string, dados: Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob">): Promise<string> {
+  if (!isZendeskConfigured() || (!dados.ticketDoLead && !dados.ticketAntigo && !dados.ticketDoJob)) return "";
+  const u = await usuarioPeloTelefone(telefone);
+  if (!u) return "usuário não achado";
+  let ticket: number | null = null;
+  for (let tentativa = 0; tentativa < 4 && !ticket; tentativa++) {
+    ticket = await ticketDaConversa(u.id);
+    if (!ticket) await new Promise((r) => setTimeout(r, 2500));
+  }
+  if (!ticket) return "ticket da conversa não apareceu";
+  let juntou = "";
+  if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
+  if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
+  if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
+  return `ticket ${ticket}${juntou}`;
 }
 
 /**
