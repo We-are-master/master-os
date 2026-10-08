@@ -26,7 +26,7 @@ import { firstName, parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
 import { scApi, scNotificacao } from "./sunshine";
-import { zendeskApi } from "@/lib/zendesk";
+import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -258,6 +258,8 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
         // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
         tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "ai_quote_draft"],
         external_id: externalId,
+        // 🟢 Sent: o template já saiu, a vez é do cliente. Vira 🔴 quando ele responde (dono, 08/10/2026).
+        custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],
       },
     },
   });

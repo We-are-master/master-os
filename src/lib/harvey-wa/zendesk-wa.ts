@@ -12,7 +12,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { zendeskApi, isZendeskConfigured } from "@/lib/zendesk";
+import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
 import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
@@ -76,10 +76,13 @@ async function statusDaConversa(ticket: number, alvo: number) {
 
 /** O ticket aberto da conversa de WhatsApp dessa pessoa. */
 async function ticketDaConversa(userId: number): Promise<number | null> {
-  const r = await zendeskApi<{ results: Array<{ id: number }> }>(
-    `search.json?query=${encodeURIComponent(`type:ticket via:whatsapp requester:${userId} status<solved`)}&sort_by=created_at&sort_order=desc`,
+  // Lista da pessoa, não a busca: o índice da busca demora minutos para ver um
+  // ticket novo, e o da conversa nasce segundos antes de a gente procurar
+  // (ticket do Dan #50964, 08/10/2026, ficou sem o do lead por isso).
+  const r = await zendeskApi<{ tickets: Array<{ id: number; status: string; via?: { channel?: string } }> }>(
+    `users/${userId}/tickets/requested.json?sort_by=created_at&sort_order=desc&per_page=25`,
   );
-  return r.results?.[0]?.id ?? null;
+  return r.tickets?.find((t) => t.via?.channel === "whatsapp" && !["solved", "closed"].includes(t.status))?.id ?? null;
 }
 
 /**
@@ -270,6 +273,33 @@ export async function juntarTicketsDaConversa(telefone: string, dados: Pick<Dado
 }
 
 /**
+ * Reply status do ticket da conversa (campo do Zendesk, o mesmo dos tickets de
+ * e-mail): 🔴 reply_awaiting quando o cliente escreveu por último, 🟢
+ * reply_replied quando fomos nós (equipe, Harvey ou template). Os gatilhos do
+ * Zendesk não servem aqui: no WhatsApp quem escreve no ticket é o sistema (o
+ * bloco do chat transcript), então "role is end_user/agent" nunca casa (dono,
+ * 08/10/2026). A tag harvey_wa vai junto: é ela que segura o e-mail de cópia
+ * da conversa para o cliente (gatilho "Notify requester and CCs").
+ */
+export async function marcarReplyStatusNaConversa(telefone: string, valor: "reply_awaiting" | "reply_replied", esperarTicket: boolean): Promise<string> {
+  if (!isZendeskConfigured()) return "";
+  const u = await usuarioPeloTelefone(telefone);
+  if (!u) return "usuário não achado";
+  let ticket: number | null = null;
+  for (let tentativa = 0; tentativa < (esperarTicket ? 4 : 1) && !ticket; tentativa++) {
+    ticket = await ticketDaConversa(u.id);
+    if (!ticket && esperarTicket) await new Promise((r) => setTimeout(r, 2500));
+  }
+  if (!ticket) return "sem ticket";
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
+  if (atual !== valor) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor }] } } });
+  // PUT acrescenta (POST substituiria as tags da conversa).
+  if (!t.tags.includes("harvey_wa")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa"] } });
+  return `ticket ${ticket}: ${valor}`;
+}
+
+/**
  * Conversa que começou direto no WhatsApp (anúncio, cliente que já tinha o
  * número): sem ticket anterior para herdar, o ticket fica "Conversation with
  * <nome>". Na primeira cotação ele ganha o assunto padrão. Só troca o assunto
@@ -295,7 +325,7 @@ export async function assuntoPadraoNaConversa(telefone: string | null, a: { orig
  * motivo e tudo que ele já sabe, para ninguém perguntar de novo ao cliente.
  * O ticket pode demorar uns segundos a aparecer depois da passagem.
  */
-export async function notaInternaNaConversa(telefone: string | null, texto: string): Promise<string> {
+export async function notaInternaNaConversa(telefone: string | null, texto: string, tags: string[] = ["harvey_passou"]): Promise<string> {
   if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
   const u = await usuarioPeloTelefone(telefone);
   if (!u) return "usuário não achado";
@@ -303,7 +333,7 @@ export async function notaInternaNaConversa(telefone: string | null, texto: stri
     const ticket = await ticketDaConversa(u.id);
     if (ticket) {
       await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
-      await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_passou"] } });
+      await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags } });
       return `nota no ticket ${ticket}`;
     }
     await new Promise((r) => setTimeout(r, 2500));
