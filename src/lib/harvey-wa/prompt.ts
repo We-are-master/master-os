@@ -303,16 +303,24 @@ function montar(secoes: SecaoDoPrompt[], edicoes: EdicoesDoPrompt): string {
   return secoes.map((s) => `# ${s.heading}\n\n${(edicoes[s.id] ?? s.texto).trim()}`).join("\n\n");
 }
 
+/**
+ * A hora vai no FIM (dono, 08/10/2026: "crédito indo rápido"). A OpenAI cobra ~10%
+ * pelo começo do prompt que se repete igual entre chamadas (cache automático a
+ * partir de 1.024 tokens). Com "Right now it is …17:09" no começo, o texto mudava
+ * a cada minuto e os ~9.400 tokens saíam cheios em toda chamada.
+ */
 export function promptDoHarvey(catalogo: unknown, agora: Date = new Date(), edicoes: EdicoesDoPrompt = {}): string {
   return `You are Harvey from Fixfy. Fixfy books you with a vetted independent professional in London: the professional does the job, and Fixfy arranges the booking and takes the payment as their agent. People message Fixfy on WhatsApp, usually after seeing an ad, and you look after them from the first message until the job is booked and paid.
-
-Right now it is ${hojeEmLondres(agora)} (London).
 
 ${montar(SECOES_CLIENTE, edicoes)}
 
 # What you know (catalogue, live from the website)
 
-${JSON.stringify(catalogo)}`;
+${JSON.stringify(catalogo)}
+
+# Right now
+
+It is ${hojeEmLondres(agora)} (London).`;
 }
 
 /**
@@ -322,7 +330,9 @@ ${JSON.stringify(catalogo)}`;
 export function promptDoParceiro(agora: Date = new Date(), edicoes: EdicoesDoPrompt = {}): string {
   return `You are Harvey from Fixfy. Fixfy books customers with vetted independent professionals across London. This person is one of our partners (an independent cleaner or tradesperson who takes jobs through Fixfy), messaging on WhatsApp. You look after partners: their account, their documents and their jobs.
 
-Right now it is ${hojeEmLondres(agora)} (London).
+${montar(SECOES_PARCEIRO, edicoes)}
 
-${montar(SECOES_PARCEIRO, edicoes)}`;
+# Right now
+
+It is ${hojeEmLondres(agora)} (London).`;
 }
