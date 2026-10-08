@@ -367,7 +367,12 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
     if (!ticket && esperarTicket) await new Promise((r) => setTimeout(r, 2500));
   }
   if (!ticket) return "sem ticket";
-  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  // harvey_ai: o Harvey está atendendo (ticket "AI agent", só leitura). A Action Required
+  // ignora essa tag; ela sai quando a conversa passa para a equipe (dono, 08/10/2026).
+  const comHarvey = t.support_type === "ai_agent";
+  if (comHarvey && !t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_ai"] } });
+  if (!comHarvey && t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
   const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
   if (atual !== valor) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor }] } } });
   // PUT acrescenta (POST substituiria as tags da conversa).
@@ -417,6 +422,75 @@ export async function assuntoPadraoNaConversa(telefone: string | null, a: { orig
 }
 
 /**
+ * Conversa que espera cotação (o Harvey pediu ou passou por causa dela): o ticket
+ * vai para 🟤 Bidding e aparece na view 💰 Quoting (dono, 08/10/2026). Só mexe
+ * em ticket ainda em New, Open ou WhatsApp.
+ */
+export async function ticketParaCotacao(telefone: string | null): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "";
+  const ticket = await ticketPeloTelefone(telefone);
+  if (!ticket) return "sem ticket";
+  for (let espera = 0; espera < 6 && (await tipoDoTicket(ticket)) === "ai_agent"; espera++) await new Promise((r) => setTimeout(r, 2500));
+  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null } }>(`tickets/${ticket}.json`);
+  if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, null].includes(t.custom_status_id)) return "";
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: Number(process.env.ZENDESK_STATUS_BIDDING?.trim() || "5688282472223") } } });
+  return `ticket ${ticket} → Bidding`;
+}
+
+/** Os tickets abertos que nasceram antes da conversa desta pessoa (lead do Checkatrade, site). */
+async function ticketsDoLeadPeloTelefone(telefone: string): Promise<number[]> {
+  const { data: lw } = await createServiceClient().from("harvey_wa_leads").select("lead_externo, ticket_id, origem").eq("chave", telefone.replace(/\D/g, "").slice(-10)).maybeSingle();
+  if (!lw) return [];
+  const ids: number[] = [];
+  if (lw.lead_externo && lw.origem !== "site") {
+    const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(`checkatrade-lead:${lw.lead_externo}`)}`);
+    ids.push(...(tickets ?? []).filter((t) => !["solved", "closed"].includes(t.status)).map((t) => t.id));
+  }
+  if (lw.ticket_id) ids.push(Number(lw.ticket_id));
+  return [...new Set(ids)];
+}
+
+/**
+ * O ticket onde a equipe trabalha agora: o da conversa, ou, com o Harvey
+ * atendendo (ticket "AI agent", só leitura), o do lead.
+ */
+export async function ticketDeTrabalho(telefone: string): Promise<{ conversa: number | null; editavel: number[] }> {
+  const conversa = await ticketPeloTelefone(telefone);
+  if (conversa && (await tipoDoTicket(conversa)) !== "ai_agent") return { conversa, editavel: [conversa] };
+  return { conversa, editavel: await ticketsDoLeadPeloTelefone(telefone) };
+}
+
+/** Nota no ticket de trabalho (botões do template, avisos). */
+export async function notaNoTicketDeTrabalho(telefone: string, texto: string, tags: string[]): Promise<string> {
+  if (!isZendeskConfigured()) return "";
+  const { editavel } = await ticketDeTrabalho(telefone);
+  for (const id of editavel) {
+    await zendeskApi(`tickets/${id}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
+    await zendeskApi(`tickets/${id}/tags.json`, { method: "PUT", body: { tags } });
+  }
+  return editavel.length ? `nota em ${editavel.map((i) => `#${i}`).join(", ")}` : "sem ticket editável";
+}
+
+/**
+ * O cliente tocou "No longer needed" (dono, 08/10/2026: a Sha respondeu isso ao
+ * lembrete e o lead ficou aberto na view Leads). Fecha como perdido: resolvido,
+ * Resolution "cancelled", tag lead_lost. O follow-up para (ele já respondeu) e
+ * o ticket reabre sozinho se a pessoa escrever de novo.
+ */
+export async function encerrarLeadPerdido(telefone: string, texto: string): Promise<string> {
+  if (!isZendeskConfigured()) return "";
+  const { editavel } = await ticketDeTrabalho(telefone);
+  for (const id of editavel) {
+    await zendeskApi(`tickets/${id}.json`, {
+      method: "PUT",
+      body: { ticket: { status: "solved", custom_fields: [{ id: 5872761703199, value: "res_cancelled" }], comment: { body: texto, public: false } } },
+    });
+    await zendeskApi(`tickets/${id}/tags.json`, { method: "PUT", body: { tags: ["lead_lost", "harvey_wa"] } });
+  }
+  return editavel.length ? `perdido: ${editavel.map((i) => `#${i}`).join(", ")}` : "sem ticket editável";
+}
+
+/**
  * Nota interna no ticket da conversa quando o Harvey passa para a equipe: o
  * motivo e tudo que ele já sabe, para ninguém perguntar de novo ao cliente.
  * O ticket pode demorar uns segundos a aparecer depois da passagem.
@@ -428,6 +502,8 @@ export async function notaInternaNaConversa(telefone: string | null, texto: stri
   for (let tentativa = 0; tentativa < 4; tentativa++) {
     const ticket = await ticketDaConversa(u.id);
     if (ticket) {
+      // Acabou de passar para a equipe: o ticket leva um instante para deixar de ser "AI agent".
+      for (let espera = 0; espera < 6 && (await tipoDoTicket(ticket)) === "ai_agent"; espera++) await new Promise((r) => setTimeout(r, 2500));
       await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
       await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags } });
       return `nota no ticket ${ticket}`;
