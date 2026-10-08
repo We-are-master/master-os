@@ -262,7 +262,9 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
         requester: emailDoCliente ? { name: nome || "Checkatrade lead", email: emailDoCliente } : { name: "Fixfy Team", email: "team@getfixfy.com" },
         priority: "high",
         // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
-        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "ai_quote_draft"],
+        // lead_gen: fica na view 🎯 Leads até responder; o gatilho "Lead replied" tira a tag
+        // e o ticket vai para a Action Required (dono, 08/10/2026).
+        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "lead_gen", "ai_quote_draft"],
         external_id: externalId,
         // 🟢 Sent: o template já saiu, a vez é do cliente. Vira 🔴 quando ele responde (dono, 08/10/2026).
         custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],
