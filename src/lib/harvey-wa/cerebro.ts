@@ -47,7 +47,15 @@ export type Contexto = {
   ajustes?: AjustesDoHarvey;
   /** O ticket do Zendesk desta conversa: o job pago nasce nele (dono, 07/10/2026). */
   ticketDaConversa?: () => Promise<number | null>;
+  /** Quem da equipe estava falando com o cliente: o Harvey continua no nome dessa pessoa (dono, 08/10/2026). */
+  falaComo?: string | null;
 };
+
+/** Continuar a conversa no nome de quem da equipe falava, sem se apresentar. */
+export function instrucaoDeVoz(nome: string): string {
+  const primeiro = nome.trim().split(/\s+/)[0];
+  return `\n\n# Who you are in this chat (this overrides everything above about your name)\n\n${nome} from the team has been talking to this customer. You carry on as ${primeiro}: write in the first person as ${primeiro}, in the same tone, and pick up exactly where they left off. Never introduce yourself, never say "I'm Harvey" or mention Harvey, and never say a colleague is taking over. If the customer asks you straight out whether they are talking to a real person or a bot, do not lie: say you are the Fixfy assistant helping ${primeiro}'s team, and carry on.`;
+}
 
 export type Resultado = {
   resposta: string | null;
@@ -362,7 +370,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
   const regras = parceiro ? "" : instrucoesDosAjustes(ajustes);
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 

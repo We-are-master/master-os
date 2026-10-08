@@ -54,11 +54,35 @@ export async function scNotificacao<T>(body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function enviarTexto(conversationId: string, texto: string) {
+/**
+ * `comoNome`: quando a equipe já falou na conversa, o Harvey segue no nome de
+ * quem estava falando (dono, 08/10/2026). A metadata `harvey` marca a mensagem
+ * como dele mesmo assim, para o motor não achar que a equipe assumiu.
+ */
+export async function enviarTexto(conversationId: string, texto: string, comoNome?: string | null) {
   return sc(`/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: { author: { type: "business", displayName: NOME_DO_HARVEY }, content: { type: "text", text: texto } },
+    body: { author: { type: "business", displayName: comoNome || NOME_DO_HARVEY }, content: { type: "text", text: texto }, metadata: { harvey: true } },
   });
+}
+
+/** A mensagem é do Harvey (no nome dele ou no de quem da equipe ele continua)? */
+export function ehDoHarvey(m: MensagemSc): boolean {
+  return m.author.type === "business" && (m.metadata?.harvey === true || m.author.displayName === NOME_DO_HARVEY);
+}
+
+/**
+ * Em nome de quem o Harvey fala: a última pessoa da equipe que escreveu na
+ * conversa (por ela mesma ou pelo Harvey no nome dela). Sem ninguém, ele mesmo.
+ */
+export function vozDaConversa(msgs: MensagemSc[]): string | null {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.author.type !== "business" || !m.author.displayName) continue;
+    if (m.author.displayName === NOME_DO_HARVEY) return null;
+    return m.author.displayName;
+  }
+  return null;
 }
 
 export async function digitando(conversationId: string) {
@@ -94,6 +118,7 @@ export type MensagemSc = {
   author: { type: "user" | "business"; displayName?: string; userId?: string };
   /** `payload`: botão de resposta rápida do template que o cliente tocou. */
   content: { type: string; text?: string; mediaUrl?: string; altText?: string; payload?: string };
+  metadata?: Record<string, unknown>;
   source?: { type?: string };
 };
 
