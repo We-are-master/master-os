@@ -37,6 +37,10 @@ async function grupoDosParceiros(): Promise<number> {
 
 async function orgDosClientes(): Promise<number> {
   if (cache.org) return cache.org;
+  // A chave de produção não pode criar/atualizar org (403, 08/10/2026): a org já
+  // existe, então vai pelo id; create_or_update só sem ele.
+  const fixo = Number(process.env.ZENDESK_ORG_CUSTOMERS?.trim() || "6354308808991");
+  if (fixo) return (cache.org = fixo);
   const r = await zendeskApi<{ organization: { id: number } }>("organizations/create_or_update.json", {
     method: "POST",
     body: { organization: { ...ORG_CLIENTES, notes: "B2C customers (website, WhatsApp). Filled in by Harvey from the OS." } },
@@ -255,7 +259,68 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
  * ele pausado (07/10/2026) cada resposta abria um ticket novo e o do lead ficava
  * sozinho. O ticket da conversa pode demorar uns segundos a aparecer.
  */
-export async function juntarTicketsDaConversa(telefone: string, dados: Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob">): Promise<string> {
+/**
+ * Com o Harvey atendendo, o Zendesk deixa o ticket da conversa como "AI agent"
+ * (support_type ai_agent): somente leitura, recusa assunto, nota e junção (Max C,
+ * #50998, 08/10/2026). Quando ele passa para a equipe, o MESMO ticket vira
+ * normal (support_type agent) e aí a junção acontece.
+ */
+async function tipoDoTicket(ticket: number): Promise<string> {
+  const { ticket: t } = await zendeskApi<{ ticket: { support_type?: string } }>(`tickets/${ticket}.json`);
+  return t?.support_type ?? "agent";
+}
+
+/**
+ * Enquanto o Harvey atende, o ticket anterior (lead, site, Express) é o lugar de
+ * trabalho: nota com o link da conversa, grupo 🤖 Harvey, tag harvey_handling, e
+ * a pessoa do WhatsApp vira a mesma do lead (o histórico dela mostra os dois
+ * tickets: é assim que se vê que é o mesmo lead). Uma vez só.
+ */
+async function espelharNoAnterior(ticketWa: number, anterior: number): Promise<string> {
+  const { ticket: t } = await zendeskApi<{ ticket: { status: string; tags: string[]; subject: string; requester_id: number } }>(`tickets/${anterior}.json`);
+  if (!t || ["solved", "closed"].includes(t.status) || t.tags.includes("harvey_handling")) return "";
+  await zendeskApi(`tickets/${anterior}.json`, {
+    method: "PUT",
+    body: {
+      ticket: {
+        group_id: Number(process.env.ZENDESK_GROUP_HARVEY?.trim() || "6395023678879"),
+        comment: {
+          body: `💬 The customer replied on WhatsApp. Harvey is handling it in the conversation ticket #${ticketWa} (read-only while he does). When he hands over, this ticket is merged into that one.`,
+          public: false,
+        },
+      },
+    },
+  });
+  await zendeskApi(`tickets/${anterior}/tags.json`, { method: "PUT", body: { tags: ["harvey_handling", "harvey_wa"] } });
+  // A pessoa do lead (nome e e-mail) e a do WhatsApp (telefone) viram uma só.
+  const { ticket: wa } = await zendeskApi<{ ticket: { requester_id: number } }>(`tickets/${ticketWa}.json`);
+  if (wa?.requester_id && wa.requester_id !== t.requester_id) {
+    const { user: doLead } = await zendeskApi<{ user: { id: number; name: string; email: string | null; role: string } }>(`users/${t.requester_id}.json`);
+    if (doLead?.role === "end-user" && !/@getfixfy\.com$/i.test(doLead.email ?? "")) {
+      await zendeskApi(`users/${doLead.id}/merge.json`, { method: "PUT", body: { user: { id: wa.requester_id } } }).catch(() => {});
+      if (doLead.name) await zendeskApi(`users/${wa.requester_id}.json`, { method: "PUT", body: { user: { name: doLead.name } } }).catch(() => {});
+    }
+  }
+  return `, #${anterior} espelhado (Harvey atendendo)`;
+}
+
+async function ticketsAnteriores(dados: Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob">): Promise<number[]> {
+  const ids: number[] = [];
+  if (dados.ticketDoLead) {
+    const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(dados.ticketDoLead)}`);
+    const t = tickets?.find((x) => !["solved", "closed"].includes(x.status));
+    if (t) ids.push(t.id);
+  }
+  if (dados.ticketAntigo) ids.push(dados.ticketAntigo);
+  if (dados.ticketDoJob) ids.push(dados.ticketDoJob.ticketId);
+  return ids;
+}
+
+export async function juntarTicketsDaConversa(
+  telefone: string,
+  dados: Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob">,
+  { esperarEquipe = false }: { esperarEquipe?: boolean } = {},
+): Promise<string> {
   if (!isZendeskConfigured() || (!dados.ticketDoLead && !dados.ticketAntigo && !dados.ticketDoJob)) return "";
   const u = await usuarioPeloTelefone(telefone);
   if (!u) return "usuário não achado";
@@ -265,6 +330,17 @@ export async function juntarTicketsDaConversa(telefone: string, dados: Pick<Dado
     if (!ticket) await new Promise((r) => setTimeout(r, 2500));
   }
   if (!ticket) return "ticket da conversa não apareceu";
+  // Passou para a equipe agora: o ticket leva um instante para deixar de ser "AI agent".
+  let tipo = await tipoDoTicket(ticket);
+  for (let tentativa = 0; esperarEquipe && tipo === "ai_agent" && tentativa < 6; tentativa++) {
+    await new Promise((r) => setTimeout(r, 2500));
+    tipo = await tipoDoTicket(ticket);
+  }
+  if (tipo === "ai_agent") {
+    let espelho = "";
+    for (const anterior of await ticketsAnteriores(dados)) espelho += await espelharNoAnterior(ticket, anterior).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
+    return `ticket ${ticket} (AI agent)${espelho}`;
+  }
   let juntou = "";
   if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);

@@ -16,6 +16,10 @@ export async function assumirConversa(sb: SupabaseClient, conversationId: string
   await passarParaEquipe(conversationId, `${quem} took over from ${onde}`);
   await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: agora, motivo_passagem: `${quem} took over`, chases: 3, atualizado_em: agora }).eq("conversation_id", conversationId);
   await moverGrupo(sb, conversationId, false);
+  // Assumiu pelo botão: o ticket deixa de ser "AI agent" e o do lead entra nele.
+  const { data } = await sb.from("harvey_wa_conversas").select("phone").eq("conversation_id", conversationId).maybeSingle();
+  const { juntarTicketAnterior } = await import("./motor");
+  await juntarTicketAnterior((data?.phone as string | null) ?? null, true).catch((e) => console.error("[harvey-wa] juntar ao assumir:", e));
 }
 
 /** O botão (Assumir / Give back) também move o ticket de grupo, sem esperar mensagem nova. */

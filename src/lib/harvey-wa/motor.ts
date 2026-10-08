@@ -175,14 +175,13 @@ function dadosDeJuncao(leadWa: LeadWa): Pick<DadosDoCliente, "ticketDoLead" | "t
 }
 
 /** Só quem recebeu um template nosso tem ticket anterior; para o resto é uma leitura no banco. */
-async function juntarTicketAnterior(userId: string | undefined): Promise<void> {
-  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+export async function juntarTicketAnterior(telefone: string | null, esperarEquipe = false): Promise<void> {
   if (!telefone) return;
   const sb = createServiceClient();
   const { data: leadWa } = await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
   if (!leadWa) return;
-  const feito = await juntarTicketsDaConversa(telefone, dadosDeJuncao(leadWa));
-  if (feito.includes("juntado")) console.log("[harvey-wa] juntou ticket anterior:", feito);
+  const feito = await juntarTicketsDaConversa(telefone, dadosDeJuncao(leadWa), { esperarEquipe });
+  if (/juntado|espelhado/.test(feito)) console.log("[harvey-wa] ticket anterior:", feito);
 }
 
 /**
@@ -224,15 +223,20 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
   if (evento.type !== "conversation:message" || !conversa?.id || !msg) return;
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone").eq("conversation_id", conversa.id).maybeSingle();
   if (msg.author.type === "user" && (!msg.source?.type || msg.source.type === "whatsapp")) {
-    // O ticket que nasceu antes da conversa (lead, site, Express) entra no da conversa.
-    await juntarTicketAnterior(msg.author.userId).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
+    // O ticket que nasceu antes da conversa (lead, site, Express): com a equipe, entra no
+    // da conversa; com o Harvey (ticket "AI agent", só leitura), vira o lugar de trabalho.
+    const telefone = (est?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId).catch(() => null) : null);
+    await juntarTicketAnterior(telefone, est?.estado === "equipe").catch((e) => console.error("[harvey-wa] juntar ticket:", e));
     await anotarBotao(msg).catch((e) => console.error("[harvey-wa] botão:", e));
+  } else if (est?.estado === "equipe" && est.phone) {
+    // A equipe assumiu: o ticket da conversa deixa de ser "AI agent" e o anterior entra nele.
+    await juntarTicketAnterior(est.phone as string, true).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
   }
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
   // Grupo do ticket: 🤖 Harvey enquanto ele atende, Fixfy Support com a equipe (parceiro fica onde está).
-  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone").eq("conversation_id", conversa.id).maybeSingle();
   if (est?.phone && est.tipo !== "parceiro") await grupoDaConversa(est.phone as string, est.estado === "harvey").catch((e) => console.error("[harvey-wa] grupo:", e));
 }
 
