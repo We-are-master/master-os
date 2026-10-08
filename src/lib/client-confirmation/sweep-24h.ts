@@ -15,6 +15,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendTemplate, whatsappConfigured } from "@/lib/whatsapp/cloud";
+import { enviarTemplatePeloZendesk, zendeskWhatsAppConfigurado } from "@/lib/harvey-wa/template-zendesk";
 import type { EnvioWhatsApp } from "./send";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { dataPorExtenso, janelaDeChegada } from "./send";
@@ -30,6 +31,14 @@ import { dataPorExtenso, janelaDeChegada } from "./send";
  */
 const template = () => process.env.WHATSAPP_TEMPLATE_REMINDER?.trim() || "booking_reminder";
 const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
+
+/**
+ * Por onde sai: o número do Zendesk (020 4538 4668) desde 08/10/2026, quando a
+ * Cloud API direta passou a devolver #200 e nenhum lembrete saiu. A resposta do
+ * cliente cai na conversa do Zendesk, onde a equipe e o Harvey já estão.
+ * `CLIENT_WA_VIA=cloud` volta para a Cloud API.
+ */
+const pelaCloud = () => process.env.CLIENT_WA_VIA?.trim() === "cloud";
 
 /** Status em que faz sentido dizer "chegamos amanhã". */
 const AGENDADOS = ["scheduled", "late"];
@@ -145,7 +154,7 @@ export async function varrerLembretesDeVespera(
   }
 
   const linhas: LinhaDaVarredura[] = [];
-  const manda: EnvioWhatsApp = opcoes?.enviar ?? sendTemplate;
+  const manda: EnvioWhatsApp = opcoes?.enviar ?? (pelaCloud() ? sendTemplate : enviarTemplatePeloZendesk);
 
   for (const raw of jobs ?? []) {
     const j = raw as unknown as Record<string, unknown>;
@@ -233,8 +242,10 @@ export async function varrerLembretesDeVespera(
       anota("pulado", "client messaging is off (CLIENT_MESSAGING_ENABLED)");
       continue;
     }
-    if (!whatsappConfigured()) {
-      anota("pulado", "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)");
+    if (!(pelaCloud() ? whatsappConfigured() : zendeskWhatsAppConfigurado())) {
+      anota("pulado", pelaCloud()
+        ? "WhatsApp is not configured (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID)"
+        : "Zendesk WhatsApp is not configured (SUNSHINE_APP_ID, SUNSHINE_KEY_ID, SUNSHINE_KEY_SECRET)");
       continue;
     }
 
