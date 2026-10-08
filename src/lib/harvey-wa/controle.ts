@@ -9,17 +9,26 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { zendeskApi } from "@/lib/zendesk";
 import { devolverAoHarvey, passarParaEquipe } from "./sunshine";
+import { grupoDaConversa } from "./zendesk-wa";
 
 export async function assumirConversa(sb: SupabaseClient, conversationId: string, quem: string, onde: string) {
   const agora = new Date().toISOString();
   await passarParaEquipe(conversationId, `${quem} took over from ${onde}`);
   await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: agora, motivo_passagem: `${quem} took over`, chases: 3, atualizado_em: agora }).eq("conversation_id", conversationId);
+  await moverGrupo(sb, conversationId, false);
+}
+
+/** O botão (Assumir / Give back) também move o ticket de grupo, sem esperar mensagem nova. */
+async function moverGrupo(sb: SupabaseClient, conversationId: string, comHarvey: boolean) {
+  const { data } = await sb.from("harvey_wa_conversas").select("phone, tipo").eq("conversation_id", conversationId).maybeSingle();
+  if (data?.phone && data.tipo !== "parceiro") await grupoDaConversa(data.phone as string, comHarvey).catch((e) => console.error("[harvey-wa] grupo:", e));
 }
 
 export async function devolverConversa(sb: SupabaseClient, conversationId: string) {
   const agora = new Date().toISOString();
   await devolverAoHarvey(conversationId);
   await sb.from("harvey_wa_conversas").update({ estado: "harvey", passou_em: null, motivo_passagem: null, chases: 3, atualizado_em: agora }).eq("conversation_id", conversationId);
+  await moverGrupo(sb, conversationId, true);
 }
 
 export type ConversaDoTicket = { conversation_id: string; estado: string; name: string | null; phone: string | null };
