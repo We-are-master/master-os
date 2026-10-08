@@ -92,7 +92,8 @@ export type MensagemSc = {
   id: string;
   received: string;
   author: { type: "user" | "business"; displayName?: string; userId?: string };
-  content: { type: string; text?: string; mediaUrl?: string; altText?: string };
+  /** `payload`: botão de resposta rápida do template que o cliente tocou. */
+  content: { type: string; text?: string; mediaUrl?: string; altText?: string; payload?: string };
   source?: { type?: string };
 };
 

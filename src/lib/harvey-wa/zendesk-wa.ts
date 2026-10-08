@@ -76,10 +76,13 @@ async function statusDaConversa(ticket: number, alvo: number) {
 
 /** O ticket aberto da conversa de WhatsApp dessa pessoa. */
 async function ticketDaConversa(userId: number): Promise<number | null> {
-  const r = await zendeskApi<{ results: Array<{ id: number }> }>(
-    `search.json?query=${encodeURIComponent(`type:ticket via:whatsapp requester:${userId} status<solved`)}&sort_by=created_at&sort_order=desc`,
+  // Lista da pessoa, não a busca: o índice da busca demora minutos para ver um
+  // ticket novo, e o da conversa nasce segundos antes de a gente procurar
+  // (ticket do Dan #50964, 08/10/2026, ficou sem o do lead por isso).
+  const r = await zendeskApi<{ tickets: Array<{ id: number; status: string; via?: { channel?: string } }> }>(
+    `users/${userId}/tickets/requested.json?sort_by=created_at&sort_order=desc&per_page=25`,
   );
-  return r.results?.[0]?.id ?? null;
+  return r.tickets?.find((t) => t.via?.channel === "whatsapp" && !["solved", "closed"].includes(t.status))?.id ?? null;
 }
 
 /**
@@ -322,7 +325,7 @@ export async function assuntoPadraoNaConversa(telefone: string | null, a: { orig
  * motivo e tudo que ele já sabe, para ninguém perguntar de novo ao cliente.
  * O ticket pode demorar uns segundos a aparecer depois da passagem.
  */
-export async function notaInternaNaConversa(telefone: string | null, texto: string): Promise<string> {
+export async function notaInternaNaConversa(telefone: string | null, texto: string, tags: string[] = ["harvey_passou"]): Promise<string> {
   if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
   const u = await usuarioPeloTelefone(telefone);
   if (!u) return "usuário não achado";
@@ -330,7 +333,7 @@ export async function notaInternaNaConversa(telefone: string | null, texto: stri
     const ticket = await ticketDaConversa(u.id);
     if (ticket) {
       await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: texto, public: false } } } });
-      await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_passou"] } });
+      await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags } });
       return `nota no ticket ${ticket}`;
     }
     await new Promise((r) => setTimeout(r, 2500));

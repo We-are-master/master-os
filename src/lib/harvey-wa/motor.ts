@@ -199,13 +199,52 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
   await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
 }
 
-/** Um evento da Sunshine. Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
+/** Botão de resposta rápida do template: vira nota no ticket com o que fazer. */
+const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[] }> = [
+  { re: /call me/i, nota: (tel) => `📞 The customer tapped "Call me back" on the WhatsApp template. Call them on ${tel}.`, tags: ["callback_requested"] },
+  { re: /photo/i, nota: () => `📷 The customer tapped "I'll send photos" on the WhatsApp template: photos are coming in this conversation.`, tags: ["photos_coming"] },
+];
+
+async function anotarBotao(msg: MensagemSc): Promise<void> {
+  const botao = msg.content.payload?.trim();
+  if (!botao || !msg.author.userId) return;
+  const telefone = await telefoneDoUsuario(msg.author.userId).catch(() => null);
+  if (!telefone) return;
+  const b = BOTOES.find((x) => x.re.test(botao));
+  await notaInternaNaConversa(telefone, b ? b.nota(telefone) : `The customer tapped "${botao}" on the WhatsApp template.`, ["harvey_wa", ...(b?.tags ?? [])]);
+}
+
+/**
+ * O que o Zendesk precisa saber de toda mensagem, DEPOIS de o Harvey (ou a
+ * pausa) cuidar dela: com o Harvey pausado o ticket da conversa só nasce quando
+ * a conversa passa para a equipe, então antes disso não havia ticket para
+ * juntar o do lead nem para marcar (ticket do Dan #50964, 08/10/2026).
+ */
+async function depoisDaMensagem(evento: EventoSc): Promise<void> {
+  const conversa = evento.payload.conversation;
+  const msg = evento.payload.message;
+  if (evento.type !== "conversation:message" || !conversa?.id || !msg) return;
+  if (msg.author.type === "user" && (!msg.source?.type || msg.source.type === "whatsapp")) {
+    // O ticket que nasceu antes da conversa (lead, site, Express) entra no da conversa.
+    await juntarTicketAnterior(msg.author.userId).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
+    await anotarBotao(msg).catch((e) => console.error("[harvey-wa] botão:", e));
+  }
+  // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
+  await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
+}
+
+/** Um evento da Sunshine: a resposta (ou a pausa) e depois a contabilidade no Zendesk. */
 export async function processarEvento(evento: EventoSc): Promise<string> {
+  const resultado = await processarMensagem(evento);
+  await depoisDaMensagem(evento).catch((e) => console.error("[harvey-wa] depois da mensagem:", e));
+  return resultado;
+}
+
+/** Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
+async function processarMensagem(evento: EventoSc): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
-  // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
-  if (conversa?.id && msg) await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
   // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
   // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
   if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && msg.author.displayName !== "Harvey") {
@@ -222,9 +261,6 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
     return "ignorado: equipe já com a conversa";
   }
   if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
-  // O ticket que nasceu antes da conversa (lead, site, Express) entra no da
-  // conversa já na primeira resposta, com o Harvey ligado, pausado ou com a equipe.
-  await juntarTicketAnterior(msg.author.userId).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
   if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) {
     // Conversa que nasceu do NOSSO template (lead do Checkatrade) cai com a equipe no
     // Zendesk, e o Harvey nunca respondia (Kit Bransby, 07/10/2026). Se nenhuma pessoa
