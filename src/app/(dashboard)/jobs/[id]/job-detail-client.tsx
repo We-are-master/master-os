@@ -5885,8 +5885,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
       const financeAnchorDate = resolveJobCompletionInstant(current) ?? new Date();
-      /** Self-bill fortnight still follows the schedule until Fase 1 moves it to the completion date in one place. */
-      const selfBillAnchorDate = current.scheduled_date ? new Date(current.scheduled_date) : new Date();
+      /** Fase 1: a quinzena do parceiro também é a do dia da conclusão. */
+      const selfBillAnchorDate = financeAnchorDate;
       const wantsSelfBill = !!current.partner_id?.trim();
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 
@@ -5956,7 +5956,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const previousInvoiceStatus = invoiceRowForFinalize?.status ?? "draft";
       const previousSelfBillStatus = selfBillRowForFinalize?.status ?? "accumulating";
       const finalInvoiceStatus: Invoice["status"] = customerDue <= 0.02 ? "paid" : "pending";
-      const finalSelfBillStatus: SelfBill["status"] = partnerDue > 0.02 ? "awaiting_payment" : "ready_to_pay";
       let invoiceFinalized = false;
       let selfBillFinalized = false;
       try {
@@ -5970,11 +5969,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           });
           invoiceFinalized = true;
         }
-        if (draftSelfBillId) {
-          await finalizeDocument("selfbill", draftSelfBillId, {
-            status: finalSelfBillStatus,
-            ...(partnerDueYmd ? { due_date: partnerDueYmd } : {}),
-          });
+        /**
+         * Aprovar UM job não fecha mais o documento da quinzena (dono, 09/10/2026: um
+         * documento por parceiro por quinzena). Antes, a aprovação passava a self-bill
+         * inteira pra awaiting_payment no meio da quinzena e o próximo job abria outro
+         * documento (a F&V chegou a 5 na quinzena 28/09 a 11/10). Quem fecha é o corte
+         * (finance-promover). Aqui só o vencimento é acertado quando o documento segue aberto.
+         */
+        if (draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating") {
+          await finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd });
           selfBillFinalized = true;
         }
       } catch (error) {

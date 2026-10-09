@@ -16,6 +16,7 @@ import {
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { resolveJobCompletionYmd, type JobCompletionAnchorInput } from "@/lib/job-completion-anchor";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import {
   normalizePartnerPayoutReferenceYmd,
@@ -815,10 +816,23 @@ export async function refreshSelfBillPayoutState(
   if (voidErr) throw voidErr;
 }
 
-/** ISO week bucket follows job start (`scheduled_start_at` → `scheduled_date`). */
+/** O job já tem prova de conclusão (relatório final, cronômetro ou completed_date)? */
+function jobHasCompletionEvidence(job: JobCompletionAnchorInput): boolean {
+  return Boolean(job.final_report?.submitted_at?.trim() || job.partner_timer_ended_at?.trim() || job.completed_date?.trim());
+}
+
+/**
+ * Quinzena do parceiro (dono, 09/10/2026): vale o DIA EM QUE O JOB FOI CONCLUÍDO, mesmo
+ * que a equipe finalize no sistema 2 ou 3 dias depois. Antes de concluir, a agenda
+ * serve de rascunho e o job muda de quinzena quando conclui (relinkSelfBillIfMisplaced).
+ */
 export function jobSelfBillPeriodAnchorYmd(
-  job: Pick<Job, "scheduled_start_at" | "scheduled_date">,
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date"> & JobCompletionAnchorInput,
 ): string | null {
+  if (jobHasCompletionEvidence(job)) {
+    const done = resolveJobCompletionYmd(job);
+    if (done) return done;
+  }
   const fromStart = job.scheduled_start_at?.trim().slice(0, 10) ?? "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(fromStart)) return fromStart;
   const fromSched = job.scheduled_date?.trim().slice(0, 10) ?? "";
@@ -853,7 +867,7 @@ export function canLinkJobToSelfBill(
 }
 
 export function resolveJobSelfBillWeekAnchor(
-  job: Pick<Job, "scheduled_start_at" | "scheduled_date">,
+  job: Pick<Job, "scheduled_start_at" | "scheduled_date"> & JobCompletionAnchorInput,
 ): Date | null {
   const ymd = jobSelfBillPeriodAnchorYmd(job);
   return ymd ? new Date(`${ymd}T12:00:00`) : null;
@@ -987,11 +1001,35 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    * Cai de volta na semana ISO quando o helper não sabe responder (cadência
    * fora do padrão), para nenhum job ficar sem self-bill por causa disto.
    */
-  const anchorYmd = anchor.toISOString().slice(0, 10);
-  const periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, dueCtx?.orgReferenceYmd ?? null);
-  const semana = getWeekBoundsForDate(anchor);
-  const weekStart = periodo?.periodStartYmd ?? semana.weekStart;
-  const weekEnd = periodo?.periodEndYmd ?? semana.weekEnd;
+  let anchorYmd = anchor.toISOString().slice(0, 10);
+  let periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, dueCtx?.orgReferenceYmd ?? null);
+  let semana = getWeekBoundsForDate(anchor);
+  let weekStart = periodo?.periodStartYmd ?? semana.weekStart;
+  let weekEnd = periodo?.periodEndYmd ?? semana.weekEnd;
+
+  /**
+   * Aprovação tardia (dono, 09/10/2026): se o documento da quinzena da conclusão já foi
+   * fechado (em pagamento ou pago), o job entra na quinzena ABERTA de hoje, em vez de
+   * abrir um documento irmão para uma quinzena velha que ninguém mais vai pagar.
+   */
+  if (!visitScope) {
+    const { data: fechado } = await supabase
+      .from("self_bills")
+      .select("id, status")
+      .eq("partner_id", partnerId)
+      .eq("week_start", weekStart)
+      .not("status", "in", `(${[...SELF_BILL_REUSABLE_STATUSES, ...SELF_BILL_TERMINAL_STATUSES].join(",")})`)
+      .limit(1)
+      .maybeSingle();
+    if (fechado) {
+      const hoje = new Date();
+      anchorYmd = hoje.toISOString().slice(0, 10);
+      periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, dueCtx?.orgReferenceYmd ?? null);
+      semana = getWeekBoundsForDate(hoje);
+      weekStart = periodo?.periodStartYmd ?? semana.weekStart;
+      weekEnd = periodo?.periodEndYmd ?? semana.weekEnd;
+    }
+  }
   // O rótulo passa a ser o intervalo do período. `2026-W33` mentia: dizia
   // semana num documento que cobre duas.
   const weekLabel = periodo ? `${periodo.periodStartYmd} a ${periodo.periodEndYmd}` : semana.weekLabel;
@@ -1463,6 +1501,37 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
   }
   if (tasks.length === 0) return;
   await Promise.all(tasks);
+}
+
+/**
+ * Job no documento errado (dono, 09/10/2026): trocou o parceiro, ou concluiu numa
+ * quinzena diferente da agenda. Só mexe em documento AINDA ABERTO (draft/accumulating):
+ * documento em pagamento ou pago nunca perde nem ganha job aqui. Devolve o novo id
+ * quando moveu.
+ */
+export async function relinkSelfBillIfMisplaced(job: Job, client?: SupabaseClient): Promise<string | null> {
+  if (!job.self_bill_id?.trim() || !job.partner_id?.trim() || !canLinkJobToSelfBill(job)) return null;
+  const supabase = client ?? getSupabase();
+  const { data: sbRow } = await supabase
+    .from("self_bills")
+    .select("id, partner_id, week_start, week_end, status")
+    .eq("id", job.self_bill_id)
+    .maybeSingle();
+  const sb = sbRow as { id: string; partner_id: string | null; week_start: string | null; week_end: string | null; status: string } | null;
+  if (!sb || !SELF_BILL_REUSABLE_STATUSES.has(sb.status)) return null;
+  const anchorYmd = jobSelfBillPeriodAnchorYmd(job);
+  const parceiroCerto = (sb.partner_id ?? "").trim() === job.partner_id.trim();
+  const quinzenaCerta =
+    !anchorYmd || !sb.week_start || !sb.week_end || (anchorYmd >= sb.week_start.slice(0, 10) && anchorYmd <= sb.week_end.slice(0, 10));
+  if (parceiroCerto && quinzenaCerta) return null;
+
+  const { error: detachErr } = await supabase.from("jobs").update({ self_bill_id: null }).eq("id", job.id);
+  if (detachErr) throw detachErr;
+  const novo = await ensureWeeklySelfBillForJob({ ...job, self_bill_id: undefined }, { client: supabase });
+  await refreshSelfBillPayoutState(sb.id, supabase).catch((e) => {
+    console.error("relinkSelfBillIfMisplaced: refresh of the old self-bill failed", sb.id, e);
+  });
+  return novo;
 }
 
 /** After bulk job updates that bypass `updateJob`, refresh every linked weekly self-bill. */

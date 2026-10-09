@@ -9,6 +9,7 @@ import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
   ensureWeeklySelfBillForJob,
+  relinkSelfBillIfMisplaced,
   canLinkJobToSelfBill,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
@@ -1164,6 +1165,15 @@ export async function updateJob(
   let row = rows[0] as Job;
   if (!row.id?.toString().trim()) {
     throw new Error("Job update returned a row without id — refresh the page.");
+  }
+  // Parceiro trocado ou concluído noutra quinzena: o job vai pro documento aberto certo.
+  if (row.self_bill_id?.trim()) {
+    try {
+      const movido = await relinkSelfBillIfMisplaced(row);
+      if (movido) row = { ...row, self_bill_id: movido };
+    } catch (e) {
+      console.error("updateJob: relink self-bill failed", { jobId: row.id, ref: row.reference }, e);
+    }
   }
   if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canLinkJobToSelfBill(row)) {
     try {
