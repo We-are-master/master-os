@@ -4691,7 +4691,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           <Button
             type="submit"
             form="create-job-form"
-            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+            className="bg-primary hover:bg-primary-hover text-white border-text-primary hover:border-text-primary"
           >
             Create Job
           </Button>
@@ -4720,7 +4720,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "fixed"
-                    ? "bg-[#1DB87A] text-white shadow-sm"
+                    ? "bg-success text-white shadow-sm"
                     : "text-text-secondary hover:bg-surface-hover",
                 )}
               >
@@ -4946,7 +4946,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
                           selected
-                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
+                            ? "border-success bg-success-light text-success"
                             : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                         )}
                       >
@@ -5087,8 +5087,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   "flex items-center justify-between gap-2 min-w-0",
                   (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
                   form.in_ccz && cczEligible
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                    ? "bg-success-light border-success shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-surface-secondary border-border",
                 )}
               >
                 <div>
@@ -5103,7 +5103,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         : "No charge applied"}
                   </p>
                 </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-success bg-success" : "border-[#9c948a] bg-[#e8e4de]")}>
                   <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
                 </span>
               </button>
@@ -5116,8 +5116,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   "flex items-center justify-between gap-2 min-w-0",
                   isHousekeepJob && "opacity-50 cursor-not-allowed",
                   !form.has_free_parking
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                    ? "bg-success-light border-success shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-surface-secondary border-border",
                 )}
               >
                 <div>
@@ -5126,7 +5126,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                     {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
                   </p>
                 </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-success bg-success" : "border-[#9c948a] bg-[#e8e4de]")}>
                   <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
                 </span>
               </button>
@@ -5230,7 +5230,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "manual"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5246,7 +5246,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "auto"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5265,7 +5265,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   <label
                     className={cn(
                       "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
+                      !form.partner_id ? "border-success bg-success-light" : "border-border hover:border-success",
                     )}
                   >
                     <div className="min-w-0">
@@ -5292,10 +5292,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
                           selected
-                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
+                          ? "border-success bg-success-light"
                             : match
-                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
-                            : "border-border hover:border-[#1DB87A]/35",
+                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-success"
+                            : "border-border hover:border-success",
                         )}
                       >
                         <div className="min-w-0">

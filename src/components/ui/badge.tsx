@@ -14,18 +14,20 @@ export type BadgeVariant =
   | "violet"
   | "orange";
 
+/**
+ * Fixfy OS UNO chip (VOS UNO §9): 11/500, padding 2×8, radius 6, no border,
+ * solid state fill. Colour is for STATE only; categories stay neutral grey.
+ */
 const variantStyles: Record<BadgeVariant, string> = {
-  default: "bg-[var(--badge-muted)] text-text-secondary ring-border/50",
-  primary: "bg-primary-light text-primary ring-primary/10 dark:bg-primary/15",
-  success: "bg-success-light text-emerald-700 ring-emerald-200/50 dark:text-emerald-400",
-  warning: "bg-warning-light text-amber-700 ring-amber-200/50 dark:text-amber-400",
-  danger: "bg-danger-light text-red-700 ring-red-200/50 dark:text-red-400",
-  info: "bg-info-light text-blue-700 ring-blue-200/50 dark:text-blue-400",
-  outline: "bg-transparent text-text-secondary ring-border",
-  violet:
-    "bg-violet-100 text-violet-800 ring-violet-200/60 dark:bg-violet-950/45 dark:text-violet-200 dark:ring-violet-800/50",
-  orange:
-    "bg-orange-100 text-orange-800 ring-orange-200/60 dark:bg-orange-950/45 dark:text-orange-200 dark:ring-orange-800/50",
+  default: "bg-surface-tertiary text-text-primary",
+  primary: "bg-[var(--pick-bg)] text-text-primary font-semibold shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--text-primary)_22%,transparent)]",
+  success: "bg-success-light text-[var(--ok-ink)]",
+  warning: "bg-warning-light text-[var(--warn-ink)]",
+  danger: "bg-danger-light text-[var(--bad-ink)]",
+  info: "bg-info-light text-[var(--info-ink)]",
+  outline: "bg-surface-tertiary text-text-primary",
+  violet: "bg-surface-tertiary text-text-primary",
+  orange: "bg-warning-light text-[var(--warn-ink)]",
 };
 
 interface BadgeProps {
@@ -46,25 +48,23 @@ export function Badge({
   className,
 }: BadgeProps) {
   const dotColors: Record<BadgeVariant, string> = {
-    default: "bg-stone-400",
-    primary: "bg-primary",
-    success: "bg-emerald-500",
-    warning: "bg-amber-500",
-    danger: "bg-red-500",
-    info: "bg-blue-500",
-    outline: "bg-stone-400",
-    violet: "bg-violet-500",
-    orange: "bg-orange-500",
+    default: "bg-text-tertiary",
+    primary: "bg-text-primary",
+    success: "bg-success",
+    warning: "bg-warning",
+    danger: "bg-danger",
+    info: "bg-info",
+    outline: "bg-text-tertiary",
+    violet: "bg-text-tertiary",
+    orange: "bg-warning",
   };
 
   return (
     <motion.span
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
       className={cn(
-        "inline-flex items-center gap-1.5 font-medium ring-1 ring-inset whitespace-nowrap shrink-0",
-        size === "sm" && "px-2 py-0.5 text-[11px] rounded-md",
-        size === "md" && "px-2.5 py-1 text-xs rounded-lg",
+        "inline-flex items-center gap-[5px] font-medium leading-[1.45] whitespace-nowrap shrink-0 rounded-[6px] text-[11px] [&_svg]:h-3 [&_svg]:w-3",
+        size === "sm" && "px-2 py-[2px]",
+        size === "md" && "px-2.5 py-[3px]",
         variantStyles[variant],
         className
       )}

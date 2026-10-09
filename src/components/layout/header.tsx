@@ -251,7 +251,7 @@ function GlobalSearch() {
           if (query.trim().length >= 2) setOpen(true);
         }}
         placeholder="Search"
-        className="h-10 w-full rounded-lg border border-fx-line bg-surface pl-9 pr-10 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
+        className="h-10 w-full rounded-lg border border-fx-line bg-surface pl-9 pr-10 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
       />
       {query ? (
         <button
@@ -286,7 +286,7 @@ function GlobalSearch() {
               if (query.trim().length >= 2) setOpen(true);
             }}
             placeholder="Search"
-            className="h-9 w-full max-w-96 rounded-lg border border-fx-line bg-surface pl-9 pr-16 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary transition-all hover:border-fx-line/80 hover:bg-fx-paper focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
+            className="h-[30px] w-full max-w-96 rounded-lg border border-fx-line bg-surface-secondary pl-9 pr-16 text-[13px] text-text-primary placeholder:text-text-tertiary transition-all hover:border-fx-line-2 focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
           />
           {query ? (
             <button
@@ -326,7 +326,7 @@ function GlobalSearch() {
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
-        className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
+        className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
         aria-label="Search"
       >
         <Search className="h-5 w-5" />
@@ -418,7 +418,7 @@ function ThemeMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="relative flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
+        className="relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
         title="Style"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -475,13 +475,13 @@ export function Header() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
       className={cn(
-        "z-20 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
+        "z-20 flex h-10 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
         <button
           onClick={toggleMobile}
-          className="lg:hidden h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
+          className="lg:hidden h-[30px] w-[30px] rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -493,7 +493,7 @@ export function Header() {
         <Link
           href="/activity"
           className={cn(
-            "hidden h-9 w-9 items-center justify-center rounded-lg transition-colors sm:flex",
+            "hidden h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors sm:flex",
             activityLogActive
               ? "bg-primary/15 text-primary"
               : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
@@ -517,7 +517,7 @@ export function Header() {
         <button
           type="button"
           onClick={handleSignOut}
-          className="h-9 w-9 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
+          className="h-[30px] w-[30px] rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
           title="Sign out"
         >
           <LogOut className="h-[18px] w-[18px]" />

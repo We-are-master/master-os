@@ -51,7 +51,7 @@ export function WorkforceSectionTitle({
     <div className="flex gap-3">
       <div className="w-1 shrink-0 rounded-full bg-primary min-h-[2rem]" aria-hidden />
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-[#020040] dark:text-text-primary">{children}</p>
+        <p className="text-sm font-semibold text-text-primary dark:text-text-primary">{children}</p>
         {subtitle ? <p className="text-xs text-text-tertiary mt-0.5">{subtitle}</p> : null}
       </div>
     </div>

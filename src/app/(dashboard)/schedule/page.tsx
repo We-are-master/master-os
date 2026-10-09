@@ -983,7 +983,7 @@ export default function SchedulePage() {
                   type="button"
                   className={cn(
                     LIVE_MAP_TOOLBAR_BTN_CLASS,
-                    "border-[#020040]/20 bg-[#020040]/5 text-[#020040] hover:bg-[#020040]/10",
+                    "border-primary/20 bg-primary/5 text-text-primary hover:bg-primary/10",
                   )}
                   onClick={backToLondon}
                 >

@@ -462,7 +462,7 @@ function ClientsPageInner() {
           {accountIdFilter ? (
             <Link
               href="/clients"
-              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
+              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
             >
               Clear account filter
             </Link>

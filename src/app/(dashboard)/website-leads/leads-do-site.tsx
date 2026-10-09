@@ -93,7 +93,7 @@ const VAZIO = "·";
 
 /** Link com cara de botão outline (botão dentro de <a> é HTML inválido). */
 const LINK_ACAO =
-  "inline-flex min-h-8 items-center gap-1.5 rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm transition-colors hover:bg-surface-hover dark:border-border dark:bg-card dark:text-text-primary";
+  "inline-flex min-h-8 items-center gap-1.5 rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm transition-colors hover:bg-surface-hover dark:border-border dark:bg-card dark:text-text-primary";
 
 const libras = (v: number | null) => (v == null ? VAZIO : `£${Number(v).toLocaleString("en-GB", { maximumFractionDigits: 2 })}`);
 

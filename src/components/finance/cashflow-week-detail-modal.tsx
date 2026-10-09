@@ -36,8 +36,8 @@ function BreakdownSection({
   emptyLabel: string;
   view: RunwayViewMode;
 }) {
-  const accent = tone === "in" ? "text-emerald-700" : "text-[#ED4B00]";
-  const dot = tone === "in" ? "bg-emerald-600" : "bg-[#ED4B00]";
+  const accent = tone === "in" ? "text-emerald-700" : "text-text-primary";
+  const dot = tone === "in" ? "bg-emerald-600" : "bg-primary";
   const dateLabel = view === "cash" && tone === "in" ? "Paid" : "Due";
 
   return (
@@ -45,7 +45,7 @@ function BreakdownSection({
       <div className="flex items-center justify-between gap-3 border-b border-border-light px-3 py-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className={cn("h-2 w-2 shrink-0 rounded-sm", dot)} />
-          <h3 className="text-sm font-semibold text-[#020040]">{title}</h3>
+          <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
         </div>
         <p className={cn("shrink-0 text-sm font-bold tabular-nums", accent)}>{formatCurrency(total)}</p>
       </div>

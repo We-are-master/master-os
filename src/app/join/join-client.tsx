@@ -151,7 +151,7 @@ function OnboardingPhase({ onComplete }: { onComplete: () => void }) {
       >
         {/* Title + subtitle */}
         <div key={`text-${active}`} className="ob-text mb-7">
-          <h1 className="text-[28px] font-extrabold text-[#020034] leading-tight tracking-tight mb-3 whitespace-pre-line">
+          <h1 className="text-[28px] font-extrabold text-text-primary leading-tight tracking-tight mb-3 whitespace-pre-line">
             {SLIDES[active].title}
           </h1>
           <p className="text-[15px] text-slate-500 leading-relaxed font-medium">
@@ -824,7 +824,7 @@ function RegistrationForm() {
         {STEPS.map((label, i) => (
           <div key={i} className="flex items-center gap-2">
             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-              i < step ? "bg-[#E94A02] text-white" : i === step ? "bg-white text-[#020034]" : "bg-white/15 text-white/50"
+              i < step ? "bg-primary text-white" : i === step ? "bg-white text-text-primary" : "bg-white/15 text-white/50"
             }`}>
               {i < step ? "✓" : i + 1}
             </div>
@@ -832,7 +832,7 @@ function RegistrationForm() {
               {label}
             </span>
             {i < STEPS.length - 1 && (
-              <div className={`w-8 h-px ${i < step ? "bg-[#E94A02]" : "bg-white/20"}`} />
+              <div className={`w-8 h-px ${i < step ? "bg-primary" : "bg-white/20"}`} />
             )}
           </div>
         ))}
@@ -1161,7 +1161,7 @@ function Step1({
                 onClick={() => toggleTrade(trade)}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
                   active
-                    ? "bg-[#E94A02] border-[#E94A02] text-white"
+                    ? "bg-primary border-text-primary text-white"
                     : "bg-slate-50 border-slate-200 text-slate-600 hover:border-orange-300 hover:text-orange-600"
                 }`}
               >

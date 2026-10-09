@@ -406,17 +406,17 @@ function getStatusColors(
   if (s === "on_hold") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
-      topBadgeClass: "bg-[#fef3c7] text-[#92400e] border border-[#d97706]",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
+      topBadgeClass: "bg-warning-light text-[var(--warn-ink)] border border-warning",
       completedAllSteps: false,
     };
   }
   if (s === "awaiting_payment") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
       topBadgeClass: "",
       completedAllSteps: false,
     };
@@ -1037,7 +1037,7 @@ function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
     "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
     active
       ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
-      : "border-[#E4E4E8] bg-[#F5F5F7] hover:border-[#D4D4DA] dark:border-[#2f3440] dark:bg-[#1e2430] dark:hover:border-[#3a4252]",
+      : "border-border bg-surface-secondary hover:border-[var(--line-2)] dark:border-[#2f3440] dark:bg-[#1e2430] dark:hover:border-[#3a4252]",
     disabled && "cursor-not-allowed opacity-50",
   );
 }
@@ -7094,7 +7094,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="w-full bg-[#fdfdfd] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
+      <div className="w-full bg-surface-secondary py-4 px-4 dark:bg-[#0f1115] sm:px-5">
         <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
@@ -7305,7 +7305,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   {canReverseStage ? (
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#ddd] bg-transparent px-2.5 py-1 text-xs text-[#888] transition-colors hover:border-[#d97706] hover:bg-[#fef3c7] hover:text-[#d97706]"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-transparent px-2.5 py-1 text-xs text-text-tertiary transition-colors hover:border-warning hover:bg-warning-light hover:text-[var(--warn-ink)]"
                       onClick={() => {
                         if (!previousStageStatus) return;
                         void handleStatusChange(job, previousStageStatus);
@@ -7657,39 +7657,39 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
-                        <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Calendar className="h-[13px] w-[13px] text-[#aaa] dark:text-[#7f899a]" />
+                        <div className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary dark:text-[#d2d8e2]">
+                          <Calendar className="h-[13px] w-[13px] text-text-tertiary dark:text-text-tertiary" />
                           <span>
                             {displayDate ? formatDate(displayDate) : "Not set"}{" "}
-                            <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
+                            <span className="text-text-tertiary dark:text-text-tertiary">visit date</span>
                           </span>
                         </div>
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
                             onClick={() => setDetailTab(0)}
-                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
                             title="Open the Visits tab"
                           >
-                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
                               <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
                               {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
                               {nextVisit.partnerName ? (
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                                <span className="text-text-tertiary dark:text-text-tertiary"> · {nextVisit.partnerName}</span>
                               ) : null}
                             </span>
                           </button>
                         ) : null}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-text-secondary dark:text-[#d2d8e2]">
+                          <Clock className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                           <span>
                             {arrivalDisplay ? (
                               <span className="font-medium">Arrival: {arrivalDisplay}</span>
                             ) : startIso ? (
                               <>
                                 {formatHourMinuteAmPm(new Date(startIso))}
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {windowLabel} window</span>
+                                <span className="text-text-tertiary dark:text-text-tertiary"> · {windowLabel} window</span>
                               </>
                             ) : (
                               "Not set"
@@ -7707,7 +7707,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             "inline-flex items-start gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-[10px] sm:text-[11px] font-bold leading-snug max-w-[13rem]",
                             job.job_type === "hourly"
                               ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6]"
-                              : "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
+                              : "border-[#333] bg-surface-secondary text-text-primary dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
                           )}
                         >
                           {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px] shrink-0 mt-0.5" /> : <Lock className="h-[11px] w-[11px] shrink-0 mt-0.5" />}
@@ -8108,8 +8108,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Scope / photos / reports / financial — tabbed */}
-            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fdfdfd] shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
-              <div className="flex flex-wrap border-b border-border-light bg-[#fdfdfd] dark:border-[#2b313d] dark:bg-[#141922]">
+            <div className="overflow-hidden rounded-xl border border-border-light bg-surface-secondary shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
+              <div className="flex flex-wrap border-b border-border-light bg-surface-secondary dark:border-[#2b313d] dark:bg-[#141922]">
                 {(
                   [
                     { label: "Details", index: 0 as const },
@@ -8135,7 +8135,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
+              <div className="p-3 space-y-3 bg-surface-secondary dark:bg-[#161c26]">
               {detailTab === 0 ? (
               <div className="space-y-3">
               <div className="space-y-1.5 border-t border-border pt-2">
@@ -9652,7 +9652,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <Button
                       size="sm"
                       variant="primary"
-                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm dark:bg-[#020040]"
+                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm dark:bg-primary"
                       disabled={!job.partner_id?.trim() || job.status === "cancelled"}
                       icon={<Plus className="h-4 w-4 shrink-0" />}
                       onClick={() => {
@@ -10119,7 +10119,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             <div className="rounded-xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-rose-500/30 dark:from-rose-950/35 dark:to-[#141922]">
               <div className="flex items-center gap-2 border-b border-rose-200/60 pb-2 dark:border-rose-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040] text-white shadow-sm">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-sm">
                   <HardHat className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -10709,7 +10709,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "manual"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -10723,7 +10723,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "auto"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -11233,7 +11233,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className={cn(
                   "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "fixed"
-                    ? "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
+                    ? "border-[#333] bg-surface-secondary text-text-primary dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
                     : "border-border-light bg-card text-text-tertiary hover:border-[#333]/60 hover:text-text-primary",
                 )}
               >
@@ -11558,7 +11558,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                         "flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
                         active
-                          ? "border-[#1DB87A] bg-[#ecfff6] text-[#157a55] dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                          ? "border-success bg-success-light text-success dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
                           : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                       )}
                     >
@@ -11571,7 +11571,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <span
                         className={cn(
                           "flex-shrink-0 h-5 w-9 rounded-full border p-0.5 transition-colors",
-                          active ? "border-[#1DB87A] bg-[#1DB87A]" : "border-border bg-border-light",
+                          active ? "border-success bg-success" : "border-border bg-border-light",
                         )}
                       >
                         <span

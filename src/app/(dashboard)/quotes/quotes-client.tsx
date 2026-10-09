@@ -3044,7 +3044,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               className={cn(
                 "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-all",
                 routingCreateEntry === "bidding"
-                  ? "bg-[#1DB87A] text-white shadow-sm"
+                  ? "bg-success text-white shadow-sm"
                   : "text-text-secondary hover:bg-surface-hover",
               )}
             >
@@ -5457,7 +5457,7 @@ function QuoteDetailDrawer({
               {routingDraft ? (
                 <div className="space-y-3 border-b border-fx-line px-7 py-5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Job on this draft</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">Job on this draft</p>
                     <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
                   </div>
                   <div>
@@ -6013,7 +6013,7 @@ function QuoteDetailDrawer({
                           className={cn(
                             "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                             depositInputMode === "percent"
-                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              ? "bg-primary text-white dark:bg-primary dark:text-white"
                               : "text-text-secondary hover:text-text-primary",
                           )}
                         >
@@ -6030,7 +6030,7 @@ function QuoteDetailDrawer({
                           className={cn(
                             "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                             depositInputMode === "amount"
-                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              ? "bg-primary text-white dark:bg-primary dark:text-white"
                               : "text-text-secondary hover:text-text-primary",
                           )}
                         >
@@ -6864,8 +6864,8 @@ function QuoteDetailDrawer({
                       className={cn(
                         "group flex min-h-[4rem] w-full min-w-0 touch-manipulation items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none transition-colors sm:gap-3 sm:px-3.5 sm:py-3",
                         isSelected
-                          ? "border-primary bg-[#020040]/[0.04] ring-2 ring-[#020040]/20 dark:bg-primary/[0.08] dark:border-primary dark:ring-primary/35"
-                          : "border-border-light bg-transparent hover:bg-surface-hover hover:border-[#020040]/30 dark:hover:bg-surface-secondary/40",
+                          ? "border-primary bg-primary/[0.04] ring-2 ring-text-primary/20 dark:bg-primary/[0.08] dark:border-primary dark:ring-primary/35"
+                          : "border-border-light bg-transparent hover:bg-surface-hover hover:border-primary/30 dark:hover:bg-surface-secondary/40",
                       )}
                     >
                       <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
@@ -6879,7 +6879,7 @@ function QuoteDetailDrawer({
                       <div className="flex shrink-0 flex-row items-center gap-2.5">
                         <div className="flex min-h-[24px] w-[4.25rem] items-center justify-center sm:justify-end">
                           {isTradeMatch ? (
-                            <span className="inline-flex rounded-full border border-[#020040]/25 bg-[#020040]/6 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-[#020040] dark:border-primary/40 dark:bg-primary/15 dark:text-primary">
+                            <span className="inline-flex rounded-full border border-primary/25 bg-primary/6 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-text-primary dark:border-primary/40 dark:bg-primary/15 dark:text-primary">
                               Match
                             </span>
                           ) : null}
@@ -6889,8 +6889,8 @@ function QuoteDetailDrawer({
                           className={cn(
                             "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
                             isSelected
-                              ? "border-[#020040] bg-[#020040] text-white dark:border-primary dark:bg-primary"
-                              : "border-border bg-card group-hover:border-[#020040]/35 dark:bg-surface-secondary",
+                              ? "border-primary bg-primary text-white dark:border-primary dark:bg-primary"
+                              : "border-border bg-card group-hover:border-primary/35 dark:bg-surface-secondary",
                           )}
                         >
                           {isSelected ? <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden /> : null}
@@ -8141,7 +8141,7 @@ function MarginCalculator({
           </p>
         </div>
 
-        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-[#ED4B00]/25 bg-[#ED4B00]/[0.05] px-2.5 py-2 ring-1 ring-inset ring-[#ED4B00]/10 sm:px-3 dark:border-[#ED4B00]/30 dark:bg-[#ED4B00]/[0.08]">
+        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-text-primary bg-[#ED4B00]/[0.05] px-2.5 py-2 ring-1 ring-inset ring-text-primary/20 sm:px-3 dark:border-text-primary dark:bg-[#ED4B00]/[0.08]">
           <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
             Sell price
           </p>
@@ -8199,7 +8199,7 @@ function MarginCalculator({
         <div className="grid grid-cols-4 items-center gap-1 text-[9px] font-medium leading-none">
           <span className="tabular-nums text-text-tertiary">5%</span>
           <span className="text-center text-amber-600 dark:text-amber-400">10% min</span>
-          <span className="text-center text-[#ED4B00]">40% target</span>
+          <span className="text-center text-text-primary">40% target</span>
           <span className="text-right tabular-nums text-text-tertiary">{MARGIN_SLIDER_MAX_MARKUP_PCT}%</span>
         </div>
         {markupPct > MARGIN_SLIDER_MAX_MARKUP_PCT ? (
@@ -8495,7 +8495,7 @@ function ManualQuoteReviewModal({
             loading={sending}
             disabled={sending}
             onClick={() => void onSend()}
-            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+            className="w-full border-0 bg-primary text-white hover:bg-primary-hover sm:w-auto"
           >
             Send to customer
           </Button>
@@ -8567,7 +8567,7 @@ function ManualQuoteReviewModal({
 
           <div className="flex items-center justify-between border-t border-border-light pt-2.5">
             <span className="text-sm font-semibold text-text-primary">Total (client)</span>
-            <span className="text-base font-bold tabular-nums text-[#ED4B00]">
+            <span className="text-base font-bold tabular-nums text-text-primary">
               {formatCurrency(snapshot.lineSellTotal > 0 ? snapshot.lineSellTotal : snapshot.linePartnerTotal)}
             </span>
           </div>
@@ -9349,8 +9349,8 @@ function CreateQuoteForm({
         </div>
       ) : null}
       {continuationQuote ? (
-        <div className="rounded-xl border border-[#020040]/18 bg-[#020040]/[0.04] px-3 py-2.5 dark:bg-[#020040]/14">
-          <p className="text-sm font-semibold text-[#020040]">Review & send · {continuationQuote.reference}</p>
+        <div className="rounded-xl border border-primary/18 bg-primary/[0.04] px-3 py-2.5 dark:bg-primary/14">
+          <p className="text-sm font-semibold text-text-primary">Review & send · {continuationQuote.reference}</p>
           <p className="mt-1 text-[11px] leading-snug text-text-secondary">
             Saves your line items and emails the PDF to the customer — quote moves to Approval when the send succeeds.
           </p>
@@ -9389,7 +9389,7 @@ function CreateQuoteForm({
         <>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              Scope <span className="text-[#ED4B00]">*</span>
+              Scope <span className="text-text-primary">*</span>
             </label>
             <textarea
               value={scopeText}
@@ -9467,7 +9467,7 @@ function CreateQuoteForm({
               <div className="mb-2 space-y-2 flex flex-col items-center">
                 <div className="flex w-full max-w-lg flex-col items-center gap-2">
                   <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
-                    Partners <span className="text-[#ED4B00]">*</span>
+                    Partners <span className="text-text-primary">*</span>
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                     <button
@@ -9610,7 +9610,7 @@ function CreateQuoteForm({
               </div>
               <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(linePartnerTotal)}</p>
             </div>
-            <div className="rounded-lg bg-[#ED4B00]/10 px-2 py-1.5 dark:bg-[#ED4B00]/15">
+            <div className="rounded-lg bg-[var(--pick-bg)] px-2 py-1.5 dark:bg-[var(--pick-bg)]">
               <div className="flex items-center gap-1 text-text-tertiary">
                 <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
                 <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
@@ -9618,7 +9618,7 @@ function CreateQuoteForm({
               <p
                 className={cn(
                   "mt-0.5 text-sm font-bold tabular-nums",
-                  createProposalMarginAbs < 0 ? "text-red-600" : "text-[#ED4B00]",
+                  createProposalMarginAbs < 0 ? "text-red-600" : "text-text-primary",
                 )}
               >
                 {formatCurrency(createProposalMarginAbs)}
@@ -9632,7 +9632,7 @@ function CreateQuoteForm({
               <p
                 className={cn(
                   "mt-0.5 text-sm font-bold tabular-nums",
-                  createProposalMarginPct < 0 ? "text-red-600" : "text-[#ED4B00]",
+                  createProposalMarginPct < 0 ? "text-red-600" : "text-text-primary",
                 )}
               >
                 {createProposalMarginPct}%
@@ -9719,7 +9719,7 @@ function CreateQuoteForm({
                     { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
                   ])
                 }
-                className="text-[11px] font-medium text-[#ED4B00] hover:underline"
+                className="text-[11px] font-medium text-text-primary hover:underline"
               >
                 + Add item
               </button>
@@ -9840,7 +9840,7 @@ function CreateQuoteForm({
                   className={cn(
                     "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                     depositRequiredEnabled
-                      ? "bg-[#020040] text-white"
+                      ? "bg-primary text-white"
                       : "text-text-secondary hover:text-text-primary",
                   )}
                 >
@@ -9852,7 +9852,7 @@ function CreateQuoteForm({
                   className={cn(
                     "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                     !depositRequiredEnabled
-                      ? "bg-[#020040] text-white"
+                      ? "bg-primary text-white"
                       : "text-text-secondary hover:text-text-primary",
                   )}
                 >
@@ -9872,7 +9872,7 @@ function CreateQuoteForm({
                       className={cn(
                         "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                         depositInputMode === "percent"
-                          ? "bg-[#020040] text-white"
+                          ? "bg-primary text-white"
                           : "text-text-secondary hover:text-text-primary",
                       )}
                     >
@@ -9889,7 +9889,7 @@ function CreateQuoteForm({
                       className={cn(
                         "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                         depositInputMode === "amount"
-                          ? "bg-[#020040] text-white"
+                          ? "bg-primary text-white"
                           : "text-text-secondary hover:text-text-primary",
                       )}
                     >
@@ -9971,7 +9971,7 @@ function CreateQuoteForm({
         <>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              Scope <span className="text-[#ED4B00]">*</span>
+              Scope <span className="text-text-primary">*</span>
             </label>
             <textarea
               value={scopeText}
@@ -10139,7 +10139,7 @@ function CreateQuoteForm({
               routingInviteBusy ||
               submitBusy
             }
-            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+            className="w-full border-0 bg-primary text-white hover:bg-primary-hover sm:w-auto"
           >
             {continuationQuote
               ? "Review & send to customer"

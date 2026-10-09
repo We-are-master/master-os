@@ -1501,7 +1501,7 @@ function AccountDetailDrawer({
 
             {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
             <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Account details</p>
+              <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Account details</p>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1590,7 +1590,7 @@ function AccountDetailDrawer({
 
             {/* ── ASSETS card ─────────────────────────────────────── */}
             <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Assets</p>
+              <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Assets</p>
 
               <div className="grid grid-cols-2 gap-5">
                 {/* Contract */}
@@ -1907,7 +1907,7 @@ function AccountDetailDrawer({
                   <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                     Send customer emails to
                   </span>
-                  <span className="text-[#ED4B00]" aria-hidden>*</span>
+                  <span className="text-text-primary" aria-hidden>*</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {(["end_client", "account"] as const).map((bt) => {
@@ -1919,17 +1919,17 @@ function AccountDetailDrawer({
                         onClick={() => setBillingType(bt)}
                         className={cn(
                           "rounded-xl border-2 p-3.5 text-left transition-all bg-card",
-                          selected ? "border-[#020040] bg-[#020040]/[0.04]" : "border-border-light hover:border-border",
+                          selected ? "border-primary bg-primary/[0.04]" : "border-border-light hover:border-border",
                         )}
                       >
                         <div className="flex items-start gap-2.5">
                           <div
                             className={cn(
                               "mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0",
-                              selected ? "border-[#020040]" : "border-border",
+                              selected ? "border-primary" : "border-border",
                             )}
                           >
-                            {selected ? <div className="h-2 w-2 rounded-full bg-[#020040]" /> : null}
+                            {selected ? <div className="h-2 w-2 rounded-full bg-primary" /> : null}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
@@ -2003,7 +2003,7 @@ function AccountDetailDrawer({
                 <div>
                   <label className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
                     Payment Terms
-                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                    <span className="text-text-primary" aria-hidden>*</span>
                   </label>
                   <button
                     type="button"
@@ -2025,7 +2025,7 @@ function AccountDetailDrawer({
                     <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                       Billing Email
                     </span>
-                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                    <span className="text-text-primary" aria-hidden>*</span>
                     <FixfyHintIcon
                       text={
                         billingType === "account"
@@ -2050,18 +2050,18 @@ function AccountDetailDrawer({
                 const label = formatBritishDate(new Date(iso + "T12:00:00"));
                 const isDor = /due\s+on\s+receipt/i.test(terms);
                 return (
-                  <div className="flex items-start gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
-                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0 mt-0.5" />
+                  <div className="flex items-start gap-2.5 rounded-xl bg-primary/[0.04] border border-primary/10 px-4 py-3">
+                    <Calendar className="h-4 w-4 text-text-primary/50 shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-text-primary/50">
                           Next payment date
                         </p>
                         {isDor ? (
                           <FixfyHintIcon text="Due on receipt — same day as job completion." placement="bottom-start" />
                         ) : null}
                       </div>
-                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
+                      <p className="text-sm font-semibold text-text-primary">{label}</p>
                     </div>
                   </div>
                 );
@@ -2362,11 +2362,11 @@ function PaymentTermsModal({
         <PaymentTermsBuilder value={local} onChange={setLocal} />
 
         {nextLabel && (
-          <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
-            <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+          <div className="flex items-center gap-2.5 rounded-xl bg-primary/[0.04] border border-primary/10 px-4 py-3">
+            <Calendar className="h-4 w-4 text-text-primary/50 shrink-0" />
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">Next payment date</p>
-              <p className="text-sm font-semibold text-[#020040]">{nextLabel}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-text-primary/50">Next payment date</p>
+              <p className="text-sm font-semibold text-text-primary">{nextLabel}</p>
             </div>
           </div>
         )}
@@ -2467,7 +2467,7 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             className={cn(
               "px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
               mode === m
-                ? "bg-[#020040] text-white border-[#020040]"
+                ? "bg-primary text-white border-primary"
                 : "bg-white text-text-secondary border-border-light hover:bg-surface-hover",
             )}
           >
@@ -2559,9 +2559,9 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             />
           </div>
 
-          <div className="rounded-lg bg-[#020040]/5 border border-[#020040]/15 px-3 py-2">
-            <p className="text-[10px] font-medium text-[#020040]/60 uppercase mb-0.5">Encoded as</p>
-            <p className="text-xs font-mono font-semibold text-[#020040]">
+          <div className="rounded-lg bg-primary/5 border border-primary/15 px-3 py-2">
+            <p className="text-[10px] font-medium text-text-primary/60 uppercase mb-0.5">Encoded as</p>
+            <p className="text-xs font-mono font-semibold text-text-primary">
               {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday, refDate || undefined)}
             </p>
           </div>

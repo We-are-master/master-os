@@ -88,9 +88,9 @@ export function ReviewPayModal({
     >
       <div className="flex max-h-[75vh] flex-col">
         {/* Orange total banner */}
-        <div className="border-b border-[#F5CFB8] bg-[#FFF8F3] px-5 py-4 sm:px-6">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#B25418]">Total to release</p>
-          <p className="mt-0.5 text-[28px] font-bold tabular-nums leading-none text-[#ED4B00]">
+        <div className="border-b border-[var(--line-2)] bg-[var(--pick-bg)] px-5 py-4 sm:px-6">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">Total to release</p>
+          <p className="mt-0.5 text-[28px] font-bold tabular-nums leading-none text-text-primary">
             {formatCurrency(totals.total)}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#733712]">
@@ -141,8 +141,8 @@ export function ReviewPayModal({
         </div>
 
         {/* Safety checklist — MUST be ticked before Confirm enables */}
-        <div className="border-t border-border-light bg-[#FAFAFB] px-5 py-4 sm:px-6">
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#020040]">
+        <div className="border-t border-border-light bg-surface-secondary px-5 py-4 sm:px-6">
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-primary">
             <Shield className="h-3 w-3" aria-hidden />
             Safety checks — all three required
           </p>
@@ -198,7 +198,7 @@ export function ReviewPayModal({
             onClick={() => void handleConfirm()}
             disabled={!allChecksGreen || confirming || items.length === 0}
             loading={confirming}
-            className="bg-[#ED4B00] hover:bg-[#D84300] text-white border-[#ED4B00] hover:border-[#D84300]"
+            className="bg-primary hover:bg-primary-hover text-white border-text-primary hover:border-text-primary"
           >
             Confirm &amp; pay {formatCurrency(totals.total)}
           </Button>
@@ -223,7 +223,7 @@ function SafetyCheck({
       className={cn(
         "flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors",
         checked
-          ? "border-[#0F6E56]/30 bg-[#EFF7F3]"
+          ? "border-[#0F6E56]/30 bg-success-light"
           : "border-border-light bg-card hover:bg-surface-hover",
       )}
     >
@@ -242,7 +242,7 @@ function SafetyCheck({
         onChange={(e) => onChange(e.target.checked)}
       />
       <span
-        className={cn("text-xs font-medium", checked ? "text-[#0F6E56]" : "text-text-primary")}
+        className={cn("text-xs font-medium", checked ? "text-success" : "text-text-primary")}
       >
         {label}
       </span>
@@ -270,20 +270,20 @@ function MethodCard({
       className={cn(
         "flex items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors",
         active
-          ? "border-[#ED4B00] bg-[#FFF8F3]"
+          ? "border-text-primary bg-[var(--pick-bg)]"
           : "border-border-light bg-card hover:border-border",
       )}
     >
       <div
         className={cn(
           "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
-          active ? "bg-[#ED4B00]/15 text-[#ED4B00]" : "bg-surface-hover text-text-tertiary",
+          active ? "bg-[var(--pick-bg)] text-text-primary" : "bg-surface-hover text-text-tertiary",
         )}
       >
         <Icon className="h-3.5 w-3.5" aria-hidden />
       </div>
       <div className="min-w-0">
-        <p className={cn("text-xs font-semibold", active ? "text-[#B25418]" : "text-text-primary")}>
+        <p className={cn("text-xs font-semibold", active ? "text-text-primary" : "text-text-primary")}>
           {title}
         </p>
         <p className="mt-0.5 text-[10px] leading-tight text-text-tertiary">{hint}</p>

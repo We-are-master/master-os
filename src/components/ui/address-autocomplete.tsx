@@ -271,7 +271,7 @@ export function AddressAutocomplete({
                       : "hover:bg-surface-hover",
                 )}
               >
-                <MapPin className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", isDark ? "text-[#e93701]" : "text-primary")} />
+                <MapPin className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", isDark ? "text-text-primary" : "text-primary")} />
                 <div className="min-w-0">
                   <p
                     className={cn(

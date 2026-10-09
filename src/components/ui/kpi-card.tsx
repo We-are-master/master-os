@@ -33,12 +33,12 @@ interface KpiCardProps {
 }
 
 const accentStyles = {
-  primary: "bg-primary/5 text-primary dark:bg-primary/15",
-  emerald: "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/35 dark:text-emerald-400",
-  blue: "bg-blue-50 text-blue-600 dark:bg-blue-950/35 dark:text-blue-400",
-  amber: "bg-amber-50 text-amber-600 dark:bg-amber-950/35 dark:text-amber-400",
-  purple: "bg-purple-50 text-purple-600 dark:bg-purple-950/35 dark:text-purple-400",
-  stone: "bg-stone-100 text-stone-600 dark:bg-stone-900/50 dark:text-stone-400",
+  primary: "bg-surface-tertiary text-text-secondary",
+  emerald: "bg-surface-tertiary text-text-secondary",
+  blue: "bg-surface-tertiary text-text-secondary",
+  amber: "bg-surface-tertiary text-text-secondary",
+  purple: "bg-surface-tertiary text-text-secondary",
+  stone: "bg-surface-tertiary text-text-secondary",
 };
 
 export function KpiCard({
@@ -80,7 +80,7 @@ export function KpiCard({
         padding={compact ? "none" : "md"}
         className={cn(
           "relative overflow-hidden group h-full flex flex-col",
-          compact && "px-3 py-2.5",
+          compact && "px-4 py-[11px]",
           className,
         )}
       >
@@ -90,7 +90,7 @@ export function KpiCard({
               <p
                 className={cn(
                   "font-medium text-text-secondary uppercase tracking-wide",
-                  compact ? "text-[10px]" : "text-xs",
+                  "text-[12px]",
                 )}
               >
                 {title}
@@ -101,8 +101,8 @@ export function KpiCard({
             </div>
             <p
               className={cn(
-                "font-bold text-text-primary tracking-tight",
-                compact ? "text-lg" : "text-2xl",
+                "font-semibold text-text-primary tracking-[-0.02em]",
+                "text-[20px] tabular-nums",
               )}
             >
               {formattedValue}
@@ -129,7 +129,7 @@ export function KpiCard({
                 <span
                   className={cn(
                     "inline-flex items-center gap-0.5 text-xs font-semibold",
-                    isPositive ? "text-emerald-600" : "text-red-500"
+                    isPositive ? "text-success" : "text-danger"
                   )}
                 >
                   {isPositive ? (

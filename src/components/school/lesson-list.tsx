@@ -50,7 +50,7 @@ function LessonRow({
       className={cn(
         "flex items-center gap-4 rounded-xl border px-4 py-3.5 transition-all",
         done && "border-emerald-200/80 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20",
-        unlocked && !done && "border-border-light bg-card hover:border-[#E94A02]/35 hover:shadow-sm cursor-pointer",
+        unlocked && !done && "border-border-light bg-card hover:border-text-primary hover:shadow-sm cursor-pointer",
         !unlocked && "border-dashed border-border-light bg-surface-hover/30 opacity-60",
       )}
     >
@@ -60,7 +60,7 @@ function LessonRow({
           done
             ? "bg-emerald-500 text-white"
             : unlocked
-              ? "bg-[#E94A02]/10 text-[#E94A02]"
+              ? "bg-[#E94A02]/10 text-text-primary"
               : "bg-surface-hover text-text-tertiary",
         )}
       >
@@ -88,7 +88,7 @@ function LessonRow({
 
       {unlocked && (
         <PlayCircle
-          className={cn("h-5 w-5 shrink-0", done ? "text-emerald-600" : "text-[#E94A02]")}
+          className={cn("h-5 w-5 shrink-0", done ? "text-emerald-600" : "text-text-primary")}
           aria-hidden
         />
       )}

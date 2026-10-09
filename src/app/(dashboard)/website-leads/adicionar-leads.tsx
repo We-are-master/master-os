@@ -175,7 +175,7 @@ export function ImportarLeads({ canais, aberto, fechar, pronto }: { canais: Cana
             <a
               href="/templates/leads-import-template.csv"
               download
-              className="inline-flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm dark:border-border dark:bg-card dark:text-text-primary"
+              className="inline-flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm dark:border-border dark:bg-card dark:text-text-primary"
             >
               <Download className="h-3.5 w-3.5" /> Download template
             </a>

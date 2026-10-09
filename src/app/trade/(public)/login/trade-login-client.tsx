@@ -237,7 +237,7 @@ export function TradeLoginClient() {
                 Already a partner?{" "}
                 <button
                   type="button"
-                  className="border-0 bg-transparent p-0 font-bold text-[#ed4b00] cursor-pointer"
+                  className="border-0 bg-transparent p-0 font-bold text-text-primary cursor-pointer"
                   onClick={() => setTab("signin")}
                 >
                   Sign in with your work email
@@ -282,7 +282,7 @@ export function TradeLoginClient() {
               </p>
               <button
                 type="button"
-                className="mt-3 w-full border-0 bg-transparent text-sm text-[#6b6b85] underline cursor-pointer"
+                className="mt-3 w-full border-0 bg-transparent text-sm text-text-tertiary underline cursor-pointer"
                 onClick={() => {
                   setSent(false);
                   setCode("");
@@ -329,7 +329,7 @@ export function TradeLoginClient() {
                 New to Fixfy?{" "}
                 <button
                   type="button"
-                  className="border-0 bg-transparent p-0 font-bold text-[#ed4b00] cursor-pointer"
+                  className="border-0 bg-transparent p-0 font-bold text-text-primary cursor-pointer"
                   onClick={() => setTab("create")}
                 >
                   Start your application

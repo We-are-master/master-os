@@ -49,10 +49,10 @@ export function LiveMapJobsPanel({
   return (
     <div className="w-[280px] max-w-[92vw] rounded-xl border border-border bg-card/95 px-3 py-2.5 shadow-md backdrop-blur-sm dark:border-border dark:bg-card/95">
       <div className="flex items-center justify-between gap-2 pb-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">
           Jobs
         </span>
-        <span className="text-[10px] text-[#64748B]">
+        <span className="text-[10px] text-text-tertiary">
           {jobPoints.length} · {dateLabel}
         </span>
       </div>
@@ -72,10 +72,10 @@ export function LiveMapJobsPanel({
               className={cn(
                 "flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-[11.5px] transition-colors",
                 active
-                  ? "bg-[#020040]/5 text-[#020040]"
+                  ? "bg-primary/5 text-text-primary"
                   : empty
                     ? "cursor-default text-[#94A3B8]"
-                    : "text-[#020040] hover:bg-[#FAFAFB]",
+                    : "text-text-primary hover:bg-surface-secondary",
               )}
             >
               <span className="flex items-center gap-2">
@@ -96,10 +96,10 @@ export function LiveMapJobsPanel({
       </div>
 
       {jobsMissingLocation > 0 || selectedJobIds.size > 0 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[#E4E4E8] pt-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-1.5">
           {jobsMissingLocation > 0 ? (
             <span
-              className="inline-flex items-center gap-1 rounded-md bg-[#FEF3C7] px-2 py-0.5 text-[10.5px] font-medium text-[#92400E]"
+              className="inline-flex items-center gap-1 rounded-md bg-warning-light px-2 py-0.5 text-[10.5px] font-medium text-[var(--warn-ink)]"
               title="These jobs have no geocoded address so they can't be placed on the map."
             >
               <AlertTriangle className="h-3 w-3" aria-hidden />
@@ -107,7 +107,7 @@ export function LiveMapJobsPanel({
             </span>
           ) : null}
           {selectedJobIds.size > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-md bg-[#020040] px-2 py-0.5 text-[10.5px] font-semibold text-white">
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2 py-0.5 text-[10.5px] font-semibold text-white">
               {selectedJobIds.size} selected
               <button
                 type="button"

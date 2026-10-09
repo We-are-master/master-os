@@ -13,11 +13,11 @@ export function FixfyModalFooter({ leading, children, className }: Props) {
   return (
     <div
       className={cn(
-        "flex shrink-0 flex-col gap-2 border-t border-border-light bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5",
+        "uno-modal-foot flex shrink-0 flex-col gap-2 border-t border-[var(--line-soft)] bg-card px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between",
         className,
       )}
     >
-      {leading ? <div className="text-[13px] text-text-secondary shrink-0">{leading}</div> : null}
+      {leading ? <div className="text-[12px] text-text-secondary shrink-0">{leading}</div> : null}
       <div className="flex items-center justify-end gap-2 min-w-0 sm:ml-auto">{children}</div>
     </div>
   );

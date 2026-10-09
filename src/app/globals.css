@@ -3,18 +3,30 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Fixfy OS UNO (09/10/2026): the VOS UNO rules of vertex-saas, 100%, with the
+ * Fixfy colours. Design system: https://claude.ai/artifact/LsrXyLdqUWqbJCzvPeWrxp
+ *
+ * Every colour utility points at a CSS variable, so light and dark both work
+ * (the old @theme literals stayed light in dark mode).
+ * - `primary` is the SOLID mass: Fixfy navy (light ink in dark). Buttons,
+ *   checked boxes, segmented cursor. No orange fill anywhere.
+ * - Coral (`fx-coral`, `accent`) is SIGNAL only: active tab rule, active
+ *   sidebar rule, focus ring, the "today" stripe.
+ */
 @theme inline {
-  --color-primary: #ed4b00;
-  --color-primary-hover: #d84300;
-  --color-primary-light: #fef3f0;
-  --color-primary-50: #fff7ed;
-  --color-primary-100: #ffedd5;
-  --color-primary-500: #ed4b00;
-  --color-primary-600: #d84300;
-  --color-primary-700: #b52b01;
+  --color-primary: var(--brand);
+  --color-primary-hover: var(--brand-hover);
+  --color-primary-light: var(--pick-bg);
+  --color-primary-50: var(--pick-bg);
+  --color-primary-100: var(--panel-3);
+  --color-primary-500: var(--brand);
+  --color-primary-600: var(--brand-hover);
+  --color-primary-700: var(--brand-hover);
 
-  --color-navy: #020034;
-  --color-navy-light: #0a0a4a;
+  --color-navy: var(--brand);
+  --color-navy-light: var(--brand-hover);
+  --color-accent: var(--accent);
 
   --color-surface: var(--surface);
   --color-surface-secondary: var(--surface-secondary);
@@ -29,25 +41,24 @@
   --color-text-tertiary: var(--text-tertiary);
   --color-text-inverse: var(--text-inverse);
 
-  --color-success: #10b981;
+  --color-success: var(--ok);
   --color-success-light: var(--success-light);
-  --color-warning: #f59e0b;
+  --color-warning: var(--warn);
   --color-warning-light: var(--warning-light);
-  --color-danger: #ef4444;
+  --color-danger: var(--bad);
   --color-danger-light: var(--danger-light);
-  --color-info: #3b82f6;
+  --color-info: var(--info);
   --color-info-light: var(--info-light);
 
-  --color-sidebar: var(--sidebar-bg);
-  --color-sidebar-hover: var(--sidebar-hover);
-  --color-sidebar-active: #ed4b00;
-  --color-sidebar-text: #d6d3d1;
-  --color-sidebar-text-muted: #78716c;
+  --color-sidebar: var(--nav-bg);
+  --color-sidebar-hover: var(--nav-hover);
+  --color-sidebar-active: var(--accent);
+  --color-sidebar-text: var(--nav-text-strong);
+  --color-sidebar-text-muted: var(--nav-muted);
 
   --color-card: var(--card-bg);
   --color-card-border: var(--card-border);
 
-  /* Sidebar/nav — theme-driven so the minimal style can flip it light/hairline */
   --color-nav-bg: var(--nav-bg);
   --color-nav-border: var(--nav-border);
   --color-nav-border-strong: var(--nav-border-strong);
@@ -56,367 +67,281 @@
   --color-nav-muted: var(--nav-muted);
   --color-nav-hover: var(--nav-hover);
   --color-nav-active-bg: var(--nav-active-bg);
-  --color-nav-accent: var(--nav-accent);
+  --color-nav-accent: var(--accent);
 
-  /* ── Fixfy OS design system (fx-*) ──────────────────────────────────── */
-  /* Brand */
-  --color-fx-navy: #020040;
-  --color-fx-navy-2: #0A0A28;
-  --color-fx-navy-3: #15153D;
-  --color-fx-coral: #ED4B00;
-  --color-fx-coral-h: #F26527;
-  --color-fx-coral-p: #D13F00;
-  --color-fx-coral-50: #FFF1E8;
+  /* fx-* (the old Fixfy OS names), now theme-driven */
+  --color-fx-navy: var(--brand);
+  --color-fx-navy-2: var(--brand-hover);
+  --color-fx-navy-3: var(--brand-hover);
+  --color-fx-coral: var(--accent);
+  --color-fx-coral-h: var(--accent);
+  --color-fx-coral-p: var(--accent);
+  --color-fx-coral-50: var(--accent-soft);
 
-  /* Neutrals */
-  --color-fx-ink: #0A0A1F;
-  --color-fx-slate: #3A3A55;
-  --color-fx-mute: #6B6B85;
-  --color-fx-line: #E4E4EC;
-  --color-fx-line-2: #CDCDD8;
-  --color-fx-paper: #F7F7FB;
-  --color-fx-paper-2: #EEEEF5;
+  --color-fx-ink: var(--text-primary);
+  --color-fx-slate: var(--text-secondary);
+  --color-fx-mute: var(--text-tertiary);
+  --color-fx-line: var(--border-color);
+  --color-fx-line-2: var(--line-2);
+  --color-fx-line-strong: var(--line-2);
+  --color-fx-paper: var(--surface-secondary);
+  --color-fx-paper-2: var(--surface-tertiary);
 
-  /* Semantic */
-  --color-fx-green: #0E8A5F;
-  --color-fx-green-50: #E4F4EC;
-  --color-fx-amber: #C47A00;
-  --color-fx-amber-50: #FBEFD6;
-  --color-fx-red: #C8102E;
-  --color-fx-red-50: #FBE3E7;
-  --color-fx-blue: #0B5FFF;
-  --color-fx-blue-50: #E1ECFF;
+  --color-fx-green: var(--ok);
+  --color-fx-green-50: var(--success-light);
+  --color-fx-amber: var(--warn);
+  --color-fx-amber-50: var(--warning-light);
+  --color-fx-red: var(--bad);
+  --color-fx-red-50: var(--danger-light);
+  --color-fx-blue: var(--info);
+  --color-fx-blue-50: var(--info-light);
 
-  --shadow-fx-1: 0 1px 2px rgba(2, 0, 64, 0.06), 0 1px 1px rgba(2, 0, 64, 0.04);
-  --shadow-fx-2: 0 8px 24px rgba(2, 0, 64, 0.08), 0 2px 6px rgba(2, 0, 64, 0.05);
-  --shadow-fx-3: 0 24px 48px rgba(2, 0, 64, 0.14);
+  --shadow-fx-1: var(--shadow-card-v);
+  --shadow-fx-2: var(--shadow-float-v);
+  --shadow-fx-3: var(--shadow-dialog-v);
 
-  --font-sans: var(--font-geist), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Inter everywhere, no monospace (VOS UNO). */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.25rem;
+  /* Type scale: only 11 · 12 · 13 · 14 · 16 · 20. */
+  --text-xs: 12px;
+  --text-xs--line-height: 1.4;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.45;
+  --text-base: 14px;
+  --text-base--line-height: 1.45;
+  --text-lg: 16px;
+  --text-lg--line-height: 1.4;
+  --text-xl: 20px;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 20px;
+  --text-2xl--line-height: 1.35;
+  --text-3xl: 20px;
+  --text-3xl--line-height: 1.35;
 
-  --shadow-soft: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
-  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
-  --shadow-elevated: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-  --shadow-modal: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
-  --shadow-glow: 0 0 20px rgba(233, 55, 1, 0.15);
+  /* Radii: chip 6 · control 8 · card 12 · dialog 14. */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 14px;
+
+  /* Tailwind status palettes → the Fixfy status colours (colour is state). */
+  --color-emerald-50: var(--success-light); --color-emerald-100: var(--success-light);
+  --color-emerald-500: var(--ok); --color-emerald-600: var(--ok); --color-emerald-700: var(--ok-ink); --color-emerald-800: var(--ok-ink); --color-emerald-900: var(--ok-ink);
+  --color-green-50: var(--success-light); --color-green-100: var(--success-light);
+  --color-green-500: var(--ok); --color-green-600: var(--ok); --color-green-700: var(--ok-ink); --color-green-800: var(--ok-ink);
+  --color-red-50: var(--danger-light); --color-red-100: var(--danger-light);
+  --color-red-500: var(--bad); --color-red-600: var(--bad); --color-red-700: var(--bad-ink); --color-red-800: var(--bad-ink); --color-red-900: var(--bad-ink);
+  --color-amber-50: var(--warning-light); --color-amber-100: var(--warning-light);
+  --color-amber-500: var(--warn); --color-amber-600: var(--warn); --color-amber-700: var(--warn-ink); --color-amber-800: var(--warn-ink); --color-amber-900: var(--warn-ink);
+  --color-orange-50: var(--warning-light); --color-orange-100: var(--warning-light);
+  --color-orange-500: var(--warn); --color-orange-600: var(--warn); --color-orange-700: var(--warn-ink); --color-orange-800: var(--warn-ink);
+  --color-blue-50: var(--info-light); --color-blue-100: var(--info-light);
+  --color-blue-500: var(--info); --color-blue-600: var(--info); --color-blue-700: var(--info-ink); --color-blue-800: var(--info-ink);
+  --color-stone-50: var(--surface-secondary); --color-stone-100: var(--surface-tertiary); --color-stone-200: var(--border-color);
+  --color-stone-400: var(--text-tertiary); --color-stone-500: var(--text-tertiary); --color-stone-600: var(--text-secondary); --color-stone-700: var(--text-secondary);
+  --color-stone-800: var(--text-primary); --color-stone-900: var(--text-primary);
+
+  --shadow-soft: var(--shadow-card-v);
+  --shadow-card: var(--shadow-card-v);
+  --shadow-elevated: var(--shadow-float-v);
+  --shadow-modal: var(--shadow-dialog-v);
+  --shadow-glow: none;
 }
 
-/* ============ LIGHT THEME (default) ============ */
+/* ============ LIGHT ============ */
 :root {
-  /* Recharts tooltips / hover bands pick up cascade from these */
-  --chart-cursor-overlay: rgb(2 0 64 / 0.04);
+  --chart-cursor-overlay: rgb(10 10 31 / 0.04);
   --chart-reference-dash: rgb(10 10 31 / 0.35);
 
+  /* UNO roles */
+  --bg: #ffffff;
+  --brand: #020040;
+  --brand-hover: #15153d;
+  --on-brand: #ffffff;
+  --accent: #ed4b00;
+  --accent-soft: rgba(237, 75, 0, 0.12);
+  --pick-bg: #f3f3f8;
+  --line-2: #cdcdd8;
+  --line-soft: #eeeef5;
+  --ok: #0e8a5f;
+  --warn: #c47a00;
+  --bad: #c8102e;
+  --info: #0b5fff;
+  --ok-ink: #054a32;
+  --warn-ink: #573600;
+  --bad-ink: #7d0a1c;
+  --info-ink: #07379a;
+
   --surface: #ffffff;
-  --surface-secondary: #f8f6f5;
-  --surface-tertiary: #f1efee;
-  --surface-hover: #fafaf9;
+  --surface-secondary: #f7f7fb;
+  --surface-tertiary: #eeeef5;
+  --surface-hover: #f3f3f8;
 
-  --border-color: #E4E4EC;
-  --border-light: #EEEEF5;
+  --border-color: #e4e4ec;
+  --border-light: #eeeef5;
 
-  --text-primary: #0A0A1F;
-  --text-secondary: #3A3A55;
-  --text-tertiary: #6B6B85;
+  --text-primary: #0a0a1f;
+  --text-secondary: #3a3a55;
+  --text-tertiary: #6b6b85;
   --text-inverse: #ffffff;
 
-  /* Fixfy invoice drawer tokens */
-  --fixfy-navy: #020040;
-  --fixfy-orange: #ED4B00;
-  --fixfy-cream: #F7F8FB;
-  --fixfy-white: #FFFFFF;
-  --fixfy-surface: #F7F8FB;
-  --fixfy-border: #DEE1EC;
-  --fixfy-border-strong: #C3C8D9;
-  --fixfy-text: #0A0D2E;
-  --fixfy-text-muted: #5B607D;
-  --fixfy-text-tertiary: #8A90A8;
-  --status-pending-bg: #FEF5E7;
-  --status-pending-border: #F5E0B5;
-  --status-pending-text: #412402;
-  --status-pending-dot: #BA7517;
-  --margin-bg: #F0F9EC;
-  --margin-text: #173404;
-  --reconciled-text: #3B6D11;
-  --partner-dot: #3C3489;
-  --partner-avatar-bg: #EEEDFE;
-  --client-avatar-bg: #E6F1FB;
-  --client-avatar-text: #042C53;
-  --danger-text: #A32D2D;
-  --link-text: #185FA5;
-
-  --success-light: #ecfdf5;
-  --warning-light: #fffbeb;
-  --danger-light: #fef2f2;
-  --info-light: #eff6ff;
-
-  --sidebar-bg: #1c1917;
-  --sidebar-hover: #292524;
+  --success-light: #d9f3e8;
+  --warning-light: #ffefd6;
+  --danger-light: #fde6ea;
+  --info-light: #e7eeff;
 
   --card-bg: #ffffff;
-  --card-border: #E4E4EC;
+  --card-border: #e4e4ec;
 
-  --input-bg: #ffffff;
-  --input-border: #e7e5e4;
-  --badge-muted: #f5f5f4;
-  --scrollbar-thumb: #d6d3d1;
-  --scrollbar-hover: #a8a29e;
+  --input-bg: #fdfdfe;
+  --input-border: #cdcdd8;
+  --badge-muted: #eeeef5;
+  --scrollbar-thumb: #cdcdd8;
+  --scrollbar-hover: #a3a3b5;
 
-  /* Sidebar/nav (default look — deep navy, constant across light & dark) */
-  --nav-bg: #0A0A28;
-  --nav-border: rgba(255, 255, 255, 0.04);
-  --nav-border-strong: rgba(255, 255, 255, 0.10);
-  --nav-text: rgba(255, 255, 255, 0.60);
-  --nav-text-strong: rgba(255, 255, 255, 0.92);
-  --nav-muted: rgba(255, 255, 255, 0.40);
-  --nav-hover: rgba(255, 255, 255, 0.04);
-  --nav-active-bg: rgba(237, 75, 0, 0.10);
-  --nav-accent: #ED4B00;
+  --shadow-card-v: 0 1px 0 0 rgba(10, 10, 31, 0.06), 0 2px 6px -2px rgba(10, 10, 31, 0.10);
+  --shadow-float-v: 0 4px 6px -2px rgba(10, 10, 31, 0.20);
+  --shadow-dialog-v: 0 24px 60px -16px rgba(10, 10, 31, 0.35);
+
+  /* Invoice drawer + finance tokens, aligned to UNO */
+  --fixfy-navy: #020040;
+  --fixfy-orange: #ed4b00;
+  --fixfy-cream: #f7f7fb;
+  --fixfy-white: #ffffff;
+  --fixfy-surface: #f7f7fb;
+  --fixfy-border: #e4e4ec;
+  --fixfy-border-strong: #cdcdd8;
+  --fixfy-text: #0a0a1f;
+  --fixfy-text-muted: #3a3a55;
+  --fixfy-text-tertiary: #6b6b85;
+  --status-pending-bg: #ffefd6;
+  --status-pending-border: #f5dcae;
+  --status-pending-text: #573600;
+  --status-pending-dot: #c47a00;
+  --margin-bg: #d9f3e8;
+  --margin-text: #054a32;
+  --reconciled-text: #0e8a5f;
+  --partner-dot: #3a3a55;
+  --partner-avatar-bg: #eeeef5;
+  --client-avatar-bg: #eeeef5;
+  --client-avatar-text: #0a0a1f;
+  --danger-text: #c8102e;
+  --link-text: #0b5fff;
+
+  /* Sidebar: Fixfy navy in both themes */
+  --nav-bg: #0a0a28;
+  --nav-border: rgba(255, 255, 255, 0.08);
+  --nav-border-strong: rgba(255, 255, 255, 0.12);
+  --nav-text: rgba(255, 255, 255, 0.62);
+  --nav-text-strong: #ffffff;
+  --nav-muted: rgba(255, 255, 255, 0.50);
+  --nav-hover: rgba(255, 255, 255, 0.08);
+  --nav-active-bg: rgba(255, 255, 255, 0.12);
+  --nav-accent: #ed4b00;
 }
 
-/* ============ DARK THEME ============ */
+/* ============ DARK ============ */
 .dark {
-  /*
-   * Slightly lifted neutrals off pure black: less eye strain than #000 on KPIs,
-   * clearer hierarchy between canvas / chrome / cards, softer body text (#e8eaef vs #fff halation).
-   */
   --chart-cursor-overlay: rgb(255 255 255 / 0.06);
   --chart-reference-dash: rgb(232 234 239 / 0.22);
 
-  --surface: #111116;
-  --surface-secondary: #141419;
-  --surface-tertiary: #1c1c24;
-  --surface-hover: #22222c;
+  --bg: #0b0b12;
+  --brand: #e8eaef;
+  --brand-hover: #ffffff;
+  --on-brand: #020040;
+  --accent: #ff6a2b;
+  --accent-soft: rgba(255, 106, 43, 0.20);
+  --pick-bg: rgba(232, 234, 239, 0.06);
+  --line-2: #34343f;
+  --line-soft: #1f1f29;
+  --ok: #2fbf86;
+  --warn: #e3a23a;
+  --bad: #f0566c;
+  --info: #5b8dff;
+  --ok-ink: #8ee8bf;
+  --warn-ink: #ffd49a;
+  --bad-ink: #ffb3bf;
+  --info-ink: #a9c4ff;
 
-  --border-color: #31313c;
-  --border-light: #282830;
+  --surface: #111118;
+  --surface-secondary: #16161e;
+  --surface-tertiary: #1d1d27;
+  --surface-hover: #1a1a23;
+
+  --border-color: #24242e;
+  --border-light: #1d1d27;
 
   --text-primary: #e8eaef;
   --text-secondary: #aab0bf;
   --text-tertiary: #8b92a3;
-  --text-inverse: #111116;
+  --text-inverse: #111118;
 
-  --success-light: #052e16;
-  --warning-light: #422006;
-  --danger-light: #450a0a;
-  --info-light: #172554;
+  --success-light: #102725;
+  --warning-light: #312414;
+  --danger-light: #32111c;
+  --info-light: #101f42;
 
-  --sidebar-bg: #0c0c12;
-  --sidebar-hover: #16161f;
+  --card-bg: #111118;
+  --card-border: #24242e;
 
-  --card-bg: #181820;
-  --card-border: #2e2e3a;
-
-  --input-bg: #1e1e28;
+  --input-bg: #16161e;
   --input-border: #34343f;
-  --badge-muted: #26262f;
-  --scrollbar-thumb: #3f3f46;
-  --scrollbar-hover: #52525b;
+  --badge-muted: #1d1d27;
+  --scrollbar-thumb: #34343f;
+  --scrollbar-hover: #4f5363;
 
-  /*
-   * Fixfy “fx-*” palette is wired into @theme above as literal light neutrals so
-   * utilities like bg-fx-paper / text-fx-mute stayed light even when semantic
-   * --text-* / --surface switched in dark mode. Mirror those tokens here so
-   * every fx-* Tailwind utility tracks the theme.
-   */
-  --color-fx-slate: #c4c8d5;
-  --color-fx-mute: #a7abb8;
-  --color-fx-line: #363644;
-  --color-fx-line-2: #48485a;
-  --color-fx-paper: #14141c;
-  --color-fx-paper-2: #1a1a24;
+  --shadow-card-v: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 12px -4px rgba(0, 0, 0, 0.45);
+  --shadow-float-v: 0 8px 24px -10px rgba(0, 0, 0, 0.6);
+  --shadow-dialog-v: 0 24px 60px -16px rgba(0, 0, 0, 0.7);
 
-  /* Tinted KPI / pill fills — solids read cleaner than muddy vertical gradients */
-  --color-fx-coral-50: #261c18;
-
-  --color-fx-green-50: #162820;
-  --color-fx-amber-50: #282214;
-  --color-fx-red-50: #281418;
-  --color-fx-blue-50: #161f32;
-
-  /* Brand literals used in headers/icons — lighten for dark surfaces */
-  --color-fx-navy: #e8eaef;
-  --color-fx-navy-2: #d0d4e0;
-  --color-fx-navy-3: #b8bdd0;
-  --color-fx-ink: #e8eaef;
-  --color-primary-light: #2a1814;
-  --color-primary-50: #261c18;
-
-  --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 1px rgba(0, 0, 0, 0.32);
-  --shadow-fx-2: 0 12px 32px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-fx-3: 0 28px 56px rgba(0, 0, 0, 0.6);
-
-  /* Invoice drawer + finance tokens (consume var(--fixfy-*)) */
-  --fixfy-navy: #ececf8;
-  --fixfy-orange: #f26527;
-  --fixfy-cream: #141420;
-  --fixfy-white: #1e1e2c;
-  --fixfy-surface: #181820;
-  --fixfy-border: #34344a;
-  --fixfy-border-strong: #4b4b65;
-  --fixfy-text: #ececf8;
-  --fixfy-text-muted: #aeaecc;
-  --fixfy-text-tertiary: #8282a6;
-  --status-pending-bg: #2c2418;
+  --fixfy-navy: #e8eaef;
+  --fixfy-orange: #ff6a2b;
+  --fixfy-cream: #16161e;
+  --fixfy-white: #111118;
+  --fixfy-surface: #16161e;
+  --fixfy-border: #24242e;
+  --fixfy-border-strong: #34343f;
+  --fixfy-text: #e8eaef;
+  --fixfy-text-muted: #aab0bf;
+  --fixfy-text-tertiary: #8b92a3;
+  --status-pending-bg: #312414;
   --status-pending-border: #5c4518;
-  --status-pending-text: #fcd9a8;
-  --status-pending-dot: #eab860;
-  --margin-bg: #142618;
-  --margin-text: #b8efc8;
-  --reconciled-text: #82d49a;
-  --partner-dot: #a69fff;
-  --partner-avatar-bg: #2a2740;
-  --client-avatar-bg: #1a3048;
-  --client-avatar-text: #9fd4ff;
-  --danger-text: #f89292;
-  --link-text: #7ab8ff;
+  --status-pending-text: #ffd49a;
+  --status-pending-dot: #e3a23a;
+  --margin-bg: #102725;
+  --margin-text: #8ee8bf;
+  --reconciled-text: #2fbf86;
+  --partner-dot: #aab0bf;
+  --partner-avatar-bg: #1d1d27;
+  --client-avatar-bg: #1d1d27;
+  --client-avatar-text: #e8eaef;
+  --danger-text: #f0566c;
+  --link-text: #a9c4ff;
+
+  --nav-bg: #08081a;
+  --nav-border: rgba(255, 255, 255, 0.07);
+  --nav-border-strong: rgba(255, 255, 255, 0.10);
+  --nav-text: rgba(255, 255, 255, 0.58);
+  --nav-text-strong: #ffffff;
+  --nav-muted: rgba(255, 255, 255, 0.45);
+  --nav-hover: rgba(255, 255, 255, 0.08);
+  --nav-active-bg: rgba(255, 255, 255, 0.12);
+  --nav-accent: #ff6a2b;
 
   color-scheme: dark;
 }
-
-/* ============ MINIMAL STYLE — LIGHT (Vercel/Stripe) ============ */
-/* Composes on top of :root. Flat, hairline, near-white surfaces, coral kept. */
-[data-style="minimal"] {
-  --surface: #ffffff;
-  --surface-secondary: #fafafa;
-  --surface-tertiary: #f4f4f5;
-  --surface-hover: #f7f7f8;
-
-  --border-color: #ededed;
-  --border-light: #f2f2f2;
-
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-tertiary: #8f8f8f;
-
-  /* fx-* neutrals → flat grays */
-  --color-fx-ink: #171717;
-  --color-fx-slate: #404040;
-  --color-fx-mute: #737373;
-  --color-fx-line: #ededed;
-  --color-fx-line-2: #e0e0e0;
-  --color-fx-paper: #fafafa;
-  --color-fx-paper-2: #f4f4f5;
-
-  --card-bg: #ffffff;
-  --card-border: #ededed;
-  --input-bg: #ffffff;
-  --input-border: #e4e4e4;
-
-  /* Flatter radii */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.625rem;
-  --radius-2xl: 0.75rem;
-
-  /* Flat shadows — hairline over elevation, no glow */
-  --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-fx-2: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-fx-3: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-elevated: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --shadow-glow: none;
-
-  /* Nav — light, hairline */
-  --nav-bg: #fafafa;
-  --nav-border: #ededed;
-  --nav-border-strong: #e4e4e4;
-  --nav-text: #525252;
-  --nav-text-strong: #171717;
-  --nav-muted: #8f8f8f;
-  --nav-hover: #f0f0f0;
-  --nav-active-bg: rgba(237, 75, 0, 0.08);
-  --nav-accent: #ED4B00;
-}
-
-/* ============ MINIMAL STYLE — DARK (Vercel dark) ============ */
-/* Composes on top of .dark. Near-black canvas, hairline borders. */
-.dark[data-style="minimal"] {
-  --surface: #0a0a0a;
-  --surface-secondary: #000000;
-  --surface-tertiary: #111111;
-  --surface-hover: #161616;
-
-  --border-color: #1f1f1f;
-  --border-light: #171717;
-
-  --text-primary: #ededed;
-  --text-secondary: #a1a1a1;
-  --text-tertiary: #6b6b6b;
-
-  --color-fx-ink: #ededed;
-  --color-fx-slate: #d4d4d4;
-  --color-fx-mute: #8f8f8f;
-  --color-fx-line: #1f1f1f;
-  --color-fx-line-2: #2a2a2a;
-  --color-fx-paper: #0f0f0f;
-  --color-fx-paper-2: #161616;
-
-  --card-bg: #0f0f0f;
-  --card-border: #1f1f1f;
-  --input-bg: #111111;
-  --input-border: #262626;
-
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.625rem;
-  --radius-2xl: 0.75rem;
-
-  --shadow-fx-1: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-fx-2: 0 1px 3px rgba(0, 0, 0, 0.6);
-  --shadow-fx-3: 0 2px 8px rgba(0, 0, 0, 0.7);
-  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-elevated: 0 1px 3px rgba(0, 0, 0, 0.6);
-  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.7);
-  --shadow-glow: none;
-
-  /* Nav — near-black, hairline */
-  --nav-bg: #0a0a0a;
-  --nav-border: #1c1c1c;
-  --nav-border-strong: #262626;
-  --nav-text: #a1a1a1;
-  --nav-text-strong: #ededed;
-  --nav-muted: #6b6b6b;
-  --nav-hover: #171717;
-  --nav-active-bg: rgba(242, 101, 39, 0.14);
-  --nav-accent: #f26527;
-}
-
-/* Inter is loaded via next/font in src/app/layout.tsx (self-hosted, preloaded). */
 
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-
-*::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-  border-radius: 20px;
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-hover);
-}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 20px; }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-hover); }
 
 html {
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
@@ -424,26 +349,27 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Base text of the shell is 13 (VOS UNO). */
 body {
-  background: var(--surface-secondary);
+  background: var(--bg);
   color: var(--text-primary);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-size: 13px;
+  line-height: 1.45;
+  font-feature-settings: "cv11", "ss01";
 }
 
 ::selection {
-  background: rgba(233, 55, 1, 0.15);
-  color: var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg);
 }
 
-/* ── Minimal style — chrome typography & icons ───────────────────────── */
-/* Geist (Vercel's typeface), tighter tracking, thinner lucide strokes. */
-html[data-style="minimal"] {
-  font-family: var(--font-geist), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: -0.011em;
-}
+/* Lucide stroke 2 (VOS UNO). */
+svg.lucide { stroke-width: 2; }
 
-[data-style="minimal"] svg.lucide {
-  stroke-width: 1.5px;
+/* Keyboard focus: 2px bg gap + 2px coral ring on buttons, tabs, chips, links. */
+:where(button, a, [role="tab"], [role="button"]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
 @keyframes shimmer {
@@ -498,11 +424,11 @@ html[data-style="minimal"] {
 /* Mono micro-label: uppercase, 10px, tracked. Use on section headers,
    table column heads, IDs, time ranges. */
 .fx-kk {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-sans);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--color-fx-mute);
 }
 
@@ -691,3 +617,86 @@ html[data-style="minimal"] {
   background-color: var(--surface-tertiary);
   color: var(--text-primary);
 }
+
+/* ============ UNO normalisation (unlayered: wins over utilities) ============
+ * The codebase carries hand-picked sizes; the UNO scale is 11 · 12 · 13 · 14 ·
+ * 16 · 20 and nothing below 11. These pull every arbitrary value onto it, so
+ * the whole OS follows without touching each screen.
+ */
+.text-\[9px\], .text-\[9\.5px\], .text-\[10px\], .text-\[10\.5px\], .text-\[11px\], .text-\[11\.5px\] { font-size: 11px; }
+.text-\[12px\], .text-\[12\.5px\] { font-size: 12px; }
+.text-\[13px\], .text-\[13\.5px\] { font-size: 13px; }
+.text-\[14px\], .text-\[14\.5px\], .text-\[15px\] { font-size: 14px; }
+.text-\[16px\], .text-\[17px\], .text-\[18px\] { font-size: 16px; }
+.text-\[20px\], .text-\[22px\], .text-\[24px\], .text-\[26px\], .text-\[28px\], .text-\[30px\], .text-\[32px\] { font-size: 20px; }
+
+/* No caps-lock labels: sentence case lives in the string (VOS UNO). Column
+   headers and micro labels that were uppercase keep their words, lose the caps. */
+.uppercase:not(.uno-keep-caps) { text-transform: none; letter-spacing: 0; }
+.tracking-wider, .tracking-widest, .tracking-\[0\.14em\], .tracking-\[0\.12em\], .tracking-\[0\.1em\], .tracking-\[0\.08em\] { letter-spacing: 0; }
+
+/* Radii onto the ruler: chip 6 · control 8 · card 12 · dialog 14. */
+.rounded-\[5px\], .rounded-\[7px\] { border-radius: 6px; }
+.rounded-\[9px\], .rounded-\[10px\] { border-radius: 8px; }
+.rounded-\[11px\], .rounded-\[14px\], .rounded-\[16px\] { border-radius: 12px; }
+.rounded-3xl { border-radius: 14px; }
+
+/* Monospace is gone: numbers line up with tabular figures. */
+.font-mono { font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+.tabular-nums, .font-mono { font-feature-settings: "tnum"; }
+
+/* View head → first card is 10px on every page (VOS UNO 56px rule: the page
+   wrappers use space-y-* or gap-*; this pins the head's gap without touching them). */
+:is(.space-y-3, .space-y-4, .space-y-5, .space-y-6, .space-y-8) > .uno-view-head + * { margin-top: 10px !important; }
+.gap-4 > .uno-view-head { margin-bottom: -6px; }
+.gap-5 > .uno-view-head { margin-bottom: -10px; }
+.gap-6 > .uno-view-head { margin-bottom: -14px; }
+.gap-8 > .uno-view-head { margin-bottom: -22px; }
+
+/* ============ Tables (VOS UNO §12) ============
+ * `.uno-tbl` is the DataTable: rows 36, header 11/500 on a 6% ink wash, zebra
+ * 2%, hover 4.5%, hairlines at 62%, EVERYTHING centred except the identity
+ * (the first data column), fixed layout. Unlayered so it beats per-cell utilities. */
+.uno-tbl { border-collapse: collapse; table-layout: fixed; }
+.uno-tbl > thead > tr > th {
+  padding: 8px 14px !important;
+  font-size: 11px !important; font-weight: 500 !important; color: var(--text-primary) !important;
+  text-transform: none !important; letter-spacing: 0 !important;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  text-align: center !important; white-space: nowrap;
+}
+.uno-tbl > tbody > tr > td {
+  height: 36px; padding: 0 14px !important;
+  font-size: 12px !important; color: var(--text-secondary);
+  text-align: center !important; vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+}
+.uno-tbl > tbody > tr:nth-child(odd) > td { background: color-mix(in srgb, var(--text-primary) 2%, transparent); }
+.uno-tbl > tbody > tr:hover > td { background: color-mix(in srgb, var(--text-primary) 4.5%, transparent); }
+.uno-tbl > tbody > tr.uno-row-sel > td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.uno-tbl > tbody > tr.uno-row-sel:hover > td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):not(.uno-selcol) > :is(.flex, .inline-flex) { justify-content: center; }
+/* identity column: the first data column, left and 600 ink */
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):first-child:not(.uno-selcol),
+.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol + :is(th, td) { text-align: left !important; }
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):first-child:not(.uno-selcol) > :is(.flex, .inline-flex),
+.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol + :is(th, td) > :is(.flex, .inline-flex) { justify-content: flex-start; }
+.uno-tbl > tbody > tr > td:first-child:not(.uno-selcol),
+.uno-tbl > tbody > tr > .uno-selcol + td { color: var(--text-primary); font-weight: 600; }
+.uno-tbl .uno-selcol { width: 40px !important; padding: 0 10px 0 14px !important; text-align: left !important; }
+.uno-tbl :is(td, th).text-right, .uno-tbl .tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Hand-built tables elsewhere: same header voice (11/500, sentence case, wash). */
+main table:not(.uno-tbl) > thead > tr > th {
+  font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0;
+}
+
+/* Modal body (VOS UNO §8): fields 32, body text 12. Drawers keep page fields. */
+.uno-modal-body { --field-h: 32px; font-size: 12px; }
+/* Modal footer buttons are `sm` (30) in VOS UNO. */
+.uno-modal-foot :is(.min-h-9, .min-h-\[42px\]) { min-height: 30px; padding-inline: 12px; font-size: 12px; }
+
+/* Solid navy flips to light ink in dark: white text on it must follow on-brand. */
+.dark :is(.bg-primary, .bg-fx-navy, .bg-navy):is(.text-white, .text-\[\#fff\], .text-\[\#ffffff\]),
+.dark :is(.bg-primary, .bg-fx-navy, .bg-navy) > :is(.text-white, svg) { color: var(--on-brand) !important; }

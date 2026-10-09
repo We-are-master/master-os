@@ -37,12 +37,12 @@ export function FixfyModalTopSteps({ steps, activeId, onStepClick }: Props) {
           >
             <span
               className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold",
+                "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold",
                 done
-                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  ? "border-primary bg-primary text-[var(--on-brand)]"
                   : active
-                    ? "border-primary text-primary bg-card"
-                    : "border-border bg-card text-text-tertiary",
+                    ? "border-primary bg-primary text-[var(--on-brand)]"
+                    : "border-transparent bg-surface-tertiary text-text-tertiary",
               )}
             >
               {done ? <Check className="h-3 w-3" strokeWidth={3} /> : null}

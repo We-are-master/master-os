@@ -18,7 +18,7 @@ export function FixfyModalSection({ id, title, badge, children, className }: Pro
       className={cn("scroll-mt-2 space-y-3", className)}
     >
       <div className="flex items-baseline gap-2">
-        <h4 className="text-[15px] font-bold text-text-primary m-0">{title}</h4>
+        <h4 className="m-0 text-[14px] font-semibold text-text-primary">{title}</h4>
         {badge === "required" ? (
           <span className="ml-auto text-xs text-text-tertiary">Required</span>
         ) : badge === "optional" ? (

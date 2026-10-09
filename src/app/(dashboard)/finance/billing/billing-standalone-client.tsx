@@ -1409,7 +1409,7 @@ function BillingStandaloneInner() {
       <div className="bl-standalone flex min-h-0 min-w-0 flex-col gap-4 sm:gap-6">
         <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <h1 className="inline-flex items-center gap-2 text-xl font-bold text-[#020040] sm:text-2xl">
+            <h1 className="inline-flex items-center gap-2 text-xl font-bold text-text-primary sm:text-2xl">
               Billing
               <FixfyHintIcon
                 text={`Everything you owe and everything you're owed — what's due, what's late, day by day. ${dateLabel}.`}
@@ -1467,7 +1467,7 @@ function BillingStandaloneInner() {
                   {!periodBounds ? (
                     <button
                       type="button"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Previous week"
                       onClick={() => setCashflowWeekOffset((o) => o - 1)}
                     >
@@ -1475,7 +1475,7 @@ function BillingStandaloneInner() {
                     </button>
                   ) : null}
                   <div className="min-w-0">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
                       Cash-Flow Runway
                       <FixfyHintIcon
                         text={cashflowRunwayHintForView(runwayView)}
@@ -1494,7 +1494,7 @@ function BillingStandaloneInner() {
                   {!periodBounds ? (
                     <button
                       type="button"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Next week"
                       onClick={() => setCashflowWeekOffset((o) => o + 1)}
                     >
@@ -1504,7 +1504,7 @@ function BillingStandaloneInner() {
                   {!periodBounds && cashflowWeekOffset !== 0 ? (
                     <button
                       type="button"
-                      className="shrink-0 text-[11px] font-semibold text-[#ED4B00] hover:underline"
+                      className="shrink-0 text-[11px] font-semibold text-text-primary hover:underline"
                       onClick={() => setCashflowWeekOffset(0)}
                     >
                       Today
@@ -1520,27 +1520,27 @@ function BillingStandaloneInner() {
                   <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                     {runwayView === "cash" ? (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Em caixa
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Payments in</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Paid / projected out</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Paid / projected out</span>
                       </>
                     ) : runwayView === "accrual" ? (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Em caixa
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Pipeline revenue</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> All costs due</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> All costs due</span>
                       </>
                     ) : (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Weekly P&amp;L
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Weekly P&amp;L
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Approved pay + expenses due</span>
                       </>
                     )}
                   </div>
@@ -1625,7 +1625,7 @@ function BillingStandaloneInner() {
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
                       Money In
                       <FixfyHintIcon
                         text={`Draft invoices and collectible receivables · ${periodBounds ? periodLabel : "All periods"}.`}
@@ -1662,7 +1662,7 @@ function BillingStandaloneInner() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">To collect · receivables</p>
-                      <p className="text-sm font-semibold text-[#020040]">
+                      <p className="text-sm font-semibold text-text-primary">
                         {kpiRow.toCollectCount} open
                         {kpiRow.overdueCount > 0 ? ` · ${kpiRow.overdueCount} overdue` : ""}
                       </p>
@@ -1670,7 +1670,7 @@ function BillingStandaloneInner() {
                         <p className="mt-0.5 text-xs font-medium text-red-600">{formatCurrency(kpiRow.overdue)} overdue</p>
                       ) : null}
                     </div>
-                    <p className="text-xl font-bold tabular-nums text-[#020040]">{formatCurrency(kpiRow.toCollect)}</p>
+                    <p className="text-xl font-bold tabular-nums text-text-primary">{formatCurrency(kpiRow.toCollect)}</p>
                   </div>
                   <AgingBar aging={aging} compact />
                   {selectableReadyInvoiceIds.length > 0 ? (
@@ -1747,7 +1747,7 @@ function BillingStandaloneInner() {
                   <>
                     <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-lg font-bold tabular-nums text-[#020040]">{formatCurrency(draftInvoiceTotal)}</p>
+                        <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(draftInvoiceTotal)}</p>
                         {selectableDraftInvoiceIds.length > 0 ? (
                           <button
                             type="button"
@@ -1787,7 +1787,7 @@ function BillingStandaloneInner() {
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
                       Money Out
                       <FixfyHintIcon
                         text={`Self-bills by pay week · ${periodWorkWeekLabel}. Mark draft → Ready → Mark as paid.`}
@@ -1825,7 +1825,7 @@ function BillingStandaloneInner() {
                   <>
                     <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-lg font-bold tabular-nums text-[#020040]">{formatCurrency(ledgerSbDraftTotal)}</p>
+                        <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(ledgerSbDraftTotal)}</p>
                         {(() => {
                           const allTabIds = ledgerSbDraftSelfBills.map((sb) => sb.id);
                           const selectedInTab = allTabIds.filter((id) => selectedSbIds.has(id));
@@ -1974,7 +1974,7 @@ function BillingStandaloneInner() {
                             ) : null}
                           </div>
                           <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-xl font-bold tabular-nums text-[#020040]">
+                            <p className="text-xl font-bold tabular-nums text-text-primary">
                               {formatCurrency(goingOutApprovedTotal)}
                             </p>
                             <MoneyOutPayActions
@@ -2701,7 +2701,7 @@ function InvoiceGroupedLedger({
             {collapsibleAccounts ? (
               <button
                 type="button"
-                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[#020040]/[0.04]"
+                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-primary/[0.04]"
                 onClick={() => collapsibleAccounts.onToggle(group.accountKey)}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -2718,7 +2718,7 @@ function InvoiceGroupedLedger({
                     </div>
                   )}
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
                     <p className="text-xs text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
@@ -2750,7 +2750,7 @@ function InvoiceGroupedLedger({
                     </div>
                   )}
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
                     <p className="text-xs text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
@@ -2933,11 +2933,11 @@ function SelfBillGroupedLedger({
         <div key={week.weekKey}>
           <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-3">
             <div>
-              <p className="text-sm font-semibold text-[#020040]">{week.weekTitle}</p>
+              <p className="text-sm font-semibold text-text-primary">{week.weekTitle}</p>
               {week.weekSubtitle ? <p className="text-xs text-text-secondary">{week.weekSubtitle}</p> : null}
             </div>
             <div className="flex items-center gap-3">
-              <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+              <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(week.weekTotal)}</p>
               {showWeekBulkActions && onApproveAndSend ? (() => {
                 const weekApproveIds = week.partners.flatMap((p) =>
                   p.rows
@@ -3049,7 +3049,7 @@ function SelfBillGroupedLedger({
                         partnerAvatarById={partnerAvatarById}
                       />
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
+                        <p className="truncate text-sm font-semibold text-text-primary">{partner.partnerName}</p>
                         <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
@@ -3098,7 +3098,7 @@ function SelfBillGroupedLedger({
                         partnerAvatarById={partnerAvatarById}
                       />
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
+                        <p className="truncate text-sm font-semibold text-text-primary">{partner.partnerName}</p>
                         <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
@@ -3160,7 +3160,7 @@ function SelfBillGroupedLedger({
                               ) : null}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-[#020040]">
+                              <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-text-primary">
                                 <span className="truncate">{sb.reference}</span>
                                 {(() => {
                                   /**
@@ -3396,7 +3396,7 @@ function KpiCard({ label, value, sub, alert, coral, green }: { label: string; va
       alert ? "border-red-200 bg-red-50/30" : coral ? "border-orange-200 bg-orange-50/30" : "border-border-light",
     )}>
       <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px]">{label}</p>
-      <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-[#020040]")}>{value}</p>
+      <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-text-primary")}>{value}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-text-secondary sm:text-xs">{sub}</p>
     </div>
   );
@@ -3428,7 +3428,7 @@ function TabPill({
       className={cn(
         "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
         active
-          ? "bg-[#020040] text-white"
+          ? "bg-primary text-white"
           : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
       )}
     >
@@ -3444,7 +3444,7 @@ function RunwayTabBtn({ active, onClick, label }: { active: boolean; onClick: ()
       onClick={onClick}
       className={cn(
         "shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors sm:px-3 sm:text-xs",
-        active ? "bg-[#ED4B00] text-white" : "text-text-secondary hover:bg-white/80",
+        active ? "bg-primary text-white" : "text-text-secondary hover:bg-white/80",
       )}
     >
       {label}
@@ -3472,14 +3472,14 @@ function AgingBar({ aging, compact = false }: { aging: ReturnType<typeof compute
       <div className={cn("flex overflow-hidden rounded-full bg-surface-hover", compact ? "h-1.5" : "h-2.5")}>
         <span className="bg-emerald-500" style={{ width: pct(aging.current) }} />
         <span className="bg-amber-400" style={{ width: pct(aging.d1_7) }} />
-        <span className="bg-[#ED4B00]" style={{ width: pct(aging.d8_30) }} />
+        <span className="bg-primary" style={{ width: pct(aging.d8_30) }} />
         <span className="bg-red-600" style={{ width: pct(aging.d30plus) }} />
       </div>
       <div className={cn("flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary", compact ? "mt-2" : "mt-3")}>
-        <span>Current <b className="text-[#020040]">{formatCurrency(aging.current)}</b></span>
-        <span>1–7 days <b className="text-[#020040]">{formatCurrency(aging.d1_7)}</b></span>
-        <span>8–30 days <b className="text-[#020040]">{formatCurrency(aging.d8_30)}</b></span>
-        <span>30+ <b className="text-[#020040]">{formatCurrency(aging.d30plus)}</b></span>
+        <span>Current <b className="text-text-primary">{formatCurrency(aging.current)}</b></span>
+        <span>1–7 days <b className="text-text-primary">{formatCurrency(aging.d1_7)}</b></span>
+        <span>8–30 days <b className="text-text-primary">{formatCurrency(aging.d8_30)}</b></span>
+        <span>30+ <b className="text-text-primary">{formatCurrency(aging.d30plus)}</b></span>
       </div>
     </div>
   );

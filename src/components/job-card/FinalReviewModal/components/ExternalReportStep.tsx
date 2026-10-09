@@ -212,7 +212,7 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
         <button
           type="button"
           onClick={onEnviado}
-          className="rounded-[5px] border border-[#D8D8DD] bg-white px-2.5 py-[4px] text-[11px] font-semibold text-[#020040] hover:bg-[#F4F4F6]"
+          className="rounded-[5px] border border-[var(--line-2)] bg-white px-2.5 py-[4px] text-[11px] font-semibold text-text-primary hover:bg-[#F4F4F6]"
         >
           Try reading it again
         </button>
