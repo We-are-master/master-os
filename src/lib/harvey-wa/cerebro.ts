@@ -21,6 +21,8 @@ export type Contas = {
   pedirCotacao?: (pedido: { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string }) => Promise<unknown>;
   /** Custo do parceiro para as linhas de uma cotação, pelos Services do OS (desconto com trava de margem). */
   custoDoParceiro?: (linhas: Array<{ label?: string; amount?: number }>) => Promise<number | null>;
+  /** Empresa (imobiliária, gestora, carteira): conta pendente para o dono aprovar + link da tabela de parceiro. */
+  registrarEmpresa?: (dados: import("./empresa").DadosDaEmpresa) => Promise<unknown>;
   situacaoDoParceiro?: () => Promise<unknown>;
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
 };
@@ -240,6 +242,29 @@ const FERRAMENTAS_CLIENTE = [
       name: "get_my_bookings",
       description: "Their existing bookings with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, and any balance to pay with its link. Use it whenever they ask about a booking they already have.",
       parameters: { type: "object", properties: { email: { type: "string", description: "only if they gave the email they booked with" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "register_business",
+      description:
+        "When the person writes for a BUSINESS (letting or estate agent, property manager, block manager, landlord with several properties, short lets or serviced apartments, student housing) and wants ongoing work or an account. Collect first, one question per message: company name, their name and role, work email, roughly how many properties and where, and which services they need. It sets up their business account for the team to approve and returns the link to our partner price list (5% below our standard prices), which you send them. Never promise payment terms or more discount: the team agrees those.",
+      parameters: {
+        type: "object",
+        properties: {
+          company_name: { type: "string" },
+          contact_name: { type: "string" },
+          role: { type: "string" },
+          email: { type: "string", description: "their work email" },
+          properties: { type: "string", description: "how many properties and what kind" },
+          area: { type: "string", description: "where the properties are" },
+          services: { type: "string", description: "which services they need, in English" },
+          finance_email: { type: "string", description: "only if they gave one for invoices" },
+          company_number: { type: "string", description: "Companies House number, only if they gave it" },
+        },
+        required: ["company_name", "contact_name", "email", "services"],
+      },
     },
   },
 ] as const;
@@ -534,6 +559,27 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       r.notaParaEquipe = `Quote ${q.reference} created in the OS with the photos.\nJob: ${a.description}\nPostcode: ${a.postcode}${a.address ? `\nAddress: ${a.address}` : ""}`;
     }
     return { ...q, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
+  }
+  if (nome === "register_business") {
+    if (!ctx.contas?.registrarEmpresa) return { error: "not available" };
+    const email = String(a.email ?? "").trim();
+    // O e-mail tem que ter vindo do cliente.
+    if (!email || !(ctx.textoDoCliente ?? "").toLowerCase().includes(email.toLowerCase())) return { error: "Ask for their work email first (they have not given it)." };
+    const res = (await ctx.contas.registrarEmpresa({
+      companyName: String(a.company_name ?? ""),
+      contactName: String(a.contact_name ?? ""),
+      email,
+      role: typeof a.role === "string" ? a.role : undefined,
+      properties: typeof a.properties === "string" ? a.properties : undefined,
+      area: typeof a.area === "string" ? a.area : undefined,
+      services: typeof a.services === "string" ? a.services : undefined,
+      financeEmail: typeof a.finance_email === "string" ? a.finance_email : undefined,
+      companyNumber: typeof a.company_number === "string" ? a.company_number : undefined,
+    })) as { ok: boolean; jaExistia?: boolean; link?: string; erro?: string };
+    if (!res.ok) return { error: res.erro ?? "could not register" };
+    return res.jaExistia
+      ? { existing_account: true, price_list: res.link, note: "They already have an account with us: carry on helping them and the team will pick it up." }
+      : { pending_account: true, price_list: res.link, note: "Send them the partner price list link and say the team will be in touch to agree terms (usually same day). Meanwhile you can still quote and book single jobs from the catalogue." };
   }
   if (nome === "get_my_bookings") return ctx.contas ? ctx.contas.reservas(typeof a.email === "string" ? a.email : null) : { error: "not available" };
   if (nome === "get_my_account") return ctx.contas?.situacaoDoParceiro ? ctx.contas.situacaoDoParceiro() : { error: "not available" };

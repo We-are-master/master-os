@@ -17,8 +17,10 @@
  */
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
-import { updateTicket, ZENDESK_REPLY_STATUS_FIELD_ID, ZENDESK_REPLY_STATUS_SENT_VALUE } from "@/lib/zendesk";
+import { addTicketTags, updateTicket, ZENDESK_REPLY_STATUS_FIELD_ID, ZENDESK_REPLY_STATUS_SENT_VALUE } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { detectarB2B } from "@/lib/b2b-deteccao";
+import { linkDaTabelaB2B } from "@/lib/catalogo-b2b";
 import { acharJobDoTicket } from "./achar-job";
 import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
@@ -709,9 +711,19 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
   });
 
   const tabelaDaConta = org.ok ? await precosCombinadosDaConta(org.id).catch(() => null) : null;
+  // Fase 3: sem conta e com cara de empresa, a equipe recebe o aviso e o link da tabela de parceiro.
+  const b2b = org.ok ? null : detectarB2B({ texto: `${ticket.subject}\n${ticket.thread}`, email: ticket.requesterEmail });
+  const avisoB2b = b2b?.potencial
+    ? [
+        `🏢 Looks like a business (${b2b.sinais.join(", ")}). Offer a partner account: partner price list ${linkDaTabelaB2B(null)}`,
+        "Collect company name, contact and role, work email, portfolio size and area, then create the account as Onboarding for approval.",
+      ].join("\n")
+    : null;
+  if (avisoB2b && postar && !ticket.tags.includes("b2b_potential")) await addTicketTags(ticketId, ["b2b_potential"]).catch(() => null);
   const nota = [
     montarNotaInterna(ticket, pedido, resultado, quoteRef),
     ...(tabelaDaConta ? ["", "──────────", tabelaDaConta] : []),
+    ...(avisoB2b ? ["", "──────────", avisoB2b] : []),
     ...(convite ? ["", "──────────", convite.nota] : []),
     ...(aviso ? ["", "──────────", aviso] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),

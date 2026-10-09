@@ -25,6 +25,7 @@ import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./o
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
 import { custoDoParceiroParaCotacao } from "./desconto";
+import { registrarEmpresa } from "./empresa";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
@@ -86,6 +87,7 @@ export async function contextoDaPessoa(
     reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
     pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
     custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
+    registrarEmpresa: (dados) => registrarEmpresa(sb, telefone, dados),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
