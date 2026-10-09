@@ -5841,8 +5841,35 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         void syncSelfBillAfterJobChange(current).catch(() => {});
       }
 
+      /**
+       * Cliente que paga no cartão (Fase 0, dono 09/10/2026): cobra o restante no cartão
+       * salvo ANTES de sair de final check. Recusado = o job fica em final check com
+       * "Card refused" e as novas tentativas ficam com o sistema.
+       */
+      let paidByCardNow = 0;
+      const cardJob = current as Job & { stripe_payment_method_id?: string | null; card_charge_status?: string | null; card_charge_hold?: boolean | null };
+      if (cardJob.stripe_payment_method_id && cardJob.card_charge_status !== "charged" && !cardJob.card_charge_hold) {
+        const res = await fetch(`/api/jobs/${current.id}/card-charge`, { method: "POST" });
+        const outcome = (await res.json().catch(() => null)) as
+          | { status: "charged"; amountGbp: number; last4?: string | null }
+          | { status: "refused" | "requires_action"; amountGbp: number; reason: string }
+          | { status: "skipped"; reason: string }
+          | null;
+        if (outcome?.status === "refused" || outcome?.status === "requires_action") {
+          toast.error(`Card refused (£${outcome.amountGbp.toFixed(2)}): ${outcome.reason}. The job stays in final check.`);
+          const fresh = await getJob(current.id).catch(() => null);
+          if (fresh) setJob(fresh);
+          setValidateCompleteOpen(false);
+          return;
+        }
+        if (outcome?.status === "charged") {
+          paidByCardNow = outcome.amountGbp;
+          toast.success(`£${outcome.amountGbp.toFixed(2)} charged to the saved card${outcome.last4 ? ` ending ${outcome.last4}` : ""}.`);
+        }
+      }
+
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0) + paidByCardNow;
       const billableForCollections = Math.max(jobCustomerTotal(current), customerScheduledTotal(current));
       const customerDue = Math.max(0, billableForCollections - (depositPaid + finalPaid));
       const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);

@@ -244,6 +244,8 @@ export const runtime  = "nodejs";
  *                                    //   booking with 3 services sends the
  *                                    //   split, not the whole basket).
  *     stripe_payment_intent_id?: string, // the charge, for reconciliation.
+ *     stripe_customer_id?: string,       // with stripe_payment_method_id: card saved on the
+ *     stripe_payment_method_id?: string, //   deposit; the balance is charged at final review.
  *     promotion_amount?: number,     // Fixfy promotion paid on the customer's
  *                                    //   behalf (agent model, mig 313).
  *                                    //   client_price stays the FULL price;
@@ -427,6 +429,9 @@ export async function POST(req: NextRequest) {
     return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
   })();
   const paymentIntentIn = str(body.stripe_payment_intent_id) || null;
+  // Sinal pago com cartão salvo (site/Harvey, Fase 0): o restante é cobrado no final review.
+  const stripeCustomerIn = str(body.stripe_customer_id) || null;
+  const stripePaymentMethodIn = str(body.stripe_payment_method_id) || null;
   /**
    * Promoção da Fixfy (modelo de agente, mig 313): o site manda o preço CHEIO
    * em client_price e o desconto aqui. Nunca negativa; o teto (o preço) é
@@ -1036,6 +1041,11 @@ export async function POST(req: NextRequest) {
     if (paymentStatusIn === "paid") jobRow.paid_at = paidAtIn ?? new Date().toISOString();
     if (paymentAmountIn !== null) jobRow.payment_amount = paymentAmountIn;
     if (paymentIntentIn) jobRow.stripe_payment_intent_id = paymentIntentIn;
+    if (stripeCustomerIn && stripePaymentMethodIn) {
+      jobRow.stripe_customer_id = stripeCustomerIn;
+      jobRow.stripe_payment_method_id = stripePaymentMethodIn;
+      jobRow.card_charge_status = "saved";
+    }
   }
   if (autoAssignBlocked) {
     const aviso = `NEEDS REVIEW · auto assign blocked: ${autoAssignBlocked.join(", ")}.`;
