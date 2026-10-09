@@ -88,6 +88,9 @@ function normalizeAccountPatch(input: Partial<Account>): Partial<Account> {
       delete next.billing_type;
     }
   }
+  if (next.collection_mode !== undefined) {
+    next.collection_mode = next.collection_mode === "card_upfront" ? "card_upfront" : "invoice";
+  }
   if (next.email_include_invoice_on_final !== undefined) {
     next.email_include_invoice_on_final = Boolean(next.email_include_invoice_on_final);
   }

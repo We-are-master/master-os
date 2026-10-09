@@ -985,6 +985,8 @@ export interface Account {
   contract_url?: string | null;
   /** When clients under this account are linked: who invoices/quotes are addressed to. */
   billing_type?: "end_client" | "account";
+  /** How this account pays: invoice after the job (with the report) or 50% deposit + saved card. */
+  collection_mode?: "invoice" | "card_upfront";
   /** If true, final email to client may include invoice/payment details (see Account UI). */
   email_include_invoice_on_final?: boolean;
   /** If true, final email may attach report PDFs. */

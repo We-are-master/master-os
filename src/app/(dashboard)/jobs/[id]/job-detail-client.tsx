@@ -1612,9 +1612,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const policy = accountFinalEmailPolicyFromRow(acc);
         if (cancelled) return;
         setAccountEmailPolicy(policy);
-        setIncludeInvoiceInEmail(policy.canIncludeInvoice);
+        // Conta que paga no cartão não recebe fatura no e-mail (o restante é cobrado no cartão salvo).
+        const pagaNoCartao = acc?.collection_mode === "card_upfront";
+        setIncludeInvoiceInEmail(policy.canIncludeInvoice && !pagaNoCartao);
         setIncludeReportInEmail(policy.canIncludeReport);
-        setCompletionDelivery(canSendClientEmailWithPack(policy) ? null : "stage_only");
+        // Conta que paga por fatura: fatura + relatório saem por e-mail por padrão no fim do final check
+        // (dono, 09/10/2026). A equipe ainda pode trocar antes de aprovar.
+        const faturaAutomatica = !!acc && !pagaNoCartao && canSendClientEmailWithPack(policy);
+        setCompletionDelivery(faturaAutomatica ? "email" : canSendClientEmailWithPack(policy) ? null : "stage_only");
       } catch {
         if (!cancelled) {
           const fallback: AccountFinalEmailPolicy = { canIncludeInvoice: true, canIncludeReport: true };
