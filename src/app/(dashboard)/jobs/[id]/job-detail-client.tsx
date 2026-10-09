@@ -1316,6 +1316,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [resumeExpectedFinishDate, setResumeExpectedFinishDate] = useState("");
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
+  /** Cartão salvo do cliente (Fase 0): o que mostrar no final review e se a cobrança fica segurada. */
+  const [savedCard, setSavedCard] = useState<{ brand: string | null; last4: string | null } | null>(null);
+  const [cardChargeHold, setCardChargeHold] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
 
   /**
@@ -1609,6 +1612,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       try {
         const c = await getClient(job.client_id!.trim());
         const acc = c?.source_account_id?.trim() ? await getAccount(c.source_account_id.trim()) : null;
+        const cc = c as { card_brand?: string | null; card_last4?: string | null } | null;
+        if (!cancelled) {
+          setSavedCard(cc?.card_last4 ? { brand: cc.card_brand ?? null, last4: cc.card_last4 } : null);
+          setCardChargeHold(Boolean((job as Job & { card_charge_hold?: boolean | null }).card_charge_hold));
+        }
         const policy = accountFinalEmailPolicyFromRow(acc);
         if (cancelled) return;
         setAccountEmailPolicy(policy);
@@ -5848,7 +5856,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
        */
       let paidByCardNow = 0;
       const cardJob = current as Job & { stripe_payment_method_id?: string | null; card_charge_status?: string | null; card_charge_hold?: boolean | null };
-      if (cardJob.stripe_payment_method_id && cardJob.card_charge_status !== "charged" && !cardJob.card_charge_hold) {
+      if (cardJob.stripe_payment_method_id && cardJob.card_charge_status !== "charged" && !cardJob.card_charge_hold && !cardChargeHold) {
         const res = await fetch(`/api/jobs/${current.id}/card-charge`, { method: "POST" });
         const outcome = (await res.json().catch(() => null)) as
           | { status: "charged"; amountGbp: number; last4?: string | null }
@@ -6097,6 +6105,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     approvalPartnerDueYmd,
     approvalComputedInvoiceDue,
     approvalComputedPartnerDue,
+    cardChargeHold,
   ]);
 
   const billableRevenueForApproval = job ? jobCustomerBillableRevenueForCollections(job) : 0;
@@ -10301,6 +10310,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         received={customerPaidTotal}
         paidOut={partnerPaidTotal}
         clientOutstanding={approvalEffectiveCustomerDue}
+        cardCharge={
+          job && (job as Job & { stripe_payment_method_id?: string | null }).stripe_payment_method_id &&
+          (job as Job & { card_charge_status?: string | null }).card_charge_status !== "charged"
+            ? {
+                amountGbp: approvalEffectiveCustomerDue,
+                brand: savedCard?.brand ?? null,
+                last4: savedCard?.last4 ?? null,
+                onHold: cardChargeHold,
+                onHoldChange: setCardChargeHold,
+              }
+            : null
+        }
         partnerOutstanding={approvalPartnerPayRemaining}
         invoiceStatus={job.invoice_id ? "issued" : "pending"}
         selfBillStatus={job.self_bill_id ? "issued" : "pending"}
