@@ -536,7 +536,7 @@ export default function PayrollPage() {
   const sectionTabs = [
     { id: "internal", label: "Payroll staff", count: internalCosts.length },
     { id: "recurring", label: "Recurring bills", count: scopedRecurring.length },
-    { id: "commission", label: "Run Commission", count: filteredCommissionRuns.length },
+    { id: "commission", label: "Run commission", count: filteredCommissionRuns.length },
   ];
 
   const patchInternalLifecycle = useCallback(
@@ -1118,7 +1118,7 @@ export default function PayrollPage() {
           saving={saving}
         />
 
-        <Modal open={runCommissionOpen} onClose={() => { setRunCommissionOpen(false); setRunCommissionDraft(null); }} title="Run Commission" subtitle="Select period. Paid invoices in period determine tier; pool is split by role." size="lg">
+        <Modal open={runCommissionOpen} onClose={() => { setRunCommissionOpen(false); setRunCommissionDraft(null); }} title="Run commission" subtitle="Select period. Paid invoices in period determine tier; pool is split by role." size="lg">
           <div className="p-6 space-y-4">
             {!runCommissionDraft ? (
               <>

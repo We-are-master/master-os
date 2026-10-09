@@ -33,7 +33,7 @@ const CERT_TYPES: { value: ComplianceCertificateType; label: string }[] = [
   { value: "eicr",        label: "EICR" },
   { value: "epc",         label: "EPC" },
   { value: "pat",         label: "PAT Testing" },
-  { value: "fire_safety", label: "Fire Safety" },
+  { value: "fire_safety", label: "Fire safety" },
   { value: "legionella",  label: "Legionella" },
   { value: "asbestos",    label: "Asbestos" },
   { value: "other",       label: "Other" },
@@ -145,7 +145,7 @@ export default function CompliancePage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="Compliance Certificates"
+          title="Compliance certificates"
           subtitle="Per-property certificates (Gas Safe, EICR, PAT, Fire Safety) shown to portal users in their PropertyDrawer → Compliance tab."
         >
           <Button

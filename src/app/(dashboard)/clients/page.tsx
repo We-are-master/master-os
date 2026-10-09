@@ -425,7 +425,7 @@ function ClientsPageInner() {
       },
     },
     {
-      key: "total_spent", label: "Total Spent", align: "right" as const,
+      key: "total_spent", label: "Total spent", align: "right" as const,
       render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.total_spent)}</span>,
     },
     {
@@ -1568,7 +1568,7 @@ function CreateClientForm({
               <Input
                 value={newSourceForm.industry}
                 onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
-                placeholder="Residential Services"
+                placeholder="Residential services"
               />
             </div>
           </div>
@@ -1681,8 +1681,8 @@ function CreateClientForm({
           { value: "direct", label: "Direct" },
           { value: "referral", label: "Referral" },
           { value: "website", label: "Website" },
-          { value: "partner", label: "Via Partner" },
-          { value: "corporate", label: "Corporate Account" },
+          { value: "partner", label: "Via partner" },
+          { value: "corporate", label: "Corporate account" },
           { value: "other", label: "Other" },
         ]}
       />

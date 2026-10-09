@@ -60,7 +60,7 @@ export function AdicionarLead({ canais, aberto, fechar, pronto }: { canais: Cana
   return (
     <Modal open={aberto} onClose={fechar} title="Add lead" subtitle="A lead that reached us outside the website booking" size="lg">
       <form onSubmit={salvar} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="sm:col-span-2"><span className={ROTULO}>Name</span><input className={CAMPO} value={f.name ?? ""} onChange={muda("name")} placeholder="Jane Smith" /></label>
+        <label className="sm:col-span-2"><span className={ROTULO}>Name</span><input className={CAMPO} value={f.name ?? ""} onChange={muda("name")} placeholder="Jane smith" /></label>
         <label><span className={ROTULO}>Email</span><input className={CAMPO} type="email" value={f.email ?? ""} onChange={muda("email")} placeholder="jane@example.com" /></label>
         <label><span className={ROTULO}>Phone</span><input className={CAMPO} value={f.phone ?? ""} onChange={muda("phone")} placeholder="07700 900123" /></label>
         <label>

@@ -712,7 +712,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               Choose a Mapbox suggestion — city and postcode are filled automatically.
             </p>
           </FieldBlock>
-          <FieldBlock label="Type of Work">
+          <FieldBlock label="Type of work">
             <Select
               value={createForm.catalog_service_id}
               onChange={(e) =>

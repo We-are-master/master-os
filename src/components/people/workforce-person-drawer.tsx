@@ -1113,7 +1113,7 @@ export function WorkforcePersonDrawer({
         </div>
         <div className="sm:col-span-2">
           <Select
-            label="Business Unit"
+            label="Business unit"
             value={buId}
             onChange={(e) => setBuId(e.target.value)}
             options={[

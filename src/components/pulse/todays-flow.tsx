@@ -92,8 +92,8 @@ const COLORS: Record<StatusKey, string> = {
 const STATUS_LABEL: Record<StatusKey, string> = {
   unassigned: "Unassigned",
   scheduled: "Scheduled",
-  in_progress: "In Progress",
-  final_check: "Final Checks",
+  in_progress: "In progress",
+  final_check: "Final checks",
 };
 
 const RESULT_COLORS = {
@@ -434,7 +434,7 @@ export function TodaysFlow() {
       <SectionCard
         className={PULSE_FORECAST_PAIR_CARD_CLASS}
         bodyClassName="flex-1 min-h-0 px-5 py-4"
-        title={isForecast ? "Jobs Forecasting" : "Monthly Results"}
+        title={isForecast ? "Jobs Forecasting" : "Monthly results"}
         subtitle={
           isForecast
             ? `Next ${FORECAST_DAYS} days · ${forecastRangeLabel}`
@@ -664,7 +664,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
     <div className="px-5 py-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <MetricTile
-          label="Faturamento"
+          label="Billed"
           value={formatCurrency(month.revenue)}
           swatch={RESULT_COLORS.revenue}
         />
@@ -707,7 +707,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
           </span>
         </div>
         <div className="divide-y divide-fx-line">
-          <CostRow label="Faturamento" value={month.revenue} />
+          <CostRow label="Billed" value={month.revenue} />
           <CostRow label="− Partner cost" value={-month.partnerCost} />
           <CostRow label="= Gross margin" value={month.gross} strong />
           <CostRow label="− Workforce" value={-month.workforce} />

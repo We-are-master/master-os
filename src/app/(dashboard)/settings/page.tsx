@@ -47,8 +47,8 @@ const settingsAdminTabs = [
   { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
   { id: "lead-origins", label: "Lead origins" },
   { id: "navigation", label: "Navigation" },
-  { id: "permissions", label: "Roles & Permissions" },
-  { id: "team", label: "Users Access" },
+  { id: "permissions", label: "Roles & permissions" },
+  { id: "team", label: "Users access" },
   { id: "system", label: "System" },
 ] as const;
 
@@ -68,7 +68,7 @@ function SettingsPageInner() {
   const isAdmin = profile?.role === "admin";
 
   const visibleTabs = useMemo(() => {
-    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My Profile" }];
+    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My profile" }];
     if (isAdmin) {
       tabs.push(
         ...settingsAdminTabs.map((t) => ({
@@ -371,8 +371,8 @@ function ProfileTab() {
             <CardTitle>Account Info</CardTitle>
           </CardHeader>
           <div className="px-5 pb-5 space-y-3">
-            <InfoRow label="Member Since" value={profile?.created_at ? formatBritishDate(profile.created_at) : "-"} />
-            <InfoRow label="Last Login" value={profile?.last_login_at ? formatBritishDate(profile.last_login_at) : "Current session"} />
+            <InfoRow label="Member since" value={profile?.created_at ? formatBritishDate(profile.created_at) : "-"} />
+            <InfoRow label="Last login" value={profile?.last_login_at ? formatBritishDate(profile.last_login_at) : "Current session"} />
             <InfoRow label="Status" value={profile?.is_active !== false ? "Active" : "Inactive"} />
             <InfoRow label="Role" value={profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1) : "-"} />
           </div>
@@ -511,7 +511,7 @@ function TeamTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Users Access</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Users access</h3>
           <p className="text-sm text-text-tertiary">{members.length} members · click the sliders icon to set per-user permission overrides</p>
         </div>
         <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setInviteOpen(true)}>
@@ -625,7 +625,7 @@ const ALL_PERMISSIONS: PermissionKey[] = [
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "manage_jobs", "service_catalog"] },
-  { label: "Network & Finance", keys: ["partners", "manage_partners", "accounts", "finance", "team"] },
+  { label: "Network & finance", keys: ["partners", "manage_partners", "accounts", "finance", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
 
@@ -1021,7 +1021,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         <h3 className="text-lg font-semibold text-text-primary">Invite user</h3>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Full Name</label>
-          <Input value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} placeholder="John Smith" />
+          <Input value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} placeholder="John smith" />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
@@ -1117,7 +1117,7 @@ function PermissionsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Roles & Permissions</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Roles & permissions</h3>
           <p className="text-sm text-text-tertiary">The system is modular: each role sees only what is enabled. Only Admin can make changes.</p>
         </div>
         {canEditConfig && (
@@ -1340,7 +1340,7 @@ function SystemTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-text-primary">System Configuration</h3>
+        <h3 className="text-lg font-semibold text-text-primary">System configuration</h3>
         <p className="text-sm text-text-tertiary">Company branding, PDF templates and system preferences. Admin only.</p>
       </div>
 
@@ -1569,7 +1569,7 @@ function SystemTab() {
             />
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Tagline</label>
-              <Input value={form.tagline} onChange={(e) => update("tagline", e.target.value)} placeholder="Professional Property Services" />
+              <Input value={form.tagline} onChange={(e) => update("tagline", e.target.value)} placeholder="Professional property services" />
             </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Brand Color</label>
@@ -1622,7 +1622,7 @@ function SystemTab() {
               ]}
             />
             <Select
-              label="Date Format"
+              label="Date format"
               defaultValue="DD/MM/YYYY"
               options={[
                 { value: "DD/MM/YYYY", label: "DD/MM/YYYY" },

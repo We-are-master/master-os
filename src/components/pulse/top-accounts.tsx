@@ -34,7 +34,7 @@ export function TopAccounts() {
 
   return (
     <SectionCard
-      title="Top Accounts"
+      title="Top accounts"
       subtitle={`By billed value · ${bounds ? rangeLabel : "this month"}`}
       bodyClassName="p-0"
     >

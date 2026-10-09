@@ -97,7 +97,7 @@ export function AlertsFeed() {
       if (lowMarginRows[0]) {
         out.push({
           id: `margin-${lowMarginRows[0].id}`,
-          title: "Margin Below Floor",
+          title: "Margin below floor",
           meta: `${lowMarginRows[0].reference} · ${(lowMarginRows[0].margin_percent ?? 0).toFixed(0)}%`,
           href: `/jobs/${lowMarginRows[0].id}`,
           tone: "navy",
@@ -120,7 +120,7 @@ export function AlertsFeed() {
       if (out.length === 0) {
         out.push({
           id: "all-clear",
-          title: "All Clear",
+          title: "All clear",
           meta: `No payment issues or margin alerts · ${periodHintLower}`,
           href: "/jobs",
           tone: "blue",
@@ -143,7 +143,7 @@ export function AlertsFeed() {
   return (
     <SectionCard
       className={PULSE_FORECAST_PAIR_CARD_CLASS}
-      title="Needs Attention"
+      title="Needs attention"
       subtitle={<span className="block truncate whitespace-nowrap">{subtitleText}</span>}
       actions={
         <div className="flex items-center gap-2 flex-wrap justify-end">

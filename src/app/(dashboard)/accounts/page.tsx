@@ -78,8 +78,8 @@ import { useAdminConfig } from "@/hooks/use-admin-config";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
-  { value: "Real Estate", label: "Real Estate" },
-  { value: "Financial Services", label: "Financial Services" },
+  { value: "Real Estate", label: "Real estate" },
+  { value: "Financial Services", label: "Financial services" },
   { value: "Technology", label: "Technology" },
   { value: "Hospitality", label: "Hospitality" },
   { value: "Manufacturing", label: "Manufacturing" },
@@ -96,7 +96,7 @@ const PAYMENT_TERMS_OPTIONS = [
   { value: "Every 7 days",            label: "Every 7 days" },
   { value: "Every 15 days",           label: "Every 15 days" },
   { value: "Every 30 days",           label: "Every 30 days" },
-  { value: "Every Friday",            label: "Every Friday" },
+  { value: "Every Friday",            label: "Every friday" },
   { value: "Every 2 weeks on Friday", label: "Every 2 weeks on Friday" },
 ];
 
@@ -780,7 +780,7 @@ export default function AccountsPage() {
         {kpisVisible ? (
         <StaggerContainer className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <KpiCard
-            title="Total Accounts"
+            title="Total accounts"
             value={totalAccounts}
             format="number"
             description={`${activeAccountCount} active · ${inactiveAccountCount} inactive`}
@@ -788,16 +788,16 @@ export default function AccountsPage() {
             accent="blue"
           />
           <KpiCard
-            title="Total Revenue"
+            title="Total revenue"
             value={combinedTotalRevenue}
             format="currency"
             description="All-time across accounts"
             icon={DollarSign}
             accent="emerald"
           />
-          <KpiCard title="Active Jobs" value={totalJobs} format="number" description="Open jobs in pipeline" icon={Briefcase} accent="primary" />
+          <KpiCard title="Active jobs" value={totalJobs} format="number" description="Open jobs in pipeline" icon={Briefcase} accent="primary" />
           <KpiCard
-            title="Avg Deal Size"
+            title="Avg deal size"
             value={avgDeal}
             format="currency"
             description="Revenue per account"
@@ -925,7 +925,7 @@ export default function AccountsPage() {
 
       <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Account" subtitle="Add a new corporate client account.">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New account" subtitle="Add a new corporate client account.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -933,7 +933,7 @@ export default function AccountsPage() {
               <Input
                 value={form.company_name}
                 onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
-                placeholder="Acme Corp"
+                placeholder="Acme corp"
               />
             </div>
             <div>
@@ -941,7 +941,7 @@ export default function AccountsPage() {
               <Input
                 value={form.contact_name}
                 onChange={(e) => setForm((f) => ({ ...f, contact_name: e.target.value }))}
-                placeholder="Jane Doe"
+                placeholder="Jane doe"
               />
             </div>
           </div>
@@ -2357,7 +2357,7 @@ function PaymentTermsModal({
     : null;
 
   return (
-    <Modal open={open} onClose={onClose} title="Payment Terms" size="md" rootClassName="z-[60]">
+    <Modal open={open} onClose={onClose} title="Payment terms" size="md" rootClassName="z-[60]">
       <div className="px-5 py-4 space-y-4">
         <PaymentTermsBuilder value={local} onChange={setLocal} />
 

@@ -1397,7 +1397,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     return [
       { id: "draft", label: "New", count: quoteFunnelCounts.draft },
       { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
-      { id: "quote_ready", label: "Quote Ready", count: statusCounts.quote_ready ?? 0 },
+      { id: "quote_ready", label: "Quote ready", count: statusCounts.quote_ready ?? 0 },
       { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
       { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
       { id: "closed", label: "Closed", count: closed },
@@ -1727,7 +1727,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   trades: [trade],
-                  title: "New Job Invitation",
+                  title: "New job invitation",
                   body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
                   data: { type: "quote_invite", quoteId: patched.id },
                 }),
@@ -2161,7 +2161,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 trades: [quote.service_type],
-                title: "New Job Invitation",
+                title: "New job invitation",
                 body: `${quote.title} — ${quote.property_address ?? quote.client_name}`,
                 data: { type: "quote_invite", quoteId: quote.id },
               }),
@@ -2653,7 +2653,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         {kpisVisible ? (
         <StaggerContainer className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           <KpiCard
-            title="Total Quoted"
+            title="Total quoted"
             value={kpiSummary.totalSentToCustomerValue}
             format="currency"
             icon={BarChart3}
@@ -2693,7 +2693,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             compact
           />
           <KpiCard
-            title="Conversion Rate"
+            title="Conversion rate"
             value={quoteToJobConversion.pct}
             format="percent"
             icon={BarChart3}
@@ -3256,7 +3256,7 @@ function PartnerBidMiniDash({
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "New", short: "New", icon: ClipboardList },
   { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "quote_ready", label: "Quote Ready", short: "Ready", icon: FileCheck },
+  { id: "quote_ready", label: "Quote ready", short: "Ready", icon: FileCheck },
   { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
   { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
 ];
@@ -4186,7 +4186,7 @@ function QuoteDetailDrawer({
   const routingDraft = isDraftRoutingPhase(quote);
   const drawerTabs = isLateStageQuote
     ? [
-        { id: "overview", label: "Review & Send" },
+        { id: "overview", label: "Review & send" },
         { id: "details", label: "Details" },
         { id: "history", label: "History" },
       ]
@@ -4196,7 +4196,7 @@ function QuoteDetailDrawer({
           { id: "history", label: "History" },
         ]
       : [
-          { id: "overview", label: "Review & Send" },
+          { id: "overview", label: "Review & send" },
           {
             id: "bids",
             label: "Bids",
@@ -6669,7 +6669,7 @@ function QuoteDetailDrawer({
           setInvitePartnerOpen(false);
           setInvitePartnerScopeEditing(false);
         }}
-        title="Invite Partners"
+        title="Invite partners"
         subtitle="Select partners to send this quote request"
         size="lg"
         scrollBody={false}
@@ -6978,7 +6978,7 @@ function QuoteDetailDrawer({
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         trades: [trade],
-                        title: "New Job Invitation",
+                        title: "New job invitation",
                         body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
                         data: { type: "quote_invite", quoteId: quote.id },
                       }),
@@ -7278,33 +7278,33 @@ function getQuoteActions(quote: Quote) {
       }
       if (isManual) {
         return [
-          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
           { label: "Reject", status: "rejected", icon: XCircle, primary: false },
         ];
       }
       return [
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: false },
+        { label: "Start bidding", status: "bidding", icon: Send, primary: true },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":
       if (isManual) {
         return [
-          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-          { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+          { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
           { label: "Reject", status: "rejected", icon: XCircle, primary: false },
         ];
       }
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
-        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Start bidding", status: "bidding", icon: Send, primary: false },
+        { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "bidding":
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "awaiting_customer":
@@ -7314,7 +7314,7 @@ function getQuoteActions(quote: Quote) {
       ];
     case "awaiting_payment":
       return [
-        { label: "Mark as Paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
+        { label: "Mark as paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
         { label: "Reopen", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "rejected":

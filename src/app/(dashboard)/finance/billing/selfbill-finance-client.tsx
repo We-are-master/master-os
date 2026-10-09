@@ -224,7 +224,7 @@ function getSelfBillDisplayStatus(sb: SelfBill, todayYmd: string): SelfBillDispl
   if (DRAFT_DB_STATUSES.has(sb.status)) return { label: "Draft", variant: "default" };
   if (selfBillCountsAsReady(sb)) {
     if (isSelfBillOverdue(sb, todayYmd)) return { label: "Overdue", variant: "danger" };
-    return { label: "Ready to Pay", variant: "info" };
+    return { label: "Ready to pay", variant: "info" };
   }
   return { label: sb.status, variant: "default" };
 }

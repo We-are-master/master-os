@@ -225,7 +225,7 @@ export function LiveOperations() {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 [&>*]:min-w-0">
       <KpiCard
-        label="Live Now"
+        label="Live now"
         hint={kpiHint(
           "All active pipeline jobs (incl. on hold in the total). Not filtered by the dashboard date range.",
           liveBreakdownHint,
@@ -253,7 +253,7 @@ export function LiveOperations() {
         topRight={<StatusDot color="bg-fx-blue" />}
       />
       <KpiCard
-        label="Daily Sales"
+        label="Daily sales"
         hint={kpiHint("Jobs added to the OS today (UK calendar day).")}
         countBesideHint={loading ? null : stats.daily_sales.count}
         value={loading ? "—" : formatGbp(stats.daily_sales.revenue)}

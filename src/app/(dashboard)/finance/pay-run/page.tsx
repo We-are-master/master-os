@@ -344,7 +344,7 @@ export default function PayRunPage() {
     <PageTransition>
       <div className="space-y-4 px-1 sm:px-0">
         <PageHeader
-          title="Pay Run"
+          title="Pay run"
           subtitle={rangeLabel}
           infoTooltip="Pay the previous week(s). Partners, workforce, and bills in one place. Default shows last week — add more weeks if you're catching up."
         >

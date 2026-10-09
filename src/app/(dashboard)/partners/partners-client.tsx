@@ -743,7 +743,7 @@ function PartnersDirectoryKanbanView({
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
-  needs_attention: { label: "Needs Attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
+  needs_attention: { label: "Needs attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
   inactive: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
   onboarding: { label: "Onboarding", variant: "warning", color: "bg-amber-50 dark:bg-amber-950/300" },
   /** @deprecated DB value — shown as Inactive + “On break” badge */
@@ -875,8 +875,8 @@ const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> 
   draft: { label: "Draft", variant: "default" },
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
-  on_hold: { label: "On Hold", variant: "warning" },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
+  on_hold: { label: "On hold", variant: "warning" },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
 };
@@ -902,7 +902,7 @@ const emptyForm = {
 const CREATE_PARTNER_WIZARD_STEPS = [
   { id: "info", label: "Partner info" },
   { id: "documents", label: "Documents" },
-  { id: "rates", label: "Rate Card" },
+  { id: "rates", label: "Rate card" },
 ] as const;
 
 type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
@@ -2680,7 +2680,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                     <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Verify all" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn
@@ -2728,7 +2728,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                     <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Verify all" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn
@@ -2780,7 +2780,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           setInviteEmail("");
           setInvitePhone("");
         }}
-        title="Invite Partner"
+        title="Invite partner"
         subtitle="Create a minimal directory record and email a Trade Portal onboarding link. They complete profile, trades, coverage, and documents from scratch."
         size="md"
       >
@@ -2863,7 +2863,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="Add Partner"
+        title="Add partner"
         subtitle={
           viewMode === "team"
             ? "Saves to Directory. To show them under Team (App), open the partner and link their app login email, or assign them on a job."
@@ -3028,7 +3028,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Company / trading name *</label>
-              <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" />
+              <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme corp" />
             </div>
             {form.partner_legal_type === "self_employed" ? (
               <div className="space-y-1.5">
@@ -3703,21 +3703,21 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   certification: { label: "Certification", icon: CheckCircle2 },
   license: { label: "License", icon: FileText },
   contract: { label: "Contract", icon: FileText },
-  tax: { label: "Tax Document", icon: DollarSign },
+  tax: { label: "Tax document", icon: DollarSign },
   utr: { label: "UTR / HMRC", icon: DollarSign },
   company_registration: { label: "Proof of company", icon: FileText },
-  service_agreement: { label: "Service Agreement", icon: FileText },
-  self_bill_agreement: { label: "Self Bill Agreement", icon: FileText },
+  service_agreement: { label: "Service agreement", icon: FileText },
+  self_bill_agreement: { label: "Self bill agreement", icon: FileText },
   id_proof: { label: "ID Proof", icon: Users },
-  proof_of_address: { label: "Proof of Address", icon: FileText },
-  right_to_work: { label: "Right to Work", icon: FileText },
+  proof_of_address: { label: "Proof of address", icon: FileText },
+  right_to_work: { label: "Right to work", icon: FileText },
   poa: { label: "Power of Attorney (POA)", icon: FileText },
   dbs: { label: "DBS (Disclosure & Barring)", icon: ShieldCheck },
   other: { label: "Other", icon: FileText },
 };
 
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
-  pending: { label: "Pending Review", variant: "warning" },
+  pending: { label: "Pending review", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
@@ -5693,7 +5693,7 @@ function PartnerDetailDrawer({
                         value={nameForm.company_name}
                         onChange={(e) => setNameForm((p) => ({ ...p, company_name: e.target.value }))}
                         className="mt-1 h-9"
-                        placeholder="Acme Maintenance Ltd"
+                        placeholder="Acme maintenance ltd"
                         autoFocus
                       />
                     </div>
@@ -5705,7 +5705,7 @@ function PartnerDetailDrawer({
                         value={nameForm.contact_name}
                         onChange={(e) => setNameForm((p) => ({ ...p, contact_name: e.target.value }))}
                         className="mt-1 h-9"
-                        placeholder="John Smith"
+                        placeholder="John smith"
                       />
                     </div>
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -7541,7 +7541,7 @@ function PartnerDetailDrawer({
               {(
                 [
                   { id: "praise" as const, label: "Good" },
-                  { id: "complaint" as const, label: "Bad / Poor" },
+                  { id: "complaint" as const, label: "Bad / poor" },
                 ] as const
               ).map((opt) => (
                 <button

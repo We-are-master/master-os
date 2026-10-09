@@ -696,7 +696,7 @@ export function PipelineScheduleMiniCalendar({
                                 ? "flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-white sm:h-6 sm:w-6"
                                 : "rounded-md px-0.5 text-text-secondary hover:bg-surface-hover/80",
                             )}
-                            title="Open Day view"
+                            title="Open day view"
                           >
                             {day}
                           </button>

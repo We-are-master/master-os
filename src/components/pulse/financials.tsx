@@ -435,7 +435,7 @@ export function Financials() {
           detailsLabel="View revenue breakdown"
         />
         <KpiCard
-          label="Operating Cost"
+          label="Operating cost"
           hint="Partner cost + materials + per-job expenses for the same pipeline. The percentage below is gross margin: what is left of revenue after this cost, before fixed costs. Target comes from Setup."
           value={loading ? "—" : formatGbp(totals.operatingCost)}
           sub={loading ? null : <MargemSub margem={margens.bruta} rotulo="gross margin" alvo="target" />}
@@ -444,7 +444,7 @@ export function Financials() {
           detailsLabel="View operating cost breakdown"
         />
         <KpiCard
-          label="Fixed Costs"
+          label="Fixed costs"
           hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Bills & expenses (monthly burn, pro-rated) and one-off bills due in the period."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
           topRight={<StatusDot color="bg-fx-blue" />}
@@ -452,7 +452,7 @@ export function Financials() {
           detailsLabel="View fixed cost breakdown (admin)"
         />
         <KpiCard
-          label="Net Margin"
+          label="Net margin"
           hint="Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead."
           variant={
             !loading && totals.netMargin < 0
@@ -581,10 +581,10 @@ export function Financials() {
         <div className="px-5 py-5">
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SummaryRow label="Revenue" value={totals.revenue} tone="green" />
-            <SummaryRow label="Operating Cost" value={-totals.operatingCost} tone="amber" />
-            <SummaryRow label="Fixed Costs" value={-totals.fixedCost} tone="blue" />
+            <SummaryRow label="Operating cost" value={-totals.operatingCost} tone="amber" />
+            <SummaryRow label="Fixed costs" value={-totals.fixedCost} tone="blue" />
             <SummaryRow
-              label="Net Margin"
+              label="Net margin"
               value={totals.netMargin}
               tone={totals.netMargin >= 0 ? "green" : "red"}
               emphasis

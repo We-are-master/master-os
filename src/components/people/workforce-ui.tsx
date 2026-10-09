@@ -68,7 +68,7 @@ export const WORKFORCE_DRAWER_TAB_CONFIG: {
   { id: "documents", label: "Documents" },
   { id: "schedule", label: "Schedule", contractorOnly: true },
   { id: "finance", label: "Finance" },
-  { id: "access", label: "Login Details" },
+  { id: "access", label: "Login details" },
 ];
 
 export function WorkforceKpiGrid({

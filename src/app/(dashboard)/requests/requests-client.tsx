@@ -111,8 +111,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   new: { label: "New", variant: "primary" },
   approved: { label: "Approved", variant: "success" },
   declined: { label: "Declined", variant: "danger" },
-  converted_to_quote: { label: "Converted to Quote", variant: "info" },
-  converted_to_job: { label: "Converted to Job", variant: "success" },
+  converted_to_quote: { label: "Converted to quote", variant: "info" },
+  converted_to_job: { label: "Converted to job", variant: "success" },
 };
 
 const priorityConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -387,12 +387,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   }, [selectedRequest, drawerFields, refreshSilent]);
 
   const tabs = [
-    { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
+    { id: "all", label: "All requests", count: statusCounts.all ?? 0 },
     { id: "new", label: "New", count: statusCounts.new ?? 0 },
     { id: "approved", label: "Approved", count: statusCounts.approved ?? 0 },
-    { id: "converted_to_quote", label: "Converted to Quote", count: statusCounts.converted_to_quote ?? 0 },
-    { id: "converted_to_job", label: "Converted to Job", count: statusCounts.converted_to_job ?? 0 },
-    { id: "declined", label: "Not Qualified", count: statusCounts.declined ?? 0 },
+    { id: "converted_to_quote", label: "Converted to quote", count: statusCounts.converted_to_quote ?? 0 },
+    { id: "converted_to_job", label: "Converted to job", count: statusCounts.converted_to_job ?? 0 },
+    { id: "declined", label: "Not qualified", count: statusCounts.declined ?? 0 },
   ];
 
   const handleBulkStatusChange = async (newStatus: string) => {
@@ -1243,7 +1243,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Service &amp; pricing</p>
                     {resolveRequestKind(selectedRequest) === "work" ? (
                       <ServiceCatalogSelect
-                        label="Call Out type"
+                        label="Call out type"
                         emptyOptionLabel="Select call out type..."
                         catalog={catalogServices}
                         value={drawerFields.catalog_service_id}
@@ -2615,7 +2615,7 @@ function ManualQuoteModal({
               <div key={idx} className="p-3 bg-surface-hover rounded-xl">
                 <div className="flex gap-2 items-start">
                   <div className="flex-1 space-y-1.5">
-                    <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs" />
+                    <Input placeholder="Service / description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs" />
                     <div className="flex gap-2 items-center">
                       <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
                       <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
@@ -3445,8 +3445,8 @@ const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
 ];
 
 const REQUEST_KIND_OPTIONS = [
-  { value: "quote", label: "Quote Request" },
-  { value: "work", label: "Work Request" },
+  { value: "quote", label: "Quote request" },
+  { value: "work", label: "Work request" },
 ] as const;
 
 function CreateRequestModal({
@@ -3616,7 +3616,7 @@ function CreateRequestModal({
             </label>
             <div className="mt-[6px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
               {([
-                { value: "work", title: "Work Request", sub: "Fixed price · 60s confirm", Icon: Wrench, accent: "#020040", bg: "#020040" },
+                { value: "work", title: "Work request", sub: "Fixed price · 60s confirm", Icon: Wrench, accent: "#020040", bg: "#020040" },
                 { value: "quote", title: "Quote", sub: "Survey first · same-day", Icon: MessageSquarePlus, accent: "#ED4B00", bg: "#FFF1EB" },
               ] as const).map(({ value, title, sub, Icon, accent, bg }) => {
                 const active = form.request_kind === value;

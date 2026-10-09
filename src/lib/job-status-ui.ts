@@ -42,11 +42,11 @@ export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
   auto_assigning: "Assigning",
   scheduled: "Scheduled",
   late: "Late",
-  in_progress: "In Progress",
-  final_check: "Final Checks",
-  awaiting_payment: "Awaiting Payment",
-  need_attention: "Needs Attention",
-  on_hold: "On Hold",
+  in_progress: "In progress",
+  final_check: "Final checks",
+  awaiting_payment: "Awaiting payment",
+  need_attention: "Needs attention",
+  on_hold: "On hold",
   completed: "Completed",
   cancelled: "Cancelled",
   deleted: "Deleted",
@@ -100,7 +100,7 @@ export function jobOnHoldDisplayBadge(job: {
   if (isJobOnHoldComplaint(job)) {
     return { label: "Complaint", variant: "danger", dot: true };
   }
-  return { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true };
+  return { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true };
 }
 
 /** Status list/detail badge — uses complaint label when on hold + complaint preset. */

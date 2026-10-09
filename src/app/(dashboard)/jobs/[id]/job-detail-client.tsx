@@ -323,11 +323,11 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
+  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
+  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
@@ -601,13 +601,13 @@ const selfBillStatusConfig: Record<
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
 > = {
   draft: { label: "Draft", variant: "default" },
-  accumulating: { label: "Open Week", variant: "default" },
-  pending_review: { label: "Approve Report", variant: "primary" },
-  needs_attention: { label: "Needs Attention", variant: "danger" },
-  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
-  ready_to_pay: { label: "Ready To Pay", variant: "info" },
+  accumulating: { label: "Open week", variant: "default" },
+  pending_review: { label: "Approve report", variant: "primary" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
   paid: { label: "Paid", variant: "success" },
-  audit_required: { label: "Audit Required", variant: "danger" },
+  audit_required: { label: "Audit required", variant: "danger" },
   rejected: { label: "Rejected", variant: "default" },
 };
 
@@ -742,10 +742,10 @@ function JobDetailSelfBillPanel({
 /** Six-stage pipeline shown on job detail (matches ops mental model). */
 const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
-  { label: "On Site", statuses: ["in_progress"], icon: HardHat },
-  { label: "On Hold", statuses: ["on_hold"], icon: PauseCircle },
-  { label: "Final Checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
-  { label: "Awaiting Payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "On site", statuses: ["in_progress"], icon: HardHat },
+  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
   { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
@@ -7669,7 +7669,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             type="button"
                             onClick={() => setDetailTab(0)}
                             className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
-                            title="Open the Visits tab"
+                            title="Open the visits tab"
                           >
                             <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
@@ -10616,7 +10616,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <>
                     <div>
                       <TimeSelect
-                        label="Arrival Time"
+                        label="Arrival time"
                         value={resumeArrivalTime}
                         disabled={resumeSaving}
                         onChange={(v) => setResumeArrivalTime(v)}
@@ -11815,7 +11815,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <>
                 <div>
                   <TimeSelect
-                    label="Arrival Time"
+                    label="Arrival time"
                     value={qrTime}
                     disabled={quickRescheduleSaving}
                     onChange={(v) => setQrTime(v)}

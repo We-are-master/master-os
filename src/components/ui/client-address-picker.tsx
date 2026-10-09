@@ -1265,7 +1265,7 @@ export function ClientAddressPicker({
                   <Input
                     value={newSourceForm.industry}
                     onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
-                    placeholder="Residential Services"
+                    placeholder="Residential services"
                   />
                 </div>
               </div>

@@ -206,9 +206,9 @@ type JoinDocField = { key: DocKey; label: string; hint: string };
 
 const DEFAULT_JOIN_DOC_FIELDS: JoinDocField[] = [
   { key: "photo_id", label: "Photo ID", hint: "Passport or driving licence" },
-  { key: "public_liability", label: "Public Liability Insurance", hint: "Active insurance certificate" },
-  { key: "proof_of_address", label: "Proof of Address", hint: "Utility bill or bank statement" },
-  { key: "right_to_work", label: "Right to Work", hint: "Visa or passport biometric page" },
+  { key: "public_liability", label: "Public liability insurance", hint: "Active insurance certificate" },
+  { key: "proof_of_address", label: "Proof of address", hint: "Utility bill or bank statement" },
+  { key: "right_to_work", label: "Right to work", hint: "Visa or passport biometric page" },
 ];
 
 const STEPS = ["Account", "Business", "Documents"];
@@ -815,7 +815,7 @@ function RegistrationForm() {
             className="w-12 h-12 object-contain"
           />
         </div>
-        <h1 className="text-3xl font-black text-white tracking-tight">Become a Partner</h1>
+        <h1 className="text-3xl font-black text-white tracking-tight">Become a partner</h1>
         <p className="text-white/55 text-sm mt-1">Join the Fixfy network and start earning</p>
       </div>
 
@@ -1013,7 +1013,7 @@ function Step0({
       <Field label="Full name" required>
         <input
           className={inputCls}
-          placeholder="John Smith"
+          placeholder="John smith"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
           name="join_full_name"
@@ -1131,7 +1131,7 @@ function Step1({
       <Field label="Company / trading name">
         <input
           className={inputCls}
-          placeholder="Smith Plumbing Ltd"
+          placeholder="Smith plumbing ltd"
           value={companyName}
           onChange={(e) => setCompanyName(e.target.value)}
           name="join_company"

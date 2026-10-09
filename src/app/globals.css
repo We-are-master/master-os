@@ -654,10 +654,11 @@ svg.lucide { stroke-width: 2; }
 .gap-8 > .uno-view-head { margin-bottom: -22px; }
 
 /* ============ Tables (VOS UNO §12) ============
- * `.uno-tbl` is the DataTable: rows 36, header 11/500 on a 6% ink wash, zebra
- * 2%, hover 4.5%, hairlines at 62%, EVERYTHING centred except the identity
- * (the first data column), fixed layout. Unlayered so it beats per-cell utilities. */
-.uno-tbl { border-collapse: collapse; table-layout: fixed; }
+ * `.uno-tbl` is the DataTable: rows at least 36, header 11/500 on a 6% ink
+ * wash, zebra 2%, hover 4.5%, hairlines at 62%. The FIRST TWO data columns
+ * (reference and who) are left-aligned; the rest is centred. Columns take the
+ * width their content needs (no fixed layout squeezing names). */
+.uno-tbl { border-collapse: collapse; table-layout: auto; }
 .uno-tbl > thead > tr > th {
   padding: 8px 14px !important;
   font-size: 11px !important; font-weight: 500 !important; color: var(--text-primary) !important;
@@ -667,8 +668,8 @@ svg.lucide { stroke-width: 2; }
   text-align: center !important; white-space: nowrap;
 }
 .uno-tbl > tbody > tr > td {
-  height: 36px; padding: 0 14px !important;
-  font-size: 12px !important; color: var(--text-secondary);
+  height: 36px; padding: 6px 14px !important;
+  font-size: 12px !important; line-height: 1.4; color: var(--text-secondary);
   text-align: center !important; vertical-align: middle;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
 }
@@ -677,13 +678,15 @@ svg.lucide { stroke-width: 2; }
 .uno-tbl > tbody > tr.uno-row-sel > td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .uno-tbl > tbody > tr.uno-row-sel:hover > td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):not(.uno-selcol) > :is(.flex, .inline-flex) { justify-content: center; }
-/* identity column: the first data column, left and 600 ink */
-.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):first-child:not(.uno-selcol),
-.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol + :is(th, td) { text-align: left !important; }
-.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):first-child:not(.uno-selcol) > :is(.flex, .inline-flex),
-.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol + :is(th, td) > :is(.flex, .inline-flex) { justify-content: flex-start; }
+/* first two data columns: left */
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):is(:nth-child(1), :nth-child(2)):not(.uno-selcol),
+.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol ~ :is(th, td):is(:nth-child(2), :nth-child(3)) { text-align: left !important; }
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):is(:nth-child(1), :nth-child(2)):not(.uno-selcol) > :is(.flex, .inline-flex),
+.uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol ~ :is(th, td):is(:nth-child(2), :nth-child(3)) > :is(.flex, .inline-flex) { justify-content: flex-start; }
+/* identity (first data column): 600 ink */
 .uno-tbl > tbody > tr > td:first-child:not(.uno-selcol),
 .uno-tbl > tbody > tr > .uno-selcol + td { color: var(--text-primary); font-weight: 600; }
+.uno-tbl > tbody > tr > td :is(.truncate) { max-width: 320px; }
 .uno-tbl .uno-selcol { width: 40px !important; padding: 0 10px 0 14px !important; text-align: left !important; }
 .uno-tbl :is(td, th).text-right, .uno-tbl .tabular-nums { font-variant-numeric: tabular-nums; }
 
@@ -700,3 +703,39 @@ main table:not(.uno-tbl) > thead > tr > th {
 /* Solid navy flips to light ink in dark: white text on it must follow on-brand. */
 .dark :is(.bg-primary, .bg-fx-navy, .bg-navy):is(.text-white, .text-\[\#fff\], .text-\[\#ffffff\]),
 .dark :is(.bg-primary, .bg-fx-navy, .bg-navy) > :is(.text-white, svg) { color: var(--on-brand) !important; }
+
+/* ============ Insights card kit (VOS UNO §10, `.ins-kit`) ============
+ * Pulse uses the vertex-saas Insights language: a soft gradient panel, a
+ * shallow two-layer shadow, 12px gaps. Scoped so it never touches other cards. */
+.ins-kit {
+  --ins-card: linear-gradient(180deg, var(--card-bg), color-mix(in srgb, var(--card-bg) 96%, var(--bg)));
+  --ins-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 4%, transparent), 0 8px 24px -16px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+.dark .ins-kit {
+  --ins-card: linear-gradient(180deg, color-mix(in srgb, var(--card-bg) 96%, #ffffff), var(--card-bg));
+  --ins-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 32px -20px rgba(0, 0, 0, 0.9);
+}
+.ins-card {
+  background: var(--ins-card, var(--card-bg));
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: var(--ins-shadow, var(--shadow-card-v));
+  min-width: 0;
+}
+.ins-kit :is(.gap-4, .gap-5, .gap-6) { gap: 12px; }
+.ins-kit .rounded-xl.border { border-radius: 12px; }
+
+/* ============ Spacing rhythm (VOS UNO §5) ============
+ * Blocks on a page sit 16 apart; nothing in page content uses 20/24/32 gaps.
+ * Applies to page content only (main), so the shell keeps its own measures. */
+main :is(.space-y-5, .space-y-6, .space-y-8) > :not([hidden]) ~ :not([hidden]) { margin-top: 16px; }
+main :is(.gap-5, .gap-6, .gap-8):not(.ins-kit *) { gap: 16px; }
+main :is(.gap-y-5, .gap-y-6, .gap-y-8) { row-gap: 16px; }
+main :is(.gap-x-5, .gap-x-6, .gap-x-8) { column-gap: 16px; }
+/* Card padding: 20 default (p-5/p-6 → 20), 16 compact. */
+main :is(.p-6) { padding: 20px; }
+main :is(.px-6) { padding-left: 20px; padding-right: 20px; }
+main :is(.py-6) { padding-top: 20px; padding-bottom: 20px; }
+/* Text never cramped: labels and values get their line height. */
+main :is(.leading-none) { line-height: 1.2; }
+main :is(.leading-tight) { line-height: 1.3; }

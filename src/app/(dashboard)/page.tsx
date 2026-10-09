@@ -36,8 +36,8 @@ function PulseInner() {
   return (
     <PageTransition>
       <PulseCurrencyProvider>
-      <div className="pulse-dark">
-        <div className="space-y-6">
+      <div className="pulse-dark ins-kit">
+        <div className="space-y-3">
           <PulseHead
             firstName={firstName}
             ceoMode={ceoMode}
@@ -50,13 +50,13 @@ function PulseInner() {
             <>
               <LiveOperations />
               <Financials />
-              <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-3 lg:items-start">
                 <TodaysFlow />
                 <AlertsFeed />
               </div>
               <LiveBoard />
               <AutoFlow />
-              <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
+              <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-3 items-stretch">
                 <RevenueTrend />
                 <TopAccounts />
               </div>

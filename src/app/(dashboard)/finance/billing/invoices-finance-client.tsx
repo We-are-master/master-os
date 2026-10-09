@@ -3885,8 +3885,8 @@ export function InvoiceDetailDrawer({
             <div>
               <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Timeline</p>
               <div className="space-y-0">
-                <TimelineStep done label="Invoice Created" date={formatDate(invoice.created_at)} />
-                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
+                <TimelineStep done label="Invoice created" date={formatDate(invoice.created_at)} />
+                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to client" date={formatDate(invoice.created_at)} />
                 <TimelineStep
                   done={invoice.status === "paid"}
                   active={

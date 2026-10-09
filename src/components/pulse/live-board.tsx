@@ -65,21 +65,21 @@ const MODE_META: Record<
   { title: string; href: string; linkLabel: string; empty: string; loading: string }
 > = {
   jobs: {
-    title: "Live Jobs",
+    title: "Live jobs",
     href: "/schedule",
     linkLabel: "Open Live View →",
     empty: "No active jobs right now.",
     loading: "Loading live jobs…",
   },
   quotes: {
-    title: "Live Quotes",
+    title: "Live quotes",
     href: "/quotes",
     linkLabel: "Open Quotes →",
     empty: "No new or bidding quotes.",
     loading: "Loading live quotes…",
   },
   leads: {
-    title: "Live Leads",
+    title: "Live leads",
     href: "/leads",
     linkLabel: "Open Leads →",
     empty: "No new leads.",

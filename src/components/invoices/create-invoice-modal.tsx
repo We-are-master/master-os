@@ -252,7 +252,7 @@ export function CreateInvoiceModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create Invoice" subtitle="Add a new client invoice" size="lg">
+    <Modal open={open} onClose={onClose} title="Create invoice" subtitle="Add a new client invoice" size="lg">
       <form onSubmit={handleSubmit} className="p-6 space-y-4">
         <div className="space-y-1">
           <ClientAddressPicker

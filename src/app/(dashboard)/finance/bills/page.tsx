@@ -1200,7 +1200,7 @@ function BillModal({
             disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
-              { value: "weekly_friday", label: "Every Friday" },
+              { value: "weekly_friday", label: "Every friday" },
               { value: "biweekly_friday", label: "Every 2 Fridays" },
               { value: "monthly", label: "Monthly" },
               { value: "quarterly", label: "Quarterly" },
