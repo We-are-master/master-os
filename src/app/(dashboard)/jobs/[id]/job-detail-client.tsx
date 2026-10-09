@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
 import type { JobDetailBundle } from "@/services/jobs";
 import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
@@ -1780,7 +1781,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     let cancelled = false;
     setApprovalDueDatesLoading(true);
     void (async () => {
-      const financeAnchorDate = job.scheduled_date ? new Date(job.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(job) ?? new Date();
       const weekEnd =
         jobSelfBill?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(jobSelfBill.week_end.trim())
           ? jobSelfBill.week_end.trim()
@@ -5617,7 +5618,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     );
     if (!updated) return;
     try {
-      const financeAnchorDate = updated.scheduled_date ? new Date(updated.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(updated) ?? new Date();
       const [linked, dueForAnchor, linkedSelfBills] = await Promise.all([
         listInvoicesLinkedToJob(updated.reference, updated.invoice_id),
         getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate, undefined, {
@@ -5843,7 +5844,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
-      const financeAnchorDate = current.scheduled_date ? new Date(current.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(current) ?? new Date();
+      /** Self-bill fortnight still follows the schedule until Fase 1 moves it to the completion date in one place. */
+      const selfBillAnchorDate = current.scheduled_date ? new Date(current.scheduled_date) : new Date();
       const wantsSelfBill = !!current.partner_id?.trim();
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 
@@ -5897,7 +5900,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           dueDate: invoiceDueYmd,
         }),
         shouldCreateSelfBill
-          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate, selfBillIdHint: primarySelfBillId })
+          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate: selfBillAnchorDate, selfBillIdHint: primarySelfBillId })
           : Promise.resolve(primarySelfBillId),
       ]);
 
