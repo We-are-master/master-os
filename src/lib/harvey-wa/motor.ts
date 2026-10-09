@@ -24,6 +24,7 @@ import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
+import { custoDoParceiroParaCotacao } from "./desconto";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
@@ -84,6 +85,7 @@ export async function contextoDaPessoa(
   const contas: Contas = {
     reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
     pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
+    custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),

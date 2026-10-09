@@ -3,6 +3,7 @@
  *  - chase de quem parou de responder (src/lib/harvey-wa/chase.ts)
  *  - transferência aguardando o sinal: confirma, lembra e libera (transferencia.ts).
  *  - lead que nunca respondeu o primeiro contato (followup-leads.ts).
+ *  - quote enviada sem resposta: lembrete com 24h e 72h (followup-quotes.ts).
  *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
@@ -17,6 +18,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { varrerChases } from "@/lib/harvey-wa/chase";
 import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
 import { varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
+import { varrerCobrancaDeQuotes } from "@/lib/harvey-wa/followup-quotes";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,7 +46,9 @@ export async function GET(req: NextRequest) {
     const transferencias = await varrerTransferencias(sb, new Date(), { aplicar: !ensaio });
     // Lead que nunca respondeu o primeiro contato: lembrete 24h, ligar 48h, fecha 7d.
     const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
-    return NextResponse.json({ ok: true, chase, transferencias, leads });
+    // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
+    const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
+    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });

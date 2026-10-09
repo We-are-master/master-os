@@ -10,6 +10,7 @@ import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
+import { decidirDesconto } from "./desconto";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -18,6 +19,8 @@ export type Contas = {
   reservas: (email?: string | null) => Promise<unknown>;
   /** Pedido de cotação no OS (com as fotos da conversa), ligado ao ticket do WhatsApp. */
   pedirCotacao?: (pedido: { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string }) => Promise<unknown>;
+  /** Custo do parceiro para as linhas de uma cotação, pelos Services do OS (desconto com trava de margem). */
+  custoDoParceiro?: (linhas: Array<{ label?: string; amount?: number }>) => Promise<number | null>;
   situacaoDoParceiro?: () => Promise<unknown>;
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
 };
@@ -143,6 +146,19 @@ const FERRAMENTAS_CLIENTE = [
   {
     type: "function",
     function: {
+      name: "check_discount",
+      description:
+        "Only when the customer ASKS for a discount on a catalogue price. Checks how much we can take off (never more than 5%) for the same selection. If it says no, kindly explain the price is already our best; if it gives a promo code, quote again with that promoCode and use it in the payment link. Never offer a discount they did not ask for, and only once per conversation.",
+      parameters: {
+        type: "object",
+        properties: { selection: SELECAO, postcode: { type: "string" } },
+        required: ["selection"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_available_dates",
       description: "The days and arrival windows that can be booked for these services (Monday to Saturday, never same day, fully booked days left out).",
       parameters: {
@@ -200,18 +216,21 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "request_quote",
       description:
-        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Then tell them the team will send the quote and hand off happens automatically.",
+        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Before calling it, collect everything the team needs, one question per message: the full address (house number, street, postcode), photos of every area involved, exactly what needs doing (for painting: which rooms, walls/ceilings/woodwork, same colour or new colour; for repairs: what is broken and where; for cleaning: bedrooms, bathrooms, empty or furnished), whether the property is empty or lived in, and when they want it done. Never quote bespoke or made-to-measure work yourself, and decline work at height (gutters, roofs, high ladders). Then tell them the team will send the quote and hand off happens automatically.",
       parameters: {
         type: "object",
         properties: {
-          service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Roofing, Cleaning" },
-          description: { type: "string", description: "the job in English, including what you saw in the photos" },
+          service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Painting, Cleaning" },
+          description: { type: "string", description: "the job in English: what needs doing, which rooms/areas, and what you saw in the photos" },
           postcode: { type: "string" },
-          address: { type: "string", description: "house number and street, if they gave it" },
+          address: { type: "string", description: "house number and street" },
+          occupancy: { type: "string", description: "empty, furnished, or lived in" },
+          timing: { type: "string", description: "when they want it done" },
+          no_photos_reason: { type: "string", description: "only if they cannot send photos: why" },
           name: { type: "string" },
           email: { type: "string" },
         },
-        required: ["service_type", "description", "postcode"],
+        required: ["service_type", "description", "postcode", "address", "occupancy", "timing"],
       },
     },
   },
@@ -470,15 +489,41 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
   }
+  if (nome === "check_discount") {
+    const { data } = await site({ action: "quote", selection: a.selection, postcode: a.postcode });
+    const linhas = ((data.lines as Array<{ label?: string; amount?: number }> | undefined) ?? []);
+    const total = typeof data.total === "number" ? data.total : 0;
+    const custo = ctx.contas?.custoDoParceiro ? await ctx.contas.custoDoParceiro(linhas) : null;
+    const d = decidirDesconto(total, custo);
+    if (!d.ok) return { discount: 0, note: "No discount possible on this price: tell them kindly it is already our best price for this job." };
+    const codigo = d.percent === 5 ? process.env.HARVEY_DISCOUNT_CODE?.trim() : undefined;
+    if (!codigo) {
+      r.notaParaEquipe = `Customer asked for a discount. Allowed: up to ${d.percent}% (£${total.toFixed(2)} → £${d.novoTotal.toFixed(2)}), margin stays at ${(d.margemDepois * 100).toFixed(1)}%.`;
+      return { discount: d.percent, newTotal: d.novoTotal, note: "Tell them you'll check with the team and come back shortly; do not promise the amount." };
+    }
+    return { discount: d.percent, newTotal: d.novoTotal, promoCode: codigo, note: "Quote again with this promoCode and use it in the payment link." };
+  }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
     // O postcode tem que ter vindo do cliente, não da imaginação do modelo.
     const pc = String(a.postcode ?? "").replace(/\s+/g, "").toUpperCase();
     const disse = ctx.textoDoCliente?.replace(/\s+/g, "").toUpperCase() ?? "";
     if (!pc || !disse.includes(pc.slice(0, Math.max(3, pc.length - 3)))) return { error: "Ask for their postcode first (they have not given it)." };
+    // O time não volta ao cliente para perguntar o básico (dono, 09/10/2026): sem isto, não passa.
+    const faltando: string[] = [];
+    if (!String(a.address ?? "").trim() || !/\d/.test(String(a.address))) faltando.push("the full address (house number and street)");
+    if (!String(a.occupancy ?? "").trim()) faltando.push("whether the property is empty or lived in");
+    if (!String(a.timing ?? "").trim()) faltando.push("when they want it done");
+    if ((ctx.fotos?.length ?? 0) === 0 && !String(a.no_photos_reason ?? "").trim()) faltando.push("photos of the areas involved");
+    if (faltando.length) return { error: `Before asking the team, get ${faltando.join(", ")}. Ask one thing at a time.` };
     const q = (await ctx.contas.pedirCotacao({
       serviceType: String(a.service_type ?? "General Maintenance"),
-      description: String(a.description ?? ""),
+      description: [
+        String(a.description ?? ""),
+        a.occupancy ? `Property: ${a.occupancy}.` : "",
+        a.timing ? `When: ${a.timing}.` : "",
+        a.no_photos_reason ? `No photos: ${a.no_photos_reason}.` : "",
+      ].filter(Boolean).join("\n"),
       postcode: String(a.postcode ?? ""),
       address: typeof a.address === "string" ? a.address : undefined,
       name: typeof a.name === "string" ? a.name : undefined,
