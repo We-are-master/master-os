@@ -602,6 +602,41 @@ export async function garantirQuoteNoOs(
 
 const arredonda2 = (v: number) => Math.round(v * 100) / 100;
 
+/**
+ * A tabela combinada com a conta (`account_service_prices`), para a quote B2B usar o
+ * preço da conta e não o pricebook genérico (Fase 2, dono 09/10/2026). Só entra na nota
+ * interna: quem manda o preço ao cliente continua sendo a equipe.
+ */
+async function precosCombinadosDaConta(accountId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("account_service_prices")
+    .select("use_standard, fixed_price, hourly_rate, preset_overrides, catalog_service_id, service:service_catalog(name, pricing_presets)")
+    .eq("account_id", accountId)
+    .is("deleted_at", null);
+  const linhas: string[] = [];
+  for (const r of (data ?? []) as Array<{
+    use_standard: boolean | null;
+    fixed_price: number | null;
+    hourly_rate: number | null;
+    preset_overrides: Record<string, { fixed_price?: number }> | null;
+    service: { name?: string; pricing_presets?: Array<{ id: string; label?: string }> } | { name?: string; pricing_presets?: Array<{ id: string; label?: string }> }[] | null;
+  }>) {
+    if (r.use_standard) continue;
+    const svc = Array.isArray(r.service) ? r.service[0] : r.service;
+    const faixas = Object.entries(r.preset_overrides ?? {})
+      .map(([id, o]) => {
+        const label = svc?.pricing_presets?.find((p) => p.id === id)?.label ?? id.slice(0, 6);
+        return typeof o.fixed_price === "number" ? `${label} £${o.fixed_price.toFixed(2)}` : null;
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+    linhas.push(`- ${svc?.name ?? "Service"}: ${faixas.length ? faixas.join(" · ") : r.fixed_price != null ? `£${Number(r.fixed_price).toFixed(2)}` : r.hourly_rate != null ? `£${Number(r.hourly_rate).toFixed(2)}/h` : "custom"}`);
+  }
+  if (!linhas.length) return null;
+  return ["── Agreed prices for this account (use these, not the generic pricebook) ──", ...linhas].join("\n");
+}
+
 export async function cotarTicket(ticketId: number, postar: boolean): Promise<ResultadoDoQuoter> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
@@ -673,8 +708,10 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
     return null;
   });
 
+  const tabelaDaConta = org.ok ? await precosCombinadosDaConta(org.id).catch(() => null) : null;
   const nota = [
     montarNotaInterna(ticket, pedido, resultado, quoteRef),
+    ...(tabelaDaConta ? ["", "──────────", tabelaDaConta] : []),
     ...(convite ? ["", "──────────", convite.nota] : []),
     ...(aviso ? ["", "──────────", aviso] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
