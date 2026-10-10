@@ -38,7 +38,8 @@ export async function conferirPayday(admin: SupabaseClient): Promise<Conferencia
     grupos.set(k, [...(grupos.get(k) ?? []), s]);
   }
   for (const lista of grupos.values()) {
-    if (lista.length > 1) duplicados.push(`${lista[0].partner_name} ${lista[0].week_start}: ${lista.map((s) => `${s.reference} (${s.status})`).join(", ")}`);
+    // Quinzena já toda paga não tem mais conserto: só aponta quando sobra documento em aberto.
+    if (lista.length > 1 && lista.some((s) => s.status !== "paid")) duplicados.push(`${lista[0].partner_name} ${lista[0].week_start}: ${lista.map((s) => `${s.reference} (${s.status})`).join(", ")}`);
   }
 
   const ids = sbs.map((s) => s.id);
@@ -48,7 +49,7 @@ export async function conferirPayday(admin: SupabaseClient): Promise<Conferencia
     jobs.push(...((data ?? []) as Jb[]));
   }
   const parceiroErrado = jobs
-    .filter((j) => j.self_bill_id && byId.get(j.self_bill_id)?.partner_id && j.partner_id && byId.get(j.self_bill_id)!.partner_id !== j.partner_id)
+    .filter((j) => j.self_bill_id && byId.get(j.self_bill_id)?.status !== "paid" && byId.get(j.self_bill_id)?.partner_id && j.partner_id && byId.get(j.self_bill_id)!.partner_id !== j.partner_id)
     .map((j) => `${j.reference} (${j.partner_name}) is on ${byId.get(j.self_bill_id!)!.reference} of ${byId.get(j.self_bill_id!)!.partner_name}`);
   const emPagamentoSemAprovar = jobs
     .filter((j) => j.status === "final_check" && j.self_bill_id && fechados.has(byId.get(j.self_bill_id)?.status ?? ""))

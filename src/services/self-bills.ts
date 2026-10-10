@@ -1021,7 +1021,16 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       .not("status", "in", `(${[...SELF_BILL_REUSABLE_STATUSES, ...SELF_BILL_TERMINAL_STATUSES].join(",")})`)
       .limit(1)
       .maybeSingle();
-    if (fechado) {
+    const hojeYmd = new Date().toISOString().slice(0, 10);
+    const quinzenaAindaAberta = Boolean(weekEnd) && weekEnd >= hojeYmd;
+    if (fechado && quinzenaAindaAberta && (fechado as { status: string }).status === "awaiting_payment") {
+      /**
+       * A quinzena ainda não acabou (10/10/2026: F&V tinha 5 documentos em 28/09–11/10).
+       * Documento em "awaiting_payment" no meio da quinzena é o approve antigo fechando
+       * o balde: reabre o MESMO documento em vez de criar um irmão.
+       */
+      await supabase.from("self_bills").update({ status: "accumulating" }).eq("id", (fechado as { id: string }).id);
+    } else if (fechado) {
       const hoje = new Date();
       anchorYmd = hoje.toISOString().slice(0, 10);
       periodo = workPeriodForJobStartYmd(anchorYmd, orgTerms, dueCtx?.orgReferenceYmd ?? null);
