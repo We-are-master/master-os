@@ -125,10 +125,7 @@ export async function alertasDeAutomacao(sb: SupabaseClient, agora = new Date())
   );
 
   const p = await conferirPayday(sb).catch(() => null);
-  // Duplicata de quinzena já paga não tem mais o que fazer: só entra a que ainda tem documento aberto.
-  const payday = p
-    ? [...p.duplicados.filter((x) => /accumulating|draft/.test(x)).map((x) => `duplicate self-bill: ${x}`), ...p.parceiroErrado, ...p.emPagamentoSemAprovar]
-    : [];
+  const payday = p ? [...p.duplicados.map((x) => `duplicate self-bill: ${x}`), ...p.parceiroErrado, ...p.emPagamentoSemAprovar] : [];
 
   return { total: cartaoRecusado.length + cobrancaPresa.length + semSelfBill.length + payday.length, cartaoRecusado, cobrancaPresa, semSelfBill, payday };
 }
