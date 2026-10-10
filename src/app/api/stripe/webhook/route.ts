@@ -3,6 +3,7 @@ import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
 import { applyOsPayLinkPayment } from "@/lib/stripe-pay-link-payment";
+import { saveCardFromCheckoutSession } from "@/lib/stripe-card-charge";
 
 export async function POST(req: NextRequest) {
   const supabaseAdmin = createServiceClient();
@@ -29,7 +30,9 @@ export async function POST(req: NextRequest) {
   if (event.type === "checkout.session.completed" || event.type === "payment_intent.succeeded") {
     const session = event.data.object as unknown as Record<string, unknown>;
     const metadata = (session.metadata ?? {}) as Record<string, string>;
-    const invoiceId = metadata.invoice_id;
+    // Cobrança no cartão salvo (`os_charge`) é lançada no ledger por quem cobrou
+    // (lib/stripe-card-charge); nunca pode cair no ramo antigo que marca a fatura paga inteira.
+    const invoiceId = metadata.os_charge ? undefined : metadata.invoice_id;
 
     if (invoiceId) {
       const { data: invRow } = await supabaseAdmin
@@ -49,6 +52,12 @@ export async function POST(req: NextRequest) {
           payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
           amount_total: Number(session.amount_total ?? 0),
         });
+        // Sinal de quem paga no cartão: guarda o cartão pro restante (Fase 0).
+        await saveCardFromCheckoutSession(supabaseAdmin, {
+          customer: typeof session.customer === "string" ? session.customer : null,
+          payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
+          metadata,
+        }).catch((e) => console.error("Stripe webhook: save card failed", e));
       } else {
         await supabaseAdmin.from("invoices").update({
           stripe_payment_status: "paid",

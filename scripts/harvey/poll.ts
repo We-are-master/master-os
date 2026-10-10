@@ -392,7 +392,11 @@ async function ciclo(): Promise<void> {
        * gente: ele fica no Action Required. O que não pode é virar job
        * sozinho.
        */
-      !/\[whatsapp\]/i.test(t.subject),
+      !/\[whatsapp\]/i.test(t.subject) &&
+      // Conversa do WhatsApp com o cliente (ticket do Sunshine) é do Harvey do WhatsApp;
+      // o do e-mail não comenta nela (Fase 2, 09/10/2026).
+      !t.tags.includes("harvey_wa") &&
+      !t.tags.includes("harvey_wa_lead"),
   );
   console.log(`[harvey] ${new Date().toISOString()} candidatos apos filtros: ${candidatos.length}`);
 

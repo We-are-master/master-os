@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerBidToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { prepararPropostaDoLance } from "@/lib/quotes/lance-para-proposta";
 import {
   buildBidNotesJson,
   normalizePartnerBidPayloadInput,
@@ -174,6 +175,11 @@ export async function POST(req: NextRequest) {
     new_value:   String(bidAmount),
     metadata:    { source: "public_partner_link", partner_id: partnerId, job_type: jobType, bid_id: bidId },
   }).then(({ error }) => { if (error) console.error("audit_logs (submit-bid)", error); });
+
+  // Fase 4: o lance vira proposta com margem (e sai sozinho quando pode). Nunca derruba o lance.
+  if (bidId) {
+    await prepararPropostaDoLance(supabase, quoteId, bidId).catch((e) => console.error("[submit-bid] proposta do lance:", e));
+  }
 
   return NextResponse.json({ ok: true, bidId, quoteReference: quote.reference });
 }

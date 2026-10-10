@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
 import type { JobDetailBundle } from "@/services/jobs";
 import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
@@ -1315,6 +1316,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [resumeExpectedFinishDate, setResumeExpectedFinishDate] = useState("");
   const [resumeSaving, setResumeSaving] = useState(false);
   const [validateCompleteOpen, setValidateCompleteOpen] = useState(false);
+  /** Cartão salvo do cliente (Fase 0): o que mostrar no final review e se a cobrança fica segurada. */
+  const [savedCard, setSavedCard] = useState<{ brand: string | null; last4: string | null } | null>(null);
+  const [cardChargeHold, setCardChargeHold] = useState(false);
   const [validatingComplete, setValidatingComplete] = useState(false);
 
   /**
@@ -1608,12 +1612,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       try {
         const c = await getClient(job.client_id!.trim());
         const acc = c?.source_account_id?.trim() ? await getAccount(c.source_account_id.trim()) : null;
+        const cc = c as { card_brand?: string | null; card_last4?: string | null } | null;
+        if (!cancelled) {
+          setSavedCard(cc?.card_last4 ? { brand: cc.card_brand ?? null, last4: cc.card_last4 } : null);
+          setCardChargeHold(Boolean((job as Job & { card_charge_hold?: boolean | null }).card_charge_hold));
+        }
         const policy = accountFinalEmailPolicyFromRow(acc);
         if (cancelled) return;
         setAccountEmailPolicy(policy);
-        setIncludeInvoiceInEmail(policy.canIncludeInvoice);
+        // Conta que paga no cartão não recebe fatura no e-mail (o restante é cobrado no cartão salvo).
+        const pagaNoCartao = acc?.collection_mode === "card_upfront";
+        setIncludeInvoiceInEmail(policy.canIncludeInvoice && !pagaNoCartao);
         setIncludeReportInEmail(policy.canIncludeReport);
-        setCompletionDelivery(canSendClientEmailWithPack(policy) ? null : "stage_only");
+        // Conta que paga por fatura: fatura + relatório saem por e-mail por padrão no fim do final check
+        // (dono, 09/10/2026). A equipe ainda pode trocar antes de aprovar.
+        const faturaAutomatica = !!acc && !pagaNoCartao && canSendClientEmailWithPack(policy);
+        setCompletionDelivery(faturaAutomatica ? "email" : canSendClientEmailWithPack(policy) ? null : "stage_only");
       } catch {
         if (!cancelled) {
           const fallback: AccountFinalEmailPolicy = { canIncludeInvoice: true, canIncludeReport: true };
@@ -1780,7 +1794,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     let cancelled = false;
     setApprovalDueDatesLoading(true);
     void (async () => {
-      const financeAnchorDate = job.scheduled_date ? new Date(job.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(job) ?? new Date();
       const weekEnd =
         jobSelfBill?.week_end?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(jobSelfBill.week_end.trim())
           ? jobSelfBill.week_end.trim()
@@ -5617,7 +5631,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     );
     if (!updated) return;
     try {
-      const financeAnchorDate = updated.scheduled_date ? new Date(updated.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(updated) ?? new Date();
       const [linked, dueForAnchor, linkedSelfBills] = await Promise.all([
         listInvoicesLinkedToJob(updated.reference, updated.invoice_id),
         getInvoiceDueDateIsoForClient(updated.client_id ?? null, financeAnchorDate, undefined, {
@@ -5835,15 +5849,44 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         void syncSelfBillAfterJobChange(current).catch(() => {});
       }
 
+      /**
+       * Cliente que paga no cartão (Fase 0, dono 09/10/2026): cobra o restante no cartão
+       * salvo ANTES de sair de final check. Recusado = o job fica em final check com
+       * "Card refused" e as novas tentativas ficam com o sistema.
+       */
+      let paidByCardNow = 0;
+      const cardJob = current as Job & { stripe_payment_method_id?: string | null; card_charge_status?: string | null; card_charge_hold?: boolean | null };
+      if (cardJob.stripe_payment_method_id && cardJob.card_charge_status !== "charged" && !cardJob.card_charge_hold && !cardChargeHold) {
+        const res = await fetch(`/api/jobs/${current.id}/card-charge`, { method: "POST" });
+        const outcome = (await res.json().catch(() => null)) as
+          | { status: "charged"; amountGbp: number; last4?: string | null }
+          | { status: "refused" | "requires_action"; amountGbp: number; reason: string }
+          | { status: "skipped"; reason: string }
+          | null;
+        if (outcome?.status === "refused" || outcome?.status === "requires_action") {
+          toast.error(`Card refused (£${outcome.amountGbp.toFixed(2)}): ${outcome.reason}. The job stays in final check.`);
+          const fresh = await getJob(current.id).catch(() => null);
+          if (fresh) setJob(fresh);
+          setValidateCompleteOpen(false);
+          return;
+        }
+        if (outcome?.status === "charged") {
+          paidByCardNow = outcome.amountGbp;
+          toast.success(`£${outcome.amountGbp.toFixed(2)} charged to the saved card${outcome.last4 ? ` ending ${outcome.last4}` : ""}.`);
+        }
+      }
+
       const depositPaid = customerPayments.filter((p) => p.type === "customer_deposit").reduce((s, p) => s + Number(p.amount), 0);
-      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0);
+      const finalPaid = customerPayments.filter((p) => p.type === "customer_final").reduce((s, p) => s + Number(p.amount), 0) + paidByCardNow;
       const billableForCollections = Math.max(jobCustomerTotal(current), customerScheduledTotal(current));
       const customerDue = Math.max(0, billableForCollections - (depositPaid + finalPaid));
       const partnerPaid = sumPartnerRecordedPayoutsForCap(partnerPayments);
       const partnerDue = Math.max(0, partnerPaymentCap(current) - partnerPaid);
 
       /** Single instant for invoice due date, weekly invoice week, and partner self-bill week (this approve action only). */
-      const financeAnchorDate = current.scheduled_date ? new Date(current.scheduled_date) : new Date();
+      const financeAnchorDate = resolveJobCompletionInstant(current) ?? new Date();
+      /** Fase 1: a quinzena do parceiro também é a do dia da conclusão. */
+      const selfBillAnchorDate = financeAnchorDate;
       const wantsSelfBill = !!current.partner_id?.trim();
       const selfBillIdBeforePartnerSection = current.self_bill_id ?? null;
 
@@ -5897,7 +5940,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           dueDate: invoiceDueYmd,
         }),
         shouldCreateSelfBill
-          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate, selfBillIdHint: primarySelfBillId })
+          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate: selfBillAnchorDate, selfBillIdHint: primarySelfBillId })
           : Promise.resolve(primarySelfBillId),
       ]);
 
@@ -5913,7 +5956,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const previousInvoiceStatus = invoiceRowForFinalize?.status ?? "draft";
       const previousSelfBillStatus = selfBillRowForFinalize?.status ?? "accumulating";
       const finalInvoiceStatus: Invoice["status"] = customerDue <= 0.02 ? "paid" : "pending";
-      const finalSelfBillStatus: SelfBill["status"] = partnerDue > 0.02 ? "awaiting_payment" : "ready_to_pay";
       let invoiceFinalized = false;
       let selfBillFinalized = false;
       try {
@@ -5927,11 +5969,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           });
           invoiceFinalized = true;
         }
-        if (draftSelfBillId) {
-          await finalizeDocument("selfbill", draftSelfBillId, {
-            status: finalSelfBillStatus,
-            ...(partnerDueYmd ? { due_date: partnerDueYmd } : {}),
-          });
+        /**
+         * Aprovar UM job não fecha mais o documento da quinzena (dono, 09/10/2026: um
+         * documento por parceiro por quinzena). Antes, a aprovação passava a self-bill
+         * inteira pra awaiting_payment no meio da quinzena e o próximo job abria outro
+         * documento (a F&V chegou a 5 na quinzena 28/09 a 11/10). Quem fecha é o corte
+         * (finance-promover). Aqui só o vencimento é acertado quando o documento segue aberto.
+         */
+        if (draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating") {
+          await finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd });
           selfBillFinalized = true;
         }
       } catch (error) {
@@ -6062,6 +6108,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     approvalPartnerDueYmd,
     approvalComputedInvoiceDue,
     approvalComputedPartnerDue,
+    cardChargeHold,
   ]);
 
   const billableRevenueForApproval = job ? jobCustomerBillableRevenueForCollections(job) : 0;
@@ -10266,6 +10313,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         received={customerPaidTotal}
         paidOut={partnerPaidTotal}
         clientOutstanding={approvalEffectiveCustomerDue}
+        cardCharge={
+          job && (job as Job & { stripe_payment_method_id?: string | null }).stripe_payment_method_id &&
+          (job as Job & { card_charge_status?: string | null }).card_charge_status !== "charged"
+            ? {
+                amountGbp: approvalEffectiveCustomerDue,
+                brand: savedCard?.brand ?? null,
+                last4: savedCard?.last4 ?? null,
+                onHold: cardChargeHold,
+                onHoldChange: setCardChargeHold,
+              }
+            : null
+        }
         partnerOutstanding={approvalPartnerPayRemaining}
         invoiceStatus={job.invoice_id ? "issued" : "pending"}
         selfBillStatus={job.self_bill_id ? "issued" : "pending"}

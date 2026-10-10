@@ -1124,6 +1124,7 @@ function AccountDetailDrawer({
   const contractFileRef = useRef<HTMLInputElement>(null);
   const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
   const [emailIncludeInvoiceOnFinal, setEmailIncludeInvoiceOnFinal] = useState(true);
+  const [collectionMode, setCollectionMode] = useState<"invoice" | "card_upfront">("invoice");
   const [emailIncludeReportOnFinal, setEmailIncludeReportOnFinal] = useState(true);
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
@@ -1149,6 +1150,7 @@ function AccountDetailDrawer({
     setBillingType(((account as unknown as Record<string, unknown>).billing_type as "end_client" | "account") ?? "end_client");
     const a = account as unknown as Record<string, unknown>;
     setEmailIncludeInvoiceOnFinal(a.email_include_invoice_on_final !== false);
+    setCollectionMode(a.collection_mode === "card_upfront" ? "card_upfront" : "invoice");
     setEmailIncludeReportOnFinal(a.email_include_report_on_final !== false);
     setEdit({
       company_name: account.company_name,
@@ -1391,6 +1393,7 @@ function AccountDetailDrawer({
         logo_url: edit.logo_url.trim() || null,
         contract_url: edit.contract_url.trim() || null,
         billing_type: billingType,
+        collection_mode: collectionMode,
         email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
         email_include_report_on_final: emailIncludeReportOnFinal,
         default_client_cancel_fee_gbp:
@@ -1991,6 +1994,21 @@ function AccountDetailDrawer({
                       <FixfyHintIcon text="Uncheck to send a notice without report attachments (rare)." />
                     </span>
                   </label>
+                </div>
+                <div className="mt-3 space-y-1.5">
+                  <label htmlFor="account-collection-mode" className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+                    How this account pays
+                    <FixfyHintIcon text="Invoice: at final check the invoice and report go to the account's finance email, due by the account's payment terms counted from the day the job was done. Card: 50% deposit up front and the rest charged to the saved card at final check." />
+                  </label>
+                  <select
+                    id="account-collection-mode"
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text-primary"
+                    value={collectionMode}
+                    onChange={(e) => setCollectionMode(e.target.value === "card_upfront" ? "card_upfront" : "invoice")}
+                  >
+                    <option value="invoice">Invoice after the job (sent with the report)</option>
+                    <option value="card_upfront">50% deposit + saved card</option>
+                  </select>
                 </div>
                 {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
                   <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">

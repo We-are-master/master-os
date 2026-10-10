@@ -18,7 +18,7 @@ export type PedidoDeCotacao = { serviceType: string; description: string; postco
 export async function pedirCotacao(
   sb: SupabaseClient,
   a: { telefone: string | null; quem: Identidade; nomeNoWhatsApp: string | null; fotos: string[]; pedido: PedidoDeCotacao },
-): Promise<{ reference?: string; error?: string }> {
+): Promise<{ reference?: string; invited?: number; error?: string }> {
   const ticket = await ticketPeloTelefone(a.telefone).catch(() => null);
   const ref = ticket ? String(ticket) : null;
 
@@ -65,11 +65,41 @@ export async function pedirCotacao(
       ...(ref ? { external_source: "zendesk", external_ref: ref } : {}),
       images: fotos,
     })
-    .select("reference")
+    .select("id, reference, title, property_address, scope, catalog_service_id")
     .single();
   if (error || !data) {
     console.error("[harvey-wa] quote", error);
     return { error: "could not create the quote" };
   }
-  return { reference: data.reference as string };
+
+  /**
+   * Concorrência de verdade (Fase 2, dono 09/10/2026). Antes a quote do WhatsApp
+   * ficava em rascunho interno e o ticket ia pra Bidding sem convite nenhum. Com o
+   * endereço completo, os parceiros da área são convidados agora, igual ao Harvey do e-mail.
+   */
+  let convidados = 0;
+  if (process.env.HARVEY_QUOTE_INVITES?.trim() === "1" && a.pedido.address?.trim()) {
+    try {
+      await sb.from("quotes").update({ status: "bidding", quote_type: "partner" }).eq("id", data.id);
+      const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
+      const soEste = process.env.HARVEY_CONVITE_PARCEIRO_UNICO?.trim();
+      const r = await dispatchQuoteBidInvites(sb, {
+        quoteId: data.id as string,
+        quoteReference: data.reference as string,
+        title: (data.title as string | null)?.trim() || a.pedido.serviceType,
+        serviceType: a.pedido.serviceType,
+        catalogServiceId: (data.catalog_service_id as string | null) ?? null,
+        propertyAddress: data.property_address as string,
+        scope: data.scope as string,
+        startIso: null,
+        invitedBy: null,
+        ...(soEste ? { partnerIds: [soEste] } : {}),
+      });
+      convidados = r.partnerIds.length;
+      if (convidados === 0) await sb.from("quotes").update({ status: "draft", quote_type: "internal" }).eq("id", data.id);
+    } catch (e) {
+      console.error("[harvey-wa] bid invites", e);
+    }
+  }
+  return { reference: data.reference as string, invited: convidados };
 }

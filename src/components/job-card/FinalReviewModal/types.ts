@@ -101,6 +101,18 @@ export type FinalReviewModalProps = {
   confirmed: boolean;
   onConfirmedChange: (v: boolean) => void;
 
+  /**
+   * Cliente que paga no cartão salvo (Fase 0): mostra antes de aprovar quanto será
+   * cobrado e em qual cartão, com opção de segurar a cobrança (job em disputa).
+   */
+  cardCharge?: {
+    amountGbp: number;
+    brand?: string | null;
+    last4?: string | null;
+    onHold: boolean;
+    onHoldChange: (v: boolean) => void;
+  } | null;
+
   /** Optional slot for hourly-job billed-hours input (rendered before the attestation section). */
   hourlySlot?: React.ReactNode;
 

@@ -10,6 +10,7 @@ import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
+import { decidirDesconto } from "./desconto";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -18,6 +19,10 @@ export type Contas = {
   reservas: (email?: string | null) => Promise<unknown>;
   /** Pedido de cotação no OS (com as fotos da conversa), ligado ao ticket do WhatsApp. */
   pedirCotacao?: (pedido: { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string }) => Promise<unknown>;
+  /** Custo do parceiro para as linhas de uma cotação, pelos Services do OS (desconto com trava de margem). */
+  custoDoParceiro?: (linhas: Array<{ label?: string; amount?: number }>) => Promise<number | null>;
+  /** Empresa (imobiliária, gestora, carteira): conta pendente para o dono aprovar + link da tabela de parceiro. */
+  registrarEmpresa?: (dados: import("./empresa").DadosDaEmpresa) => Promise<unknown>;
   situacaoDoParceiro?: () => Promise<unknown>;
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
 };
@@ -143,6 +148,19 @@ const FERRAMENTAS_CLIENTE = [
   {
     type: "function",
     function: {
+      name: "check_discount",
+      description:
+        "Only when the customer ASKS for a discount on a catalogue price. Checks how much we can take off (never more than 5%) for the same selection. If it says no, kindly explain the price is already our best; if it allows a percent, tell them the new price and pass that discount_percent when you create the payment link. Never offer a discount they did not ask for, and only once per conversation.",
+      parameters: {
+        type: "object",
+        properties: { selection: SELECAO, postcode: { type: "string" } },
+        required: ["selection"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_available_dates",
       description: "The days and arrival windows that can be booked for these services (Monday to Saturday, never same day, fully booked days left out).",
       parameters: {
@@ -174,6 +192,7 @@ const FERRAMENTAS_CLIENTE = [
           addressLine2: { type: "string", description: "flat or unit, if any" },
           notes: { type: "string", description: "anything the team should know, in English" },
           promoCode: { type: "string" },
+          discount_percent: { type: "integer", minimum: 1, maximum: 5, description: "only the percent check_discount allowed in this conversation" },
           pay_in_full: { type: "boolean", description: "true only if the payment settings let the customer choose and they asked to pay the full price now" },
         },
         required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1"],
@@ -200,18 +219,21 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "request_quote",
       description:
-        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Then tell them the team will send the quote and hand off happens automatically.",
+        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Before calling it, collect everything the team needs, one question per message: the full address (house number, street, postcode), photos of every area involved, exactly what needs doing (for painting: which rooms, walls/ceilings/woodwork, same colour or new colour; for repairs: what is broken and where; for cleaning: bedrooms, bathrooms, empty or furnished), whether the property is empty or lived in, and when they want it done. Never quote bespoke or made-to-measure work yourself, and decline work at height (gutters, roofs, high ladders). Then tell them the team will send the quote and hand off happens automatically.",
       parameters: {
         type: "object",
         properties: {
-          service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Roofing, Cleaning" },
-          description: { type: "string", description: "the job in English, including what you saw in the photos" },
+          service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Painting, Cleaning" },
+          description: { type: "string", description: "the job in English: what needs doing, which rooms/areas, and what you saw in the photos" },
           postcode: { type: "string" },
-          address: { type: "string", description: "house number and street, if they gave it" },
+          address: { type: "string", description: "house number and street" },
+          occupancy: { type: "string", description: "empty, furnished, or lived in" },
+          timing: { type: "string", description: "when they want it done" },
+          no_photos_reason: { type: "string", description: "only if they cannot send photos: why" },
           name: { type: "string" },
           email: { type: "string" },
         },
-        required: ["service_type", "description", "postcode"],
+        required: ["service_type", "description", "postcode", "address", "occupancy", "timing"],
       },
     },
   },
@@ -221,6 +243,29 @@ const FERRAMENTAS_CLIENTE = [
       name: "get_my_bookings",
       description: "Their existing bookings with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, and any balance to pay with its link. Use it whenever they ask about a booking they already have.",
       parameters: { type: "object", properties: { email: { type: "string", description: "only if they gave the email they booked with" } } },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "register_business",
+      description:
+        "When the person writes for a BUSINESS (letting or estate agent, property manager, block manager, landlord with several properties, short lets or serviced apartments, student housing) and wants ongoing work or an account. Collect first, one question per message: company name, their name and role, work email, roughly how many properties and where, and which services they need. It sets up their business account for the team to approve and returns the link to our partner price list (5% below our standard prices), which you send them. Never promise payment terms or more discount: the team agrees those.",
+      parameters: {
+        type: "object",
+        properties: {
+          company_name: { type: "string" },
+          contact_name: { type: "string" },
+          role: { type: "string" },
+          email: { type: "string", description: "their work email" },
+          properties: { type: "string", description: "how many properties and what kind" },
+          area: { type: "string", description: "where the properties are" },
+          services: { type: "string", description: "which services they need, in English" },
+          finance_email: { type: "string", description: "only if they gave one for invoices" },
+          company_number: { type: "string", description: "Companies House number, only if they gave it" },
+        },
+        required: ["company_name", "contact_name", "email", "services"],
+      },
     },
   },
 ] as const;
@@ -470,15 +515,41 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     if (typeof data.total === "number") r.cotacao = { servico: linhas.map((l) => l.label).join(" + "), total: data.total, postcode: (data.postcode as string) ?? null };
     return data;
   }
+  if (nome === "check_discount") {
+    const { data } = await site({ action: "quote", selection: a.selection, postcode: a.postcode });
+    const linhas = ((data.lines as Array<{ label?: string; amount?: number }> | undefined) ?? []);
+    const total = typeof data.total === "number" ? data.total : 0;
+    const custo = ctx.contas?.custoDoParceiro ? await ctx.contas.custoDoParceiro(linhas) : null;
+    const d = decidirDesconto(total, custo);
+    if (!d.ok) return { discount: 0, note: "No discount possible on this price: tell them kindly it is already our best price for this job." };
+    // Sem cupom (dono, 10/10/2026): o link já nasce com o preço descontado.
+    return {
+      discount: d.percent,
+      newTotal: d.novoTotal,
+      note: `Tell them you can take ${d.percent}% off: £${d.novoTotal.toFixed(2)} instead of £${total.toFixed(2)}. When you create the payment link, pass discount_percent: ${d.percent}.`,
+    };
+  }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
     // O postcode tem que ter vindo do cliente, não da imaginação do modelo.
     const pc = String(a.postcode ?? "").replace(/\s+/g, "").toUpperCase();
     const disse = ctx.textoDoCliente?.replace(/\s+/g, "").toUpperCase() ?? "";
     if (!pc || !disse.includes(pc.slice(0, Math.max(3, pc.length - 3)))) return { error: "Ask for their postcode first (they have not given it)." };
+    // O time não volta ao cliente para perguntar o básico (dono, 09/10/2026): sem isto, não passa.
+    const faltando: string[] = [];
+    if (!String(a.address ?? "").trim() || !/\d/.test(String(a.address))) faltando.push("the full address (house number and street)");
+    if (!String(a.occupancy ?? "").trim()) faltando.push("whether the property is empty or lived in");
+    if (!String(a.timing ?? "").trim()) faltando.push("when they want it done");
+    if ((ctx.fotos?.length ?? 0) === 0 && !String(a.no_photos_reason ?? "").trim()) faltando.push("photos of the areas involved");
+    if (faltando.length) return { error: `Before asking the team, get ${faltando.join(", ")}. Ask one thing at a time.` };
     const q = (await ctx.contas.pedirCotacao({
       serviceType: String(a.service_type ?? "General Maintenance"),
-      description: String(a.description ?? ""),
+      description: [
+        String(a.description ?? ""),
+        a.occupancy ? `Property: ${a.occupancy}.` : "",
+        a.timing ? `When: ${a.timing}.` : "",
+        a.no_photos_reason ? `No photos: ${a.no_photos_reason}.` : "",
+      ].filter(Boolean).join("\n"),
       postcode: String(a.postcode ?? ""),
       address: typeof a.address === "string" ? a.address : undefined,
       name: typeof a.name === "string" ? a.name : undefined,
@@ -489,6 +560,27 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       r.notaParaEquipe = `Quote ${q.reference} created in the OS with the photos.\nJob: ${a.description}\nPostcode: ${a.postcode}${a.address ? `\nAddress: ${a.address}` : ""}`;
     }
     return { ...q, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
+  }
+  if (nome === "register_business") {
+    if (!ctx.contas?.registrarEmpresa) return { error: "not available" };
+    const email = String(a.email ?? "").trim();
+    // O e-mail tem que ter vindo do cliente.
+    if (!email || !(ctx.textoDoCliente ?? "").toLowerCase().includes(email.toLowerCase())) return { error: "Ask for their work email first (they have not given it)." };
+    const res = (await ctx.contas.registrarEmpresa({
+      companyName: String(a.company_name ?? ""),
+      contactName: String(a.contact_name ?? ""),
+      email,
+      role: typeof a.role === "string" ? a.role : undefined,
+      properties: typeof a.properties === "string" ? a.properties : undefined,
+      area: typeof a.area === "string" ? a.area : undefined,
+      services: typeof a.services === "string" ? a.services : undefined,
+      financeEmail: typeof a.finance_email === "string" ? a.finance_email : undefined,
+      companyNumber: typeof a.company_number === "string" ? a.company_number : undefined,
+    })) as { ok: boolean; jaExistia?: boolean; link?: string; erro?: string };
+    if (!res.ok) return { error: res.erro ?? "could not register" };
+    return res.jaExistia
+      ? { existing_account: true, price_list: res.link, note: "They already have an account with us: carry on helping them and the team will pick it up." }
+      : { pending_account: true, price_list: res.link, note: "Send them the partner price list link and say the team will be in touch to agree terms (usually same day). Meanwhile you can still quote and book single jobs from the catalogue." };
   }
   if (nome === "get_my_bookings") return ctx.contas ? ctx.contas.reservas(typeof a.email === "string" ? a.email : null) : { error: "not available" };
   if (nome === "get_my_account") return ctx.contas?.situacaoDoParceiro ? ctx.contas.situacaoDoParceiro() : { error: "not available" };
@@ -528,7 +620,17 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
     // O ticket da conversa vai junto (Stripe → job): o job pago nasce nele, sem ticket novo.
     const zendeskTicketId = await ctx.ticketDaConversa?.().catch(() => null);
-    const { status, data } = await site({ action: "checkout", booking, deposit: deposito, campaign: ctx.campanha || "wa_v1", ...(zendeskTicketId ? { zendeskTicketId } : {}) });
+    // Desconto pedido: confere de novo a margem aqui, o modelo não decide o número.
+    let descontoPct = 0;
+    if (Number(a.discount_percent) > 0) {
+      const q = await site({ action: "quote", selection: a.selection, postcode: a.postcode });
+      const linhas = (q.data.lines as Array<{ label?: string; amount?: number }> | undefined) ?? [];
+      const custo = ctx.contas?.custoDoParceiro ? await ctx.contas.custoDoParceiro(linhas) : null;
+      const d = decidirDesconto(typeof q.data.total === "number" ? q.data.total : 0, custo);
+      descontoPct = d.ok ? Math.min(d.percent, Math.floor(Number(a.discount_percent))) : 0;
+    }
+    if (descontoPct > 0) booking.promoCode = undefined;
+    const { status, data } = await site({ action: "checkout", booking, deposit: deposito, campaign: ctx.campanha || "wa_v1", ...(descontoPct > 0 ? { discountPercent: descontoPct } : {}), ...(zendeskTicketId ? { zendeskTicketId } : {}) });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
     const total = Number(data.total);
     const sinal = Number(data.payNow ?? total);

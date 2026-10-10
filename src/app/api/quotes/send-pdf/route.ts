@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import React from "react";
 import { QuotePDF, type QuotePDFData, type CompanyBranding } from "@/lib/pdf/quote-template";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { segredoInternoValido } from "@/lib/internal-secret";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -136,7 +137,8 @@ export async function POST(req: NextRequest) {
   const startedAt = nowMs();
   const marks: Array<[string, number]> = [];
   const tAuth = nowMs();
-  const auth = await requireAuth();
+  // Fase 4: a proposta do lance pode sair sozinha (lance-para-proposta.ts), com o segredo interno.
+  const auth = segredoInternoValido(req.headers.get("x-internal-secret")) ? null : await requireAuth();
   marks.push(["auth", nowMs() - tAuth]);
   if (auth instanceof NextResponse) return auth;
 
