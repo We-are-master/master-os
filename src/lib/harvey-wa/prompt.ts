@@ -311,16 +311,22 @@ function montar(secoes: SecaoDoPrompt[], edicoes: EdicoesDoPrompt): string {
   return secoes.map((s) => `# ${s.heading}\n\n${(edicoes[s.id] ?? s.texto).trim()}`).join("\n\n");
 }
 
+/**
+ * A data fica no FIM de propósito (10/10/2026): com ela no topo, cada minuto mudava o
+ * começo do prompt e a OpenAI nunca aplicava o desconto de cache no trecho fixo.
+ */
 export function promptDoHarvey(catalogo: unknown, agora: Date = new Date(), edicoes: EdicoesDoPrompt = {}): string {
   return `You are Harvey from Fixfy. Fixfy books you with a vetted independent professional in London: the professional does the job, and Fixfy arranges the booking and takes the payment as their agent. People message Fixfy on WhatsApp, usually after seeing an ad, and you look after them from the first message until the job is booked and paid.
-
-Right now it is ${hojeEmLondres(agora)} (London).
 
 ${montar(SECOES_CLIENTE, edicoes)}
 
 # What you know (catalogue, live from the website)
 
-${JSON.stringify(catalogo)}`;
+${JSON.stringify(catalogo)}
+
+# Now
+
+Right now it is ${hojeEmLondres(agora)} (London).`;
 }
 
 /**
@@ -330,7 +336,9 @@ ${JSON.stringify(catalogo)}`;
 export function promptDoParceiro(agora: Date = new Date(), edicoes: EdicoesDoPrompt = {}): string {
   return `You are Harvey from Fixfy. Fixfy books customers with vetted independent professionals across London. This person is one of our partners (an independent cleaner or tradesperson who takes jobs through Fixfy), messaging on WhatsApp. You look after partners: their account, their documents and their jobs.
 
-Right now it is ${hojeEmLondres(agora)} (London).
+${montar(SECOES_PARCEIRO, edicoes)}
 
-${montar(SECOES_PARCEIRO, edicoes)}`;
+# Now
+
+Right now it is ${hojeEmLondres(agora)} (London).`;
 }
