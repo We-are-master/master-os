@@ -150,7 +150,7 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "check_discount",
       description:
-        "Only when the customer ASKS for a discount on a catalogue price. Checks how much we can take off (never more than 5%) for the same selection. If it says no, kindly explain the price is already our best; if it gives a promo code, quote again with that promoCode and use it in the payment link. Never offer a discount they did not ask for, and only once per conversation.",
+        "Only when the customer ASKS for a discount on a catalogue price. Checks how much we can take off (never more than 5%) for the same selection. If it says no, kindly explain the price is already our best; if it allows a percent, tell them the new price and pass that discount_percent when you create the payment link. Never offer a discount they did not ask for, and only once per conversation.",
       parameters: {
         type: "object",
         properties: { selection: SELECAO, postcode: { type: "string" } },
@@ -192,6 +192,7 @@ const FERRAMENTAS_CLIENTE = [
           addressLine2: { type: "string", description: "flat or unit, if any" },
           notes: { type: "string", description: "anything the team should know, in English" },
           promoCode: { type: "string" },
+          discount_percent: { type: "integer", minimum: 1, maximum: 5, description: "only the percent check_discount allowed in this conversation" },
           pay_in_full: { type: "boolean", description: "true only if the payment settings let the customer choose and they asked to pay the full price now" },
         },
         required: ["selection", "postcode", "date", "window", "access", "parking", "firstName", "lastName", "email", "addressLine1"],
@@ -521,12 +522,12 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const custo = ctx.contas?.custoDoParceiro ? await ctx.contas.custoDoParceiro(linhas) : null;
     const d = decidirDesconto(total, custo);
     if (!d.ok) return { discount: 0, note: "No discount possible on this price: tell them kindly it is already our best price for this job." };
-    const codigo = d.percent === 5 ? process.env.HARVEY_DISCOUNT_CODE?.trim() : undefined;
-    if (!codigo) {
-      r.notaParaEquipe = `Customer asked for a discount. Allowed: up to ${d.percent}% (£${total.toFixed(2)} → £${d.novoTotal.toFixed(2)}), margin stays at ${(d.margemDepois * 100).toFixed(1)}%.`;
-      return { discount: d.percent, newTotal: d.novoTotal, note: "Tell them you'll check with the team and come back shortly; do not promise the amount." };
-    }
-    return { discount: d.percent, newTotal: d.novoTotal, promoCode: codigo, note: "Quote again with this promoCode and use it in the payment link." };
+    // Sem cupom (dono, 10/10/2026): o link já nasce com o preço descontado.
+    return {
+      discount: d.percent,
+      newTotal: d.novoTotal,
+      note: `Tell them you can take ${d.percent}% off: £${d.novoTotal.toFixed(2)} instead of £${total.toFixed(2)}. When you create the payment link, pass discount_percent: ${d.percent}.`,
+    };
   }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
@@ -619,7 +620,17 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     // Sempre 50% adiantado (dono, 29/09/2026): no cartão ou na transferência.
     // O ticket da conversa vai junto (Stripe → job): o job pago nasce nele, sem ticket novo.
     const zendeskTicketId = await ctx.ticketDaConversa?.().catch(() => null);
-    const { status, data } = await site({ action: "checkout", booking, deposit: deposito, campaign: ctx.campanha || "wa_v1", ...(zendeskTicketId ? { zendeskTicketId } : {}) });
+    // Desconto pedido: confere de novo a margem aqui, o modelo não decide o número.
+    let descontoPct = 0;
+    if (Number(a.discount_percent) > 0) {
+      const q = await site({ action: "quote", selection: a.selection, postcode: a.postcode });
+      const linhas = (q.data.lines as Array<{ label?: string; amount?: number }> | undefined) ?? [];
+      const custo = ctx.contas?.custoDoParceiro ? await ctx.contas.custoDoParceiro(linhas) : null;
+      const d = decidirDesconto(typeof q.data.total === "number" ? q.data.total : 0, custo);
+      descontoPct = d.ok ? Math.min(d.percent, Math.floor(Number(a.discount_percent))) : 0;
+    }
+    if (descontoPct > 0) booking.promoCode = undefined;
+    const { status, data } = await site({ action: "checkout", booking, deposit: deposito, campaign: ctx.campanha || "wa_v1", ...(descontoPct > 0 ? { discountPercent: descontoPct } : {}), ...(zendeskTicketId ? { zendeskTicketId } : {}) });
     if (status !== 200 || typeof data.url !== "string") return { error: data.error || `could not create the link (${status})`, errors: data.errors };
     const total = Number(data.total);
     const sinal = Number(data.payNow ?? total);
