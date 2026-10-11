@@ -505,9 +505,12 @@ export async function fetchClientIdToAccountId(clientIds: string[]): Promise<Rec
   const supabase = getSupabase();
   const map: Record<string, string> = {};
   const chunk = 100;
-  for (let i = 0; i < unique.length; i += chunk) {
-    const slice = unique.slice(i, i + chunk);
-    const { data, error } = await supabase.from("clients").select("id, source_account_id").in("id", slice);
+  const slices: string[][] = [];
+  for (let i = 0; i < unique.length; i += chunk) slices.push(unique.slice(i, i + chunk));
+  const results = await Promise.all(
+    slices.map((slice) => supabase.from("clients").select("id, source_account_id").in("id", slice)),
+  );
+  for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {
       const r = row as { id?: string; source_account_id?: string | null };

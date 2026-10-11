@@ -62,33 +62,62 @@ function namesLooselyMatch(a: string, b: string): boolean {
   return false;
 }
 
-/** Same rule as `get_jobs_for_account` RPC: client_name ILIKE %company_name%. */
-function escapeIlike(raw: string): string {
-  return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+
+const PAGE = 500;
+
+type PageResult = { data: unknown[] | null; error: unknown; count?: number | null };
+
+/** Lê todas as linhas de uma consulta: a 1ª página conta o total e as demais vêm em paralelo. */
+async function fetchAllRows<T>(page: (from: number, to: number) => PromiseLike<PageResult>): Promise<T[]> {
+  const first = await page(0, PAGE - 1);
+  if (first.error) throw first.error;
+  const rows = [...((first.data ?? []) as T[])];
+  if (rows.length < PAGE) return rows;
+  const total = first.count ?? 0;
+  if (total > PAGE) {
+    const starts: number[] = [];
+    for (let from = PAGE; from < total; from += PAGE) starts.push(from);
+    const rest = await Promise.all(starts.map((from) => page(from, from + PAGE - 1)));
+    for (const r of rest) {
+      if (r.error) throw r.error;
+      rows.push(...((r.data ?? []) as T[]));
+    }
+    return rows;
+  }
+  // Sem contagem: segue em fila até a página vir incompleta.
+  for (let from = PAGE; from < 200_000; from += PAGE) {
+    const r = await page(from, from + PAGE - 1);
+    if (r.error) throw r.error;
+    const more = (r.data ?? []) as T[];
+    rows.push(...more);
+    if (more.length < PAGE) break;
+  }
+  return rows;
 }
 
-async function fetchScopedAccountsAndLinkedClients(
-  supabase: ReturnType<typeof getSupabase>,
+/**
+ * Contas e clientes ligados a conta que casam com os nomes das faturas e dos jobs.
+ *
+ * Isto era DUAS consultas `ilike` por nome, direto do navegador: com 532 nomes distintos
+ * nas faturas (11/10/2026) eram mais de mil consultas a cada abertura do Billing. As duas
+ * tabelas inteiras cabem em poucas páginas (12 contas, ~3.200 clientes com conta), então
+ * elas vêm uma vez e o casamento é feito aqui, com a mesma regra: o nome é trecho do nome
+ * da conta/contato/cliente, sem diferenciar maiúsculas, no máximo 5 por nome.
+ */
+function scopeAccountsAndLinkedClients(
+  allAccounts: AccountRow[],
+  allLinkedClients: ClientRow[],
   invoices: Pick<Invoice, "source_account_id" | "client_name">[],
   jobRows: JobRow[],
-): Promise<{ accounts: AccountRow[]; linkedClientsForNames: ClientRow[] }> {
+): { accounts: AccountRow[]; linkedClientsForNames: ClientRow[] } {
   const accountById = new Map<string, AccountRow>();
   const linkedById = new Map<string, ClientRow>();
   const linkedClientsForNames: ClientRow[] = [];
 
-  const directAccountIds = [
-    ...new Set(invoices.map((i) => i.source_account_id?.trim()).filter(Boolean)),
-  ] as string[];
-  for (const ids of chunk(directAccountIds, CHUNK)) {
-    if (ids.length === 0) continue;
-    const { data, error } = await supabase
-      .from("accounts")
-      .select("id, company_name, contact_name, email")
-      .in("id", ids)
-      .is("deleted_at", null);
-    if (error) throw error;
-    for (const a of (data ?? []) as AccountRow[]) accountById.set(a.id, a);
-  }
+  const directAccountIds = new Set(
+    invoices.map((i) => i.source_account_id?.trim()).filter(Boolean) as string[],
+  );
+  for (const a of allAccounts) if (directAccountIds.has(a.id)) accountById.set(a.id, a);
 
   const namesForHeuristic = new Set<string>();
   for (const inv of invoices) {
@@ -100,38 +129,33 @@ async function fetchScopedAccountsAndLinkedClients(
     if (n && n.length >= 2) namesForHeuristic.add(n);
   }
 
-  const nameList = [...namesForHeuristic];
-  const NAME_QUERY_BATCH = 12;
-  for (let i = 0; i < nameList.length; i += NAME_QUERY_BATCH) {
-    const batch = nameList.slice(i, i + NAME_QUERY_BATCH);
-    await Promise.all(
-      batch.map(async (name) => {
-        const pattern = `%${escapeIlike(name)}%`;
-        const [{ data: accts, error: acctErr }, { data: clients, error: clientErr }] = await Promise.all([
-          supabase
-            .from("accounts")
-            .select("id, company_name, contact_name, email")
-            .is("deleted_at", null)
-            .or(`company_name.ilike."${pattern}",contact_name.ilike."${pattern}"`)
-            .limit(5),
-          supabase
-            .from("clients")
-            .select("id, full_name, email, source_account_id")
-            .not("source_account_id", "is", null)
-            .is("deleted_at", null)
-            .ilike("full_name", pattern)
-            .limit(5),
-        ]);
-        if (acctErr) throw acctErr;
-        if (clientErr) throw clientErr;
-        for (const a of (accts ?? []) as AccountRow[]) accountById.set(a.id, a);
-        for (const c of (clients ?? []) as ClientRow[]) {
-          if (linkedById.has(c.id)) continue;
-          linkedById.set(c.id, c);
-          linkedClientsForNames.push(c);
-        }
-      }),
-    );
+  const accountsLower = allAccounts.map((a) => ({
+    a,
+    company: String(a.company_name ?? "").toLowerCase(),
+    contact: String(a.contact_name ?? "").toLowerCase(),
+  }));
+  const clientsLower = allLinkedClients
+    .filter((c) => c.full_name)
+    .map((c) => ({ c, name: String(c.full_name).toLowerCase() }));
+
+  const LIMIT = 5;
+  for (const raw of namesForHeuristic) {
+    const n = raw.toLowerCase();
+    let hits = 0;
+    for (const { a, company, contact } of accountsLower) {
+      if (!company.includes(n) && !contact.includes(n)) continue;
+      accountById.set(a.id, a);
+      if (++hits >= LIMIT) break;
+    }
+    hits = 0;
+    for (const { c, name } of clientsLower) {
+      if (!name.includes(n)) continue;
+      if (!linkedById.has(c.id)) {
+        linkedById.set(c.id, c);
+        linkedClientsForNames.push(c);
+      }
+      if (++hits >= LIMIT) break;
+    }
   }
 
   return { accounts: [...accountById.values()], linkedClientsForNames };
@@ -189,15 +213,45 @@ export async function buildInvoiceAccountMaps(
 
   const supabase = getSupabase();
 
+  /**
+   * As consultas vão em ETAPAS paralelas, não mais uma atrás da outra: cada etapa só
+   * espera o que de fato depende da anterior. Eram ~35 idas e voltas em fila (mais as de
+   * nome); agora são 4 de profundidade.
+   */
+  // Etapa 1: jobs das faturas, todas as contas e todos os clientes ligados a conta.
+  const [jobResults, allAccounts, allLinkedClients] = await Promise.all([
+    Promise.all(
+      chunk(refs, CHUNK).map((part) =>
+        supabase
+          .from("jobs")
+          .select("id, reference, client_id, client_name, quote_id, property_id, external_ref, external_source")
+          .in("reference", part)
+          .is("deleted_at", null),
+      ),
+    ),
+    fetchAllRows<AccountRow>((from, to) =>
+      supabase
+        .from("accounts")
+        .select("id, company_name, contact_name, email", { count: "exact" })
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<ClientRow>((from, to) =>
+      supabase
+        .from("clients")
+        .select("id, full_name, email, source_account_id", { count: "exact" })
+        .not("source_account_id", "is", null)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+
   const jobRows: JobRow[] = [];
   const jobIds = new Set<string>();
   const externalRefs = new Set<string>();
-  for (const part of chunk(refs, CHUNK)) {
-    const { data, error } = await supabase
-      .from("jobs")
-      .select("id, reference, client_id, client_name, quote_id, property_id, external_ref, external_source")
-      .in("reference", part)
-      .is("deleted_at", null);
+  for (const { data, error } of jobResults) {
     if (error) throw error;
     for (const row of (data ?? []) as JobRow[]) {
       jobRows.push(row);
@@ -208,8 +262,9 @@ export async function buildInvoiceAccountMaps(
     }
   }
 
-  const { accounts, linkedClientsForNames } = await fetchScopedAccountsAndLinkedClients(
-    supabase,
+  const { accounts, linkedClientsForNames } = scopeAccountsAndLinkedClients(
+    allAccounts,
+    allLinkedClients,
     invoices,
     jobRows,
   );
@@ -227,13 +282,58 @@ export async function buildInvoiceAccountMaps(
     if (pid) propertyIds.add(pid);
   }
 
+  const fetchClientsByIds = (ids: string[]) =>
+    Promise.all(
+      chunk(ids, CHUNK).map((part) =>
+        supabase
+          .from("clients")
+          .select("id, full_name, email, source_account_id")
+          .in("id", part)
+          .is("deleted_at", null),
+      ),
+    );
+
+  // Etapa 2: tudo que depende só dos jobs (e as duas leituras que não dependem de nada).
+  const [clientResults, quoteResults, ticketResults, siblingInvoiceResults, clientsByNameResults] =
+    await Promise.all([
+      fetchClientsByIds([...clientIds]),
+      Promise.all(
+        chunk([...quoteIds], CHUNK).map((ids) =>
+          supabase
+            .from("quotes")
+            .select("id, client_id, property_id, source_account_id, request_id, external_ref")
+            .in("id", ids)
+            .is("deleted_at", null),
+        ),
+      ),
+      Promise.all(
+        chunk([...jobIds], CHUNK).map((ids) =>
+          supabase.from("tickets").select("job_id, account_id").in("job_id", ids),
+        ),
+      ),
+      Promise.all(
+        chunk(refs, CHUNK).map((part) =>
+          supabase
+            .from("invoices")
+            .select("source_account_id, job_reference")
+            .in("job_reference", part)
+            .is("deleted_at", null)
+            .neq("status", "cancelled"),
+        ),
+      ),
+      Promise.all(
+        chunk(invoiceNames, CHUNK).map((part) =>
+          supabase
+            .from("clients")
+            .select("full_name, source_account_id")
+            .in("full_name", part)
+            .is("deleted_at", null),
+        ),
+      ),
+    ]);
+
   const clientById = new Map<string, ClientRow>();
-  for (const ids of chunk([...clientIds], CHUNK)) {
-    const { data, error } = await supabase
-      .from("clients")
-      .select("id, full_name, email, source_account_id")
-      .in("id", ids)
-      .is("deleted_at", null);
+  for (const { data, error } of clientResults) {
     if (error) throw error;
     for (const c of (data ?? []) as ClientRow[]) clientById.set(c.id, c);
   }
@@ -241,12 +341,7 @@ export async function buildInvoiceAccountMaps(
   const quoteById = new Map<string, QuoteRow>();
   const quoteAccountByExternalRef = new Map<string, string>();
   const requestIds = new Set<string>();
-  for (const ids of chunk([...quoteIds], CHUNK)) {
-    const { data, error } = await supabase
-      .from("quotes")
-      .select("id, client_id, property_id, source_account_id, request_id, external_ref")
-      .in("id", ids)
-      .is("deleted_at", null);
+  for (const { data, error } of quoteResults) {
     if (error) throw error;
     for (const q of (data ?? []) as QuoteRow[]) {
       quoteById.set(q.id, q);
@@ -261,16 +356,49 @@ export async function buildInvoiceAccountMaps(
     }
   }
 
+  const jobIdToTicketAccount = new Map<string, string>();
+  for (const { data, error } of ticketResults) {
+    if (error) throw error;
+    for (const t of data ?? []) {
+      const jid = (t as { job_id?: string }).job_id?.trim();
+      const aid = (t as { account_id?: string }).account_id?.trim();
+      if (jid && aid && !jobIdToTicketAccount.has(jid)) jobIdToTicketAccount.set(jid, aid);
+    }
+  }
+
+  // Etapa 3: quotes irmãs (mesmo external_ref), pedidos de serviço e imóveis.
+  const [siblingQuoteResults, requestResults, propertyResults] = await Promise.all([
+    Promise.all(
+      chunk([...externalRefs], CHUNK).map((refsPart) =>
+        supabase
+          .from("quotes")
+          .select("external_ref, source_account_id, client_id")
+          .in("external_ref", refsPart)
+          .is("deleted_at", null),
+      ),
+    ),
+    Promise.all(
+      chunk([...requestIds], CHUNK).map((ids) =>
+        supabase
+          .from("service_requests")
+          .select("id, client_id, account_id")
+          .in("id", ids)
+          .is("deleted_at", null),
+      ),
+    ),
+    Promise.all(
+      chunk([...propertyIds], CHUNK).map((ids) =>
+        supabase.from("account_properties").select("id, account_id").in("id", ids).is("deleted_at", null),
+      ),
+    ),
+  ]);
+
+  const siblingQuoteRows: QuoteRow[] = [];
   const siblingQuoteClientIds = new Set<string>();
-  for (const refsPart of chunk([...externalRefs], CHUNK)) {
-    if (refsPart.length === 0) continue;
-    const { data, error } = await supabase
-      .from("quotes")
-      .select("external_ref, source_account_id, client_id")
-      .in("external_ref", refsPart)
-      .is("deleted_at", null);
+  for (const { data, error } of siblingQuoteResults) {
     if (error) throw error;
     for (const q of (data ?? []) as QuoteRow[]) {
+      siblingQuoteRows.push(q);
       const er = q.external_ref?.trim();
       if (!er || quoteAccountByExternalRef.has(er)) continue;
       const qAcc = q.source_account_id?.trim();
@@ -287,55 +415,8 @@ export async function buildInvoiceAccountMaps(
     }
   }
 
-  if (siblingQuoteClientIds.size > 0) {
-    for (const ids of chunk([...siblingQuoteClientIds], CHUNK)) {
-      const { data, error } = await supabase
-        .from("clients")
-        .select("id, full_name, email, source_account_id")
-        .in("id", ids)
-        .is("deleted_at", null);
-      if (error) throw error;
-      for (const c of (data ?? []) as ClientRow[]) clientById.set(c.id, c);
-    }
-    for (const refsPart of chunk([...externalRefs], CHUNK)) {
-      if (refsPart.length === 0) continue;
-      const { data } = await supabase
-        .from("quotes")
-        .select("external_ref, client_id")
-        .in("external_ref", refsPart)
-        .is("deleted_at", null);
-      for (const q of (data ?? []) as QuoteRow[]) {
-        const er = q.external_ref?.trim();
-        if (!er || quoteAccountByExternalRef.has(er)) continue;
-        const cAcc = clientById.get(q.client_id?.trim() ?? "")?.source_account_id?.trim();
-        if (cAcc) quoteAccountByExternalRef.set(er, cAcc);
-      }
-    }
-  }
-
-  const jobIdToTicketAccount = new Map<string, string>();
-  if (jobIds.size > 0) {
-    for (const ids of chunk([...jobIds], CHUNK)) {
-      const { data, error } = await supabase
-        .from("tickets")
-        .select("job_id, account_id")
-        .in("job_id", ids);
-      if (error) throw error;
-      for (const t of data ?? []) {
-        const jid = (t as { job_id?: string }).job_id?.trim();
-        const aid = (t as { account_id?: string }).account_id?.trim();
-        if (jid && aid && !jobIdToTicketAccount.has(jid)) jobIdToTicketAccount.set(jid, aid);
-      }
-    }
-  }
-
   const requestById = new Map<string, ServiceRequestRow>();
-  for (const ids of chunk([...requestIds], CHUNK)) {
-    const { data, error } = await supabase
-      .from("service_requests")
-      .select("id, client_id, account_id")
-      .in("id", ids)
-      .is("deleted_at", null);
+  for (const { data, error } of requestResults) {
     if (error) throw error;
     for (const r of (data ?? []) as ServiceRequestRow[]) {
       requestById.set(r.id, r);
@@ -344,29 +425,31 @@ export async function buildInvoiceAccountMaps(
     }
   }
 
-  for (const ids of chunk([...clientIds].filter((id) => !clientById.has(id)), CHUNK)) {
-    if (ids.length === 0) continue;
-    const { data, error } = await supabase
-      .from("clients")
-      .select("id, full_name, email, source_account_id")
-      .in("id", ids)
-      .is("deleted_at", null);
-    if (error) throw error;
-    for (const c of (data ?? []) as ClientRow[]) clientById.set(c.id, c);
-  }
-
   const propertyIdToAccount = new Map<string, string>();
-  for (const ids of chunk([...propertyIds], CHUNK)) {
-    const { data, error } = await supabase
-      .from("account_properties")
-      .select("id, account_id")
-      .in("id", ids)
-      .is("deleted_at", null);
+  for (const { data, error } of propertyResults) {
     if (error) throw error;
     for (const row of data ?? []) {
       const id = (row as { id: string }).id;
       const aid = (row as { account_id?: string }).account_id?.trim();
       if (id && aid) propertyIdToAccount.set(id, aid);
+    }
+  }
+
+  // Etapa 4: clientes que só apareceram nas quotes, nos pedidos ou nas quotes irmãs.
+  const missingClientIds = [
+    ...new Set([...siblingQuoteClientIds, ...clientIds].filter((id) => !clientById.has(id))),
+  ];
+  for (const { data, error } of await fetchClientsByIds(missingClientIds)) {
+    if (error) throw error;
+    for (const c of (data ?? []) as ClientRow[]) clientById.set(c.id, c);
+  }
+  if (siblingQuoteClientIds.size > 0) {
+    // Segunda passada nas MESMAS linhas, agora com os clientes carregados (era outra consulta).
+    for (const q of siblingQuoteRows) {
+      const er = q.external_ref?.trim();
+      if (!er || quoteAccountByExternalRef.has(er)) continue;
+      const cAcc = clientById.get(q.client_id?.trim() ?? "")?.source_account_id?.trim();
+      if (cAcc) quoteAccountByExternalRef.set(er, cAcc);
     }
   }
 
@@ -377,26 +460,15 @@ export async function buildInvoiceAccountMaps(
     const em = c.email?.trim().toLowerCase();
     if (em) emailsNeedingAccount.add(em);
   }
-  for (const emails of chunk([...emailsNeedingAccount], 50)) {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, email")
-      .in("email", emails)
-      .is("deleted_at", null);
-    for (const a of data ?? []) {
-      const em = String((a as { email?: string }).email ?? "").trim().toLowerCase();
-      const id = (a as { id: string }).id;
-      if (em && id) accountIdsFromEmail.set(em, id);
-    }
+  // As contas já vieram todas na etapa 1: o casamento por e-mail é local.
+  for (const a of allAccounts) {
+    const raw = a.email ?? "";
+    if (!raw || !emailsNeedingAccount.has(raw)) continue;
+    const em = raw.trim().toLowerCase();
+    if (em && a.id) accountIdsFromEmail.set(em, a.id);
   }
 
-  for (const part of chunk(refs, CHUNK)) {
-    const { data } = await supabase
-      .from("invoices")
-      .select("source_account_id, job_reference")
-      .in("job_reference", part)
-      .is("deleted_at", null)
-      .neq("status", "cancelled");
+  for (const { data } of siblingInvoiceResults) {
     for (const inv of (data ?? []) as Array<{ source_account_id?: string | null; job_reference?: string | null }>) {
       const aid = inv.source_account_id?.trim();
       const ref = inv.job_reference?.trim();
@@ -500,12 +572,7 @@ export async function buildInvoiceAccountMaps(
     if (fromName) clientNameToAccountId[name] = fromName;
   }
 
-  for (const part of chunk(invoiceNames, CHUNK)) {
-    const { data, error } = await supabase
-      .from("clients")
-      .select("full_name, source_account_id")
-      .in("full_name", part)
-      .is("deleted_at", null);
+  for (const { data, error } of clientsByNameResults) {
     if (error) throw error;
     for (const row of data ?? []) {
       const r = row as { full_name?: string | null; source_account_id?: string | null };
