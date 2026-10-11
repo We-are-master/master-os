@@ -32,6 +32,16 @@ import { soOqueENovo } from "./sem-citacao";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const MAX_IMAGENS = 6;
+
+/**
+ * Rascunho de PREÇO desligado por padrão (dono, 10/10/2026: "tá gastando muito crédito,
+ * só fica lá os que os partners quote"). No modo enxuto o Harvey só lê o pedido (até 3
+ * fotos em baixa resolução) e descobre o tipo de serviço, para a quote nascer no OS e ir
+ * para os parceiros cotarem. Não monta preço nem o bloco "pronto para o cliente".
+ * HARVEY_QUOTE_DRAFT=1 volta ao rascunho completo.
+ */
+export const rascunhoDePrecoLigado = () => process.env.HARVEY_QUOTE_DRAFT?.trim() === "1";
+const MAX_IMAGENS_ENXUTO = 3;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
 
 function baseUrl(): string {
@@ -234,9 +244,9 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
           : "No readable images attached."
       }`,
     },
-    ...ticket.imagens.map((img) => ({
+    ...(rascunhoDePrecoLigado() ? ticket.imagens : ticket.imagens.slice(-MAX_IMAGENS_ENXUTO)).map((img) => ({
       type: "image_url",
-      image_url: { url: img.dataUrl, detail: "high" },
+      image_url: { url: img.dataUrl, detail: rascunhoDePrecoLigado() ? "high" : "low" },
     })),
   ];
 
@@ -305,6 +315,20 @@ export function montarNotaInterna(
   resultado: ResultadoPriceCheck,
   quoteRef?: string | null,
 ): string {
+  if (!rascunhoDePrecoLigado()) {
+    // Modo enxuto: sem preço. O preço vem do lance do parceiro.
+    const l: string[] = [
+      "📨 QUOTE REQUEST logged (no AI price draft: the price comes from the partners' quotes)",
+      ...(quoteRef ? [`Quote ${quoteRef} created in the OS (Quotes).`] : []),
+      "",
+      `What I read: ${pedido.quoteRequest}`,
+    ];
+    if (pedido.missingInfo.length > 0) {
+      l.push("", "⚠️ Ask the customer (missing info):");
+      for (const m of pedido.missingInfo) l.push(`• ${m}`);
+    }
+    return l.join("\n");
+  }
   const linhas: string[] = [
     "🤖 AI QUOTE DRAFT — internal only (phase 1: review and send manually)",
     ...(quoteRef ? [`Quote ${quoteRef} created in the OS (Quotes → New).`] : []),
@@ -522,7 +546,9 @@ export async function garantirQuoteNoOs(
     return null;
   }
 
-  const total = resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
+  // Modo enxuto: a quote nasce sem valor; quem põe preço é o lance do parceiro.
+  const comPreco = rascunhoDePrecoLigado();
+  const total = comPreco && resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
   /**
    * Quote que vai ser transmitida nasce em `bidding`, e não em `draft`.
    *
@@ -572,7 +598,7 @@ export async function garantirQuoteNoOs(
       catalog_service_id: catalogServiceId,
       status: transmite ? "bidding" : "draft",
       total_value: total,
-      cost: arredonda2(resultado.quote.materialsCost),
+      cost: comPreco ? arredonda2(resultado.quote.materialsCost) : 0,
       sell_price: total,
       margin_percent: 0,
       partner_cost: 0,
