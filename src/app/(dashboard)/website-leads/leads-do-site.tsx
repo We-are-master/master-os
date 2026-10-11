@@ -13,10 +13,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload, LayoutGrid, List } from "lucide-react";
-import { PageHeader } from "@/components/layout/page-header";
+import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload, SquareKanban, List, CalendarClock } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
-import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
+import { SearchInput } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { Tabs } from "@/components/ui/tabs";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
@@ -202,6 +203,16 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
 
   const aberto = leads.find((l) => l.id === abertoId) ?? null;
 
+  /** O resumo ao lado do título, como "N companies · M won" no lado B2B. */
+  const resumo = useMemo(() => {
+    const abertosAgora = leads.filter((l) => ["new", "hot", "contacted"].includes(l.status));
+    return {
+      abertos: abertosAgora.length,
+      clientes: leads.filter((l) => l.status === "won").length,
+      valorAberto: abertosAgora.reduce((t, l) => t + Number(l.price ?? 0), 0),
+    };
+  }, [leads]);
+
   /** O quadro ignora as abas (cada coluna já é um estado) e respeita origem e busca. */
   const colunasDoQuadro = useMemo<KanbanColumn<LeadDaTela>[]>(() => {
     const q = busca.trim().toLowerCase();
@@ -337,97 +348,117 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
 
   return (
     <PageTransition>
-      <div className="space-y-5">
-        <PageHeader
-          title="Leads"
-          infoTooltip={
-            "B2C leads: people who started a booking at getfixfy.com and did not pay, people who messaged Harvey on WhatsApp, and leads the team added. Switch to B2B for companies.\n\n" +
-            "Each one gets email 1 thirty minutes after stopping (08:30 if that is at night), email 2 the next morning at 09:30, email 3 with 10% off the morning after, and a WhatsApp with the same code at 15:00 that day when there is a phone. Every step counts from when the previous one really went out.\n\n" +
-            "Each lead has one Zendesk ticket where replies land. Any reply stops the automatic touches and moves the lead to In contact. Paying turns the lead into a customer and it leaves this list.\n\n" +
-            "Numbers and the funnel live in the office Leads Room."
-          }
-        >
-          <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* Mesma estrutura do lado B2B (crm-client.tsx): barra de uma linha, quadro de altura
+          cheia com colunas que rolam sozinhas, mesmo cartão e a lista (dono, 12/10/2026). */}
+      <div className="-mt-2 flex h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] min-h-0 flex-col gap-3 overflow-hidden sm:-mt-3 lg:-mt-4 lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)]">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="mr-1 flex items-center gap-2">
+            <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">Leads</h1>
             <LadoToggle lado="b2c" />
-            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="View">
-              {([["board", "Board", LayoutGrid], ["list", "List", List]] as const).map(([v, rotulo, Icone]) => (
-                <button
-                  key={v}
-                  type="button"
-                  aria-pressed={visao === v}
-                  onClick={() => trocarVisao(v)}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors ${visao === v ? "bg-surface-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
-                >
-                  <Icone className="h-3.5 w-3.5" />
-                  {rotulo}
-                </button>
-              ))}
-            </div>
-            <ToolbarIconButton icon={RefreshCw} label="Refresh leads" onClick={() => router.refresh()} />
-            <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setImportarAberto(true)}>
-              Import CSV
-            </Button>
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setAdicionarAberto(true)}>
-              Add lead
-            </Button>
+            <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
+              {resumo.abertos} open · {resumo.clientes} became customers
+              {resumo.valorAberto > 0 ? ` · ${libras(resumo.valorAberto)} open` : ""}
+            </span>
           </div>
-        </PageHeader>
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="View">
+            {([["board", "Board", SquareKanban, null], ["list", "List", List, lista.length]] as const).map(([v, rotulo, Icone, n]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={visao === v}
+                onClick={() => trocarVisao(v)}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+                  visao === v ? "bg-surface-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+                )}
+              >
+                <Icone className="h-3.5 w-3.5" />
+                {rotulo}
+                {n != null ? <span className="tabular-nums text-text-tertiary">{n}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="w-52"><SearchInput value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Search leads" aria-label="Search leads" /></div>
+          <div className="w-40">
+            <Select
+              aria-label="Filter by origin"
+              value={canal}
+              onChange={(e) => setCanal(e.target.value as "all" | Canal)}
+              options={[{ value: "all", label: "All origins" }, ...canais.map((c) => ({ value: c.key, label: `${c.label}${c.active ? "" : " (inactive)"}` }))]}
+            />
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="icon" aria-label="Refresh" title="Refresh leads" onClick={() => router.refresh()}>
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" aria-label="Import" title="Import a CSV of leads" onClick={() => setImportarAberto(true)}>
+              <Upload className="h-4 w-4" />
+            </Button>
+            <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setAdicionarAberto(true)}>New lead</Button>
+          </div>
+        </div>
 
         {exemplo ? (
-          <div className="rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="shrink-0 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">
             Local example: migration 294 has not run, so these rows are built from the 4 real leads with made-up details. Nothing here writes to the database.
           </div>
         ) : null}
 
-        <div>
-          <div className="mb-4 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="-mb-1 min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:thin]">
-              {visao === "list" ? <Tabs tabs={abas} activeTab={aba} onChange={setAba} /> : aviso ? <p role="status" className="m-0 text-sm text-text-secondary">{aviso}</p> : null}
+        {aviso ? <p role="status" className="m-0 shrink-0 text-[12px] text-text-secondary">{aviso}</p> : null}
+
+        {visao === "board" ? (
+          <KanbanBoard
+            columns={colunasDoQuadro}
+            getCardId={(l) => l.id}
+            onCardClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
+            onCardDrop={soltar}
+            pendingCardIds={movendo}
+            pageSize={30}
+            fillHeight
+            className="gap-3 pb-1 lg:overflow-x-auto"
+            columnClassName="w-80 lg:w-80 lg:flex-none border border-border bg-surface-tertiary/50 p-2.5"
+            renderCard={(l) => {
+              const o = origem(l, canais);
+              return (
+                <div className="space-y-1.5 rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-shadow hover:shadow-md">
+                  <p className="min-w-0 text-[13px] font-semibold leading-snug text-text-primary">{l.full_name || l.email || l.phone || "Lead"}</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge size="sm">{rotuloCanal(l.channel, canais)}</Badge>
+                    {l.price != null ? <span className="text-[11px] font-semibold text-text-secondary">{libras(l.price)}</span> : null}
+                  </div>
+                  {l.service_label ? <p className="line-clamp-2 text-[11px] text-text-secondary first-letter:uppercase">{l.service_label}</p> : null}
+                  <p className="flex items-start gap-1 text-[11px] text-text-tertiary">
+                    <CalendarClock className="mt-px h-3 w-3 shrink-0" />
+                    <span className="min-w-0">{[quando(l.last_activity_at), o.detalhe || null, l.postcode].filter(Boolean).join(" · ")}</span>
+                  </p>
+                  {l.phone ? (
+                    <p className="flex items-center gap-1 text-[11px] font-medium tabular-nums text-text-secondary">
+                      <Phone className="h-3 w-3 shrink-0" />
+                      {l.phone}
+                    </p>
+                  ) : null}
+                  {l.email ? <p className="truncate text-[11px] text-text-tertiary">{l.email}</p> : null}
+                </div>
+              );
+            }}
+          />
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
+            <div className="shrink-0 overflow-x-auto pb-1 [scrollbar-width:thin]">
+              <Tabs tabs={abas} activeTab={aba} onChange={setAba} />
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <select
-                value={canal}
-                onChange={(e) => setCanal(e.target.value as "all" | Canal)}
-                className="h-8 rounded-lg border border-border bg-card px-2 text-xs font-medium text-text-primary"
-                aria-label="Filter by origin"
-              >
-                <option value="all">All origins</option>
-                {canais.map((c) => <option key={c.key} value={c.key}>{c.label}{c.active ? "" : " (inactive)"}</option>)}
-              </select>
-              <ExpandingSearch value={busca} onChange={setBusca} placeholder="Search leads…" />
+            <div className="min-h-0 flex-1 overflow-auto">
+              <DataTable
+                columns={colunas}
+                data={lista}
+                getRowId={(l) => l.id}
+                selectedId={abertoId ?? undefined}
+                onRowClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
+                emptyMessage="No leads in this tab."
+              />
             </div>
           </div>
-
-          {visao === "list" ? (
-            <DataTable
-              columns={colunas}
-              data={lista}
-              getRowId={(l) => l.id}
-              selectedId={abertoId ?? undefined}
-              onRowClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
-              emptyMessage="No leads in this tab."
-            />
-          ) : (
-            <KanbanBoard
-              columns={colunasDoQuadro}
-              getCardId={(l) => l.id}
-              onCardClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
-              onCardDrop={soltar}
-              pendingCardIds={movendo}
-              pageSize={30}
-              renderCard={(l) => {
-                const o = origem(l, canais);
-                return (
-                  <div className="min-w-0 space-y-1">
-                    <p className="truncate text-sm font-semibold text-text-primary">{l.full_name || l.email || l.phone || "Lead"}</p>
-                    <p className="truncate text-xs text-text-secondary first-letter:uppercase">{[l.service_label, l.price != null ? libras(l.price) : null].filter(Boolean).join(" · ") || VAZIO}</p>
-                    <p className="truncate text-[11px] text-text-tertiary">{[o.linha, l.postcode, quando(l.last_activity_at)].filter(Boolean).join(" · ")}</p>
-                  </div>
-                );
-              }}
-            />
-          )}
-        </div>
+        )}
       </div>
 
       <Drawer
