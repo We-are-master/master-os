@@ -90,28 +90,26 @@ export function MonthGoal() {
   const m = (n: number) => pulseMoney(n);
 
   return (
-    <section aria-label="Month goal" className="rounded-xl border border-fx-line bg-fx-paper p-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-fx-coral">{nomeDoMes} · month goal</p>
-        <p className="text-[12px] text-text-tertiary">
-          {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
-        </p>
-      </div>
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <p className="text-[34px] font-bold leading-none tracking-[-0.02em] text-text-primary tabular-nums">{d ? m(receita) : "—"}</p>
+    <section aria-label="Month goal" className="rounded-xl border border-fx-line bg-fx-paper px-4 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-fx-coral">{nomeDoMes} goal</p>
+        <p className="text-[22px] font-bold leading-none tracking-[-0.02em] text-text-primary tabular-nums">{d ? m(receita) : "—"}</p>
         {meta ? (
-          <p className="text-[14px] text-text-secondary">
+          <p className="text-[13px] text-text-secondary">
             of {m(meta)} · <span className="font-semibold text-text-primary">{m(falta)} to go</span> · {m(porDia)} a day
           </p>
         ) : (
-          <p className="text-[14px] text-text-secondary">Set the monthly revenue goal in Setup</p>
+          <p className="text-[13px] text-text-secondary">Set the monthly revenue goal in Setup</p>
         )}
+        <p className="ml-auto text-[12px] text-text-tertiary">
+          {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
+        </p>
       </div>
-      <div className="relative mt-3 h-3 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
+      <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
         <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral/35" style={{ width: `${pct}%` }} />
         <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral" style={{ width: `${pctEntregue}%` }} />
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-text-secondary">
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11.5px] text-text-secondary">
         <span>
           <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-fx-coral align-middle" aria-hidden />
           Delivered {d ? m(d.entregue) : "—"} · {d?.jobsEntregues ?? 0} jobs
@@ -121,7 +119,7 @@ export function MonthGoal() {
           Booked {d ? m(receita) : "—"} · {d?.jobs ?? 0} jobs
         </span>
         <span>Gross margin {d ? `${margem.toFixed(1)}%` : "—"}</span>
-        <span>At this pace the month closes at {d ? m(ritmo) : "—"} delivered</span>
+        <span>On pace for {d ? m(ritmo) : "—"} delivered</span>
       </div>
     </section>
   );

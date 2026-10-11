@@ -41,7 +41,8 @@ function PulseInner() {
     <PageTransition>
       <PulseCurrencyProvider>
       <div className="pulse-dark">
-        <div className="space-y-6">
+        {/* Colado no header e mais denso (dono, 12/10/2026), mesmo recuo da tela de Leads. */}
+        <div className="-mt-2 space-y-4 sm:-mt-3 lg:-mt-4">
           <PulseHead
             firstName={firstName}
             ceoMode={ceoMode}

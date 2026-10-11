@@ -97,12 +97,12 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
   };
 
   return (
-    <div className="flex items-end justify-between gap-6 flex-wrap">
-      <div className="flex flex-col gap-1 min-w-0">
-        <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+        <h1 className="m-0 text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">
           {greeting}, {firstName}.
         </h1>
-        <p className="text-[13px] text-fx-mute m-0">
+        <p className="m-0 text-[12px] leading-none text-fx-mute">
           {formatLongDate(today)}
           {typeof todaysJobsCount === "number" && (
             <> · {todaysJobsCount} active job{todaysJobsCount === 1 ? "" : "s"} today.</>
