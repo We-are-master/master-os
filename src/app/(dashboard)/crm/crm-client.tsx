@@ -14,6 +14,8 @@ import { Input, SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs } from "@/components/ui/tabs";
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
+import { LadoToggle } from "@/components/leads/lado-toggle";
+import { HistoricoDoLead } from "@/components/leads/historico-do-lead";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { csvToCrmRows, type CrmCsvRow } from "@/lib/crm-csv";
 import {
@@ -237,8 +239,9 @@ export function CrmClient() {
     // cada coluna do quadro rola sozinha.
     <div className="-mt-2 flex h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] min-h-0 flex-col gap-3 overflow-hidden sm:-mt-3 lg:-mt-4 lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)]">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <div className="mr-1 flex items-baseline gap-2">
-          <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">CRM</h1>
+        <div className="mr-1 flex items-center gap-2">
+          <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">Leads</h1>
+          <LadoToggle lado="b2b" />
           <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
             {deals.length} companies · {totals.won} won
             {totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo open` : ""}
@@ -644,7 +647,7 @@ function DealDrawer({
       open
       onClose={onClose}
       title={isNew ? "New lead" : form.company_name || "Company"}
-      subtitle={isNew ? "Add a company to the CRM" : form.source ?? undefined}
+      subtitle={isNew ? "Add a company to Leads" : form.source ?? undefined}
       footer={
         <div className="flex w-full items-center justify-between gap-2 px-5 py-3">
           {!isNew ? (
@@ -747,6 +750,11 @@ function DealDrawer({
             <Input id="crm-next-date" type="date" value={form.next_step_date ?? ""} onChange={(e) => set({ next_step_date: e.target.value || null })} />
           </Field>
         </div>
+        {!isNew && (form.account_id || form.contact_email || form.contact_phone) ? (
+          <div className="rounded-xl border border-border p-3">
+            <HistoricoDoLead accountId={form.account_id} email={form.account_id ? null : form.contact_email} phone={form.account_id ? null : form.contact_phone} />
+          </div>
+        ) : null}
         <div className="rounded-xl border border-border p-3">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Contact</p>
           <div className="space-y-3">
