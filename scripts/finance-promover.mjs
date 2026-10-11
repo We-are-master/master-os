@@ -44,10 +44,23 @@ const ANCORA_SEXTA = new Date("2026-08-07T00:00:00Z");
 const hoje = new Date();
 let sexta = new Date(ANCORA_SEXTA);
 while (sexta <= hoje) sexta = new Date(sexta.getTime() + 14 * 86400e3);
-const CORTE = ymd(new Date(sexta.getTime() - 5 * 86400e3));  // domingo que fechou (sexta menos 5)
-const PROX_SEXTA = ymd(sexta);
+/**
+ * O corte é o último domingo que JÁ PASSOU, não o da próxima sexta.
+ *
+ * "Sexta menos 5" só é um domingo fechado entre a segunda e a sexta da semana do
+ * pagamento. Do sábado em diante a próxima sexta pula 14 dias e o "corte" vira o domingo
+ * da quinzena ainda ABERTA: em 03/10/2026 isso passou três documentos de 28/09 a 11/10
+ * para pronto no sexto dia, e o job seguinte da RJ abriu um segundo documento ao lado.
+ */
+const HOJE = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(hoje);
+// As faturas seguem na regra antiga: este conserto é só do self-bill do parceiro.
+const CORTE_FATURA = ymd(new Date(sexta.getTime() - 5 * 86400e3));
+let corte = new Date(sexta.getTime() - 5 * 86400e3);
+while (ymd(corte) >= HOJE) corte = new Date(corte.getTime() - 14 * 86400e3);
+const CORTE = ymd(corte);
+const PROX_SEXTA = ymd(new Date(corte.getTime() + 5 * 86400e3));
 
-console.log(`\nCorte fechado: domingo ${CORTE}  ·  próximo pagamento: sexta ${PROX_SEXTA}\n`);
+console.log(`\nCorte fechado: domingo ${CORTE}  ·  pagamento desse corte: sexta ${PROX_SEXTA}\n`);
 
 // ── Faturas: rascunho -> a receber ────────────────────────────────────────
 const drafts = await (await fetch(
@@ -64,7 +77,7 @@ const promover = [], ficam = [];
 for (const i of drafts) {
   const j = i.job_reference ? jm.get(i.job_reference) : null;
   // Entregue e com o período fechado. Sem data de conclusão não há o que cobrar.
-  if (j && j.completed_date && j.completed_date <= CORTE && j.status !== "cancelled") promover.push({ i, j });
+  if (j && j.completed_date && j.completed_date <= CORTE_FATURA && j.status !== "cancelled") promover.push({ i, j });
   else ficam.push({ i, j });
 }
 console.log(`FATURAS  rascunho -> a receber: ${promover.length} (${fmt(promover.reduce((a, x) => a + (+x.i.amount || 0), 0))})`);
@@ -73,7 +86,7 @@ console.log(`  seguem em rascunho: ${ficam.length} (serviço ainda não entregue
 
 // ── Self-bills: acumulando -> pronto para pagar ───────────────────────────
 const bills = await (await fetch(
-  `${SB}/rest/v1/self_bills?select=reference,partner_name,net_payout,status,week_end&status=eq.accumulating&week_end=lte.${CORTE}&limit=500`,
+  `${SB}/rest/v1/self_bills?select=reference,partner_name,net_payout,status,week_end,approved_at&status=eq.accumulating&week_end=lte.${CORTE}&limit=500`,
   { headers: SH },
 )).json();
 const comValor = (bills ?? []).filter((b) => (Number(b.net_payout) || 0) > 0);
@@ -91,7 +104,8 @@ for (const { i } of promover) {
 }
 for (const b of comValor) {
   await fetch(`${SB}/rest/v1/self_bills?reference=eq.${encodeURIComponent(b.reference)}`, {
-    method: "PATCH", headers: SHW, body: JSON.stringify({ status: "ready_to_pay" }),
+    // Job aprovado no final check já aprova o parceiro: o documento fecha aprovado.
+    method: "PATCH", headers: SHW, body: JSON.stringify({ status: "ready_to_pay", ...(b.approved_at ? {} : { approved_at: new Date().toISOString() }) }),
   });
 }
 console.log(`\naplicado: ${promover.length} fatura(s) e ${comValor.length} self-bill(s)\n`);

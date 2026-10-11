@@ -592,6 +592,12 @@ export async function refreshSelfBillPayoutState(
   const netPayout =
     Math.round(Math.max(0, grossLabour - clawAdjustAll + officePayoutAdjustAll) * 100) / 100;
 
+  /**
+   * Job aprovado no final check já aprova o parceiro (dono, 11/10/2026): não existe
+   * segundo clique no self-bill. `recomputeSelfBillTotals` carimbava `approved_at`, mas
+   * quem roda depois de cada mudança de job é esta função, e o campo ficava vazio em
+   * todo documento aberto. Só carimba uma vez.
+   */
   const { error: uErr } = await supabase
     .from("self_bills")
     .update({
@@ -600,6 +606,7 @@ export async function refreshSelfBillPayoutState(
       materials,
       commission,
       net_payout: netPayout,
+      ...(payable.length > 0 && !before.approved_at ? { approved_at: new Date().toISOString() } : {}),
     })
     .eq("id", selfBillId);
   if (uErr) throw uErr;
@@ -1023,11 +1030,15 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
       .maybeSingle();
     const hojeYmd = new Date().toISOString().slice(0, 10);
     const quinzenaAindaAberta = Boolean(weekEnd) && weekEnd >= hojeYmd;
-    if (fechado && quinzenaAindaAberta && (fechado as { status: string }).status === "awaiting_payment") {
+    const fechadoStatus = (fechado as { status: string } | null)?.status ?? "";
+    if (fechado && quinzenaAindaAberta && (fechadoStatus === "awaiting_payment" || fechadoStatus === "ready_to_pay")) {
       /**
        * A quinzena ainda não acabou (10/10/2026: F&V tinha 5 documentos em 28/09–11/10).
        * Documento em "awaiting_payment" no meio da quinzena é o approve antigo fechando
        * o balde: reabre o MESMO documento em vez de criar um irmão.
+       *
+       * "ready_to_pay" entra pela mesma razão (11/10/2026): o corte marcou o documento
+       * da RJ como pronto no meio da quinzena e o job seguinte abriu o SB-14533 ao lado.
        */
       await supabase.from("self_bills").update({ status: "accumulating" }).eq("id", (fechado as { id: string }).id);
     } else if (fechado) {

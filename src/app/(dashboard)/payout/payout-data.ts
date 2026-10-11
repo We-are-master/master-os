@@ -312,10 +312,17 @@ export async function fetchPayoutRange(
   const inRange: PayoutItem[] = [];
   const overdue: PayoutItem[] = [];
   for (const it of items) {
-    const isInRange = it.weekStart >= rangeStart && it.weekStart <= rangeEnd;
+    /**
+     * Self-bill de parceiro aparece na semana em que VENCE, não na que a quinzena começa.
+     * A quinzena 28/09 a 11/10 paga em 16/10: pelo início ela nunca entrava na semana do
+     * pagamento e caía em "overdue" antes de vencer (11/10/2026, F&V £1.498,36).
+     */
+    const due = it.source === "self_bill_partner" ? (it.dueDate ?? "").slice(0, 10) : "";
+    const anchor = /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : it.weekStart;
+    const isInRange = anchor >= rangeStart && anchor <= rangeEnd;
     if (isInRange) {
       inRange.push(it);
-    } else if (it.status === "approved" || it.status === "draft") {
+    } else if (anchor < rangeStart && (it.status === "approved" || it.status === "draft")) {
       // "Still open" = anything not paid / cancelled that lives before the active range.
       overdue.push(it);
     }
