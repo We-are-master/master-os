@@ -24,8 +24,8 @@ export function MonthFunnel() {
     { rotulo: "Paid", valor: f ? pulseMoney(f.pagos.valor) : "—", nota: f ? `${f.pagos.n} invoice${f.pagos.n === 1 ? "" : "s"} paid` : "" },
   ];
   return (
-    <SectionCard title="Funnel" subtitle={`${mes} · ${f ? `${f.conversao}% of leads became customers` : loading ? "loading" : ""}`}>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <SectionCard title="Funnel" subtitle={`${mes} · from lead to money in the bank`}>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {passos.map((p, i) => (
           <div key={p.rotulo} className="relative min-w-0 rounded-lg border border-fx-line bg-fx-paper px-4 py-3">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">{p.rotulo}</p>
@@ -34,6 +34,11 @@ export function MonthFunnel() {
             {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-[11px] top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full bg-card text-fx-mute lg:block" /> : null}
           </div>
         ))}
+        <div className="min-w-0 rounded-lg border border-fx-coral/40 bg-fx-coral-50 px-4 py-3">
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-fx-coral-p">Conversion</p>
+          <p className="mt-1 text-[24px] font-bold leading-none tabular-nums text-text-primary">{f ? `${f.conversao}%` : loading ? "—" : "0%"}</p>
+          <p className="mt-1.5 truncate text-[11.5px] text-text-secondary">{f ? `${f.convertidos} of ${f.leads} leads became customers` : ""}</p>
+        </div>
       </div>
     </SectionCard>
   );

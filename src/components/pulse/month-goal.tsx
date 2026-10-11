@@ -16,6 +16,7 @@ import { pulseMoney } from "@/lib/pulse-money-display";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import { resolvePulseMonthlyRevenueGoal } from "@/lib/pulse-revenue-goal";
 import { ukTodayYmd } from "@/lib/uk-schedule-range";
+import { usePulseCeo } from "./pulse-ceo-data";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 
 const FORA = new Set(["cancelled", "deleted"]);
@@ -33,6 +34,7 @@ type Dados = { receita: number; custo: number; entregue: number; jobs: number; j
 
 export function MonthGoal() {
   const [d, setD] = useState<Dados | null>(null);
+  const { data: ceo } = usePulseCeo();
 
   useEffect(() => {
     let vivo = true;
@@ -119,6 +121,10 @@ export function MonthGoal() {
           Booked {d ? m(receita) : "—"} · {d?.jobs ?? 0} jobs
         </span>
         <span>Gross margin {d ? `${margem.toFixed(1)}%` : "—"}</span>
+        <span>
+          Conversion <span className="font-semibold text-text-primary">{ceo ? `${ceo.funil.conversao}%` : "—"}</span>
+          {ceo ? ` · ${ceo.funil.convertidos} of ${ceo.funil.leads} leads` : ""}
+        </span>
         <span>On pace for {d ? m(ritmo) : "—"} delivered</span>
       </div>
     </section>

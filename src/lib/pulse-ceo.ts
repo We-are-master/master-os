@@ -23,6 +23,8 @@ export type PulseCeo = {
     entregues: { n: number; valor: number };
     pagos: { n: number; valor: number };
     conversao: number;
+    /** Leads do mês que viraram cliente. */
+    convertidos: number;
   };
   dinheiro: {
     aReceber: { n: number; valor: number };
@@ -172,6 +174,7 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
       entregues: { n: entregues.length, valor: r2(entregues.reduce((t, x) => t + valor(x.j), 0)) },
       pagos: { n: pagos.length, valor: r2(pagos.reduce((t, p) => t + Number(p.amount ?? 0), 0)) },
       conversao: leads.taxa,
+      convertidos: leads.convertidos,
     },
     dinheiro: { aReceber: total(faturas), vencido: total(vencidas), plataformas: total(dePlataforma) },
     urgentes,

@@ -20,7 +20,7 @@ export function pulseCeoParaCsv(p: PulseCeo): string {
     ["Funnel", "Jobs booked", p.funil.fechados.n, `GBP ${p.funil.fechados.valor}`],
     ["Funnel", "Delivered", p.funil.entregues.n, `GBP ${p.funil.entregues.valor}`],
     ["Funnel", "Paid (GBP)", p.funil.pagos.valor, `${p.funil.pagos.n} invoices`],
-    ["Funnel", "Conversion (%)", p.funil.conversao, "leads that became customers"],
+    ["Funnel", "Conversion (%)", p.funil.conversao, `${p.funil.convertidos} of ${p.funil.leads} leads became customers`],
     ["Money", "To receive (GBP)", p.dinheiro.aReceber.valor, `${p.dinheiro.aReceber.n} invoices`],
     ["Money", "Overdue (GBP)", p.dinheiro.vencido.valor, `${p.dinheiro.vencido.n} invoices, accounts and customers`],
     ["Money", "Platforms past date (GBP)", p.dinheiro.plataformas.valor, `${p.dinheiro.plataformas.n} invoices, paid on their own cycle`],
