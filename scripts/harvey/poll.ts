@@ -729,6 +729,15 @@ async function ciclo(): Promise<void> {
       }
       // Não marca visto: um ticket pode virar pedido de quote num comentário
       // futuro, e a janela de busca é curta o bastante para reavaliar barato.
+      /**
+       * Mas sem mudança no ticket não há o que reavaliar (11/10/2026): o #51021 era lido
+       * como booking, o extrator discordava, e as duas chamadas se repetiam a cada 5 min.
+       * Fica guardado até o `updated_at` mudar.
+       */
+      if (!quer.quote && t.updated_at && classificados[String(t.id)] !== t.updated_at) {
+        classificados[String(t.id)] = t.updated_at;
+        classificadosMudou = true;
+      }
       continue;
     }
 
