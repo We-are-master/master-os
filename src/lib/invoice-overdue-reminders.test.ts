@@ -7,19 +7,28 @@ describe("overdue invoice reminders: 1, 3, 4 days friendly, 7 days final", () =>
     assert.equal(daysOverdue("2026-10-16", "2026-10-17"), 1);
     assert.equal(daysOverdue("2026-10-16", "2026-10-16"), 0);
   });
-  it("sends each stage once, in order", () => {
+  it("sends each stage once, in order, with the gap since the last one", () => {
     assert.equal(nextReminderStage(0, 0), null);
     assert.equal(nextReminderStage(0, 1), 1);
-    assert.equal(nextReminderStage(1, 2), null);
-    assert.equal(nextReminderStage(1, 3), 2);
-    assert.equal(nextReminderStage(2, 4), 3);
-    assert.equal(nextReminderStage(3, 6), null);
-    assert.equal(nextReminderStage(3, 7), 4);
-    assert.equal(nextReminderStage(4, 30), null);
+    assert.equal(nextReminderStage(1, 2, 1), null);
+    assert.equal(nextReminderStage(1, 3, 2), 2);
+    assert.equal(nextReminderStage(2, 4, 1), 3);
+    assert.equal(nextReminderStage(3, 6, 2), null);
+    assert.equal(nextReminderStage(3, 7, 3), 4);
+    assert.equal(nextReminderStage(4, 30, 10), null);
   });
-  it("catches up one stage at a time after a gap", () => {
+  it("an old invoice does not get one reminder a day", () => {
     assert.equal(nextReminderStage(0, 10), 1);
-    assert.equal(nextReminderStage(1, 10), 2);
+    assert.equal(nextReminderStage(1, 11, 1), null);
+    assert.equal(nextReminderStage(1, 12, 2), 2);
+    assert.equal(nextReminderStage(2, 13, 1), 3);
+    assert.equal(nextReminderStage(3, 14, 1), null);
+    assert.equal(nextReminderStage(3, 16, 3), 4);
+  });
+  it("more than 14 days overdue with no reminder yet goes to the team, not the sequence", () => {
+    assert.equal(nextReminderStage(0, 15), null);
+    assert.equal(nextReminderStage(0, 34), null);
+    assert.equal(nextReminderStage(0, 14), 1);
   });
   it("last one is the final reminder", () => {
     const c = reminderCopy(4, { name: "Maryna", reference: "INV-1", amount: "£198.00", dueLabel: "16 Oct", jobLabel: "JOB-1", payUrl: null });

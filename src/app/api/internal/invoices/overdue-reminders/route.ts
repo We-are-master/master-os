@@ -14,7 +14,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { loadInvoiceSendContext, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { invoicePayLinkUrl } from "@/lib/pay-link-url";
-import { daysOverdue, londonTodayYmd, nextReminderStage, reminderCopy } from "@/lib/invoice-overdue-reminders";
+import { daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage, reminderCopy } from "@/lib/invoice-overdue-reminders";
 import type { Invoice } from "@/types/database";
 
 export const runtime = "nodejs";
@@ -58,8 +58,19 @@ export async function POST(req: NextRequest) {
   for (const inv of (rows ?? []) as (Invoice & { overdue_reminder_stage?: number; source_account_id?: string | null })[]) {
     const balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
     if (balance <= 0.02 || !inv.due_date) continue;
-    const stage = nextReminderStage(inv.overdue_reminder_stage ?? 0, daysOverdue(inv.due_date.slice(0, 10), today));
-    if (!stage) continue;
+    const ultimo = (inv as { overdue_reminder_last_at?: string | null }).overdue_reminder_last_at;
+    const desdeUltimo = ultimo ? daysOverdue(londonTodayYmd(new Date(ultimo)), today) : null;
+    const atraso = daysOverdue(inv.due_date.slice(0, 10), today);
+    const stage = nextReminderStage(inv.overdue_reminder_stage ?? 0, atraso, desdeUltimo);
+    if (!stage) {
+      if ((inv.overdue_reminder_stage ?? 0) === 0 && atraso > MAX_DIAS_PARA_COMECAR) out.push(`${inv.reference}: ${atraso} days overdue, left for the team (too old to start the sequence)`);
+      continue;
+    }
+    // Job em espera (reclamação, disputa) não recebe cobrança automática.
+    if (inv.job_reference) {
+      const { data: job } = await admin.from("jobs").select("status").eq("reference", inv.job_reference).maybeSingle();
+      if ((job as { status?: string } | null)?.status === "on_hold") { out.push(`${inv.reference}: skip (job on hold)`); continue; }
+    }
 
     const ctx = await loadInvoiceSendContext(admin, inv.id);
     if ("error" in ctx) { out.push(`${inv.reference}: skip (${ctx.error.split(" [")[0]})`); continue; }

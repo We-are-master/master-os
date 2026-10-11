@@ -13,11 +13,28 @@ export function daysOverdue(dueYmd: string, todayYmd: string): number {
   return Math.floor((b - a) / 86_400_000);
 }
 
-/** Próximo estágio a mandar hoje, ou null. Nunca pula dois de uma vez (manda o próximo devido). */
-export function nextReminderStage(currentStage: number, overdueDays: number): number | null {
+/**
+ * Fatura vencida há mais que isto sem nenhum lembrete não entra na sequência automática
+ * (11/10/2026: a primeira passada mandou lembrete numa fatura de 34 dias, de cliente em
+ * reclamação). Atraso velho é conversa da equipe, que sabe se há acordo ou disputa.
+ */
+export const MAX_DIAS_PARA_COMECAR = 14;
+
+/**
+ * Próximo estágio a mandar hoje, ou null. Respeita o intervalo da sequência (1, 3, 4, 7
+ * dias) também quando a fatura está muito atrasada: antes, uma fatura velha recebia um
+ * lembrete por dia até o final.
+ */
+export function nextReminderStage(currentStage: number, overdueDays: number, daysSinceLast: number | null = null): number | null {
   if (currentStage >= FINAL_REMINDER_STAGE) return null;
+  if (currentStage === 0 && overdueDays > MAX_DIAS_PARA_COMECAR) return null;
   const next = currentStage + 1;
-  return overdueDays >= OVERDUE_REMINDER_DAYS[next - 1] ? next : null;
+  if (overdueDays < OVERDUE_REMINDER_DAYS[next - 1]) return null;
+  if (currentStage > 0) {
+    const intervalo = OVERDUE_REMINDER_DAYS[next - 1] - OVERDUE_REMINDER_DAYS[next - 2];
+    if (daysSinceLast == null || daysSinceLast < intervalo) return null;
+  }
+  return next;
 }
 
 export function londonTodayYmd(now: Date = new Date()): string {
