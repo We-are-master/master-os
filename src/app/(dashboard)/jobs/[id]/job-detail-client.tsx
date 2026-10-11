@@ -5925,7 +5925,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
 
       let primarySelfBillId = current.self_bill_id ?? null;
-      if (!primarySelfBillId && linkedSelfBills.length > 0) {
+      /**
+       * Job aprovado depois que o documento dele já foi PAGO (dono, 11/10/2026: "se a data
+       * do pagamento já passou, fica pro próximo"). Documento pago não é recalculado, então
+       * o job ficava pendurado nele e o parceiro nunca recebia. Solta o vínculo e deixa
+       * `ensureWeeklySelfBillForJob` pôr o job na quinzena aberta. Documento vencido mas
+       * ainda não pago segue como está: o valor dele reajusta.
+       */
+      const documentoJaPago =
+        Boolean(primarySelfBillId) && linkedSelfBills.find((s) => s.id === primarySelfBillId)?.status === "paid";
+      if (documentoJaPago) primarySelfBillId = null;
+      if (!primarySelfBillId && !documentoJaPago && linkedSelfBills.length > 0) {
         const pick =
           linkedSelfBills.find((s) => s.status === "accumulating" || s.status === "pending_review") ??
           linkedSelfBills[linkedSelfBills.length - 1];
@@ -5940,7 +5950,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           dueDate: invoiceDueYmd,
         }),
         shouldCreateSelfBill
-          ? createDocumentAsDraft("selfbill", current, { financeAnchorDate: selfBillAnchorDate, selfBillIdHint: primarySelfBillId })
+          ? createDocumentAsDraft("selfbill", documentoJaPago ? { ...current, self_bill_id: undefined } : current, {
+              financeAnchorDate: selfBillAnchorDate,
+              selfBillIdHint: primarySelfBillId,
+            })
           : Promise.resolve(primarySelfBillId),
       ]);
 
