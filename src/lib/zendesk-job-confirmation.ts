@@ -44,6 +44,13 @@ export function resolveCustomerGreetingName(
   return firstName(clientDisplayName) || "there";
 }
 
+/** A conta leva o nome da nossa empresa: é a dos clientes diretos, não uma organização. */
+export function ehContaPropria(nomeDaConta: string | null | undefined, nomeDaEmpresa: string | null | undefined): boolean {
+  const a = nomeDaConta?.trim().toLowerCase();
+  const b = nomeDaEmpresa?.trim().toLowerCase();
+  return Boolean(a && b && a === b);
+}
+
 /**
  * Nome da organização de uma conta, para a saudação.
  *
@@ -73,7 +80,13 @@ export async function loadAccountOrganizationName(
       return null;
     }
     const row = data as { company_name?: string | null; contact_name?: string | null } | null;
-    return row?.company_name?.trim() || row?.contact_name?.trim() || null;
+    const nome = row?.company_name?.trim() || row?.contact_name?.trim() || null;
+    if (!nome) return null;
+    // A conta com o nosso próprio nome é onde moram os clientes diretos. Sem isto o
+    // cliente direto recebia "Hi Fixfy" (dono, 11/10/2026: "chama ela pelo nome").
+    const { data: empresa } = await supabase.from("company_settings").select("company_name").limit(1).maybeSingle();
+    if (ehContaPropria(nome, (empresa as { company_name?: string | null } | null)?.company_name)) return null;
+    return nome;
   } catch (e) {
     console.error("loadAccountOrganizationName:", e);
     return null;

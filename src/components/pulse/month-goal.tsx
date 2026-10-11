@@ -13,6 +13,7 @@
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { getSupabase } from "@/services/base";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
@@ -91,50 +92,72 @@ export function MonthGoal() {
   const porDia = meta ? falta / diasRestantes : 0;
   const ritmo = d && dia > 0 ? (d.entregue / dia) * ultimoDia : 0;
   const margem = d && d.receita > 0 ? ((d.receita - d.custo) / d.receita) * 100 : 0;
+  // Onde o mês deveria estar hoje, se a meta fosse feita em linha reta.
+  const pctHoje = (dia / ultimoDia) * 100;
+  const esperadoHoje = meta ? (meta * dia) / ultimoDia : 0;
+  const atras = meta ? esperadoHoje - receita : 0;
   const m = (n: number) => pulseMoney(n);
 
+  // O detalhe mora no "!": o card mostra só o número, a barra e a distância da meta
+  // (dono, 11/10/2026: "muita info, queria algo mais visual").
+  const dica = d
+    ? [
+        `Booked: ${m(receita)} in ${d.jobs} jobs (everything with a visit this month, open jobs included).`,
+        `Delivered: ${m(d.entregue)} in ${d.jobsEntregues} jobs.`,
+        `Gross margin: ${margem.toFixed(1)}%.`,
+        ceo ? `Conversion: ${ceo.funil.conversao}% (${ceo.funil.convertidos} of ${ceo.funil.leads} leads).` : null,
+        meta ? `To hit the goal: ${m(porDia)} a day for the ${diasRestantes} days left.` : null,
+        `On pace for ${m(ritmo)} delivered by the end of the month.`,
+        meta ? `The marker on the bar is where the month should be today: ${m(esperadoHoje)}.` : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    : "This month against the goal chosen in Settings.";
+
   return (
-    <section aria-label="Month goal" className="rounded-xl border border-fx-line bg-fx-paper px-4 py-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-fx-coral">{nomeDoMes} goal</p>
-        <p className="text-[22px] font-bold leading-none tracking-[-0.02em] text-text-primary tabular-nums">{d ? m(receita) : "—"}</p>
-        {meta ? (
-          <p className="text-[13px] text-text-secondary">
-            of{" "}
-            <Link href="/settings?tab=setup&section=finance" title="Change the monthly goal in Settings" className="underline decoration-dotted underline-offset-2 hover:text-text-primary">
-              {m(meta)}
-            </Link>{" "}
-            · <span className="font-semibold text-text-primary">{m(falta)} to go</span> · {m(porDia)} a day
-          </p>
-        ) : d ? (
-          <Link href="/settings?tab=setup&section=finance" className="text-[13px] font-medium text-fx-coral hover:underline">
-            Choose the monthly goal in Settings
-          </Link>
-        ) : null}
-        <p className="ml-auto text-[12px] text-text-tertiary">
+    <section aria-label="Month goal" className="rounded-xl border border-fx-line bg-fx-paper px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-fx-coral">
+          {nomeDoMes} goal
+          <FixfyHintIcon text={dica} placement="bottom-start" />
+        </p>
+        <p className="text-[12px] text-text-tertiary">
           {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
         </p>
       </div>
-      <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
-        <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral/35" style={{ width: `${pct}%` }} />
-        <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral" style={{ width: `${pctEntregue}%` }} />
+
+      <div className="mt-2 flex items-end justify-between gap-4">
+        <p className="min-w-0 truncate leading-none">
+          <span className="text-[30px] font-bold tracking-[-0.02em] text-text-primary tabular-nums">{d ? m(receita) : "—"}</span>
+          {meta ? (
+            <Link href="/settings?tab=setup&section=finance" title="Change the monthly goal in Settings" className="ml-2 text-[14px] text-text-tertiary tabular-nums hover:text-text-primary">
+              / {m(meta)}
+            </Link>
+          ) : d ? (
+            <Link href="/settings?tab=setup&section=finance" className="ml-3 text-[13px] font-medium text-fx-coral hover:underline">
+              Choose the monthly goal in Settings
+            </Link>
+          ) : null}
+        </p>
+        {meta ? <p className="shrink-0 text-[30px] font-bold leading-none tracking-[-0.02em] text-fx-coral tabular-nums">{Math.round(pct)}%</p> : null}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11.5px] text-text-secondary">
-        <span>
-          <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-fx-coral align-middle" aria-hidden />
-          Delivered {d ? m(d.entregue) : "—"} · {d?.jobsEntregues ?? 0} jobs
-        </span>
-        <span>
-          <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-fx-coral/35 align-middle" aria-hidden />
-          Booked {d ? m(receita) : "—"} · {d?.jobs ?? 0} jobs
-        </span>
-        <span>Gross margin {d ? `${margem.toFixed(1)}%` : "—"}</span>
-        <span>
-          Conversion <span className="font-semibold text-text-primary">{ceo ? `${ceo.funil.conversao}%` : "—"}</span>
-          {ceo ? ` · ${ceo.funil.convertidos} of ${ceo.funil.leads} leads` : ""}
-        </span>
-        <span>On pace for {d ? m(ritmo) : "—"} delivered</span>
+
+      <div className="relative mt-3">
+        <div className="relative h-3 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
+          <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral/35" style={{ width: `${pct}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral" style={{ width: `${pctEntregue}%` }} />
+        </div>
+        {meta ? <span aria-hidden className="absolute -top-1 h-5 w-0.5 rounded-full bg-text-primary" style={{ left: `${pctHoje}%` }} /> : null}
       </div>
+
+      {meta ? (
+        <div className="mt-2.5 flex items-center justify-between gap-3 text-[13px]">
+          <p className="font-semibold text-text-primary tabular-nums">{m(falta)} to go</p>
+          <p className={`rounded-full px-2.5 py-0.5 text-[12px] font-semibold tabular-nums ${atras > 0 ? "bg-fx-red-50 text-fx-red" : "bg-fx-green/10 text-fx-green"}`}>
+            {atras > 0 ? `${m(atras)} behind today` : "On pace"}
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }
