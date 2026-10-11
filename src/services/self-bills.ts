@@ -1016,22 +1016,37 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
 
   /**
    * Aprovação tardia (dono, 09/10/2026): se o documento da quinzena da conclusão já foi
-   * fechado (em pagamento ou pago), o job entra na quinzena ABERTA de hoje, em vez de
-   * abrir um documento irmão para uma quinzena velha que ninguém mais vai pagar.
+   * PAGO ou a data do pagamento já passou, o job entra na quinzena ABERTA de hoje, em vez
+   * de abrir um documento irmão para uma quinzena velha que ninguém mais vai pagar.
    */
+  /** Documento já fechado no corte que ainda recebe o job (ver "pagamento ainda não passou"). */
+  let fechadoQueAindaRecebe: string | undefined;
   if (!visitScope) {
-    const { data: fechado } = await supabase
+    const { data: fechados } = await supabase
       .from("self_bills")
-      .select("id, status")
+      .select("id, status, due_date")
       .eq("partner_id", partnerId)
       .eq("week_start", weekStart)
       .not("status", "in", `(${[...SELF_BILL_REUSABLE_STATUSES, ...SELF_BILL_TERMINAL_STATUSES].join(",")})`)
-      .limit(1)
-      .maybeSingle();
+      .order("created_at", { ascending: true });
+    const linhasFechadas = (fechados ?? []) as { id: string; status: string; due_date: string | null }[];
+    // Documento ainda não pago ganha do pago: é nele que o job tardio pode entrar.
+    const fechado = linhasFechadas.find((r) => r.status !== "paid") ?? linhasFechadas[0] ?? null;
     const hojeYmd = new Date().toISOString().slice(0, 10);
     const quinzenaAindaAberta = Boolean(weekEnd) && weekEnd >= hojeYmd;
-    const fechadoStatus = (fechado as { status: string } | null)?.status ?? "";
-    if (fechado && quinzenaAindaAberta && (fechadoStatus === "awaiting_payment" || fechadoStatus === "ready_to_pay")) {
+    const fechadoStatus = fechado?.status ?? "";
+    const vencimentoYmd = fechado?.due_date?.slice(0, 10) ?? "";
+    const pagamentoAindaNaoPassou = /^\d{4}-\d{2}-\d{2}$/.test(vencimentoYmd) && vencimentoYmd >= hojeYmd;
+    if (fechado && !quinzenaAindaAberta && fechadoStatus !== "paid" && pagamentoAindaNaoPassou) {
+      /**
+       * Job aprovado depois do corte (dono, 11/10/2026): vale o dia em que o job foi
+       * concluído, mesmo aprovado na véspera do pagamento. Entra no MESMO documento da
+       * quinzena dele, que segue no status em que está, e o valor é recalculado. Só vai
+       * para a quinzena seguinte quando a data do pagamento já passou ou o documento já
+       * foi pago.
+       */
+      fechadoQueAindaRecebe = fechado.id;
+    } else if (fechado && quinzenaAindaAberta && (fechadoStatus === "awaiting_payment" || fechadoStatus === "ready_to_pay")) {
       /**
        * A quinzena ainda não acabou (10/10/2026: F&V tinha 5 documentos em 28/09–11/10).
        * Documento em "awaiting_payment" no meio da quinzena é o approve antigo fechando
@@ -1040,7 +1055,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
        * "ready_to_pay" entra pela mesma razão (11/10/2026): o corte marcou o documento
        * da RJ como pronto no meio da quinzena e o job seguinte abriu o SB-14533 ao lado.
        */
-      await supabase.from("self_bills").update({ status: "accumulating" }).eq("id", (fechado as { id: string }).id);
+      await supabase.from("self_bills").update({ status: "accumulating" }).eq("id", fechado.id);
     } else if (fechado) {
       const hoje = new Date();
       anchorYmd = hoje.toISOString().slice(0, 10);
@@ -1100,7 +1115,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    * visita entrou num self-bill de £248 já em awaiting_payment.
    */
   const isTerminal = existingRow ? !SELF_BILL_REUSABLE_STATUSES.has(existingRow.status) : false;
-  let sbId = existingRow && !isTerminal ? (existingRow.id as string) : undefined;
+  let sbId = fechadoQueAindaRecebe ?? (existingRow && !isTerminal ? (existingRow.id as string) : undefined);
 
   if (!sbId) {
     const ref = await nextSelfBillRef(supabase, weekLabel, job.reference);
