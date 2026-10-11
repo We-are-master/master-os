@@ -19,7 +19,6 @@ import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
 import { LiveBoard } from "@/components/pulse/live-board";
-import { AutoFlow } from "@/components/pulse/auto-flow";
 import { TopAccounts } from "@/components/pulse/top-accounts";
 
 const CeoFinancialDashboard = dynamic(
@@ -66,9 +65,9 @@ function PulseInner() {
                 <MonthBurnUp />
                 <RevenueBySource />
               </div>
-              <LiveBoard />
-              <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
-                <AutoFlow />
+              {/* Live Jobs e as maiores contas do ano, meia tela cada (dono, 12/10/2026). O Auto-flow saiu. */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch [&>*]:min-w-0">
+                <LiveBoard />
                 <TopAccounts />
               </div>
             </PulseCeoProvider>
