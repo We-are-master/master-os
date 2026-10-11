@@ -241,6 +241,8 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     "/requests",
     "/compliance",
     "/ppm",
+    // Saiu do menu em 12/10/2026 (dono): o Pulse já mostra o que precisa de atenção.
+    "/automation",
   ]);
   const next = nav.map((g) => ({
     ...g,
