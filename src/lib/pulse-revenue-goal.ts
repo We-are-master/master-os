@@ -111,7 +111,14 @@ export function resolvePulsePeriodRevenueGoal(
   }
 
   const dailyGoal = monthlyGoal / monthlyWd;
-  const periodGoal = dailyGoal * workingDaysInPeriod;
+  // Mês cheio = a meta do mês, sem arredondar por dias úteis (11/10/2026: a meta de
+  // £50 mil aparecia como £51,8 mil num mês de 27 dias úteis).
+  const mesCheio =
+    bounds.from.getFullYear() === bounds.to.getFullYear() &&
+    bounds.from.getMonth() === bounds.to.getMonth() &&
+    bounds.from.getDate() === 1 &&
+    bounds.to.getDate() === new Date(bounds.to.getFullYear(), bounds.to.getMonth() + 1, 0).getDate();
+  const periodGoal = mesCheio ? monthlyGoal : dailyGoal * workingDaysInPeriod;
   return { periodGoal, workingDaysInPeriod, dailyGoal };
 }
 

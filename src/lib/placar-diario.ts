@@ -17,8 +17,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveJobCompletionYmd } from "@/lib/job-completion-anchor";
 
 export const META_JOBS_POR_DIA = () => Number(process.env.META_JOBS_POR_DIA?.trim() || "10");
-/** R$ 500 mil por mês a ~R$ 7 por libra. */
-export const META_MENSAL_GBP = () => Number(process.env.META_MENSAL_GBP?.trim() || "71000");
+/** Meta mensal padrão (dono, 11/10/2026: £50 mil). A que vale é a do Setup, a mesma do Pulse. */
+export const META_MENSAL_GBP = () => Number(process.env.META_MENSAL_GBP?.trim() || "50000");
+
+/** A meta do mês: `frontend_setup.pulse_revenue_goal_monthly_gbp` (Setup), senão o padrão. */
+export async function metaMensal(sb: SupabaseClient): Promise<number> {
+  const { data } = await sb.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
+  const v = Number(((data as { frontend_setup?: { pulse_revenue_goal_monthly_gbp?: number | null } } | null)?.frontend_setup ?? {}).pulse_revenue_goal_monthly_gbp);
+  return Number.isFinite(v) && v > 0 ? v : META_MENSAL_GBP();
+}
 
 export const STATUS_ENTREGUE = ["final_check", "awaiting_payment", "completed"] as const;
 export const STATUS_ABERTO = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check"] as const;
@@ -129,7 +136,7 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
     .gte("scheduled_date", somarDias(inicioMes, -21))
     .limit(5000);
   const doMes = entreguesNaJanela((jobsRaw ?? []) as JobDoPlacar[], inicioMes, hoje);
-  const meta = META_MENSAL_GBP();
+  const meta = await metaMensal(sb);
 
   // 2. Leads do mês e quantos viraram cliente. Lead = quem chegou até nós: site, WhatsApp e
   // lançados à mão (site_leads) mais os pedidos do Checkatrade (cliente com a marca

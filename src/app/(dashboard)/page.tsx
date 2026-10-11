@@ -10,6 +10,7 @@ import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 import { PulseHead } from "@/components/pulse/pulse-head";
 import { PulseCurrencyProvider } from "@/lib/pulse-currency";
 import { LiveOperations } from "@/components/pulse/live-operations";
+import { MonthGoal } from "@/components/pulse/month-goal";
 import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
@@ -48,6 +49,7 @@ function PulseInner() {
             <CeoFinancialDashboard />
           ) : (
             <>
+              <MonthGoal />
               <LiveOperations />
               <Financials />
               <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
