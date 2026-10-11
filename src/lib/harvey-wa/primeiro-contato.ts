@@ -19,6 +19,7 @@
  *                                  o aprovado em 07/10/2026 chama pelo nome e o tipo de trabalho)
  */
 
+import { contaDasNotas, rotuloDaConta } from "@/lib/checkatrade-contas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decideDispatch } from "@/lib/agent/sales/dispatch-gate";
 import { areaDoTemplate } from "@/lib/agent/sales/dispatch-one";
@@ -212,6 +213,7 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
   const { data: c } = await sb.from("clients").select("full_name,email,postcode,address,notes").eq("id", p.clienteId).maybeSingle();
   const brief = parseLeadBrief({ id: p.clienteId, name: c?.full_name ?? null, phone: destino, email: c?.email ?? null, postcode: c?.postcode ?? null, address: c?.address ?? null, notes: c?.notes ?? null });
   const nome = brief.name || p.nome;
+  const conta = contaDasNotas(c?.notes ?? null);
   const email = (brief.email ?? "").trim().toLowerCase();
   const emailDoCliente = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !/@getfixfy\.com$/i.test(email) ? email : null;
   const ligarAte = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" }).format(new Date(quando.getTime() + 2 * 3600_000));
@@ -250,6 +252,8 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
     "",
     `OS contact: https://app.getfixfy.com/clients?clientId=${p.clienteId}`,
     `Checkatrade lead id: ${p.leadExterno}`,
+    // Em qual conta do Checkatrade responder a este lead (duas contas, 11/10/2026).
+    rotuloDaConta(conta),
     "",
     notaDoEnvio,
   ].join("\n");
@@ -264,7 +268,7 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
         // ai_quote_draft: o Harvey de e-mail pula o ticket; quem cuida é o Harvey do WhatsApp.
         // lead_gen: fica na view 🎯 Leads até responder; o gatilho "Lead replied" tira a tag
         // e o ticket vai para a Action Required (dono, 08/10/2026).
-        tags: ["harvey_wa_lead", "lead_checkatrade", "lead_wa_sent", "lead_gen", "ai_quote_draft"],
+        tags: ["harvey_wa_lead", "lead_checkatrade", `checkatrade_${conta}`, "lead_wa_sent", "lead_gen", "ai_quote_draft"],
         external_id: externalId,
         // 🟢 Sent: o template já saiu, a vez é do cliente. Vira 🔴 quando ele responde (dono, 08/10/2026).
         custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],
