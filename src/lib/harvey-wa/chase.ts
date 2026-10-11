@@ -1,5 +1,6 @@
 /**
- * Chase: quem parou de responder recebe até 3 lembretes no dia, escritos pelo
+ * Chase: quem parou de responder recebe lembrete (1 por conversa desde 10/10/2026, para
+ * poupar crédito; HARVEY_WA_MAX_CHASES=3 volta aos três degraus abaixo), escrito pelo
  * Harvey com o contexto da conversa (a pergunta que ficou, o dia que está
  * segurando, o link que expirou). Nada pendente, nada sai (NO_CHASE).
  *
@@ -15,7 +16,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pensar, type Fala } from "./cerebro";
+import { maxChases, pensar, type Fala } from "./cerebro";
 import { contextoDaPessoa, catalogo, paraFalas, sessaoAtual } from "./motor";
 import { chamarSite } from "./site";
 import { enviarTexto, historico, vozDaConversa } from "./sunshine";
@@ -35,13 +36,14 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
   const out: ResultadoChase = { ensaio: !aplicar, olhados: 0, enviados: 0, semNada: 0, detalhes: [] };
   const hora = horaEmLondres(agora);
   if (escala() === 1 && (hora < 8 || hora >= 21)) return out; // no teste acelerado vale a qualquer hora
+  if (maxChases() === 0) return out;
 
   const desde = new Date(agora.getTime() - JANELA_H * 3_600_000).toISOString();
   const { data } = await sb
     .from("harvey_wa_conversas")
     .select("conversation_id, phone, cliente_em, harvey_em, chases, checkout_method, sinal_recebido_em, liberado_em")
     .eq("estado", "harvey")
-    .lt("chases", 3)
+    .lt("chases", maxChases())
     .gte("cliente_em", desde)
     .not("harvey_em", "is", null)
     .limit(40);
