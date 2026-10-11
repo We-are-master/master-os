@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/services/base";
@@ -45,8 +46,12 @@ export function TopAccounts() {
 
   return (
     <SectionCard
-      title="Top Accounts"
-      subtitle={`By billed value · ${ano}, whole year`}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          Top Accounts
+          <FixfyHintIcon text={`By billed value in ${ano}, whole year.`} placement="top-start" />
+        </span>
+      }
       bodyClassName="p-0"
     >
       <div className="flex flex-col">

@@ -324,11 +324,12 @@ export function Financials() {
 
   const revenueGoalUi = useMemo(() => {
     if (loading) {
-      return { sub: "Loading…" as ReactNode, variant: "default" as const, topRight: <StatusDot color="bg-fx-green" /> };
+      return { sub: null as ReactNode, dica: "", variant: "default" as const, topRight: <StatusDot color="bg-fx-green" /> };
     }
     if (revenueGoal.periodGoal <= 0 || revenueGoal.status === "unset") {
       return {
-        sub: "Set revenue goal in Setup",
+        sub: null as ReactNode,
+        dica: "No revenue goal set. Choose it in Settings, Setup, Finance.",
         variant: "default" as const,
         topRight: <StatusDot color="bg-fx-green" />,
       };
@@ -340,26 +341,22 @@ export function Financials() {
 
     let pillLabel: string;
     let gapLabel: string;
-    let gapClass: string;
     let barClass: string;
     let variant: "default" | "coral" | "alert";
 
     if (revenueGoal.status === "above") {
       pillLabel = `+${formatGbp(revenueGoal.aheadOfGoal)} ahead`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
-      gapClass = "text-fx-coral-p font-semibold";
       barClass = "bg-fx-coral";
       variant = "coral";
     } else if (revenueGoal.status === "on_track") {
       pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% · almost there`;
-      gapClass = "text-fx-amber font-semibold";
       barClass = "bg-fx-amber";
       variant = "default";
     } else {
       pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
-      gapClass = "text-fx-red font-semibold";
       barClass = "bg-fx-red";
       variant = "alert";
     }
@@ -391,12 +388,9 @@ export function Financials() {
               style={{ width: `${barPct}%` }}
             />
           </div>
-          <span className="font-mono text-[11.5px] leading-snug">
-            <span className={gapClass}>{gapLabel}</span>
-            <span className="text-fx-mute">{wdPart}</span>
-          </span>
         </div>
       ),
+      dica: `${gapLabel}${wdPart}`,
     };
   }, [loading, revenueGoal]);
 
@@ -427,7 +421,7 @@ export function Financials() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           label="Revenue"
-          hint="Total client price + extras for jobs in the active pipeline. Goal comes from Setup (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days."
+          hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Setup (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
           value={loading ? "—" : formatGbp(totals.revenue)}
           sub={revenueGoalUi.sub}
           variant={revenueGoalUi.variant}
@@ -437,9 +431,8 @@ export function Financials() {
         />
         <KpiCard
           label="Operating Cost"
-          hint="Partner cost + materials + per-job expenses for the same pipeline. The percentage below is gross margin: what is left of revenue after this cost, before fixed costs. Target comes from Setup."
+          hint={`Partner cost + materials + per-job expenses for the same pipeline. Gross margin is what is left of revenue after this cost, before fixed costs. Target comes from Setup.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
           value={loading ? "—" : formatGbp(totals.operatingCost)}
-          sub={loading ? null : <MargemSub margem={margens.bruta} rotulo="gross margin" alvo="target" />}
           topRight={<StatusDot color="bg-fx-amber" />}
           onShowDetails={() => setOpenModal("operating")}
           detailsLabel="View operating cost breakdown"
@@ -454,7 +447,7 @@ export function Financials() {
         />
         <KpiCard
           label="Net Margin"
-          hint="Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead."
+          hint={`Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead.${loading ? "" : `\n\n${margemTexto(margens.liquida, "net margin", "healthy")}`}`}
           variant={
             !loading && totals.netMargin < 0
               ? "alert"
@@ -463,7 +456,6 @@ export function Financials() {
                 : "default"
           }
           value={loading ? "—" : formatGbp(totals.netMargin)}
-          sub={loading ? null : <MargemSub margem={margens.liquida} rotulo="net margin" alvo="healthy" />}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
           onShowDetails={() => setOpenModal("net")}
           detailsLabel="View net margin breakdown"
@@ -899,45 +891,15 @@ function StatusDot({ color }: { color: string }) {
 }
 
 /**
- * A margem em porcentagem embaixo do valor em libras, com a meta ao lado.
+ * A margem em porcentagem, com a meta ao lado, para o "!" do card (dono, 11/10/2026:
+ * as legendas saíram de baixo do número para o Pulse ficar limpo).
  *
- * O rótulo é obrigatório e explícito por causa do card de custo: "38%" solto
- * embaixo de £7.420 lê como "o custo é 38% da receita", que é o contrário do
- * que o número diz. Escrever "gross margin" custa duas palavras e tira a
- * ambiguidade.
- *
- * Mesma forma do card de Revenue: o número colorido, a meta em cinza.
+ * O rótulo é explícito por causa do card de custo: "38%" solto lê como "o custo é 38%
+ * da receita", que é o contrário do que o número diz.
  */
-function MargemSub({
-  margem,
-  rotulo,
-  alvo,
-}: {
-  margem: MargemDoPeriodo;
-  rotulo: string;
-  /** Como o Setup chama a meta desta margem: "target" na bruta, "healthy" na líquida. */
-  alvo: string;
-}) {
-  if (margem.pct == null) {
-    return <span className="text-fx-mute">no revenue in this period</span>;
-  }
-  const cor =
-    margem.situacao === "acima"
-      ? "text-fx-green"
-      : margem.situacao === "no_alvo"
-        ? "text-fx-amber"
-        : "text-fx-red";
-  return (
-    <span className="leading-snug">
-      <span className={cn("font-semibold", cor)}>
-        {margem.pct}% {rotulo}
-      </span>
-      <span className="text-fx-mute">
-        {" · "}
-        {alvo} {margem.alvo}%
-      </span>
-    </span>
-  );
+function margemTexto(margem: MargemDoPeriodo, rotulo: string, alvo: string): string {
+  if (margem.pct == null) return "No revenue in this period.";
+  return `${margem.pct}% ${rotulo} · ${alvo} ${margem.alvo}%`;
 }
 
 function ymd(d: Date): string {

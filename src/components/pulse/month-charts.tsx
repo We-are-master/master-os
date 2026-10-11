@@ -5,6 +5,7 @@
  *  1. o mês acumulado contra a meta (fechado e entregue subindo, contra a reta da meta);
  *  2. de onde vem a receita do mês: contas B2B, plataformas e B2C.
  */
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { SectionCard } from "@/components/fx/primitives";
 import { usePulseCeo } from "./pulse-ceo-data";
@@ -26,7 +27,7 @@ export function MonthBurnUp() {
   const metaHoje = n ? (meta * hojeDia) / n : 0;
   const fechadoFim = serie[n - 1]?.fechado ?? 0;
   return (
-    <SectionCard title="Month vs Goal" subtitle={data ? `Day ${hojeDia} of ${n} · goal line says ${pulseMoney(metaHoje)} by today` : "loading"}>
+    <SectionCard title={<ComDica titulo="Month vs Goal" dica={data ? `Day ${hojeDia} of ${n}. The goal line says ${pulseMoney(metaHoje)} by today.` : "Booked and delivered revenue against the goal line."} />}>
       <svg viewBox={`0 0 ${W} ${H}`} className="h-[220px] w-full" role="img" aria-label={`Booked ${pulseMoney(fechadoFim)} and delivered ${pulseMoney(entregueHoje)} against a goal of ${pulseMoney(meta)}`}>
         {[0.25, 0.5, 0.75, 1].map((p) => (
           <line key={p} x1={PAD.l} x2={W - PAD.r} y1={y(topo * p)} y2={y(topo * p)} className="stroke-fx-line" strokeWidth="1" />
@@ -56,7 +57,7 @@ export function RevenueBySource() {
   const origem = data?.origem ?? [];
   const total = origem.reduce((t, o) => t + o.valor, 0);
   return (
-    <SectionCard title="Where Revenue Comes From" subtitle="This month · by type of customer">
+    <SectionCard title={<ComDica titulo="Where Revenue Comes From" dica="This month, by type of customer." />}>
       <div className="flex h-3 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={origem.map((o) => `${o.nome} ${total ? Math.round((o.valor / total) * 100) : 0}%`).join(", ")}>
         {origem.map((o) => (total > 0 && o.valor > 0 ? <div key={o.nome} className={COR[o.nome]} style={{ width: `${(o.valor / total) * 100}%` }} /> : null))}
       </div>
@@ -73,5 +74,15 @@ export function RevenueBySource() {
         {!origem.length ? <li className="text-[13px] text-text-tertiary">Loading…</li> : null}
       </ul>
     </SectionCard>
+  );
+}
+
+/** Título com a explicação no "!", no lugar da legenda embaixo. */
+function ComDica({ titulo, dica }: { titulo: string; dica: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {titulo}
+      <FixfyHintIcon text={dica} placement="top-start" />
+    </span>
   );
 }
