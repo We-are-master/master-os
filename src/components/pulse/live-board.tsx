@@ -80,7 +80,7 @@ const MODE_META: Record<
   },
   leads: {
     title: "Live Leads",
-    href: "/leads",
+    href: "/crm?side=b2c",
     linkLabel: "Open Leads →",
     empty: "No new leads.",
     loading: "Loading live leads…",
@@ -188,22 +188,32 @@ export function LiveBoard() {
         setQuotes(enriched);
         setActiveCount(countRes.count ?? 0);
       } else {
+        // Os leads de verdade (site, WhatsApp, lançados à mão), os mesmos da tela Leads.
+        // A tabela `leads` antiga é de jobs oferecidos a parceiros (11/10/2026).
+        const ABERTOS = ["new", "hot", "contacted"];
         const [listRes, countRes] = await Promise.all([
           supabase
-            .from("leads")
-            .select("id, reference, name, address, urgency, scope, status, created_at")
-            .eq("status", "new")
-            .is("deleted_at", null)
-            .order("created_at", { ascending: false })
+            .from("site_leads")
+            .select("id, full_name, email, phone, postcode, channel, status, service_label, created_at, last_activity_at")
+            .in("status", ABERTOS)
+            .order("last_activity_at", { ascending: false })
             .limit(5),
-          supabase
-            .from("leads")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "new")
-            .is("deleted_at", null),
+          supabase.from("site_leads").select("id", { count: "exact", head: true }).in("status", ABERTOS),
         ]);
         if (cancelled) return;
-        setLeads((listRes.data ?? []) as LiveLead[]);
+        type SiteLead = { id: string; full_name: string | null; email: string | null; phone: string | null; postcode: string | null; channel: string | null; status: string; service_label: string | null; created_at: string };
+        setLeads(
+          ((listRes.data ?? []) as SiteLead[]).map((l) => ({
+            id: l.id,
+            reference: (l.channel ?? "website").replace(/_/g, " "),
+            name: l.full_name || l.email || l.phone || "Lead",
+            address: l.postcode ?? "",
+            urgency: (l.status === "hot" ? "high" : l.status === "contacted" ? "low" : "medium") as LeadUrgency,
+            scope: l.service_label ?? "",
+            status: l.status,
+            created_at: l.created_at,
+          })),
+        );
         setActiveCount(countRes.count ?? 0);
       }
 
@@ -480,7 +490,7 @@ function LeadsTable({
                 <span className="text-fx-mute line-clamp-2 text-[12px]">{l.scope?.trim() || "—"}</span>
               </td>
               <td className="px-4 py-3 align-middle text-right">
-                <OpenLink href="/leads" />
+                <OpenLink href="/crm?side=b2c" />
               </td>
             </tr>
           ))

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/services/base";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
+import { getLocalCalendarMonthDashboardBounds } from "@/lib/dashboard-date-range";
 import { MicroLabel, SectionCard } from "@/components/fx/primitives";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { fetchPulseAutoFlow, type PulseAutoFlowMetrics } from "@/lib/pulse-auto-flow";
@@ -23,7 +24,7 @@ export function AutoFlow() {
     });
     void (async () => {
       try {
-        const result = await fetchPulseAutoFlow(getSupabase(), bounds);
+        const result = await fetchPulseAutoFlow(getSupabase(), bounds ?? getLocalCalendarMonthDashboardBounds());
         if (!cancelled) setM(result);
       } catch {
         if (!cancelled) {

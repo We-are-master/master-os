@@ -29,11 +29,47 @@ export interface DashboardDateBounds {
  * not `bounds.*.slice(0, 10)` on UTC ISO strings (that can shift the day at month boundaries).
  */
 export function dashboardBoundsToInclusiveLocalYmd(bounds: DashboardDateBounds): { fromDay: string; toDay: string } {
-  const from = new Date(bounds.fromIso);
-  const to = new Date(bounds.toIso);
+  return { fromDay: londonYmd(new Date(bounds.fromIso)), toDay: londonYmd(new Date(bounds.toIso)) };
+}
+
+/**
+ * O Pulse inteiro conta os dias em Londres (dono, 11/10/2026), não no fuso do navegador:
+ * quem abre o OS de outro país tem que ver o mesmo "hoje" e o mesmo "este mês".
+ *
+ * `londonWallNow` devolve um Date cujos campos locais (ano, mês, dia, hora) são o relógio
+ * de parede de Londres agora; as contas de período continuam usando getDate/setDate, e
+ * `wallToLondonIso` transforma o resultado de volta no instante real.
+ */
+const LONDON_PARTS = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+
+function londonParts(d: Date): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of LONDON_PARTS.formatToParts(d)) if (p.type !== "literal") out[p.type] = Number(p.value);
+  return out;
+}
+
+export function londonYmd(d: Date): string {
+  const p = londonParts(d);
   const pad = (n: number) => String(n).padStart(2, "0");
-  const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  return { fromDay: ymd(from), toDay: ymd(to) };
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+}
+
+export function londonWallNow(now = new Date()): Date {
+  const p = londonParts(now);
+  return new Date(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, 0);
+}
+
+/** Os campos locais de `wall` lidos como relógio de Londres → ISO do instante real. */
+export function wallToLondonIso(wall: Date): string {
+  const comoUtc = Date.UTC(wall.getFullYear(), wall.getMonth(), wall.getDate(), wall.getHours(), wall.getMinutes(), wall.getSeconds(), wall.getMilliseconds());
+  // Diferença de Londres para UTC naquele momento (0 no inverno, +1h no verão).
+  let chute = comoUtc;
+  for (let i = 0; i < 2; i++) {
+    const p = londonParts(new Date(chute));
+    const visto = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, 0);
+    chute -= visto - Math.floor(comoUtc / 1000) * 1000;
+  }
+  return new Date(chute).toISOString();
 }
 
 /**
@@ -47,7 +83,7 @@ export function getBoundsForPreset(
 ): DashboardDateBounds | null {
   if (preset === "all") return null;
 
-  const now = new Date();
+  const now = londonWallNow();
   let end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   if (preset === "custom") {
@@ -55,7 +91,7 @@ export function getBoundsForPreset(
     const s = new Date(customFrom + "T00:00:00");
     const e = new Date(customTo + "T23:59:59.999");
     if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
-    return { fromIso: s.toISOString(), toIso: e.toISOString() };
+    return { fromIso: wallToLondonIso(s), toIso: wallToLondonIso(e) };
   }
 
   let start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -138,17 +174,18 @@ export function getBoundsForPreset(
       return null;
   }
 
-  return { fromIso: start.toISOString(), toIso: end.toISOString() };
+  return { fromIso: wallToLondonIso(start), toIso: wallToLondonIso(end) };
 }
 
 /**
  * Local calendar month (1st 00:00 → last day 23:59:59.999), same span as the “This month (full)” preset.
  * Used for Overview revenue KPIs (booked in month) independent of the global dashboard range.
  */
-export function getLocalCalendarMonthDashboardBounds(now = new Date()): DashboardDateBounds {
+export function getLocalCalendarMonthDashboardBounds(agora = new Date()): DashboardDateBounds {
+  const now = londonWallNow(agora);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-  return { fromIso: start.toISOString(), toIso: end.toISOString() };
+  return { fromIso: wallToLondonIso(start), toIso: wallToLondonIso(end) };
 }
 
 export const PRESET_OPTIONS: { id: DateRangePreset; label: string }[] = [

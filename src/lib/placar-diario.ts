@@ -124,24 +124,13 @@ async function ticketsUrgentes(): Promise<{ reclamacoes: TicketZd[]; semResposta
   }
 }
 
-export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Promise<Placar> {
-  const hoje = ymdDeLondres(agora);
-  const inicioMes = `${hoje.slice(0, 8)}01`;
-
-  // 1. Faturamento e margem do mês: jobs entregues, pela data de conclusão.
-  const { data: jobsRaw } = await sb
-    .from("jobs")
-    .select("status, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_start_at, completed_date, partner_timer_ended_at, final_report, partner_id, created_at")
-    .is("deleted_at", null)
-    .gte("scheduled_date", somarDias(inicioMes, -21))
-    .limit(5000);
-  const doMes = entreguesNaJanela((jobsRaw ?? []) as JobDoPlacar[], inicioMes, hoje);
-  const meta = await metaMensal(sb);
-
-  // 2. Leads do mês e quantos viraram cliente. Lead = quem chegou até nós: site, WhatsApp e
-  // lançados à mão (site_leads) mais os pedidos do Checkatrade (cliente com a marca
-  // `checkatrade-lead:`). Quem veio do Checkatrade e respondeu no WhatsApp é a mesma pessoa:
-  // conta uma vez, como Checkatrade, pelo telefone.
+/**
+ * Leads do mês e quantos viraram cliente. Lead = quem chegou até nós: site, WhatsApp e
+ * lançados à mão (site_leads) mais os pedidos do Checkatrade (cliente com a marca
+ * `checkatrade-lead:`). Quem veio do Checkatrade e respondeu no WhatsApp é a mesma pessoa:
+ * conta uma vez, como Checkatrade, pelo telefone. Lista de prospecção importada não é lead.
+ */
+export async function leadsDoMes(sb: SupabaseClient, inicioMes: string): Promise<Placar["leads"]> {
   const inicioIso = `${inicioMes}T00:00:00Z`;
   const fim9 = (t: string | null | undefined) => (t ?? "").replace(/\D/g, "").slice(-9);
   const [{ data: leadsRaw }, { data: ckRaw }] = await Promise.all([
@@ -161,8 +150,17 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
   }
   const totalLeads = doSite.length + ck.length;
   const convertidos = doSite.filter((l) => l.won_at).length + ckComJob;
+  return {
+    total: totalLeads,
+    porCanal: [...canais].sort((a, b) => b[1] - a[1]).map(([canal, n]) => ({ canal, n })),
+    convertidos,
+    taxa: totalLeads ? Math.round((convertidos / totalLeads) * 1000) / 10 : 0,
+  };
+}
 
-  // 3. Atenção urgente.
+/** O que precisa de gente agora: reclamação, cliente sem resposta, job sem parceiro, atraso, cartão. */
+export async function urgentesAgora(sb: SupabaseClient, agora = new Date()): Promise<Urgente[]> {
+  const hoje = ymdDeLondres(agora);
   const urgentes: Urgente[] = [];
   const { data: emEspera } = await sb.from("jobs").select("reference, client_name, on_hold_at").eq("status", "on_hold").eq("on_hold_reason_preset_id", "complaint").is("deleted_at", null).limit(50);
   for (const j of (emEspera ?? []) as Array<{ reference: string; client_name: string | null; on_hold_at: string | null }>)
@@ -191,16 +189,29 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
   const { data: cartao } = await sb.from("jobs").select("reference, card_refused_reason").in("card_charge_status", ["refused", "requires_action"]).eq("status", "final_check").is("deleted_at", null).limit(30);
   for (const j of (cartao ?? []) as Array<{ reference: string; card_refused_reason: string | null }>)
     urgentes.push({ tipo: "card", texto: `${j.reference} · card refused${j.card_refused_reason ? ` (${j.card_refused_reason})` : ""}` });
+  return urgentes;
+}
+
+export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Promise<Placar> {
+  const hoje = ymdDeLondres(agora);
+  const inicioMes = `${hoje.slice(0, 8)}01`;
+
+  // 1. Faturamento e margem do mês: jobs entregues, pela data de conclusão.
+  const { data: jobsRaw } = await sb
+    .from("jobs")
+    .select("status, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_start_at, completed_date, partner_timer_ended_at, final_report, partner_id, created_at")
+    .is("deleted_at", null)
+    .gte("scheduled_date", somarDias(inicioMes, -21))
+    .limit(5000);
+  const doMes = entreguesNaJanela((jobsRaw ?? []) as JobDoPlacar[], inicioMes, hoje);
+  const meta = await metaMensal(sb);
+
+  const [leads, urgentes] = await Promise.all([leadsDoMes(sb, inicioMes), urgentesAgora(sb, agora)]);
 
   return {
     hoje,
     mes: { ...doMes, margemPct: margemPct(doMes), meta, ...contaDaMeta(doMes.receita, meta, hoje) },
-    leads: {
-      total: totalLeads,
-      porCanal: [...canais].sort((a, b) => b[1] - a[1]).map(([canal, n]) => ({ canal, n })),
-      convertidos,
-      taxa: totalLeads ? Math.round((convertidos / totalLeads) * 1000) / 10 : 0,
-    },
+    leads,
     urgentes,
   };
 }

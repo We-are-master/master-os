@@ -11,12 +11,15 @@ import { PulseHead } from "@/components/pulse/pulse-head";
 import { PulseCurrencyProvider } from "@/lib/pulse-currency";
 import { LiveOperations } from "@/components/pulse/live-operations";
 import { MonthGoal } from "@/components/pulse/month-goal";
+import { PulseCeoProvider } from "@/components/pulse/pulse-ceo-data";
+import { MonthFunnel } from "@/components/pulse/month-funnel";
+import { MoneyReceivable } from "@/components/pulse/money-receivable";
+import { MonthBurnUp, RevenueBySource } from "@/components/pulse/month-charts";
 import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
 import { LiveBoard } from "@/components/pulse/live-board";
 import { AutoFlow } from "@/components/pulse/auto-flow";
-import { RevenueTrend } from "@/components/pulse/revenue-trend";
 import { TopAccounts } from "@/components/pulse/top-accounts";
 
 const CeoFinancialDashboard = dynamic(
@@ -48,21 +51,26 @@ function PulseInner() {
           {ceoMode ? (
             <CeoFinancialDashboard />
           ) : (
-            <>
+            <PulseCeoProvider>
               <MonthGoal />
               <LiveOperations />
+              <MonthFunnel />
               <Financials />
+              <MoneyReceivable />
               <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
                 <TodaysFlow />
                 <AlertsFeed />
               </div>
-              <LiveBoard />
-              <AutoFlow />
               <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
-                <RevenueTrend />
+                <MonthBurnUp />
+                <RevenueBySource />
+              </div>
+              <LiveBoard />
+              <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
+                <AutoFlow />
                 <TopAccounts />
               </div>
-            </>
+            </PulseCeoProvider>
           )}
         </div>
       </div>

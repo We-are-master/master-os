@@ -4,6 +4,7 @@ import { pulseMoney } from "@/lib/pulse-money-display";
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/services/base";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
+import { getLocalCalendarMonthDashboardBounds } from "@/lib/dashboard-date-range";
 import { MicroLabel, SectionCard } from "@/components/fx/primitives";
 import { fetchPulseTopAccounts, type PulseTopAccountRow } from "@/lib/pulse-top-accounts";
 
@@ -19,7 +20,7 @@ export function TopAccounts() {
     void (async () => {
       try {
         const supabase = getSupabase();
-        const result = await fetchPulseTopAccounts(supabase, bounds);
+        const result = await fetchPulseTopAccounts(supabase, bounds ?? getLocalCalendarMonthDashboardBounds());
         if (!cancelled) setRows(result);
       } catch {
         if (!cancelled) setRows([]);
