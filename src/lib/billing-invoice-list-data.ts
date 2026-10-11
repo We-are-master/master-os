@@ -25,6 +25,12 @@ export type InvoiceListJobSnapshot = {
   client_name?: string | null;
 };
 
+function inChunks<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 export async function fetchAllActiveInvoices(): Promise<Invoice[]> {
   const supabase = getSupabase();
   const acc: Invoice[] = [];
@@ -49,15 +55,18 @@ export async function fetchJobsByReferences(refs: string[]): Promise<Record<stri
   const map: Record<string, InvoiceListJobSnapshot> = {};
   if (refs.length === 0) return map;
   const supabase = getSupabase();
-  const CHUNK = 100;
-  for (let i = 0; i < refs.length; i += CHUNK) {
-    const chunk = refs.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("jobs")
-      .select(
-        "id, reference, status, scheduled_date, scheduled_start_at, completed_date, scheduled_finish_date, scheduled_end_at, property_address, title, billed_hours, client_name",
-      )
-      .in("reference", chunk);
+  // Lotes em paralelo: em fila, 670 referências eram 7 idas e voltas uma atrás da outra.
+  const results = await Promise.all(
+    inChunks(refs, 100).map((chunk) =>
+      supabase
+        .from("jobs")
+        .select(
+          "id, reference, status, scheduled_date, scheduled_start_at, completed_date, scheduled_finish_date, scheduled_end_at, property_address, title, billed_hours, client_name",
+        )
+        .in("reference", chunk),
+    ),
+  );
+  for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {
       const r = row as InvoiceListJobSnapshot & { reference?: string | null };
@@ -77,15 +86,17 @@ export async function fetchCustomerPaidSumByJobIds(jobIds: string[]): Promise<Re
   const unique = [...new Set(jobIds.filter(Boolean))];
   if (unique.length === 0) return sums;
   const supabase = getSupabase();
-  const CHUNK = 100;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const chunk = unique.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("job_payments")
-      .select("job_id, amount, type, note")
-      .in("job_id", chunk)
-      .in("type", ["customer_deposit", "customer_final"])
-      .is("deleted_at", null);
+  const results = await Promise.all(
+    inChunks(unique, 100).map((chunk) =>
+      supabase
+        .from("job_payments")
+        .select("job_id, amount, type, note")
+        .in("job_id", chunk)
+        .in("type", ["customer_deposit", "customer_final"])
+        .is("deleted_at", null),
+    ),
+  );
+  for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {
       const p = row as { job_id?: string; amount?: number; type?: string; note?: string | null };
@@ -114,15 +125,17 @@ export async function fetchCustomerPaymentRowsByJobIds(jobIds: string[]): Promis
   if (unique.length === 0) return [];
   const supabase = getSupabase();
   const rows: CustomerPaymentRow[] = [];
-  const CHUNK = 100;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const chunk = unique.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("job_payments")
-      .select("id, job_id, amount, payment_date, type, note, created_at")
-      .in("job_id", chunk)
-      .in("type", ["customer_deposit", "customer_final"])
-      .is("deleted_at", null);
+  const results = await Promise.all(
+    inChunks(unique, 100).map((chunk) =>
+      supabase
+        .from("job_payments")
+        .select("id, job_id, amount, payment_date, type, note, created_at")
+        .in("job_id", chunk)
+        .in("type", ["customer_deposit", "customer_final"])
+        .is("deleted_at", null),
+    ),
+  );
+  for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {
       const p = row as {
