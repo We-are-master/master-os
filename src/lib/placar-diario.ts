@@ -61,6 +61,44 @@ export function entreguesNaJanela(jobs: JobDoPlacar[], deYmd: string, ateYmd: st
   return { jobs: n, receita: r2(receita), margem: r2(receita - custo) };
 }
 
+/** Uma ação candidata para "as 3 do dia". `peso` maior sobe na lista. */
+export type Acao = { chave: string; titulo: string; detalhe: string; peso: number };
+
+/**
+ * As 3 ações que mais movem o dia (dono, 11/10/2026). A ordem é de urgência: job que
+ * acontece em até 2 dias sem parceiro vem antes de tudo; depois cliente esperando
+ * resposta, dinheiro parado em final check, quote pronta para mandar, fatura vencida
+ * e conta de empresa esperando aprovação. Sem banco: testável.
+ */
+export function escolherAcoes(c: {
+  semParceiroUrgente: { n: number; proximo: string | null; refs: string[] };
+  semParceiroDepois: number;
+  clientesEsperando: number | null;
+  finalCheck: { n: number; valor: number };
+  quotesProntas: { n: number; valor: number };
+  vencidas: { n: number; valor: number };
+  contasPendentes: number;
+}): Acao[] {
+  const gbp0 = (v: number) => `£${v.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
+  const s = (n: number) => (n === 1 ? "" : "s");
+  const todas: Acao[] = [];
+  if (c.semParceiroUrgente.n > 0)
+    todas.push({ chave: "assign_now", peso: 100, titulo: `Assign a partner to ${c.semParceiroUrgente.n} job${s(c.semParceiroUrgente.n)} happening in the next 2 days`, detalhe: `${c.semParceiroUrgente.refs.slice(0, 4).join(", ")}${c.semParceiroUrgente.proximo ? ` · first one on ${c.semParceiroUrgente.proximo}` : ""}` });
+  if ((c.clientesEsperando ?? 0) > 0)
+    todas.push({ chave: "reply", peso: 90, titulo: `Reply to ${c.clientesEsperando} customer${s(c.clientesEsperando!)} waiting on us`, detalhe: "Zendesk · Action Required" });
+  if (c.finalCheck.n > 0)
+    todas.push({ chave: "final_check", peso: 80, titulo: `Approve ${c.finalCheck.n} job${s(c.finalCheck.n)} in final check`, detalhe: `${gbp0(c.finalCheck.valor)} waiting to be invoiced or charged` });
+  if (c.quotesProntas.n > 0)
+    todas.push({ chave: "send_quotes", peso: 70, titulo: `Send ${c.quotesProntas.n} quote${s(c.quotesProntas.n)} that ${c.quotesProntas.n === 1 ? "is" : "are"} ready`, detalhe: `${gbp0(c.quotesProntas.valor)} on the table · Quotes → Ready to send` });
+  if (c.semParceiroDepois > 0)
+    todas.push({ chave: "assign_later", peso: 60, titulo: `Assign a partner to ${c.semParceiroDepois} job${s(c.semParceiroDepois)} later this week`, detalhe: "Jobs → Unassigned" });
+  if (c.vencidas.n > 0)
+    todas.push({ chave: "chase_money", peso: 50, titulo: `Chase ${c.vencidas.n} overdue invoice${s(c.vencidas.n)}`, detalhe: `${gbp0(c.vencidas.valor)} from accounts and customers` });
+  if (c.contasPendentes > 0)
+    todas.push({ chave: "approve_accounts", peso: 40, titulo: `Approve ${c.contasPendentes} business account${s(c.contasPendentes)} waiting`, detalhe: "Accounts → Onboarding" });
+  return todas.sort((a, b) => b.peso - a.peso).slice(0, 3);
+}
+
 export type Placar = {
   hoje: string;
   ontem: Janela;
@@ -79,6 +117,8 @@ export type Placar = {
   /** Passaram da data, mas são de plataforma (Housekeep, Fantastic, Checkatrade): pagam no ciclo delas. */
   plataformas: { faturas: number; valor: number };
   novosOntem: { jobs: number; leads: number; quotes: number };
+  /** As 3 ações do dia, da mais urgente para a menos. */
+  acoes: Acao[];
   divisao: Divisao;
   alertas: Alertas;
 };
@@ -99,8 +139,8 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
   const d7 = entreguesNaJanela(jobs, somarDias(hoje, -7), ontem);
   const d30 = entreguesNaJanela(jobs, somarDias(hoje, -30), ontem);
 
-  const { data: abertosRaw } = await sb.from("jobs").select("status, partner_id, scheduled_date").is("deleted_at", null).in("status", [...STATUS_ABERTO]).limit(5000);
-  const abertos = (abertosRaw ?? []) as Array<{ status: string; partner_id: string | null; scheduled_date: string | null }>;
+  const { data: abertosRaw } = await sb.from("jobs").select("reference, status, partner_id, scheduled_date, client_price, extras_amount").is("deleted_at", null).in("status", [...STATUS_ABERTO]).limit(5000);
+  const abertos = (abertosRaw ?? []) as Array<{ reference: string; status: string; partner_id: string | null; scheduled_date: string | null; client_price: number | null; extras_amount: number | null }>;
   const deHoje = abertos.filter((j) => (j.scheduled_date ?? "").slice(0, 10) === hoje);
 
   const { data: fat } = await sb.from("invoices").select("status, due_date, amount, amount_paid, source_account_id").is("deleted_at", null).in("status", ["pending", "overdue", "partially_paid"]).limit(5000);
@@ -117,8 +157,29 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
   const conta = async (t: string) => (await sb.from(t).select("id", { count: "exact", head: true }).gte("created_at", inicioOntem).lt("created_at", inicioHoje)).count ?? 0;
   const [jobsNovos, leadsNovos, quotesNovas, divisao, alertas] = await Promise.all([conta("jobs"), conta("site_leads"), conta("quotes"), medirDivisao(sb, 7), alertasDeAutomacao(sb, agora)]);
 
+  // As 3 ações do dia.
+  const semParceiro = abertos.filter((j) => !j.partner_id && j.status !== "on_hold" && j.status !== "final_check");
+  const limite = somarDias(hoje, 2);
+  const urgentes = semParceiro.filter((j) => j.scheduled_date && j.scheduled_date.slice(0, 10) <= limite).sort((a, b) => String(a.scheduled_date).localeCompare(String(b.scheduled_date)));
+  const emFinal = abertos.filter((j) => j.status === "final_check");
+  const [{ data: prontas }, { count: contasPendentes }, clientesEsperando] = await Promise.all([
+    sb.from("quotes").select("total_value").eq("status", "quote_ready").is("deleted_at", null).limit(500),
+    sb.from("accounts").select("id", { count: "exact", head: true }).eq("status", "onboarding").is("deleted_at", null),
+    filaActionRequired(),
+  ]);
+  const acoes = escolherAcoes({
+    semParceiroUrgente: { n: urgentes.length, proximo: urgentes[0]?.scheduled_date ? diaLongo(urgentes[0].scheduled_date.slice(0, 10)) : null, refs: urgentes.map((j) => j.reference) },
+    semParceiroDepois: semParceiro.length - urgentes.length,
+    clientesEsperando,
+    finalCheck: { n: emFinal.length, valor: emFinal.reduce((t, j) => t + Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0), 0) },
+    quotesProntas: { n: (prontas ?? []).length, valor: (prontas ?? []).reduce((t, q) => t + Number((q as { total_value?: number }).total_value ?? 0), 0) },
+    vencidas: { n: vencidas.length, valor: soma(vencidas) },
+    contasPendentes: contasPendentes ?? 0,
+  });
+
   return {
     hoje,
+    acoes,
     ontem: entreguesNaJanela(jobs, ontem, ontem),
     seteDias: { ...d7, porDia: Math.round((d7.jobs / 7) * 10) / 10 },
     trintaDias: { ...d30, pctDaMeta: Math.round((d30.receita / META_MENSAL_GBP()) * 1000) / 10 },
@@ -139,7 +200,23 @@ export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Prom
 }
 
 const gbp = (v: number) => `£${v.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
-const diaLongo = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+function diaLongo(ymd: string): string {
+  return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/** Quantos tickets esperam resposta nossa no Zendesk (view ⚡ Action Required). Falhou, null. */
+async function filaActionRequired(): Promise<number | null> {
+  try {
+    const { isZendeskConfigured, zendeskApi } = await import("@/lib/zendesk");
+    if (!isZendeskConfigured()) return null;
+    const view = process.env.ZENDESK_VIEW_ACTION_REQUIRED?.trim() || "5685314898719";
+    const r = await zendeskApi<{ view_count?: { value?: number | null } }>(`views/${view}/count.json`);
+    const n = r.view_count?.value;
+    return typeof n === "number" ? n : null;
+  } catch {
+    return null;
+  }
+}
 
 export function assuntoDoPlacar(p: Placar): string {
   return `Fixfy · ${diaLongo(p.hoje)} · ${p.seteDias.porDia} jobs a day (goal ${p.metaJobsPorDia}) · ${p.trintaDias.pctDaMeta}% of the monthly goal${p.alertas.total ? ` · ${p.alertas.total} to fix` : ""}`;
@@ -158,6 +235,10 @@ export function placarEmHtml(p: Placar): string {
   <p style="margin:0;font:800 22px/1.2 -apple-system,Segoe UI,sans-serif;color:#020040">Fixfy scoreboard · ${diaLongo(p.hoje)}</p>
   <p style="margin:6px 0 14px;font:14px/1.4 -apple-system,Segoe UI,sans-serif;color:#5b6080">${gbp(p.trintaDias.receita)} delivered in the last 30 days, ${p.trintaDias.pctDaMeta}% of the ${gbp(p.metaMensal)} monthly goal.</p>
   <div style="height:12px;border-radius:99px;background:#eceef5;overflow:hidden"><div style="height:12px;width:${pct}%;background:#ED4B00;border-radius:99px"></div></div>
+  <div style="margin:20px 0 4px;padding:14px 16px;border-radius:12px;background:#020040">
+    <p style="margin:0 0 8px;font:700 12px/1 -apple-system,Segoe UI,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#ff9a5c">${p.acoes.length ? `Do these ${p.acoes.length === 1 ? "first" : `${p.acoes.length} first`}` : "Nothing urgent today"}</p>
+    ${p.acoes.length ? p.acoes.map((a, i) => `<p style="margin:${i ? 10 : 0}px 0 0;font:600 15px/1.35 -apple-system,Segoe UI,sans-serif;color:#ffffff">${i + 1}. ${a.titulo}<span style="display:block;font:400 13px/1.35 -apple-system,Segoe UI,sans-serif;color:#b9bce6">${a.detalhe}</span></p>`).join("") : `<p style="margin:0;font:400 14px/1.4 -apple-system,Segoe UI,sans-serif;color:#ffffff">No job without a partner, nobody waiting on a reply. Time to sell.</p>`}
+  </div>
   ${bloco("Pace", linha("Jobs a day, last 7 days", `${p.seteDias.porDia}`, `goal ${p.metaJobsPorDia} a day`) + linha("Yesterday", `${p.ontem.jobs} jobs · ${gbp(p.ontem.receita)}`, `margin ${gbp(p.ontem.margem)}`) + linha("Last 7 days", `${p.seteDias.jobs} jobs · ${gbp(p.seteDias.receita)}`, `margin ${gbp(p.seteDias.margem)}`) + linha("Last 30 days", `${p.trintaDias.jobs} jobs · ${gbp(p.trintaDias.receita)}`, `margin ${gbp(p.trintaDias.margem)}`))}
   ${bloco("Today", linha("Jobs scheduled today", `${p.hojeAgendados}`, p.hojeSemParceiro ? `${p.hojeSemParceiro} with no partner yet` : "all have a partner") + linha("Open jobs", `${p.abertos}`, `${p.semParceiro} with no partner · ${p.emFinalCheck} in final check`))}
   ${bloco("Came in yesterday", linha("New jobs", `${p.novosOntem.jobs}`) + linha("New leads", `${p.novosOntem.leads}`) + linha("New quotes", `${p.novosOntem.quotes}`))}
