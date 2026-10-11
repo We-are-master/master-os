@@ -169,7 +169,6 @@ function bucketForStatus(status: string): StatusKey | null {
     case "in_progress":
       return "in_progress";
     case "final_check":
-    case "awaiting_payment":
     case "need_attention":
       return "final_check";
     default:
@@ -454,7 +453,7 @@ export function TodaysFlow() {
                 <Pill
                   className="bg-[#0B1F3A]/10 text-[#0B1F3A] dark:bg-white/10 dark:text-white"
                 >
-                  Faturamento · {formatCurrency(resultsTotals.revenue)}
+                  Revenue · {formatCurrency(resultsTotals.revenue)}
                 </Pill>
                 <Pill tone="coral">
                   All costs · {formatCurrency(resultsTotals.allCosts)} · {resultsTotals.costPct.toFixed(0)}%
@@ -633,7 +632,7 @@ function ResultsHoverHint({
       </div>
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
-          <span className="text-fx-mute">Faturamento</span>
+          <span className="text-fx-mute">Revenue</span>
           <span className="tabular-nums font-medium text-text-primary">
             {formatCurrency(entry.revenue)}
           </span>
@@ -664,7 +663,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
     <div className="px-5 py-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <MetricTile
-          label="Faturamento"
+          label="Revenue"
           value={formatCurrency(month.revenue)}
           swatch={RESULT_COLORS.revenue}
         />
@@ -707,7 +706,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
           </span>
         </div>
         <div className="divide-y divide-fx-line">
-          <CostRow label="Faturamento" value={month.revenue} />
+          <CostRow label="Revenue" value={month.revenue} />
           <CostRow label="− Partner cost" value={-month.partnerCost} />
           <CostRow label="= Gross margin" value={month.gross} strong />
           <CostRow label="− Workforce" value={-month.workforce} />

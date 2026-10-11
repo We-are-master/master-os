@@ -41,6 +41,7 @@ const ACTIVE_OPS_STATUSES = [
   "scheduled",
   "late",
   "in_progress",
+  "on_hold",
   "final_check",
   "need_attention",
   "awaiting_payment",

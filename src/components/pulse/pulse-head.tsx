@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { Crown, Download } from "lucide-react";
 import { formatBritishDate } from "@/lib/utils/date";
 import { cn } from "@/lib/utils";
+import { pulseCeoParaCsv } from "@/lib/pulse-ceo-csv";
+import type { PulseCeo } from "@/lib/pulse-ceo";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
 import { LiveIndicator } from "@/components/fx/primitives";
 import { usePulseMoney } from "@/lib/pulse-currency";
@@ -42,6 +45,7 @@ const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
   tomorrow: "tomorrow",
   wtd: "week",
   last_week: "last_week",
+  next_week: "next_week",
   mtd: "month",
   last_month: "last_month",
   next_month: "next_month",
@@ -52,6 +56,28 @@ const PRESET_TO_SHARED: Partial<Record<DateRangePreset, DateFilterMode>> = {
 export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onToggleCeo }: Props) {
   const { preset, setPreset, customFrom, customTo, setCustomFrom, setCustomTo } = useDashboardDateRange();
   const greeting = getGreeting();
+  const [exportando, setExportando] = useState(false);
+  /** Export: os números do CEO do mês num CSV (antes o botão não fazia nada). */
+  async function exportar() {
+    setExportando(true);
+    try {
+      const r = await fetch("/api/pulse/ceo");
+      if (!r.ok) throw new Error(String(r.status));
+      const dados = (await r.json()) as PulseCeo;
+      const url = URL.createObjectURL(new Blob([pulseCeoParaCsv(dados)], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fixfy-pulse-${dados.hoje}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("[pulse] export failed", e);
+    } finally {
+      setExportando(false);
+    }
+  }
   const today = new Date();
 
   // Legacy presets (7d/30d/90d/ytd/all) fall through to "today" in the shared chip strip —
@@ -71,12 +97,12 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
   };
 
   return (
-    <div className="flex items-end justify-between gap-6 flex-wrap">
-      <div className="flex flex-col gap-1 min-w-0">
-        <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+        <h1 className="m-0 text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">
           {greeting}, {firstName}.
         </h1>
-        <p className="text-[13px] text-fx-mute m-0">
+        <p className="m-0 text-[12px] leading-none text-fx-mute">
           {formatLongDate(today)}
           {typeof todaysJobsCount === "number" && (
             <> · {todaysJobsCount} active job{todaysJobsCount === 1 ? "" : "s"} today.</>
@@ -104,9 +130,11 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
         <CurrencyToggle />
         <button
           type="button"
-          className="inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border border-fx-line bg-card text-text-primary transition-colors hover:bg-fx-paper"
-          title="Export"
-          aria-label="Export"
+          onClick={exportar}
+          disabled={exportando}
+          className="inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border border-fx-line bg-card text-text-primary transition-colors hover:bg-fx-paper disabled:opacity-50"
+          title={exportando ? "Exporting…" : "Export this month's numbers (CSV)"}
+          aria-label="Export this month's numbers as CSV"
         >
           <Download className="h-3.5 w-3.5" />
         </button>

@@ -5,6 +5,7 @@ import {
   type FrontendSetup,
   type PulseRevenueGoalMode,
 } from "./frontend-setup";
+import { londonYmd } from "./dashboard-date-range";
 
 export type PulseRevenueGoalSuggestions = {
   breakevenMonthly: number | null;
@@ -111,7 +112,13 @@ export function resolvePulsePeriodRevenueGoal(
   }
 
   const dailyGoal = monthlyGoal / monthlyWd;
-  const periodGoal = dailyGoal * workingDaysInPeriod;
+  // Mês cheio = a meta do mês, sem arredondar por dias úteis (11/10/2026: a meta de
+  // £50 mil aparecia como £51,8 mil num mês de 27 dias úteis).
+  const de = londonYmd(bounds.from);
+  const ate = londonYmd(bounds.to);
+  const ultimo = new Date(Date.UTC(Number(ate.slice(0, 4)), Number(ate.slice(5, 7)), 0)).getUTCDate();
+  const mesCheio = de.slice(0, 7) === ate.slice(0, 7) && de.endsWith("-01") && Number(ate.slice(8, 10)) === ultimo;
+  const periodGoal = mesCheio ? monthlyGoal : dailyGoal * workingDaysInPeriod;
   return { periodGoal, workingDaysInPeriod, dailyGoal };
 }
 
