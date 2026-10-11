@@ -14,7 +14,8 @@ export type UrgenteDoPulse = { tipo: Urgente["tipo"] | "final_check" | "quote_re
 
 export type PulseCeo = {
   hoje: string;
-  meta: number;
+  /** Escolhida em Settings > Setup. Null enquanto ninguém escolheu. */
+  meta: number | null;
   funil: {
     leads: number;
     porCanal: Array<{ canal: string; n: number }>;

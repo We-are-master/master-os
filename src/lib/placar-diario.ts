@@ -17,14 +17,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveJobCompletionYmd } from "@/lib/job-completion-anchor";
 
 export const META_JOBS_POR_DIA = () => Number(process.env.META_JOBS_POR_DIA?.trim() || "10");
-/** Meta mensal padrão (dono, 11/10/2026: £50 mil). A que vale é a do Setup, a mesma do Pulse. */
-export const META_MENSAL_GBP = () => Number(process.env.META_MENSAL_GBP?.trim() || "50000");
-
-/** A meta do mês: `frontend_setup.pulse_revenue_goal_monthly_gbp` (Setup), senão o padrão. */
-export async function metaMensal(sb: SupabaseClient): Promise<number> {
+/**
+ * A meta do mês é escolhida pelo time em Settings > Setup > "Pulse · Revenue goal"
+ * (`frontend_setup.pulse_revenue_goal_monthly_gbp`). Nada de número fixo no código
+ * (dono, 11/10/2026): sem meta salva, devolve null e as telas pedem para escolher.
+ */
+export async function metaMensal(sb: SupabaseClient): Promise<number | null> {
   const { data } = await sb.from("company_settings").select("frontend_setup").limit(1).maybeSingle();
   const v = Number(((data as { frontend_setup?: { pulse_revenue_goal_monthly_gbp?: number | null } } | null)?.frontend_setup ?? {}).pulse_revenue_goal_monthly_gbp);
-  return Number.isFinite(v) && v > 0 ? v : META_MENSAL_GBP();
+  return Number.isFinite(v) && v > 0 ? v : null;
 }
 
 export const STATUS_ENTREGUE = ["final_check", "awaiting_payment", "completed"] as const;
@@ -76,7 +77,7 @@ export type Urgente = { tipo: "complaint" | "no_reply" | "no_partner" | "late" |
 export type Placar = {
   hoje: string;
   /** Mês corrente de Londres, do dia 1 até agora. */
-  mes: Janela & { margemPct: number; meta: number; falta: number; pctDaMeta: number; diasRestantes: number; porDiaNecessario: number };
+  mes: Janela & { margemPct: number; meta: number | null; falta: number; pctDaMeta: number; diasRestantes: number; porDiaNecessario: number };
   /** Leads que chegaram até nós no mês (site, WhatsApp, Checkatrade, lançados à mão). Lista de prospecção importada não é lead. */
   leads: { total: number; porCanal: Array<{ canal: string; n: number }>; convertidos: number; taxa: number };
   urgentes: Urgente[];
@@ -95,10 +96,11 @@ export function margemPct(j: Janela): number {
 }
 
 /** Quanto falta para a meta e quanto por dia até o fim do mês. Sem banco: testável. */
-export function contaDaMeta(receita: number, meta: number, hojeYmd: string) {
+export function contaDaMeta(receita: number, meta: number | null, hojeYmd: string) {
   const [ano, mes, dia] = hojeYmd.split("-").map(Number);
   const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
   const diasRestantes = Math.max(1, ultimoDia - dia + 1);
+  if (!meta || meta <= 0) return { falta: 0, pctDaMeta: 0, diasRestantes, porDiaNecessario: 0 };
   const falta = Math.max(0, Math.round((meta - receita) * 100) / 100);
   return { falta, pctDaMeta: Math.round((receita / meta) * 1000) / 10, diasRestantes, porDiaNecessario: Math.round(falta / diasRestantes) };
 }
@@ -223,7 +225,7 @@ function diaLongo(ymd: string): string {
 const mesLongo = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
 
 export function assuntoDoPlacar(p: Placar): string {
-  return `Fixfy · ${diaLongo(p.hoje)} · ${gbp(p.mes.receita)} this month, ${gbp(p.mes.falta)} to go${p.urgentes.length ? ` · ${p.urgentes.length} urgent` : ""}`;
+  return `Fixfy · ${diaLongo(p.hoje)} · ${gbp(p.mes.receita)} this month${p.mes.meta ? `, ${gbp(p.mes.falta)} to go` : ""}${p.urgentes.length ? ` · ${p.urgentes.length} urgent` : ""}`;
 }
 
 const GRUPOS: Array<{ tipo: Urgente["tipo"]; titulo: string }> = [
@@ -245,9 +247,9 @@ export function placarEmHtml(p: Placar): string {
   return `<div style="max-width:560px;margin:0 auto;padding:24px 20px;background:#ffffff">
   <p style="margin:0;font:600 12px/1 ${F};letter-spacing:.08em;text-transform:uppercase;color:#ED4B00">${mesLongo(p.hoje)} so far · ${diaLongo(p.hoje)}</p>
   <p style="margin:8px 0 0;font:800 34px/1.05 ${F};color:#020040">${gbp(p.mes.receita)}</p>
-  <p style="margin:6px 0 12px;font:400 15px/1.4 ${F};color:#0d1030">Goal ${gbp(p.mes.meta)} · <b>${gbp(p.mes.falta)} to go</b> · ${p.mes.pctDaMeta}% there</p>
+  <p style="margin:6px 0 12px;font:400 15px/1.4 ${F};color:#0d1030">${p.mes.meta ? `Goal ${gbp(p.mes.meta)} · <b>${gbp(p.mes.falta)} to go</b> · ${p.mes.pctDaMeta}% there` : "No monthly goal set. Choose it in Settings, Setup, Pulse revenue goal."}</p>
   <div style="height:14px;border-radius:99px;background:#eceef5;overflow:hidden"><div style="height:14px;width:${pct}%;background:#ED4B00;border-radius:99px"></div></div>
-  <p style="margin:8px 0 0;font:400 13px/1.4 ${F};color:#5b6080">${p.mes.jobs} jobs delivered. ${p.mes.diasRestantes} day${p.mes.diasRestantes === 1 ? "" : "s"} left in the month: ${gbp(p.mes.porDiaNecessario)} a day to hit the goal.</p>
+  <p style="margin:8px 0 0;font:400 13px/1.4 ${F};color:#5b6080">${p.mes.jobs} jobs delivered. ${p.mes.diasRestantes} day${p.mes.diasRestantes === 1 ? "" : "s"} left in the month${p.mes.meta ? `: ${gbp(p.mes.porDiaNecessario)} a day to hit the goal` : ""}.</p>
 
   <table style="width:100%;margin-top:20px;border-collapse:separate;border-spacing:6px 0"><tr>
     ${cartao("Leads", String(p.leads.total), canais)}

@@ -11,10 +11,10 @@ export function pulseCeoParaCsv(p: PulseCeo): string {
   const hojeDia = Number(p.hoje.slice(8, 10));
   const linhas: Array<[string, string, string | number, string]> = [
     ["Month", "Date", p.hoje, "London"],
-    ["Month", "Goal (GBP)", p.meta, ""],
+    ["Month", "Goal (GBP)", p.meta ?? "not set", ""],
     ["Month", "Booked for the month (GBP)", fim?.fechado ?? 0, "jobs with a visit this month, not cancelled"],
     ["Month", "Delivered so far (GBP)", p.acumulado[hojeDia - 1]?.entregue ?? 0, "counted on the day each job was finished"],
-    ["Month", "To go (GBP)", Math.max(0, p.meta - (fim?.fechado ?? 0)), ""],
+    ["Month", "To go (GBP)", p.meta ? Math.max(0, p.meta - (fim?.fechado ?? 0)) : "not set", ""],
     ["Funnel", "Leads", p.funil.leads, p.funil.porCanal.map((c) => `${c.n} ${c.canal}`).join(" / ")],
     ["Funnel", "Quotes", p.funil.quotes, "created this month"],
     ["Funnel", "Jobs booked", p.funil.fechados.n, `GBP ${p.funil.fechados.valor}`],

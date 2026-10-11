@@ -8,9 +8,11 @@
  *    abertos (sem parceiro, agendado, em andamento, em espera, final check).
  *  - Entregue = os que já foram concluídos (final check, aguardando pagamento, completo).
  *  - Custo anda junto com a venda: repasse e material dos MESMOS jobs.
- *  - A meta é a do Setup (`pulse_revenue_goal_monthly_gbp`), a mesma do placar das 8h.
+ *  - A meta é a que o time escolhe em Settings > Setup ("Pulse · Revenue goal"), a mesma
+ *    do placar das 8h. Nenhum número fixo aqui: sem meta, o card pede para escolher.
  */
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getSupabase } from "@/services/base";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
@@ -98,11 +100,17 @@ export function MonthGoal() {
         <p className="text-[22px] font-bold leading-none tracking-[-0.02em] text-text-primary tabular-nums">{d ? m(receita) : "—"}</p>
         {meta ? (
           <p className="text-[13px] text-text-secondary">
-            of {m(meta)} · <span className="font-semibold text-text-primary">{m(falta)} to go</span> · {m(porDia)} a day
+            of{" "}
+            <Link href="/settings?tab=setup&section=finance" title="Change the monthly goal in Settings" className="underline decoration-dotted underline-offset-2 hover:text-text-primary">
+              {m(meta)}
+            </Link>{" "}
+            · <span className="font-semibold text-text-primary">{m(falta)} to go</span> · {m(porDia)} a day
           </p>
-        ) : (
-          <p className="text-[13px] text-text-secondary">Set the monthly revenue goal in Setup</p>
-        )}
+        ) : d ? (
+          <Link href="/settings?tab=setup&section=finance" className="text-[13px] font-medium text-fx-coral hover:underline">
+            Choose the monthly goal in Settings
+          </Link>
+        ) : null}
         <p className="ml-auto text-[12px] text-text-tertiary">
           {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
         </p>
