@@ -83,19 +83,24 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
   const segunda = inicioDaSemana(hoje);
   const iniHoje = inicioDoDiaLondres(hoje);
   const iniSemana = inicioDoDiaLondres(segunda);
+  /** Mês corrente. A semana pode ter começado no mês anterior, então as buscas partem do mais antigo dos dois. */
+  const diaUm = `${hoje.slice(0, 8)}01`;
+  const iniMes = inicioDoDiaLondres(diaUm);
+  const maisAntigoYmd = segunda < diaUm ? segunda : diaUm;
+  const maisAntigoIso = iniSemana < iniMes ? iniSemana : iniMes;
   /** Fim do dia consultado: com `?dia=` no passado, nada depois dele entra na conta. */
   const fim = inicioDoDiaLondres(amanha);
   const desde = (iso: string | null | undefined, inicio: string) => !!iso && iso >= inicio && iso < fim;
 
-  const [conversasRes, pagamentosRes, jobsRes, emCampoRes, quotesRes, leadsRes] = await Promise.all([
+  const [conversasRes, pagamentosRes, jobsRes, emCampoRes, quotesRes, leadsRes, vendidosRes, emitidasRes] = await Promise.all([
     supabase
       .from("harvey_wa_conversas")
       .select(
         "estado, tipo, criado_em, atualizado_em, passou_em, checkout_at, checkout_total, checkout_sinal, sinal_recebido_em, job_ids",
       )
       .or(
-        `criado_em.gte.${iniSemana},checkout_at.gte.${iniSemana},sinal_recebido_em.gte.${iniSemana},` +
-          `passou_em.gte.${iniSemana},atualizado_em.gte.${iniSemana}`,
+        `criado_em.gte.${maisAntigoIso},checkout_at.gte.${maisAntigoIso},sinal_recebido_em.gte.${maisAntigoIso},` +
+          `passou_em.gte.${maisAntigoIso},atualizado_em.gte.${maisAntigoIso}`,
       ),
     /**
      * "Recebido" vem da FATURA paga (paid_date), não do ledger `job_payments`:
@@ -107,7 +112,7 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
       .select("job_reference, amount, amount_paid, paid_date, status")
       .is("deleted_at", null)
       .in("status", ["paid", "partially_paid"])
-      .gte("paid_date", segunda),
+      .gte("paid_date", maisAntigoYmd),
     supabase
       .from("jobs")
       .select("reference, title, status, partner_name, client_name, scheduled_date, scheduled_start_at")
@@ -126,8 +131,24 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
       .is("deleted_at", null)
       .not("status", "in", '("rejected","converted_to_job")'),
     supabase.from("site_leads").select("status, channel, created_at").gte("created_at", iniSemana).lt("created_at", fim),
+    /** "Vendido" = job que nasceu no período (pelo valor do cliente + extras), fora cancelado e apagado. */
+    supabase
+      .from("jobs")
+      .select("client_price, extras_amount, created_at")
+      .gte("created_at", maisAntigoIso)
+      .lt("created_at", fim)
+      .is("deleted_at", null)
+      .not("status", "in", '("cancelled","deleted")'),
+    /** "Faturado" = fatura emitida no período, fora cancelada e apagada (paga ou não). */
+    supabase
+      .from("invoices")
+      .select("amount, created_at")
+      .gte("created_at", maisAntigoIso)
+      .lt("created_at", fim)
+      .is("deleted_at", null)
+      .neq("status", "cancelled"),
   ]);
-  for (const r of [conversasRes, pagamentosRes, jobsRes, emCampoRes, quotesRes, leadsRes]) {
+  for (const r of [conversasRes, pagamentosRes, jobsRes, emCampoRes, quotesRes, leadsRes, vendidosRes, emitidasRes]) {
     if (r.error) throw r.error;
   }
 
@@ -162,6 +183,22 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
     );
   const doHarvey = (f: FaturaPaga) => !!f.job_reference && refsDoHarvey.has(f.job_reference.trim());
 
+  // ---- Vendido e faturado, por período
+  const porPeriodo = <T extends { created_at: string }>(linhas: T[], valor: (l: T) => number) => {
+    const soma = (inicio: string) => {
+      const sel = linhas.filter((l) => desde(l.created_at, inicio));
+      return { quantidade: sel.length, valor: r2(sel.reduce((s, l) => s + valor(l), 0)) };
+    };
+    return { hoje: soma(iniHoje), semana: soma(iniSemana), mes: soma(iniMes) };
+  };
+  const vendido = porPeriodo(
+    (vendidosRes.data ?? []) as { client_price: number | null; extras_amount: number | null; created_at: string }[],
+    (j) => Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0),
+  );
+  const faturado = porPeriodo((emitidasRes.data ?? []) as { amount: number | null; created_at: string }[], (f) =>
+    Number(f.amount ?? 0),
+  );
+
   // ---- A receber: mesma regra da aba Ready to receive
   const aReceber = await calcularAReceber(supabase, hoje);
 
@@ -192,9 +229,11 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
     gerado_em: agora.toISOString(),
     dia_londres: hoje,
     semana_desde: segunda,
+    mes_desde: diaUm,
     harvey: {
       hoje: harvey(iniHoje),
       semana: harvey(iniSemana),
+      mes: harvey(iniMes),
       agora: {
         conversando_com_harvey: conversas.filter((c) => c.estado === "harvey" && desde(c.atualizado_em, iniHoje)).length,
         com_a_equipe: conversas.filter((c) => c.estado === "equipe").length,
@@ -202,15 +241,20 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
       recebido_dos_jobs_do_harvey: {
         hoje: entrou(hoje, doHarvey),
         semana: entrou(segunda, doHarvey),
+        mes: entrou(diaUm, doHarvey),
       },
     },
     dinheiro: {
       recebido_de_clientes: {
         hoje: entrou(hoje),
         semana: entrou(segunda),
+        mes: entrou(diaUm),
+        faturas_pagas_mes: pagas.filter((f) => dataEntre((f.paid_date ?? "").slice(0, 10), diaUm, hoje)).length,
         faturas_pagas_hoje: pagas.filter((f) => dataEntre((f.paid_date ?? "").slice(0, 10), hoje, hoje)).length,
         faturas_pagas_semana: pagas.filter((f) => dataEntre((f.paid_date ?? "").slice(0, 10), segunda, hoje)).length,
       },
+      vendido,
+      faturado,
       a_receber: aReceber,
     },
     operacao: {
