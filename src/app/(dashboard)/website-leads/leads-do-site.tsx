@@ -11,9 +11,9 @@
  * travessão (vazio é "·").
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload } from "lucide-react";
+import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload, LayoutGrid, List } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
@@ -23,6 +23,9 @@ import { Drawer } from "@/components/ui/drawer";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { rotuloCanal, type Canal, type CanalDef } from "@/lib/site-leads/manual";
+import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
+import { LadoToggle } from "@/components/leads/lado-toggle";
+import { HistoricoDoLead } from "@/components/leads/historico-do-lead";
 import { AdicionarLead, ImportarLeads } from "./adicionar-leads";
 
 export type AtividadeDaTela = {
@@ -59,6 +62,8 @@ export type LeadDaTela = {
   email1_sent_at: string | null;
   email2_sent_at: string | null;
   email3_sent_at: string | null;
+  /** Cliente do OS, quando o lead já foi casado com um (histórico e reputação na ficha). */
+  client_id?: string | null;
   /** 302: o quarto toque, o ticket do lead e a resposta do cliente. */
   whatsapp_due_at?: string | null;
   whatsapp_sent_at?: string | null;
@@ -86,6 +91,16 @@ const ABAS = [
   { id: "lost", label: "Lost", filtro: (l: LeadDaTela) => l.status === "lost" || l.status === "unsubscribed" },
   { id: "all", label: "All", filtro: (l: LeadDaTela) => l.status !== "won" },
 ] as const;
+
+/** As colunas do quadro, na ordem do funil. "Customer" mostra quem pagou nos últimos 30 dias. */
+const COLUNAS: Array<{ id: LeadDaTela["status"]; titulo: string; cor: string }> = [
+  { id: "new", titulo: "New", cor: "#3B82F6" },
+  { id: "hot", titulo: "Hot", cor: "#ED4B00" },
+  { id: "contacted", titulo: "In contact", cor: "#D97706" },
+  { id: "won", titulo: "Customer", cor: "#16A34A" },
+  { id: "lost", titulo: "Lost", cor: "#9CA3AF" },
+];
+const VISAO_KEY = "fixfy-leads-b2c-view";
 
 const PASSOS = ["Your job", "Details", "Date and access", "Checkout"];
 const MOTIVOS = ["Price", "Date not available", "Outside our area", "Just researching", "No reply", "Booked elsewhere", "Other"];
@@ -162,6 +177,17 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
   const [motivo, setMotivo] = useState(MOTIVOS[0]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
+  const [visao, setVisao] = useState<"list" | "board">("board");
+  const [movendo, setMovendo] = useState<ReadonlySet<string>>(new Set());
+  const [aviso, setAviso] = useState("");
+
+  useEffect(() => {
+    try { const v = localStorage.getItem(VISAO_KEY); if (v === "list" || v === "board") setVisao(v); } catch { /* sem storage, fica o padrão */ }
+  }, []);
+  function trocarVisao(v: "list" | "board") {
+    setVisao(v);
+    try { localStorage.setItem(VISAO_KEY, v); } catch { /* idem */ }
+  }
 
   const abas = useMemo(() => ABAS.map((a) => ({ id: a.id, label: a.label, count: leads.filter(a.filtro).length })), [leads]);
 
@@ -175,6 +201,39 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
   }, [leads, aba, busca, canal]);
 
   const aberto = leads.find((l) => l.id === abertoId) ?? null;
+
+  /** O quadro ignora as abas (cada coluna já é um estado) e respeita origem e busca. */
+  const colunasDoQuadro = useMemo<KanbanColumn<LeadDaTela>[]>(() => {
+    const q = busca.trim().toLowerCase();
+    const visiveis = leads
+      .filter((l) => canal === "all" || (l.channel ?? "website") === canal)
+      .filter((l) => !q || [l.full_name, l.email, l.postcode, l.service_label, l.phone, l.notes, ...(l.tags ?? [])].some((v) => (v ?? "").toLowerCase().includes(q)));
+    return COLUNAS.map((c) => {
+      const itens = visiveis.filter((l) => (c.id === "lost" ? l.status === "lost" || l.status === "unsubscribed" : l.status === c.id));
+      const soma = itens.reduce((t, l) => t + Number(l.price ?? 0), 0);
+      return { id: c.id, title: c.titulo, color: c.cor, items: itens, meta: soma > 0 ? libras(soma) : undefined };
+    });
+  }, [leads, busca, canal]);
+
+  /** Arrastar no quadro: muda o estado. "Lost" pede o motivo na ficha; "Customer" só o pagamento marca. */
+  async function soltar(l: LeadDaTela, para: string) {
+    setAviso("");
+    if (para === l.status || (para === "lost" && l.status === "unsubscribed")) return;
+    if (para === "won") { setAviso("A lead becomes a customer when the booking is paid, not by moving the card."); return; }
+    if (l.status === "won") { setAviso("This lead already paid: it stays in Customer."); return; }
+    if (para === "lost") { setAbertoId(l.id); setAbaDoLead("overview"); setAviso("Pick the reason and press Mark lost."); return; }
+    setMovendo((m) => new Set(m).add(l.id));
+    try {
+      const r = await fetch(`/api/site-leads/${l.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: para }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || `Error ${r.status}`);
+      router.refresh();
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : "Not moved. Try again.");
+    } finally {
+      setMovendo((m) => { const n = new Set(m); n.delete(l.id); return n; });
+    }
+  }
 
   async function agir(corpo: Record<string, string>) {
     if (!aberto) return;
@@ -282,13 +341,28 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
         <PageHeader
           title="Leads"
           infoTooltip={
-            "People who started a booking at getfixfy.com and did not pay.\n\n" +
+            "B2C leads: people who started a booking at getfixfy.com and did not pay, people who messaged Harvey on WhatsApp, and leads the team added. Switch to B2B for companies.\n\n" +
             "Each one gets email 1 thirty minutes after stopping (08:30 if that is at night), email 2 the next morning at 09:30, email 3 with 10% off the morning after, and a WhatsApp with the same code at 15:00 that day when there is a phone. Every step counts from when the previous one really went out.\n\n" +
             "Each lead has one Zendesk ticket where replies land. Any reply stops the automatic touches and moves the lead to In contact. Paying turns the lead into a customer and it leaves this list.\n\n" +
             "Numbers and the funnel live in the office Leads Room."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
+            <LadoToggle lado="b2c" />
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="View">
+              {([["board", "Board", LayoutGrid], ["list", "List", List]] as const).map(([v, rotulo, Icone]) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={visao === v}
+                  onClick={() => trocarVisao(v)}
+                  className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors ${visao === v ? "bg-surface-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+                >
+                  <Icone className="h-3.5 w-3.5" />
+                  {rotulo}
+                </button>
+              ))}
+            </div>
             <ToolbarIconButton icon={RefreshCw} label="Refresh leads" onClick={() => router.refresh()} />
             <Button size="sm" variant="outline" icon={<Upload className="h-3.5 w-3.5" />} onClick={() => setImportarAberto(true)}>
               Import CSV
@@ -308,7 +382,7 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
         <div>
           <div className="mb-4 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="-mb-1 min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:thin]">
-              <Tabs tabs={abas} activeTab={aba} onChange={setAba} />
+              {visao === "list" ? <Tabs tabs={abas} activeTab={aba} onChange={setAba} /> : aviso ? <p role="status" className="m-0 text-sm text-text-secondary">{aviso}</p> : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <select
@@ -324,14 +398,35 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
             </div>
           </div>
 
-          <DataTable
-            columns={colunas}
-            data={lista}
-            getRowId={(l) => l.id}
-            selectedId={abertoId ?? undefined}
-            onRowClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
-            emptyMessage="No leads in this tab."
-          />
+          {visao === "list" ? (
+            <DataTable
+              columns={colunas}
+              data={lista}
+              getRowId={(l) => l.id}
+              selectedId={abertoId ?? undefined}
+              onRowClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
+              emptyMessage="No leads in this tab."
+            />
+          ) : (
+            <KanbanBoard
+              columns={colunasDoQuadro}
+              getCardId={(l) => l.id}
+              onCardClick={(l) => { setAbertoId(l.id); setAbaDoLead("overview"); setErro(""); }}
+              onCardDrop={soltar}
+              pendingCardIds={movendo}
+              pageSize={30}
+              renderCard={(l) => {
+                const o = origem(l, canais);
+                return (
+                  <div className="min-w-0 space-y-1">
+                    <p className="truncate text-sm font-semibold text-text-primary">{l.full_name || l.email || l.phone || "Lead"}</p>
+                    <p className="truncate text-xs text-text-secondary first-letter:uppercase">{[l.service_label, l.price != null ? libras(l.price) : null].filter(Boolean).join(" · ") || VAZIO}</p>
+                    <p className="truncate text-[11px] text-text-tertiary">{[o.linha, l.postcode, quando(l.last_activity_at)].filter(Boolean).join(" · ")}</p>
+                  </div>
+                );
+              }}
+            />
+          )}
         </div>
       </div>
 
@@ -390,6 +485,8 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
                     ) : null}
                   </div>
                 </section>
+
+                <HistoricoDoLead clientId={aberto.client_id} email={aberto.email} phone={aberto.phone} />
 
                 {["new", "hot", "contacted", "lost"].includes(aberto.status) ? (
                   <section>
