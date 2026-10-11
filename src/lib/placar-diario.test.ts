@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { entreguesNaJanela, escolherAcoes, somarDias, STATUS_ABERTO } from "./placar-diario";
+import { contaDaMeta, entreguesNaJanela, haQuanto, margemPct, somarDias, STATUS_ABERTO } from "./placar-diario";
 
 const job = (o: Record<string, unknown>) => ({ status: "completed", client_price: 200, extras_amount: 0, partner_cost: 120, materials_cost: 0, scheduled_date: "2026-10-09", completed_date: "2026-10-09", ...o }) as never;
 
@@ -24,23 +24,21 @@ describe("daily scoreboard", () => {
     assert.equal(somarDias("2026-10-01", -1), "2026-09-30");
     assert.equal(somarDias("2026-10-11", -30), "2026-09-11");
   });
-  it("picks the 3 most urgent actions, a job with no partner in 2 days first", () => {
-    const a = escolherAcoes({
-      semParceiroUrgente: { n: 1, proximo: "Tue 13 Oct", refs: ["JOB-9699"] },
-      semParceiroDepois: 2,
-      clientesEsperando: 9,
-      finalCheck: { n: 4, valor: 2100 },
-      quotesProntas: { n: 10, valor: 5400 },
-      vencidas: { n: 3, valor: 1061 },
-      contasPendentes: 1,
-    });
-    assert.deepEqual(a.map((x) => x.chave), ["assign_now", "reply", "final_check"]);
-    assert.match(a[0].titulo, /1 job happening/);
-    assert.match(a[0].detalhe, /JOB-9699 · first one on Tue 13 Oct/);
+  it("says how much is left and what each remaining day needs", () => {
+    const c = contaDaMeta(11000, 71000, "2026-10-12");
+    assert.equal(c.falta, 60000);
+    assert.equal(c.diasRestantes, 20);
+    assert.equal(c.porDiaNecessario, 3000);
+    assert.equal(c.pctDaMeta, 15.5);
+    assert.equal(contaDaMeta(80000, 71000, "2026-10-31").falta, 0);
   });
-  it("skips what is empty and copes with Zendesk being unreachable", () => {
-    const a = escolherAcoes({ semParceiroUrgente: { n: 0, proximo: null, refs: [] }, semParceiroDepois: 0, clientesEsperando: null, finalCheck: { n: 0, valor: 0 }, quotesProntas: { n: 2, valor: 800 }, vencidas: { n: 0, valor: 0 }, contasPendentes: 0 });
-    assert.deepEqual(a.map((x) => x.chave), ["send_quotes"]);
-    assert.equal(escolherAcoes({ semParceiroUrgente: { n: 0, proximo: null, refs: [] }, semParceiroDepois: 0, clientesEsperando: 0, finalCheck: { n: 0, valor: 0 }, quotesProntas: { n: 0, valor: 0 }, vencidas: { n: 0, valor: 0 }, contasPendentes: 0 }).length, 0);
+  it("gross margin is profit over revenue", () => {
+    assert.equal(margemPct({ jobs: 2, receita: 400, margem: 160 }), 40);
+    assert.equal(margemPct({ jobs: 0, receita: 0, margem: 0 }), 0);
+  });
+  it("waiting time reads in hours, then days", () => {
+    assert.equal(haQuanto(0), "less than 1h");
+    assert.equal(haQuanto(5), "5h");
+    assert.equal(haQuanto(120), "5 days");
   });
 });

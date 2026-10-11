@@ -1,7 +1,11 @@
 /**
- * Placar diário (dono, 11/10/2026: "brief de volta com os números certos, para ver o
- * placar todo dia rumo à meta"). Só números do banco, sem IA: o brief antigo foi
+ * Placar diário (dono, 11/10/2026). Só números do banco, sem IA: o brief antigo foi
  * desligado em 05/10 porque contava cancelado e job aprovado como "aberto".
+ *
+ * O e-mail tem só três blocos, a pedido do dono:
+ *  1. faturamento do mês até agora, a meta e quanto falta
+ *  2. leads do mês, taxa de conversão e margem bruta
+ *  3. o que precisa de atenção urgente (reclamação, cliente sem resposta, job sem parceiro)
  *
  * As definições:
  *  - job ENTREGUE num dia = concluído naquele dia (relatório final > cronômetro >
@@ -11,7 +15,6 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveJobCompletionYmd } from "@/lib/job-completion-anchor";
-import { alertasDeAutomacao, medirDivisao, type Alertas, type Divisao } from "@/lib/divisao-automacao";
 
 export const META_JOBS_POR_DIA = () => Number(process.env.META_JOBS_POR_DIA?.trim() || "10");
 /** R$ 500 mil por mês a ~R$ 7 por libra. */
@@ -61,141 +64,137 @@ export function entreguesNaJanela(jobs: JobDoPlacar[], deYmd: string, ateYmd: st
   return { jobs: n, receita: r2(receita), margem: r2(receita - custo) };
 }
 
-/** Uma ação candidata para "as 3 do dia". `peso` maior sobe na lista. */
-export type Acao = { chave: string; titulo: string; detalhe: string; peso: number };
-
-/**
- * As 3 ações que mais movem o dia (dono, 11/10/2026). A ordem é de urgência: job que
- * acontece em até 2 dias sem parceiro vem antes de tudo; depois cliente esperando
- * resposta, dinheiro parado em final check, quote pronta para mandar, fatura vencida
- * e conta de empresa esperando aprovação. Sem banco: testável.
- */
-export function escolherAcoes(c: {
-  semParceiroUrgente: { n: number; proximo: string | null; refs: string[] };
-  semParceiroDepois: number;
-  clientesEsperando: number | null;
-  finalCheck: { n: number; valor: number };
-  quotesProntas: { n: number; valor: number };
-  vencidas: { n: number; valor: number };
-  contasPendentes: number;
-}): Acao[] {
-  const gbp0 = (v: number) => `£${v.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
-  const s = (n: number) => (n === 1 ? "" : "s");
-  const todas: Acao[] = [];
-  if (c.semParceiroUrgente.n > 0)
-    todas.push({ chave: "assign_now", peso: 100, titulo: `Assign a partner to ${c.semParceiroUrgente.n} job${s(c.semParceiroUrgente.n)} happening in the next 2 days`, detalhe: `${c.semParceiroUrgente.refs.slice(0, 4).join(", ")}${c.semParceiroUrgente.proximo ? ` · first one on ${c.semParceiroUrgente.proximo}` : ""}` });
-  if ((c.clientesEsperando ?? 0) > 0)
-    todas.push({ chave: "reply", peso: 90, titulo: `Reply to ${c.clientesEsperando} customer${s(c.clientesEsperando!)} waiting on us`, detalhe: "Zendesk · Action Required" });
-  if (c.finalCheck.n > 0)
-    todas.push({ chave: "final_check", peso: 80, titulo: `Approve ${c.finalCheck.n} job${s(c.finalCheck.n)} in final check`, detalhe: `${gbp0(c.finalCheck.valor)} waiting to be invoiced or charged` });
-  if (c.quotesProntas.n > 0)
-    todas.push({ chave: "send_quotes", peso: 70, titulo: `Send ${c.quotesProntas.n} quote${s(c.quotesProntas.n)} that ${c.quotesProntas.n === 1 ? "is" : "are"} ready`, detalhe: `${gbp0(c.quotesProntas.valor)} on the table · Quotes → Ready to send` });
-  if (c.semParceiroDepois > 0)
-    todas.push({ chave: "assign_later", peso: 60, titulo: `Assign a partner to ${c.semParceiroDepois} job${s(c.semParceiroDepois)} later this week`, detalhe: "Jobs → Unassigned" });
-  if (c.vencidas.n > 0)
-    todas.push({ chave: "chase_money", peso: 50, titulo: `Chase ${c.vencidas.n} overdue invoice${s(c.vencidas.n)}`, detalhe: `${gbp0(c.vencidas.valor)} from accounts and customers` });
-  if (c.contasPendentes > 0)
-    todas.push({ chave: "approve_accounts", peso: 40, titulo: `Approve ${c.contasPendentes} business account${s(c.contasPendentes)} waiting`, detalhe: "Accounts → Onboarding" });
-  return todas.sort((a, b) => b.peso - a.peso).slice(0, 3);
-}
+export type Urgente = { tipo: "complaint" | "no_reply" | "no_partner" | "late" | "card"; texto: string };
 
 export type Placar = {
   hoje: string;
-  ontem: Janela;
-  seteDias: Janela & { porDia: number };
-  trintaDias: Janela & { pctDaMeta: number };
-  metaJobsPorDia: number;
-  metaMensal: number;
-  hojeAgendados: number;
-  hojeSemParceiro: number;
-  abertos: number;
-  semParceiro: number;
-  emFinalCheck: number;
-  aReceber: { faturas: number; valor: number };
-  /** Vencidas de contas e clientes: é o que se cobra. */
-  vencidas: { faturas: number; valor: number };
-  /** Passaram da data, mas são de plataforma (Housekeep, Fantastic, Checkatrade): pagam no ciclo delas. */
-  plataformas: { faturas: number; valor: number };
-  novosOntem: { jobs: number; leads: number; quotes: number };
-  /** As 3 ações do dia, da mais urgente para a menos. */
-  acoes: Acao[];
-  divisao: Divisao;
-  alertas: Alertas;
+  /** Mês corrente de Londres, do dia 1 até agora. */
+  mes: Janela & { margemPct: number; meta: number; falta: number; pctDaMeta: number; diasRestantes: number; porDiaNecessario: number };
+  /** Leads que chegaram até nós no mês (site, WhatsApp, Checkatrade, lançados à mão). Lista de prospecção importada não é lead. */
+  leads: { total: number; porCanal: Array<{ canal: string; n: number }>; convertidos: number; taxa: number };
+  urgentes: Urgente[];
 };
+
+const horasDesde = (iso: string, agora: Date) => Math.max(0, Math.round((agora.getTime() - Date.parse(iso)) / 3_600_000));
+export function haQuanto(horas: number): string {
+  if (horas < 1) return "less than 1h";
+  if (horas < 48) return `${horas}h`;
+  return `${Math.round(horas / 24)} days`;
+}
+
+/** Margem bruta em %, uma casa. Receita zero dá 0. */
+export function margemPct(j: Janela): number {
+  return j.receita > 0 ? Math.round((j.margem / j.receita) * 1000) / 10 : 0;
+}
+
+/** Quanto falta para a meta e quanto por dia até o fim do mês. Sem banco: testável. */
+export function contaDaMeta(receita: number, meta: number, hojeYmd: string) {
+  const [ano, mes, dia] = hojeYmd.split("-").map(Number);
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const diasRestantes = Math.max(1, ultimoDia - dia + 1);
+  const falta = Math.max(0, Math.round((meta - receita) * 100) / 100);
+  return { falta, pctDaMeta: Math.round((receita / meta) * 1000) / 10, diasRestantes, porDiaNecessario: Math.round(falta / diasRestantes) };
+}
+
+type TicketZd = { id: number; subject: string; updated_at: string; tags: string[] };
+
+/** Tickets do Zendesk que pedem gente: reclamação que o Harvey detectou e cliente esperando resposta. */
+async function ticketsUrgentes(): Promise<{ reclamacoes: TicketZd[]; semResposta: TicketZd[] }> {
+  try {
+    const { isZendeskConfigured, zendeskApi } = await import("@/lib/zendesk");
+    if (!isZendeskConfigured()) return { reclamacoes: [], semResposta: [] };
+    const busca = (q: string) =>
+      zendeskApi<{ results?: TicketZd[] }>(`search.json?query=${encodeURIComponent(q)}&sort_by=updated_at&sort_order=asc&per_page=30`)
+        .then((r) => r.results ?? [])
+        .catch(() => [] as TicketZd[]);
+    const [reclamacoes, semResposta] = await Promise.all([
+      busca("type:ticket status<solved tags:harvey_class__reclamacao"),
+      busca("type:ticket status<solved tags:reply_awaiting"),
+    ]);
+    return { reclamacoes, semResposta };
+  } catch {
+    return { reclamacoes: [], semResposta: [] };
+  }
+}
 
 export async function montarPlacar(sb: SupabaseClient, agora = new Date()): Promise<Placar> {
   const hoje = ymdDeLondres(agora);
-  const ontem = somarDias(hoje, -1);
-  const desde = somarDias(hoje, -45);
+  const inicioMes = `${hoje.slice(0, 8)}01`;
 
+  // 1. Faturamento e margem do mês: jobs entregues, pela data de conclusão.
   const { data: jobsRaw } = await sb
     .from("jobs")
     .select("status, client_price, extras_amount, partner_cost, materials_cost, scheduled_date, scheduled_start_at, completed_date, partner_timer_ended_at, final_report, partner_id, created_at")
     .is("deleted_at", null)
-    .gte("scheduled_date", desde)
+    .gte("scheduled_date", somarDias(inicioMes, -21))
     .limit(5000);
-  const jobs = (jobsRaw ?? []) as JobDoPlacar[];
+  const doMes = entreguesNaJanela((jobsRaw ?? []) as JobDoPlacar[], inicioMes, hoje);
+  const meta = META_MENSAL_GBP();
 
-  const d7 = entreguesNaJanela(jobs, somarDias(hoje, -7), ontem);
-  const d30 = entreguesNaJanela(jobs, somarDias(hoje, -30), ontem);
-
-  const { data: abertosRaw } = await sb.from("jobs").select("reference, status, partner_id, scheduled_date, client_price, extras_amount").is("deleted_at", null).in("status", [...STATUS_ABERTO]).limit(5000);
-  const abertos = (abertosRaw ?? []) as Array<{ reference: string; status: string; partner_id: string | null; scheduled_date: string | null; client_price: number | null; extras_amount: number | null }>;
-  const deHoje = abertos.filter((j) => (j.scheduled_date ?? "").slice(0, 10) === hoje);
-
-  const { data: fat } = await sb.from("invoices").select("status, due_date, amount, amount_paid, source_account_id").is("deleted_at", null).in("status", ["pending", "overdue", "partially_paid"]).limit(5000);
-  const faturas = ((fat ?? []) as Array<{ status: string; due_date: string | null; amount: number | null; amount_paid: number | null; source_account_id: string | null }>).map((f) => ({ ...f, saldo: Number(f.amount ?? 0) - Number(f.amount_paid ?? 0) })).filter((f) => f.saldo > 0.02);
-  // Plataforma = conta com o lembrete de vencida desligado (mig 320): paga pelo extrato dela.
-  const { data: plat } = await sb.from("accounts").select("id").eq("overdue_reminders", false);
-  const ehPlataforma = new Set(((plat ?? []) as { id: string }[]).map((a) => a.id));
-  const passadas = faturas.filter((f) => f.due_date && f.due_date.slice(0, 10) < hoje);
-  const vencidas = passadas.filter((f) => !f.source_account_id || !ehPlataforma.has(f.source_account_id));
-  const dePlataforma = passadas.filter((f) => f.source_account_id && ehPlataforma.has(f.source_account_id));
-  const soma = (l: Array<{ saldo: number }>) => Math.round(l.reduce((t, f) => t + f.saldo, 0) * 100) / 100;
-
-  const inicioOntem = `${ontem}T00:00:00Z`, inicioHoje = `${hoje}T00:00:00Z`;
-  const conta = async (t: string) => (await sb.from(t).select("id", { count: "exact", head: true }).gte("created_at", inicioOntem).lt("created_at", inicioHoje)).count ?? 0;
-  const [jobsNovos, leadsNovos, quotesNovas, divisao, alertas] = await Promise.all([conta("jobs"), conta("site_leads"), conta("quotes"), medirDivisao(sb, 7), alertasDeAutomacao(sb, agora)]);
-
-  // As 3 ações do dia.
-  const semParceiro = abertos.filter((j) => !j.partner_id && j.status !== "on_hold" && j.status !== "final_check");
-  const limite = somarDias(hoje, 2);
-  const urgentes = semParceiro.filter((j) => j.scheduled_date && j.scheduled_date.slice(0, 10) <= limite).sort((a, b) => String(a.scheduled_date).localeCompare(String(b.scheduled_date)));
-  const emFinal = abertos.filter((j) => j.status === "final_check");
-  const [{ data: prontas }, { count: contasPendentes }, clientesEsperando] = await Promise.all([
-    sb.from("quotes").select("total_value").eq("status", "quote_ready").is("deleted_at", null).limit(500),
-    sb.from("accounts").select("id", { count: "exact", head: true }).eq("status", "onboarding").is("deleted_at", null),
-    filaActionRequired(),
+  // 2. Leads do mês e quantos viraram cliente. Lead = quem chegou até nós: site, WhatsApp e
+  // lançados à mão (site_leads) mais os pedidos do Checkatrade (cliente com a marca
+  // `checkatrade-lead:`). Quem veio do Checkatrade e respondeu no WhatsApp é a mesma pessoa:
+  // conta uma vez, como Checkatrade, pelo telefone.
+  const inicioIso = `${inicioMes}T00:00:00Z`;
+  const fim9 = (t: string | null | undefined) => (t ?? "").replace(/\D/g, "").slice(-9);
+  const [{ data: leadsRaw }, { data: ckRaw }] = await Promise.all([
+    sb.from("site_leads").select("channel, phone, won_at").gte("created_at", inicioIso).limit(5000),
+    sb.from("clients").select("id, phone").gte("created_at", inicioIso).ilike("notes", "%checkatrade-lead:%").limit(5000),
   ]);
-  const acoes = escolherAcoes({
-    semParceiroUrgente: { n: urgentes.length, proximo: urgentes[0]?.scheduled_date ? diaLongo(urgentes[0].scheduled_date.slice(0, 10)) : null, refs: urgentes.map((j) => j.reference) },
-    semParceiroDepois: semParceiro.length - urgentes.length,
-    clientesEsperando,
-    finalCheck: { n: emFinal.length, valor: emFinal.reduce((t, j) => t + Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0), 0) },
-    quotesProntas: { n: (prontas ?? []).length, valor: (prontas ?? []).reduce((t, q) => t + Number((q as { total_value?: number }).total_value ?? 0), 0) },
-    vencidas: { n: vencidas.length, valor: soma(vencidas) },
-    contasPendentes: contasPendentes ?? 0,
-  });
+  const ck = (ckRaw ?? []) as Array<{ id: string; phone: string | null }>;
+  const telefonesCk = new Set(ck.map((c) => fim9(c.phone)).filter((t) => t.length === 9));
+  const doSite = ((leadsRaw ?? []) as Array<{ channel: string | null; phone: string | null; won_at: string | null }>).filter((l) => !telefonesCk.has(fim9(l.phone)));
+  const canais = new Map<string, number>();
+  for (const l of doSite) canais.set(l.channel || "website", (canais.get(l.channel || "website") ?? 0) + 1);
+  if (ck.length) canais.set("checkatrade", ck.length);
+  let ckComJob = 0;
+  for (let i = 0; i < ck.length; i += 100) {
+    const { data } = await sb.from("jobs").select("client_id").in("client_id", ck.slice(i, i + 100).map((c) => c.id)).is("deleted_at", null).not("status", "in", "(cancelled,deleted)");
+    ckComJob += new Set(((data ?? []) as Array<{ client_id: string }>).map((j) => j.client_id)).size;
+  }
+  const totalLeads = doSite.length + ck.length;
+  const convertidos = doSite.filter((l) => l.won_at).length + ckComJob;
+
+  // 3. Atenção urgente.
+  const urgentes: Urgente[] = [];
+  const { data: emEspera } = await sb.from("jobs").select("reference, client_name, on_hold_at").eq("status", "on_hold").eq("on_hold_reason_preset_id", "complaint").is("deleted_at", null).limit(50);
+  for (const j of (emEspera ?? []) as Array<{ reference: string; client_name: string | null; on_hold_at: string | null }>)
+    urgentes.push({ tipo: "complaint", texto: `${j.reference} · ${j.client_name ?? "customer"} · complaint open${j.on_hold_at ? ` for ${haQuanto(horasDesde(j.on_hold_at, agora))}` : ""}` });
+  const zd = await ticketsUrgentes();
+  for (const t of zd.reclamacoes)
+    urgentes.push({ tipo: "complaint", texto: `#${t.id} ${t.subject.slice(0, 60)} · complaint${t.tags.includes("reply_awaiting") ? `, customer waiting ${haQuanto(horasDesde(t.updated_at, agora))}` : ""}` });
+  const jaListados = new Set(zd.reclamacoes.map((t) => t.id));
+  for (const t of zd.semResposta.filter((x) => !jaListados.has(x.id)))
+    urgentes.push({ tipo: "no_reply", texto: `#${t.id} ${t.subject.slice(0, 60)} · no reply for ${haQuanto(horasDesde(t.updated_at, agora))}` });
+  const { data: semParceiro } = await sb
+    .from("jobs")
+    .select("reference, scheduled_date, client_name")
+    .is("deleted_at", null)
+    .is("partner_id", null)
+    .in("status", ["unassigned", "auto_assigning", "scheduled"])
+    .gte("scheduled_date", hoje)
+    .lte("scheduled_date", somarDias(hoje, 2))
+    .order("scheduled_date", { ascending: true })
+    .limit(30);
+  for (const j of (semParceiro ?? []) as Array<{ reference: string; scheduled_date: string; client_name: string | null }>)
+    urgentes.push({ tipo: "no_partner", texto: `${j.reference} · ${diaLongo(j.scheduled_date.slice(0, 10))} · no partner yet` });
+  const { data: atrasados } = await sb.from("jobs").select("reference, scheduled_date, partner_name").eq("status", "late").is("deleted_at", null).limit(30);
+  for (const j of (atrasados ?? []) as Array<{ reference: string; scheduled_date: string | null; partner_name: string | null }>)
+    urgentes.push({ tipo: "late", texto: `${j.reference} · late${j.partner_name ? ` · ${j.partner_name}` : ""}` });
+  const { data: cartao } = await sb.from("jobs").select("reference, card_refused_reason").in("card_charge_status", ["refused", "requires_action"]).eq("status", "final_check").is("deleted_at", null).limit(30);
+  for (const j of (cartao ?? []) as Array<{ reference: string; card_refused_reason: string | null }>)
+    urgentes.push({ tipo: "card", texto: `${j.reference} · card refused${j.card_refused_reason ? ` (${j.card_refused_reason})` : ""}` });
 
   return {
     hoje,
-    acoes,
-    ontem: entreguesNaJanela(jobs, ontem, ontem),
-    seteDias: { ...d7, porDia: Math.round((d7.jobs / 7) * 10) / 10 },
-    trintaDias: { ...d30, pctDaMeta: Math.round((d30.receita / META_MENSAL_GBP()) * 1000) / 10 },
-    metaJobsPorDia: META_JOBS_POR_DIA(),
-    metaMensal: META_MENSAL_GBP(),
-    hojeAgendados: deHoje.length,
-    hojeSemParceiro: deHoje.filter((j) => !j.partner_id).length,
-    abertos: abertos.length,
-    semParceiro: abertos.filter((j) => !j.partner_id && j.status !== "on_hold").length,
-    emFinalCheck: abertos.filter((j) => j.status === "final_check").length,
-    aReceber: { faturas: faturas.length, valor: soma(faturas) },
-    vencidas: { faturas: vencidas.length, valor: soma(vencidas) },
-    plataformas: { faturas: dePlataforma.length, valor: soma(dePlataforma) },
-    novosOntem: { jobs: jobsNovos, leads: leadsNovos, quotes: quotesNovas },
-    divisao,
-    alertas,
+    mes: { ...doMes, margemPct: margemPct(doMes), meta, ...contaDaMeta(doMes.receita, meta, hoje) },
+    leads: {
+      total: totalLeads,
+      porCanal: [...canais].sort((a, b) => b[1] - a[1]).map(([canal, n]) => ({ canal, n })),
+      convertidos,
+      taxa: totalLeads ? Math.round((convertidos / totalLeads) * 1000) / 10 : 0,
+    },
+    urgentes,
   };
 }
 
@@ -203,49 +202,44 @@ const gbp = (v: number) => `£${v.toLocaleString("en-GB", { maximumFractionDigit
 function diaLongo(ymd: string): string {
   return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
-
-/** Quantos tickets esperam resposta nossa no Zendesk (view ⚡ Action Required). Falhou, null. */
-async function filaActionRequired(): Promise<number | null> {
-  try {
-    const { isZendeskConfigured, zendeskApi } = await import("@/lib/zendesk");
-    if (!isZendeskConfigured()) return null;
-    const view = process.env.ZENDESK_VIEW_ACTION_REQUIRED?.trim() || "5685314898719";
-    const r = await zendeskApi<{ view_count?: { value?: number | null } }>(`views/${view}/count.json`);
-    const n = r.view_count?.value;
-    return typeof n === "number" ? n : null;
-  } catch {
-    return null;
-  }
-}
+const mesLongo = (ymd: string) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
 
 export function assuntoDoPlacar(p: Placar): string {
-  return `Fixfy · ${diaLongo(p.hoje)} · ${p.seteDias.porDia} jobs a day (goal ${p.metaJobsPorDia}) · ${p.trintaDias.pctDaMeta}% of the monthly goal${p.alertas.total ? ` · ${p.alertas.total} to fix` : ""}`;
+  return `Fixfy · ${diaLongo(p.hoje)} · ${gbp(p.mes.receita)} this month, ${gbp(p.mes.falta)} to go${p.urgentes.length ? ` · ${p.urgentes.length} urgent` : ""}`;
 }
 
+const GRUPOS: Array<{ tipo: Urgente["tipo"]; titulo: string }> = [
+  { tipo: "complaint", titulo: "Complaints" },
+  { tipo: "no_reply", titulo: "Customers with no reply" },
+  { tipo: "no_partner", titulo: "Jobs in the next 2 days with no partner" },
+  { tipo: "late", titulo: "Late jobs" },
+  { tipo: "card", titulo: "Card refused" },
+];
+
 export function placarEmHtml(p: Placar): string {
-  const linha = (rotulo: string, valor: string, nota = "") =>
-    `<tr><td style="padding:7px 0;color:#5b6080;font:14px/1.4 -apple-system,Segoe UI,sans-serif">${rotulo}</td><td style="padding:7px 0;text-align:right;font:600 15px/1.4 -apple-system,Segoe UI,sans-serif;color:#0d1030">${valor}${nota ? `<div style="font:400 12px/1.3 -apple-system,Segoe UI,sans-serif;color:#8a8fa8">${nota}</div>` : ""}</td></tr>`;
-  const bloco = (titulo: string, linhas: string) =>
-    `<h3 style="margin:22px 0 4px;font:700 12px/1 -apple-system,Segoe UI,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#ED4B00">${titulo}</h3><table style="width:100%;border-collapse:collapse">${linhas}</table>`;
-  const pct = Math.min(100, p.trintaDias.pctDaMeta);
-  const alertas = [
-    ...p.alertas.cartaoRecusado, ...p.alertas.cobrancaPresa, ...p.alertas.semSelfBill, ...p.alertas.payday,
-  ];
+  const F = "-apple-system,Segoe UI,sans-serif";
+  const esc = (t: string) => t.replace(/[<>&]/g, "");
+  const cartao = (rotulo: string, valor: string, nota: string) =>
+    `<td style="width:33.3%;padding:12px 10px;vertical-align:top;border:1px solid #e3e5f0;border-radius:10px"><div style="font:600 11px/1 ${F};letter-spacing:.07em;text-transform:uppercase;color:#5b6080">${rotulo}</div><div style="margin-top:6px;font:800 22px/1.1 ${F};color:#020040">${valor}</div><div style="margin-top:4px;font:400 12px/1.35 ${F};color:#8a8fa8">${nota}</div></td>`;
+  const pct = Math.min(100, p.mes.pctDaMeta);
+  const canais = p.leads.porCanal.map((c) => `${c.n} ${c.canal}`).join(" · ") || "none yet";
+  const grupos = GRUPOS.map((g) => ({ ...g, itens: p.urgentes.filter((u) => u.tipo === g.tipo) })).filter((g) => g.itens.length);
   return `<div style="max-width:560px;margin:0 auto;padding:24px 20px;background:#ffffff">
-  <p style="margin:0;font:800 22px/1.2 -apple-system,Segoe UI,sans-serif;color:#020040">Fixfy scoreboard · ${diaLongo(p.hoje)}</p>
-  <p style="margin:6px 0 14px;font:14px/1.4 -apple-system,Segoe UI,sans-serif;color:#5b6080">${gbp(p.trintaDias.receita)} delivered in the last 30 days, ${p.trintaDias.pctDaMeta}% of the ${gbp(p.metaMensal)} monthly goal.</p>
-  <div style="height:12px;border-radius:99px;background:#eceef5;overflow:hidden"><div style="height:12px;width:${pct}%;background:#ED4B00;border-radius:99px"></div></div>
-  <div style="margin:20px 0 4px;padding:14px 16px;border-radius:12px;background:#020040">
-    <p style="margin:0 0 8px;font:700 12px/1 -apple-system,Segoe UI,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#ff9a5c">${p.acoes.length ? `Do these ${p.acoes.length === 1 ? "first" : `${p.acoes.length} first`}` : "Nothing urgent today"}</p>
-    ${p.acoes.length ? p.acoes.map((a, i) => `<p style="margin:${i ? 10 : 0}px 0 0;font:600 15px/1.35 -apple-system,Segoe UI,sans-serif;color:#ffffff">${i + 1}. ${a.titulo}<span style="display:block;font:400 13px/1.35 -apple-system,Segoe UI,sans-serif;color:#b9bce6">${a.detalhe}</span></p>`).join("") : `<p style="margin:0;font:400 14px/1.4 -apple-system,Segoe UI,sans-serif;color:#ffffff">No job without a partner, nobody waiting on a reply. Time to sell.</p>`}
-  </div>
-  ${bloco("Pace", linha("Jobs a day, last 7 days", `${p.seteDias.porDia}`, `goal ${p.metaJobsPorDia} a day`) + linha("Yesterday", `${p.ontem.jobs} jobs · ${gbp(p.ontem.receita)}`, `margin ${gbp(p.ontem.margem)}`) + linha("Last 7 days", `${p.seteDias.jobs} jobs · ${gbp(p.seteDias.receita)}`, `margin ${gbp(p.seteDias.margem)}`) + linha("Last 30 days", `${p.trintaDias.jobs} jobs · ${gbp(p.trintaDias.receita)}`, `margin ${gbp(p.trintaDias.margem)}`))}
-  ${bloco("Today", linha("Jobs scheduled today", `${p.hojeAgendados}`, p.hojeSemParceiro ? `${p.hojeSemParceiro} with no partner yet` : "all have a partner") + linha("Open jobs", `${p.abertos}`, `${p.semParceiro} with no partner · ${p.emFinalCheck} in final check`))}
-  ${bloco("Came in yesterday", linha("New jobs", `${p.novosOntem.jobs}`) + linha("New leads", `${p.novosOntem.leads}`) + linha("New quotes", `${p.novosOntem.quotes}`))}
-  ${bloco("Money", linha("To receive", `${gbp(p.aReceber.valor)}`, `${p.aReceber.faturas} invoices`) + linha("Overdue (accounts and customers)", `${gbp(p.vencidas.valor)}`, `${p.vencidas.faturas} invoices to chase`) + linha("Platforms past their date", `${gbp(p.plataformas.valor)}`, `${p.plataformas.faturas} invoices, paid on their own cycle`))}
-  ${bloco("Who did the work, last 7 days", linha("Harvey", `${p.divisao.pct.harvey}%`, "goal 50%") + linha("System", `${p.divisao.pct.system}%`, "goal 30%") + linha("Team", `${p.divisao.pct.human}%`, "goal 20%"))}
-  <h3 style="margin:22px 0 6px;font:700 12px/1 -apple-system,Segoe UI,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:${alertas.length ? "#c5332b" : "#17894c"}">${alertas.length ? `Needs a person today · ${alertas.length}` : "Nothing waiting on a person"}</h3>
-  ${alertas.length ? `<ul style="margin:0;padding-left:18px;font:14px/1.5 -apple-system,Segoe UI,sans-serif;color:#0d1030">${alertas.map((a) => `<li>${a.replace(/[<>&]/g, "")}</li>`).join("")}</ul>` : ""}
-  <p style="margin:24px 0 0;font:12px/1.4 -apple-system,Segoe UI,sans-serif;color:#8a8fa8">Numbers straight from the OS. A job counts on the day it was finished. Open the OS: app.getfixfy.com/automation</p>
+  <p style="margin:0;font:600 12px/1 ${F};letter-spacing:.08em;text-transform:uppercase;color:#ED4B00">${mesLongo(p.hoje)} so far · ${diaLongo(p.hoje)}</p>
+  <p style="margin:8px 0 0;font:800 34px/1.05 ${F};color:#020040">${gbp(p.mes.receita)}</p>
+  <p style="margin:6px 0 12px;font:400 15px/1.4 ${F};color:#0d1030">Goal ${gbp(p.mes.meta)} · <b>${gbp(p.mes.falta)} to go</b> · ${p.mes.pctDaMeta}% there</p>
+  <div style="height:14px;border-radius:99px;background:#eceef5;overflow:hidden"><div style="height:14px;width:${pct}%;background:#ED4B00;border-radius:99px"></div></div>
+  <p style="margin:8px 0 0;font:400 13px/1.4 ${F};color:#5b6080">${p.mes.jobs} jobs delivered. ${p.mes.diasRestantes} day${p.mes.diasRestantes === 1 ? "" : "s"} left in the month: ${gbp(p.mes.porDiaNecessario)} a day to hit the goal.</p>
+
+  <table style="width:100%;margin-top:20px;border-collapse:separate;border-spacing:6px 0"><tr>
+    ${cartao("Leads", String(p.leads.total), canais)}
+    ${cartao("Conversion", `${p.leads.taxa}%`, `${p.leads.convertidos} became customer${p.leads.convertidos === 1 ? "" : "s"}`)}
+    ${cartao("Gross margin", `${p.mes.margemPct}%`, `${gbp(p.mes.margem)} gross profit`)}
+  </tr></table>
+
+  <p style="margin:26px 0 8px;font:700 12px/1 ${F};letter-spacing:.08em;text-transform:uppercase;color:${p.urgentes.length ? "#c5332b" : "#17894c"}">${p.urgentes.length ? `Needs urgent attention · ${p.urgentes.length}` : "Nothing needs urgent attention"}</p>
+  ${grupos.map((g) => `<p style="margin:12px 0 4px;font:700 14px/1.3 ${F};color:#0d1030">${g.titulo} · ${g.itens.length}</p><ul style="margin:0;padding-left:18px;font:400 14px/1.5 ${F};color:#0d1030">${g.itens.slice(0, 8).map((u) => `<li>${esc(u.texto)}</li>`).join("")}${g.itens.length > 8 ? `<li style="color:#8a8fa8">and ${g.itens.length - 8} more</li>` : ""}</ul>`).join("")}
+
+  <p style="margin:26px 0 0;font:400 12px/1.4 ${F};color:#8a8fa8">Revenue and margin count jobs delivered this month, on the day they were finished. Leads are people who reached us (website, WhatsApp, Checkatrade, added by the team); imported prospect lists are not leads.</p>
 </div>`;
 }
