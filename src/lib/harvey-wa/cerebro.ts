@@ -65,6 +65,8 @@ export function instrucaoDeVoz(nome: string): string {
 export type Resultado = {
   resposta: string | null;
   passarParaEquipe: string | null;
+  /** O que a equipe faz a seguir, dito pelo Harvey: "call", "quote" ou "other". Decide a etapa do ticket. */
+  precisaDe?: string | null;
   checkout: {
     ref: string;
     /** Link do Stripe (cartão); vazio na transferência. */
@@ -216,6 +218,7 @@ const FERRAMENTAS_CLIENTE = [
         type: "object",
         properties: {
           reason: { type: "string", description: "one line in English: what is needed and why" },
+          need: { type: "string", enum: ["call", "quote", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: a person has to price the job (electrical, gas, building work, anything outside the catalogue). other: complaint, bank transfer, existing booking, anything else" },
           details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
         },
         required: ["reason"],
@@ -603,6 +606,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   if (nome === "get_available_dates") return (await site({ action: "slots", services: Array.isArray(a.services) ? a.services : [] })).data;
   if (nome === "hand_off_to_team") {
     r.passarParaEquipe = String(a.reason || "Harvey asked for a person");
+    r.precisaDe = typeof a.need === "string" ? a.need : null;
     r.notaParaEquipe = typeof a.details === "string" ? a.details : null;
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };
   }

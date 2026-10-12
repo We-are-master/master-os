@@ -85,6 +85,14 @@ export const ZD_STATUS_WHATSAPP = 5799929141919;
 /** 🟢 Partner — conversa de parceiro (grupo Partners), fora do Action Required. */
 export const ZD_STATUS_PARTNER = 5722749157407;
 
+/**
+ * Funil de lead (dono, 12/10/2026): status que vivem só no Zendesk, para enxergar a
+ * etapa de cada oportunidade. O OS não sincroniza nenhum deles; só o Harvey grava
+ * To Call e Needs Quote ao passar a conversa para a equipe.
+ */
+export const ZD_STATUS_LEAD = Number(process.env.ZENDESK_STATUS_LEAD_ID?.trim() || "6417913706527");
+export const ZD_STATUS_TO_CALL = Number(process.env.ZENDESK_STATUS_TO_CALL_ID?.trim() || "6417870637599");
+export const ZD_STATUS_NEEDS_QUOTE = Number(process.env.ZENDESK_STATUS_NEEDS_QUOTE_ID?.trim() || "6417917628703");
 /** 🆕 New e 🟡 Open: o ticket ainda não entrou em processo nenhum. */
 export const ZD_STATUS_NEW = 5679191543071;
 export const ZD_STATUS_OPEN = 5679178035743;

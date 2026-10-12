@@ -14,7 +14,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
-import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
 
 const GRUPO_PARCEIROS = "Partners";
@@ -435,6 +435,22 @@ export async function ticketParaCotacao(telefone: string | null): Promise<string
   if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, null].includes(t.custom_status_id)) return "";
   await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: Number(process.env.ZENDESK_STATUS_BIDDING?.trim() || "5688282472223") } } });
   return `ticket ${ticket} → Bidding`;
+}
+
+/**
+ * Etapa do funil ao passar a conversa para a equipe: 📞 To Call ou 📝 Needs Quote.
+ * Só mexe em ticket que ainda está no funil de lead (New, Open, In Conversation, Lead):
+ * depois que existe cotação ou serviço, quem manda no status é o OS.
+ */
+export async function ticketParaEtapa(telefone: string | null, statusId: number): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "";
+  const ticket = await ticketPeloTelefone(telefone);
+  if (!ticket) return "sem ticket";
+  for (let espera = 0; espera < 6 && (await tipoDoTicket(ticket)) === "ai_agent"; espera++) await new Promise((r) => setTimeout(r, 2500));
+  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null } }>(`tickets/${ticket}.json`);
+  if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, null].includes(t.custom_status_id)) return "";
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: statusId } } });
+  return `ticket ${ticket} → ${statusId === ZD_STATUS_TO_CALL ? "To Call" : "Needs Quote"}`;
 }
 
 /** Os tickets abertos que nasceram antes da conversa desta pessoa (lead do Checkatrade, site). */

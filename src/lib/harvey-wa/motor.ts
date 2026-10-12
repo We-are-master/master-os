@@ -10,6 +10,8 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { etapaDaPassagem } from "./etapa-da-passagem";
+import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
 import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
@@ -18,7 +20,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { reservasDoCliente, situacaoDoParceiro } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -417,7 +419,15 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       .join("\n");
     const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
     // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
-    if (/quote/i.test(r.passarParaEquipe)) await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
+    // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
+    // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
+    if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
+      await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
+    } else {
+      // Sem `need` (modelo esqueceu, ou prometeu a equipe sem chamar a ferramenta), o que ele disse ao cliente também conta.
+      const etapa = etapaDaPassagem(r.precisaDe, r.precisaDe ? r.passarParaEquipe : `${r.passarParaEquipe} ${r.resposta ?? ""}`);
+      if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
+    }
     console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
