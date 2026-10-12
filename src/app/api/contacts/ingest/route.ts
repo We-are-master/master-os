@@ -34,7 +34,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
 import { ajustesDoHarvey, janelaAberta } from "@/lib/harvey-wa/ajustes";
 import type { CatalogService } from "@/types/database";
-import { decidirLead, mandarPrimeiroContato, registrarLeadNoOs, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
+import { decidirLead, mandarPrimeiroContato, mandarPrimeiroContatoPorEmail, registrarLeadNoOs, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
 
 type ContactPayload = {
   name?: string | null;
@@ -256,6 +256,11 @@ async function contatarPeloHarvey(ids: string[], contaId: string | null) {
   for (const r of (rows ?? []) as LinhaDeCliente[]) {
     const d = decidirLead(r, catalogo);
     if (d.kind === "pular") continue;
+    if (d.kind === "email") {
+      const e = await mandarPrimeiroContatoPorEmail(d.contato);
+      console.log(`[contacts/ingest] harvey e-mail ${d.contato.nome}: ${e.kind}${e.kind === "falhou" ? ` (${e.motivo})` : ""}`);
+      continue;
+    }
     const res = await mandarPrimeiroContato(sb, d.contato);
     console.log(`[contacts/ingest] harvey ${d.contato.nome}: ${res.kind}${res.kind === "falhou" ? ` (${res.motivo})` : ""}`);
   }

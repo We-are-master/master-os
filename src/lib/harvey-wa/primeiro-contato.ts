@@ -143,9 +143,17 @@ export type LinhaDeCliente = {
   notes: string | null;
 };
 
+export type ContatoPorEmail = { clienteId: string; email: string; nome: string; nomeCompleto: string; servico: string; postcode: string | null; leadExterno: string };
+
 export type DecisaoDoLead =
   | { kind: "mandar"; contato: PrimeiroContato }
+  /** Sem telefone, com e-mail: o primeiro contato vai por e-mail (dono, 12/10/2026). */
+  | { kind: "email"; contato: ContatoPorEmail }
   | { kind: "pular"; motivo: string };
+
+/** Postcode de Londres usado só para decidir o SERVIÇO de quem não informou o seu. */
+const POSTCODE_NEUTRO = "EC1V 2NX";
+const EMAIL_VALIDO = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
  * Lead do banco (clients) → o que vai no template, ou por que não vai. A
@@ -157,19 +165,83 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
   // Só lead do Checkatrade: o template fala "your Checkatrade request". Lead do
   // site também chega com celular pelo ingest e não pode receber esse texto.
   if (!brief.externalId) return { kind: "pular", motivo: "não é lead do Checkatrade" };
-  const d = decideDispatch(brief, catalogo);
+  let d = decideDispatch(brief, catalogo);
+  // Sem postcode não é motivo para perder o lead (dono, 12/10/2026): o template não
+  // usa o postcode, e o Harvey pergunta na conversa antes de dar preço.
+  let semPostcode = false;
+  if (!d.dispatch && d.reason === "sem postcode utilizável") {
+    d = decideDispatch({ ...brief, postcode: POSTCODE_NEUTRO }, catalogo);
+    semPostcode = true;
+  }
+  const nome = /^unnamed/i.test(brief.name ?? "") ? "there" : (firstName(brief.name) ?? "there");
+  // Sem telefone não há WhatsApp, mas com e-mail o primeiro contato sai por lá.
+  if (!d.dispatch && d.reason === "sem telefone utilizável") {
+    const email = (brief.email ?? "").trim().toLowerCase();
+    if (!EMAIL_VALIDO.test(email) || /@getfixfy\.com$/.test(email)) return { kind: "pular", motivo: d.reason };
+    const porEmail = decideDispatch({ ...brief, phone: "07000000000", postcode: (brief.postcode ?? "").trim() || POSTCODE_NEUTRO }, catalogo);
+    if (!porEmail.dispatch) return { kind: "pular", motivo: porEmail.reason };
+    return { kind: "email", contato: { clienteId: r.id, email, nome, nomeCompleto: brief.name ?? "", servico: porEmail.label, postcode: brief.postcode ?? null, leadExterno: brief.externalId } };
+  }
   if (!d.dispatch) return { kind: "pular", motivo: d.reason };
   return {
     kind: "mandar",
     contato: {
       clienteId: r.id,
       telefone: brief.phone!,
-      nome: firstName(brief.name) ?? "there",
+      nome,
       servico: d.label,
-      area: areaDoTemplate(d.postcodeText),
+      area: semPostcode ? "London" : areaDoTemplate(d.postcodeText),
       leadExterno: brief.externalId ?? null,
     },
   };
+}
+
+/** O WhatsApp que cai no Zendesk e no Harvey. */
+const WHATSAPP_DA_FIXFY = "020 4538 4668";
+
+/**
+ * Primeiro contato por E-MAIL, para o lead do Checkatrade que veio sem telefone.
+ *
+ * Sai como comentário público de um ticket novo do Zendesk: o cliente recebe o e-mail
+ * e a resposta dele cai no mesmo ticket. O external_id do lead é a trava: se o ticket
+ * já existe, nada sai de novo. Nunca lança.
+ */
+export async function mandarPrimeiroContatoPorEmail(c: ContatoPorEmail): Promise<{ kind: "enviado"; ticket: number | null } | { kind: "ja_falamos" } | { kind: "falhou"; motivo: string }> {
+  try {
+    const externalId = externalIdDoLead(c.leadExterno);
+    const { tickets } = await zendeskApi<{ tickets: Array<{ id: number }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
+    if (tickets?.length) return { kind: "ja_falamos" };
+    const corpo = [
+      `Hi ${c.nome},`,
+      "",
+      `This is Fixfy. We've just received your Checkatrade request for ${c.servico}.`,
+      "",
+      "Could you reply to this email with a few photos of the job? That way we can give you an accurate price with no surprises.",
+      "",
+      `If it's easier, you can also message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
+      "",
+      "Thank you,",
+      "Fixfy Team",
+    ].join("\n");
+    const r = await zendeskApi<{ ticket: { id: number } }>("tickets.json", {
+      method: "POST",
+      body: {
+        ticket: {
+          subject: assuntoDoLead(c.servico, c.nomeCompleto, c.postcode),
+          comment: { body: corpo, public: true },
+          requester: { name: c.nomeCompleto || "Checkatrade lead", email: c.email },
+          priority: "high",
+          status: "pending",
+          // ai_quote_draft: o Harvey de e-mail não cota em cima; lead_gen segura na view Leads até a resposta.
+          tags: ["lead_checkatrade", "lead_gen", "lead_email_sent", "ai_quote_draft"],
+          external_id: externalId,
+        },
+      },
+    });
+    return { kind: "enviado", ticket: r.ticket?.id ?? null };
+  } catch (e) {
+    return { kind: "falhou", motivo: e instanceof Error ? e.message.slice(0, 240) : "falhou" };
+  }
 }
 
 

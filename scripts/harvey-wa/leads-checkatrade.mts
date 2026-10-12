@@ -23,7 +23,7 @@ for (const l of readFileSync(new URL("../../.env.local", import.meta.url), "utf8
 }
 
 const { createServiceClient } = await import("../../src/lib/supabase/service");
-const { decidirLead, mandarPrimeiroContato, templateDoLeadConfigurado, jaFalamosComEle, telefoneE164 } = await import("../../src/lib/harvey-wa/primeiro-contato");
+const { decidirLead, mandarPrimeiroContato, mandarPrimeiroContatoPorEmail, templateDoLeadConfigurado, jaFalamosComEle, telefoneE164 } = await import("../../src/lib/harvey-wa/primeiro-contato");
 const { ajustesDoHarvey, janelaAberta } = await import("../../src/lib/harvey-wa/ajustes");
 
 const arg = (nome: string, padrao: number) => Number(process.argv.find((a) => a.startsWith(`--${nome}=`))?.split("=")[1] ?? padrao);
@@ -67,6 +67,18 @@ for (const r of leads ?? []) {
   const d = decidirLead(r as never, (catRows ?? []) as never);
   if (d.kind === "pular") {
     conta(`pulado: ${d.motivo}`);
+    continue;
+  }
+  // Sem telefone, com e-mail: o primeiro contato vai por e-mail (o ticket é a trava de repetição).
+  if (d.kind === "email") {
+    if (!ENVIAR) {
+      console.log(`  → e-mail: ${d.contato.nomeCompleto} · ${d.contato.email} · ${d.contato.servico}`);
+      conta("iria receber e-mail");
+      continue;
+    }
+    const e = await mandarPrimeiroContatoPorEmail(d.contato);
+    if (e.kind === "enviado") console.log(`  ✉️ ${d.contato.nomeCompleto} · ${d.contato.email} · ${d.contato.servico}`);
+    conta(e.kind === "enviado" ? "e-mail enviado" : e.kind === "ja_falamos" ? "pulado: já falamos" : `e-mail falhou: ${e.motivo}`);
     continue;
   }
   const tel = telefoneE164(d.contato.telefone);

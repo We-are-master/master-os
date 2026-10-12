@@ -72,7 +72,7 @@ const PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["Gas Safety Certificate", /gas safety cert|\bgsc\b|landlord gas/i],
   ["Gas Safety Check", /\bcp12\b|gas safety check/i],
   ["Energy Performance Certificate", /\bepc\b|energy performance/i],
-  ["Builder", /\bbuild(er|ing)?\b|extension|loft conversion|stud wall|brickwork|blockwork|render|screed|structural|knock through|\brsj\b|steel beam|damp proof|underpin/i],
+  ["Builder", /\bbuild(er|ing)?\b|extension|loft conversion|(?:new|erect|construct|partition)\w*\s+(?:an?\s+)?stud wall|brickwork|blockwork|render|screed|structural|knock through|\brsj\b|steel beam|damp proof|underpin/i],
   ["Carpenter", /carpen|joiner|\bskirting\b|architrave|wardrobe|shelv|\bshelf\b|\bdoor\s*(hang|fit|frame)|kitchen fit|worktop|flooring|laminate|floorboard|staircase|\bbespoke\b|cabinet|cupboard|alcove|\bcat\s*flap\b/i],
   ["Painter", /\b(?:re)?paint(er|ing|ed)?\b|decorat|\bwallpaper|papering|emulsion|gloss|undercoat|redecorat/i],
   // `fit` precisa de `fitted`: "want a wood table top fitted" não casava com
