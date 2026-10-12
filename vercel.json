@@ -12,6 +12,14 @@
     {
       "path": "/api/cron/workforce-self-bills",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/marketing-agente",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/marketing-agente?passo=whatsapp",
+      "schedule": "0 15 * * *"
     }
   ]
 }

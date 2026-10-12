@@ -28,6 +28,8 @@ export async function enviarTemplatePeloZendesk(input: {
   name: string;
   language?: string;
   bodyParams?: string[];
+  /** O pedaço variável do botão de link (template com URL dinâmica). */
+  buttonUrlParam?: string;
 }): Promise<{ messageId: string; to: string }> {
   const destino = telefoneE164(input.to);
   if (!destino) throw new Error(`invalid WhatsApp number: ${input.to}`);
@@ -41,9 +43,14 @@ export async function enviarTemplatePeloZendesk(input: {
         namespace: namespace(),
         name: input.name,
         language: { policy: "deterministic", code: input.language || "en_GB" },
-        components: input.bodyParams?.length
-          ? [{ type: "body", parameters: input.bodyParams.map((text) => ({ type: "text", text })) }]
-          : [],
+        components: [
+          ...(input.bodyParams?.length
+            ? [{ type: "body", parameters: input.bodyParams.map((text) => ({ type: "text", text })) }]
+            : []),
+          ...(input.buttonUrlParam
+            ? [{ type: "button", sub_type: "url", index: 0, parameters: [{ type: "text", text: input.buttonUrlParam }] }]
+            : []),
+        ],
       },
     },
     metadata: { origem: input.name },
