@@ -7,6 +7,7 @@ import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTradeFeeOptions } from "@/lib/invoice-trade-fee-split";
 import { displayBillingReference } from "@/lib/billing-reference";
+import { splitFeeVat } from "@/lib/invoice-fee-vat";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 import {
@@ -42,6 +43,11 @@ export type InvoiceEmailOptions = {
    * Vem de `loadAgentReceiptParty`. Ausente = Schedule B, e-mail de sempre.
    */
   agentParty?: AgentReceiptParty | null;
+  /**
+   * Conta com `invoice_fee_vat` (mig 323): o corpo mostra o serviço do parceiro
+   * sem VAT e a taxa da Fixfy em líquido + VAT, igual ao PDF. Ausente = e-mail de sempre.
+   */
+  feeVat?: { ratePct: number; vatNumber: string } | null;
 };
 
 const PAID_INTRO =
@@ -85,6 +91,46 @@ const B_CHARGES_ROWS = `                <tr>
                   </td>
                 </tr>
 `;
+
+/** Conta com VAT só na taxa: três linhas, e os valores sem "inc VAT". */
+function buildFeeVatChargesRows(trade: number, net: number, vat: number, ratePct: number): string {
+  const linha = (titulo: string, sub: string, valor: number) => `                <tr>
+                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle">
+                          <p style="margin:0; font-size:14px; color:#1A1A1A;">${titulo}</p>
+                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">${sub}</p>
+                        </td>
+                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£${formatMoneyPlain(valor)}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+`;
+  return (
+    linha("Trade services", "Passed through at cost, no VAT", trade) +
+    linha("Fixfy management fee (net)", "Coordination, vetting &amp; quality assurance", net) +
+    linha(`VAT at ${ratePct}%`, "On the Fixfy management fee only", vat)
+  );
+}
+
+/** Conta com VAT só na taxa: o quadro diz de quem é o VAT, em vez de "Need a VAT invoice?". */
+function buildFeeVatBox(vatNumber: string): string {
+  return `          <tr>
+            <td class="px" style="padding:0 40px 24px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">VAT</p>
+                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">Getfixfy Ltd · VAT No. ${escapeHtml(vatNumber)}. VAT is charged on the Fixfy management fee only. Trade services are passed through at cost, with no VAT added by Fixfy.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+`;
+}
 
 /** Schedule B: o quadro "Need a VAT invoice?" de sempre. */
 const B_VAT_BOX = `          <tr>
@@ -637,8 +683,9 @@ export function buildInvoiceClientEmailHTML(
   html = replaceAll(html, "professional_block", agentView ? buildProfessionalBlock(agentView) : "");
   html = replaceAll(html, "job_section_label", agentView ? "JOB" : "JOB COMPLETED");
   html = replaceAll(html, "breakdown_section_label", agentView ? "SERVICES" : "PAYMENT BREAKDOWN");
-  html = replaceAll(html, "charges_rows", agentView ? buildAgentChargesRows(agentView, paid) : B_CHARGES_ROWS);
-  html = replaceAll(html, "vat_box_block", agentView ? buildAgentNoticeBlock(agentView) : B_VAT_BOX);
+  const feeVat = !agentView && options?.feeVat ? { ...splitFeeVat(fee, options.feeVat.ratePct), ...options.feeVat } : null;
+  html = replaceAll(html, "charges_rows", agentView ? buildAgentChargesRows(agentView, paid) : feeVat ? buildFeeVatChargesRows(trade, feeVat.net, feeVat.vat, feeVat.ratePct) : B_CHARGES_ROWS);
+  html = replaceAll(html, "vat_box_block", agentView ? buildAgentNoticeBlock(agentView) : feeVat ? buildFeeVatBox(feeVat.vatNumber) : B_VAT_BOX);
   html = replaceAll(html, "trade_amount", formatMoneyPlain(trade));
   html = replaceAll(html, "fixfy_fee", formatMoneyPlain(fee));
   html = replaceAll(html, "amount_paid_row", amountPaidRow);
