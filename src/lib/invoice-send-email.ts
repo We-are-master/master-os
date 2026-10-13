@@ -1,4 +1,5 @@
 import "server-only";
+import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import {
@@ -176,9 +177,12 @@ export async function sendInvoiceEmail(
       : undefined;
   // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
   const agentParty = await loadAgentReceiptParty(admin, job);
+  // Conta com VAT só na taxa (mig 323): o corpo do e-mail acompanha o PDF.
+  const formatoDaConta = agentParty ? null : await loadAccountInvoiceFormat(admin, inv.source_account_id ?? billing.sourceAccountId ?? null, 0);
+  const feeVat = formatoDaConta ? { ratePct: formatoDaConta.feeVat.ratePct, vatNumber: formatoDaConta.feeVat.vatNumber } : null;
   const emailOpts = emailOptsBase
-    ? { ...emailOptsBase, tradeFeeOptions, agentParty }
-    : { tradeFeeOptions, agentParty };
+    ? { ...emailOptsBase, tradeFeeOptions, agentParty, feeVat }
+    : { tradeFeeOptions, agentParty, feeVat };
 
   const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOptsBase);
   if ("error" in pdfResult) {
