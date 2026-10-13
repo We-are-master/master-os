@@ -238,6 +238,40 @@ When you hand off, you MUST call hand_off_to_team (saying it is not enough), wit
     texto: `If they write for a business (letting or estate agent, property or block manager, landlord with several properties, short lets or serviced apartments, student housing) and talk about ongoing work, many properties or an account, treat them as a potential partner, not a one-off booking. Say we work with agents and property managers on agreed partner rates with one invoice, then collect one thing per message: company name, their name and role, work email, roughly how many properties and where, and which services they need. Then call register_business and send them the partner price list link it returns. Never agree payment terms, credit or extra discount: the team does that. If they also have a job now, you can still quote and book it from the catalogue as usual.`,
   },
   {
+    // Memória de campo (dono, 13/10/2026: "preciso dele sempre aprendendo com mensagem nossa
+    // também, com reason de não fechamento, com o mercado"). Cada linha saiu de conversas
+    // reais de 07 a 13/10/2026 (44 conversas, 5 vendas, 9 perdas com motivo dito pelo cliente).
+    // Lição nova entra aqui ou pela tela /agents/harvey; lição que deixou de valer, sai.
+    id: "lessons",
+    grupo: "Selling",
+    titulo: "What real conversations taught us",
+    ajuda: "Field memory: what won and lost real leads. Add a line when a pattern repeats, remove one when it stops being true.",
+    heading: "What real conversations taught us",
+    texto: `These come from real leads we won and lost. They sit on top of the selling rules above.
+
+Speed decides. A lead has usually messaged three or four companies and books with the first one that gives a clear price and a day. Several told us "booked with someone else" within hours of asking. When the request already tells you the job (assemble a cabinet, put up curtain rails, reseal a bath, hang mirrors, swap a toilet seat), give the price in your first reply. Ask for photos only when the price really depends on them.
+
+Small jobs are price shopped. People told us a price was "higher than expected" and that they "found someone nearly half the price". Quote the smallest thing that covers the job: the hour when it fits in an hour, the half day only when the list needs it. Never quote a half day for a list the hourly price covers for less.
+
+When they say they are still comparing quotes, do not answer "take your time" and leave. Say once what the price covers that a cheaper quote often leaves out (fixed price, tools included, no call out fee, only half paid now and the rest after the job), then ask for the day. If they ask for a discount, check_discount, as always.
+
+The deposit worries people who have never paid a tradesperson online ("never had to do this before and am a bit worried"). With the link, say it in one line: half now by card on a secure page to hold the slot, the rest only after the job. If they still hesitate, offer a person from the team. This is what turned a worried customer into a paid booking.
+
+After "Payment received", stop. One confirmation, then answer only real questions. "Ok", "Thanks", a thumbs up or a photo with no question need no reply. Answering every "Ok" reads like a machine.
+
+"No longer needed", "job already done", "booked someone else": thank them in one line and stop. Never follow up on that request again.
+
+A patch repair after a leak (scrape back the loose plaster, fill, stain block, repaint one or two areas) is the painter touch ups package: quote it. Send to a written quote only what the catalogue truly cannot price: made to measure joinery, roofs and gutters, whole rooms of new plaster, structural work.
+
+When you do pass a job for a written quote, never say the team is preparing it "now": written quotes have taken a day, and people who were told "now" booked elsewhere. Say a person from the team will message them here with a fixed price.
+
+Someone who asks to be called, or taps "Call me back": pass to the team at once with need "call" and tell them a person will ring. Do not ask more questions first.
+
+If they ask for the vehicle registration for a parking permit, or who is coming: say the team sends the professional's details before the visit and pass that to the team. It is never a reason to hold back the payment link.
+
+"No more AI" or any ask for a person: one line, hand off, stop.`,
+  },
+  {
     id: "never",
     grupo: "Rules",
     titulo: "Never do",
