@@ -68,3 +68,33 @@ test("a lista cresce em degraus e depois abre", () => {
 test("o template do WhatsApp tem as quatro variáveis que o envio preenche", () => {
   assert.deepEqual(TEMPLATE_DO_WHATSAPP.corpo.match(/\{\{\d\}\}/g), ["{{1}}", "{{2}}", "{{3}}", "{{4}}"]);
 });
+
+import { SEQUENCIA_B2B, escolherOnda, htmlDoB2B, quandoSai } from "./b2b";
+
+test("agências: 16 e-mails em ordem, 8 de oferta e 8 de nutrição, todos com PDF, reunião e saída", () => {
+  assert.equal(SEQUENCIA_B2B.length, 16);
+  assert.equal(SEQUENCIA_B2B.filter((e) => e.fase === "oferta").length, 8);
+  const datas = SEQUENCIA_B2B.map((e) => quandoSai(e, "2026-10-15").getTime());
+  assert.deepEqual(datas, [...datas].sort((a, b) => a - b));
+  assert.equal(quandoSai(SEQUENCIA_B2B[0], "2026-10-15").toISOString(), "2026-10-15T07:30:00.000Z");
+  assert.equal(quandoSai(SEQUENCIA_B2B[8], "2026-10-15").toISOString(), "2026-11-16T08:30:00.000Z");
+  for (const e of SEQUENCIA_B2B) {
+    const html = htmlDoB2B(e);
+    assert.ok(html.includes("/r/fixfy-for-business") && html.includes("/r/fixfy-price-list"), e.key);
+    assert.ok(html.includes("mailto:victor@getfixfy.com?subject="), e.key);
+    assert.ok(html.includes("{{{RESEND_UNSUBSCRIBE_URL}}}") && html.includes("Victor Braz"), e.key);
+    assert.ok(!html.includes("—"), `${e.key} tem travessão`);
+    assert.ok(e.assunto.length <= 70, `${e.key}: assunto longo`);
+  }
+});
+
+test("agências: a onda seguinte anda os mesmos dias", () => {
+  assert.equal(quandoSai(SEQUENCIA_B2B[1], "2026-11-12").toISOString().slice(0, 10), "2026-11-16");
+});
+
+test("agências: a onda põe pessoa antes de caixa geral e pula bloqueado e quem já está em onda", () => {
+  const c = (email: string, first_name: string | null, unsubscribed = false) => ({ email, first_name, unsubscribed });
+  const lista = [c("info@a.co.uk", "A Lettings Team"), c("jane@b.co.uk", "Jane"), c("sam@c.co.uk", "Sam"), c("x@d.co.uk", "X", true), c("tom@e.co.uk", "Tom")];
+  const onda = escolherOnda(lista, new Set(["sam@c.co.uk"]), new Set(["tom@e.co.uk"]), 2);
+  assert.deepEqual(onda.map((o) => o.email), ["jane@b.co.uk", "info@a.co.uk"]);
+});

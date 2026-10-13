@@ -9,6 +9,8 @@
  *   npx tsx scripts/agente-marketing.mts --manha [--aplicar]     # a rotina da manhã inteira
  *   npx tsx scripts/agente-marketing.mts --tarde [--aplicar]     # o WhatsApp do relâmpago no ar
  *   npx tsx scripts/agente-marketing.mts --teste-wa=447700900123 --relampago=move15   # UM WhatsApp, para o seu número
+ *   npx tsx scripts/agente-marketing.mts --b2b-onda=1 [--aplicar]             # segmento "Fixfy B2B · Wave 1" com 200 agências
+ *   npx tsx scripts/agente-marketing.mts --b2b=1 [--agendar] [--aplicar]      # os 16 broadcasts da onda no Resend
  *   npx tsx scripts/agente-marketing.mts --template              # o texto do template para submeter à Meta
  *
  * Sem --aplicar é ensaio. Lê o .env.local; fala com o banco de produção e com a Resend de verdade.
@@ -33,6 +35,7 @@ const clube = await import("../src/lib/marketing/agente/clube");
 const lista = await import("../src/lib/marketing/agente/lista");
 const relampago = await import("../src/lib/marketing/agente/relampago");
 const agente = await import("../src/lib/marketing/agente/index");
+const b2b = await import("../src/lib/marketing/agente/b2b");
 const { segmentoPeloNome } = await import("../src/lib/marketing/agente/resend");
 
 const hora = (d: Date) => d.toLocaleString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -51,7 +54,8 @@ if (arg("plano")) {
   mkdirSync(dir, { recursive: true });
   for (const e of cal.CLUBE) writeFileSync(join(dir, `${e.dia}-${e.key}.html`), clube.htmlDaEdicao(clube.pecaDaEdicao(e)));
   for (const r of cal.RELAMPAGOS) writeFileSync(join(dir, `${r.dia}-flash-${r.slug}.html`), relampago.htmlDoRelampago(r));
-  console.log(`${cal.CLUBE.length + cal.RELAMPAGOS.length} e-mails em ${dir}/`);
+  for (const e of b2b.SEQUENCIA_B2B) writeFileSync(join(dir, `b2b-${String(e.n).padStart(2, "0")}-${e.key}.html`), b2b.htmlDoB2B(e));
+  console.log(`${cal.CLUBE.length + cal.RELAMPAGOS.length + b2b.SEQUENCIA_B2B.length} e-mails em ${dir}/`);
 } else if (arg("lista")) {
   console.log(JSON.stringify(await lista.sincronizarLista({ aplicar: APLICAR, maxOperacoes: Number(valor("max") ?? "5000") }), null, 2));
 } else if (arg("clube")) {
@@ -59,6 +63,15 @@ if (arg("plano")) {
   if (!segmento) console.log(`A lista "${lista.NOME_DO_SEGMENTO}" ainda não existe na Resend: rode --lista --aplicar antes.\n`);
   const linhas = await clube.montarClube({ aplicar: APLICAR, agendar: Boolean(arg("agendar")), segmento });
   for (const l of linhas) console.log(`  ${l.dia}  ${l.estado.padEnd(12)} ${l.key.padEnd(22)} ${l.detalhe ?? ""}`);
+} else if (arg("b2b-onda")) {
+  console.log(JSON.stringify(await b2b.montarOnda({ onda: Number(valor("b2b-onda") || 1), aplicar: APLICAR }), null, 2));
+} else if (arg("b2b")) {
+  const onda = b2b.ONDAS.find((o) => o.n === Number(valor("b2b") || 1));
+  if (!onda) throw new Error("onda desconhecida: acrescente em ONDAS (b2b.ts)");
+  const segmento = await segmentoPeloNome(b2b.nomeDaOnda(onda.n), false);
+  if (!segmento) console.log(`O segmento "${b2b.nomeDaOnda(onda.n)}" ainda não existe: rode --b2b-onda=${onda.n} --aplicar antes.\n`);
+  for (const l of await b2b.montarB2B({ aplicar: APLICAR, agendar: Boolean(arg("agendar")), onda: onda.n, inicio: onda.inicio, segmento }))
+    console.log(`  ${String(l.n).padStart(2)}  ${hora(new Date(l.quando)).padEnd(22)} ${l.estado.padEnd(12)} ${l.assunto} ${l.detalhe ?? ""}`);
 } else if (arg("manha")) {
   console.log(JSON.stringify(await agente.rodarManha({ aplicar: APLICAR }), null, 2));
 } else if (arg("tarde")) {

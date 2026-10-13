@@ -77,3 +77,7 @@ export const criarBroadcast = (b: { segment_id: string; from: string; reply_to?:
 /** Agenda (ou manda já, sem `quando`). Depois disto o broadcast sai sozinho. */
 export const agendarBroadcast = (id: string, quando?: Date) =>
   api<{ id: string }>("POST", `/broadcasts/${id}/send`, quando ? { scheduled_at: quando.toISOString() } : {});
+
+/** Põe um contato que já existe na conta em mais um segmento. */
+export const adicionarAoSegmento = (contatoId: string, segmento: string) =>
+  api<unknown>("POST", `/contacts/${contatoId}/segments/${segmento}`);

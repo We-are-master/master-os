@@ -13,7 +13,9 @@
 
 import { varrerRespostasDoZendesk } from "@/lib/marketing/zendesk-respostas";
 import { relampagoDoDia, relampagoNoAr } from "./calendario";
+import { ONDAS, montarB2B, nomeDaOnda } from "./b2b";
 import { montarClube, type LinhaDoClube } from "./clube";
+import { segmentoPeloNome } from "./resend";
 import { sincronizarLista, type ResultadoDaLista } from "./lista";
 import { abrirRelampago, voltaDoWhatsApp, type ResultadoDaAbertura, type ResultadoDoWhatsApp } from "./relampago";
 
@@ -27,6 +29,7 @@ export type ResultadoDaManha = {
   lista: ResultadoDaLista | { erro: string };
   clube: { criados: number; agendados: number; enviados: number; erros: string[]; proxima: LinhaDoClube | null };
   relampago: ResultadoDaAbertura | null;
+  b2b: Array<{ onda: number; agendados: number; rascunhos: number; erros: string[] }>;
   stops: unknown;
 };
 
@@ -34,7 +37,7 @@ export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Pr
   const agora = opcoes.agora ?? new Date();
   const res: ResultadoDaManha = {
     ligado: agenteLigado(), ensaio: !opcoes.aplicar, lista: { erro: "não rodou" },
-    clube: { criados: 0, agendados: 0, enviados: 0, erros: [], proxima: null }, relampago: null, stops: null,
+    clube: { criados: 0, agendados: 0, enviados: 0, erros: [], proxima: null }, relampago: null, b2b: [], stops: null,
   };
 
   // Stop primeiro: quem pediu para sair ontem não pode entrar na lista de hoje.
@@ -57,6 +60,17 @@ export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Pr
   }
   res.clube.agendados = linhas.filter((l) => l.estado === "agendado").length;
   res.clube.proxima = linhas.find((l) => l.estado !== "enviado" && l.estado !== "passou") ?? null;
+
+  // Agências: o Resend só agenda 30 dias à frente, então os rascunhos mais distantes ganham hora aqui, dia a dia.
+  for (const onda of ONDAS) {
+    try {
+      const seg = await segmentoPeloNome(nomeDaOnda(onda.n), false);
+      const ls = await montarB2B({ aplicar: opcoes.aplicar, agendar: true, onda: onda.n, inicio: onda.inicio, segmento: seg, agora });
+      res.b2b.push({ onda: onda.n, agendados: ls.filter((l) => l.estado === "agendado").length, rascunhos: ls.filter((l) => l.estado === "rascunho" || l.estado === "criado").length, erros: ls.filter((l) => l.detalhe).map((l) => `${l.n}: ${l.detalhe}`) });
+    } catch (e) {
+      res.b2b.push({ onda: onda.n, agendados: 0, rascunhos: 0, erros: [String((e as Error).message ?? e)] });
+    }
+  }
 
   const hoje = relampagoDoDia(agora);
   if (hoje) res.relampago = await abrirRelampago(hoje, { aplicar: opcoes.aplicar, segmento, agora }).catch((e) => ({ relampago: hoje.slug, codigo: hoje.codigo, ok: false, motivo: String(e.message ?? e) }));
