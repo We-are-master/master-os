@@ -4,6 +4,7 @@ import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import type { AgentReceiptView } from "@/lib/agent-model/receipt-view";
+import type { FeeVatBreakdown, InvoiceBillTo } from "@/lib/invoice-fee-vat";
 import {
   FIXFY_PDF_FOOTER_HEIGHT,
   FIXFY_PDF_NAVY,
@@ -47,6 +48,12 @@ export interface InvoicePdfData {
    * Fixfy como agente dele. Ausente = Schedule B, documento de sempre.
    */
   agent?: AgentReceiptView;
+  /** Quem lê o documento, quando o "Bill to" é a empresa e não a pessoa. */
+  contactName?: string;
+  /** Razão social, endereço e número da empresa cobrada (conta com `invoice_fee_vat`). */
+  billTo?: InvoiceBillTo;
+  /** A taxa da Fixfy aberta em líquido + VAT. O total não muda. */
+  feeVat?: FeeVatBreakdown;
 }
 
 const NAVY = FIXFY_PDF_NAVY;
@@ -249,10 +256,12 @@ function firstNameOf(name: string): string {
 export function InvoicePDF({ data }: { data: InvoicePdfData }) {
   if (data.agent) return <AgentReceiptPDF data={data} agent={data.agent} />;
   const isPaid = data.paid;
-  const eyebrow = isPaid ? "PAYMENT RECEIPT" : "STATEMENT OF CHARGES";
+  const eyebrow = isPaid ? "PAYMENT RECEIPT" : data.feeVat ? "INVOICE" : "STATEMENT OF CHARGES";
   const intro = isPaid
     ? "Thank you — your payment has been received. This statement is for your records."
-    : "Your job is complete. Below is your statement of charges. This statement PDF is for your records.";
+    : data.feeVat
+      ? "Your job is complete. Below is your invoice, with VAT shown on the Fixfy management fee."
+      : "Your job is complete. Below is your statement of charges. This statement PDF is for your records.";
   const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
   const requestedDue =
     !isPaid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
@@ -289,8 +298,10 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
               <Text style={styles.docRef}>{displayBillingReference(data.reference)}</Text>
               <Text style={styles.docClient}>{data.clientName.trim() || "Client"}</Text>
             </View>
-            <Text style={styles.headline}>Hi {firstNameOf(data.clientName)},</Text>
-            <Text style={styles.intro}>{intro}</Text>
+            <Text style={styles.headline}>
+              {isPaid ? `Hi ${firstNameOf(data.contactName ?? data.clientName)},` : `Your invoice ${displayBillingReference(data.reference)} is ready`}
+            </Text>
+            <Text style={styles.intro}>{isPaid ? intro : `Hi ${firstNameOf(data.contactName ?? data.clientName)}, ${intro.charAt(0).toLowerCase()}${intro.slice(1)}`}</Text>
           </KeepTogetherBlock>
 
           {isPaid ? (
@@ -303,6 +314,26 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           ) : null}
 
           <KeepTogetherBlock minHeight={72} style={[styles.refBar, styles.sectionGap]}>
+            {data.billTo ? (
+              <>
+                <View style={styles.refRow}>
+                  <Text style={styles.refKey}>Bill to</Text>
+                  <Text style={styles.refVal}>{data.billTo.legalName}</Text>
+                </View>
+                {data.billTo.addressLines.length ? (
+                  <View style={styles.refRow}>
+                    <Text style={styles.refKey}>Address</Text>
+                    <Text style={styles.refVal}>{data.billTo.addressLines.join(", ")}</Text>
+                  </View>
+                ) : null}
+                {data.billTo.companyNumber ? (
+                  <View style={styles.refRow}>
+                    <Text style={styles.refKey}>Company no.</Text>
+                    <Text style={styles.refVal}>{data.billTo.companyNumber}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
             <View style={styles.refRow}>
               <Text style={styles.refKey}>Issue date</Text>
               <Text style={styles.refVal}>{data.issueDate}</Text>
@@ -363,13 +394,26 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
             <Text style={styles.sectionLabel}>Charges breakdown</Text>
             <View style={styles.card}>
               <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Trade services</Text>
-                <Text style={styles.lineVal}>{money(data.tradeAmount)}</Text>
+                <Text style={styles.lineLabel}>{data.feeVat ? "Trade services (passed through, no VAT)" : "Trade services"}</Text>
+                <Text style={styles.lineVal}>{data.feeVat ? plainMoney(data.tradeAmount) : money(data.tradeAmount)}</Text>
               </View>
-              <View style={styles.lineRow}>
-                <Text style={styles.lineLabel}>Fixfy management fee</Text>
-                <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
-              </View>
+              {data.feeVat ? (
+                <>
+                  <View style={styles.lineRow}>
+                    <Text style={styles.lineLabel}>Fixfy management fee (net)</Text>
+                    <Text style={styles.lineVal}>{plainMoney(data.feeVat.net)}</Text>
+                  </View>
+                  <View style={styles.lineRow}>
+                    <Text style={styles.lineLabel}>VAT at {data.feeVat.ratePct}% on the Fixfy management fee</Text>
+                    <Text style={styles.lineVal}>{plainMoney(data.feeVat.vat)}</Text>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.lineRow}>
+                  <Text style={styles.lineLabel}>Fixfy management fee</Text>
+                  <Text style={styles.lineVal}>{money(data.feeAmount)}</Text>
+                </View>
+              )}
               {data.partial && !isPaid ? (
                 <View style={styles.lineRow}>
                   <Text style={styles.lineLabel}>Already paid</Text>
@@ -404,12 +448,22 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
             </KeepTogetherBlock>
           ) : null}
 
-          <KeepTogetherBlock minHeight={52} style={styles.vatNote}>
-            <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
-            <Text style={styles.vatText}>
-              Reply to your statement email or contact support@getfixfy.com and we&#39;ll send one across.
-            </Text>
-          </KeepTogetherBlock>
+          {data.feeVat ? (
+            <KeepTogetherBlock minHeight={52} style={styles.vatNote}>
+              <Text style={styles.vatEyebrow}>VAT</Text>
+              <Text style={styles.vatText}>
+                Getfixfy Ltd · VAT No. {data.feeVat.vatNumber}. VAT is charged on the Fixfy management fee only. Trade
+                services are passed through at cost, with no VAT added by Fixfy.
+              </Text>
+            </KeepTogetherBlock>
+          ) : (
+            <KeepTogetherBlock minHeight={52} style={styles.vatNote}>
+              <Text style={styles.vatEyebrow}>Need a VAT invoice?</Text>
+              <Text style={styles.vatText}>
+                Reply to your statement email or contact support@getfixfy.com and we&#39;ll send one across.
+              </Text>
+            </KeepTogetherBlock>
+          )}
         </View>
 
         <FixfyPdfFooterGuard />

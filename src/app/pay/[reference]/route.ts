@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { billingReferenceCandidates } from "@/lib/billing-reference";
 import { requireStripe } from "@/lib/stripe";
 import { accountPaysByCard, CARD_ON_FILE_ON } from "@/lib/stripe-card-charge";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -15,8 +16,8 @@ const EPS = 0.02;
 const MIN_CHARGE_GBP = 0.3;
 
 /**
- * Public pay link: `/pay/RCP-XXXX` charges the invoice's open balance,
- * `/pay/RCP-XXXX?pct=50` charges that percentage of the open balance (deposit).
+ * Public pay link: `/pay/INV-XXXX` charges the invoice's open balance,
+ * `/pay/INV-XXXX?pct=50` charges that percentage of the open balance (deposit).
  *
  * A Checkout Session is created per click with the amount computed NOW, so the
  * URL never goes stale when the invoice amount changes or a partial payment
@@ -40,7 +41,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     const { data: invRow } = await admin
       .from("invoices")
       .select("id, reference, client_name, amount, amount_paid, status, job_reference, stripe_customer_email")
-      .eq("reference", reference)
+      // O cliente pode chegar com o prefixo antigo (RCP-) ou o novo (INV-): é a mesma fatura.
+      .in("reference", billingReferenceCandidates(reference))
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (!invRow) {
