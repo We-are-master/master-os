@@ -191,7 +191,7 @@ export async function sendInvoiceEmail(
       clientName: billing.displayName,
       jobTitle: job?.title ?? inv.job_reference ?? "Job",
       propertyAddress: job?.property_address ?? null,
-      serviceType: (job as { service_type?: string | null } | null)?.service_type ?? null,
+      serviceType: job?.title ?? null,
       completionDate: job?.completed_date ?? inv.created_at,
       quoteReference,
     },

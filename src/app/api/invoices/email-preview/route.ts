@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, partner_id, created_at, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, partner_id, created_at, property_address, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
       clientName: billing?.displayName ?? inv.client_name,
       jobTitle: job?.title ?? inv.job_reference ?? "Job",
       propertyAddress: job?.property_address ?? null,
-      serviceType: (job as { service_type?: string | null } | null)?.service_type ?? null,
+      serviceType: job?.title ?? null,
       completionDate: job?.completed_date ?? inv.created_at,
       quoteReference,
     },
