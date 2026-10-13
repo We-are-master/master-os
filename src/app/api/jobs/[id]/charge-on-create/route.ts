@@ -76,6 +76,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     userName,
     requestPercent: percent >= 100 ? undefined : percent,
     jobId: j.id,
+    variant: "booking",
   });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
   return NextResponse.json({ ok: true, to: result.to, percent });

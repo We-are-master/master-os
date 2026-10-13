@@ -1,4 +1,7 @@
 import "server-only";
+import { buildBookingPaymentEmailHTML, buildBookingPaymentSubject, type BookingPaymentEmailInput } from "@/lib/booking-payment-email";
+import { rotuloDaJanela, rotuloDoDia } from "@/lib/client-confirmation/professional-email";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
@@ -135,7 +138,14 @@ export type SendInvoiceEmailResult =
 export async function sendInvoiceEmail(
   admin: SupabaseClient,
   invoiceId: string,
-  options: { userId: string; userName: string; requestPercent?: number; jobId?: string | null },
+  options: {
+    userId: string;
+    userName: string;
+    requestPercent?: number;
+    jobId?: string | null;
+    /** "booking": e-mail de "almost there" da cobrança na criação do job, em vez do e-mail de fatura. */
+    variant?: "booking";
+  },
 ): Promise<SendInvoiceEmailResult> {
   const ctx = await loadInvoiceSendContext(admin, invoiceId, { jobId: options.jobId });
   if ("error" in ctx && "status" in ctx) {
@@ -204,7 +214,29 @@ export async function sendInvoiceEmail(
   );
 
   const jobRef = job?.reference ?? inv.job_reference ?? "Job";
-  const subject = buildInvoiceEmailSubject(inv, jobRef);
+  let subject = buildInvoiceEmailSubject(inv, jobRef);
+  let bodyHtml = html;
+  // Reserva ainda não paga: o cliente recebe o convite para confirmar, não uma fatura.
+  if (options.variant === "booking" && job && request.amountDueNow > 0.02) {
+    const dayLabel = rotuloDoDia(job.scheduled_date ?? job.scheduled_start_at ?? null);
+    const pct = request.percent;
+    const booking: BookingPaymentEmailInput = {
+      clientName: billing.displayName,
+      jobReference: job.reference,
+      invoiceReference: inv.reference,
+      serviceTitle: job.title?.trim() || "Your booking",
+      scope: job.scope?.trim() || null,
+      dayLabel,
+      windowLabel: rotuloDaJanela(job.scheduled_start_at, job.scheduled_end_at),
+      address: job.property_address ?? null,
+      total: Number(inv.amount ?? 0),
+      amountDueNow: request.amountDueNow,
+      percent: pct,
+      payLink: invoicePayLinkUrl(inv.reference, pct < 100 ? pct : undefined),
+    };
+    subject = buildBookingPaymentSubject(booking);
+    bodyHtml = buildBookingPaymentEmailHTML(booking);
+  }
   const safeName = pdfResult.reference.replace(/[^\w.-]+/g, "_");
 
   const resend = new Resend(resendKey);
@@ -213,7 +245,7 @@ export async function sendInvoiceEmail(
     to: [emailTo],
     cc: ccList.length > 0 ? ccList : undefined,
     subject,
-    html,
+    html: bodyHtml,
     attachments: [
       {
         filename: `${safeName}.pdf`,
