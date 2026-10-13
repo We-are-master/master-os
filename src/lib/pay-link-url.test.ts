@@ -5,12 +5,12 @@ import { invoicePayLinkForClient, isStripeTestLink } from "./pay-link-url";
 describe("invoicePayLinkForClient", () => {
   it("troca Payment Link de teste pelo /pay da fatura", () => {
     const url = invoicePayLinkForClient("RCP-2026-886", "https://buy.stripe.com/test_9AQ5kM2bX");
-    assert.match(url, /\/pay\/RCP-2026-886$/);
+    assert.match(url, /\/pay\/INV-2026-886$/);
   });
 
   it("troca sessão de checkout de teste gravada", () => {
     const url = invoicePayLinkForClient("RCP-1", "https://checkout.stripe.com/c/pay/cs_test_a16dzx#abc");
-    assert.match(url, /\/pay\/RCP-1$/);
+    assert.match(url, /\/pay\/INV-1$/);
   });
 
   it("mantém /pay com pct", () => {

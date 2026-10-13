@@ -10,7 +10,7 @@ export function resolveInvoiceCcEmail(companyEmail?: string | null): string {
   );
 }
 
-/** "Your invoice RCP-2026-904 is ready": o mesmo título no assunto do e-mail e no topo do PDF. */
+/** "Your invoice INV-2026-904 is ready": o mesmo título no assunto do e-mail e no topo do PDF. */
 export function invoiceReadyTitle(reference: string): string {
   return `Your invoice ${displayBillingReference(reference)} is ready`;
 }

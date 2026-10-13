@@ -237,7 +237,14 @@ export async function sendInvoiceEmail(
     }
   }
 
-  void admin.from("audit_logs").insert({
+  // Marca que o cliente recebeu a fatura: é o que libera o lembrete de cobrança
+  // (dono, 13/10/2026). Coluna da migration 323; sem ela o registro abaixo ainda vale.
+  const { error: sentErr } = await admin.from("invoices").update({ sent_at: new Date().toISOString() }).eq("id", invoiceId);
+  if (sentErr) console.warn("[invoice-send-email] sent_at não gravado:", sentErr.message);
+
+  // ESPERADO, não solto: na Vercel a função morre depois da resposta e um `void`
+  // aqui nunca gravou nada (zero `email_sent` de fatura em produção até 13/10/2026).
+  const { error: auditErr } = await admin.from("audit_logs").insert({
     entity_type: "invoice",
     entity_id: invoiceId,
     entity_ref: inv.reference,
@@ -255,6 +262,7 @@ export async function sendInvoiceEmail(
       amount_due_now: request?.amountDueNow ?? invoiceAmountDueForRequest(inv, 100).amountDueNow,
     },
   });
+  if (auditErr) console.warn("[invoice-send-email] histórico não gravado:", auditErr.message);
 
   return { ok: true, to: emailTo, cc: ccList, resendId: emailResult?.id };
 }

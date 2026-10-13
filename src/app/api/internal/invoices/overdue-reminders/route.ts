@@ -3,6 +3,7 @@
  * tom amigável e o 4º, no dia 7, como final reminder. Um estágio por fatura por rodada,
  * com a fatura em PDF e o link de pagamento. Plataformas (Housekeep, Fantastic,
  * Checkatrade, Express) ficam fora (`accounts.overdue_reminders = false`).
+ * Fatura que nunca foi enviada ao cliente também fica fora: primeiro o envio, depois a cobrança.
  *
  * Chamado pelo n8n uma vez por dia (manhã de Londres). Auth: x-internal-secret =
  * INTERNAL_SYNC_SECRET. ?dry-run=1 só lista o que mandaria.
@@ -26,6 +27,19 @@ function autorizado(dado: string | null): boolean {
   const segredo = process.env.INTERNAL_SYNC_SECRET?.trim();
   if (!segredo || !dado || dado.length !== segredo.length) return false;
   return timingSafeEqual(Buffer.from(dado), Buffer.from(segredo));
+}
+
+/** A fatura já foi enviada ao cliente? O envio grava `invoices.sent_at` (mig 323) e `email_sent` no histórico; qualquer um dos dois vale. */
+async function faturaJaFoiEnviada(admin: ReturnType<typeof createServiceClient>, invoiceId: string): Promise<boolean> {
+  const { count, error } = await admin
+    .from("audit_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("entity_type", "invoice")
+    .eq("entity_id", invoiceId)
+    .eq("field_name", "email_sent");
+  // Sem conseguir conferir, não cobra: lembrete errado custa mais do que lembrete atrasado.
+  if (error) return false;
+  return (count ?? 0) > 0;
 }
 
 function esc(s: string): string {
@@ -71,6 +85,10 @@ export async function POST(req: NextRequest) {
       const { data: job } = await admin.from("jobs").select("status").eq("reference", inv.job_reference).maybeSingle();
       if ((job as { status?: string } | null)?.status === "on_hold") { out.push(`${inv.reference}: skip (job on hold)`); continue; }
     }
+
+    // Só cobra o que o cliente já recebeu (dono, 13/10/2026): fatura que nunca foi enviada não gera lembrete.
+    // A RCP-2026-904 recebeu "overdue" em 12/10 sem a fatura ter saído uma única vez.
+    if (!(inv as { sent_at?: string | null }).sent_at && !(await faturaJaFoiEnviada(admin, inv.id))) { out.push(`${inv.reference}: skip (invoice never sent to the client)`); continue; }
 
     const ctx = await loadInvoiceSendContext(admin, inv.id);
     if ("error" in ctx) { out.push(`${inv.reference}: skip (${ctx.error.split(" [")[0]})`); continue; }
