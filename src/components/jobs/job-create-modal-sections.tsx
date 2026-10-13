@@ -311,6 +311,94 @@ export function JobCreateModalExtraPayment({
   );
 }
 
+export type JobChargeMode = "completion" | "deposit" | "full";
+
+const CHARGE_MODE_HINT =
+  "How the client is charged. Full or Deposit sends the payment request by email as soon as the job is created, with a pay button and the bank transfer details. On completion sends nothing now.";
+
+const CHARGE_MODES: { id: JobChargeMode; label: string }[] = [
+  { id: "completion", label: "On completion" },
+  { id: "deposit", label: "Deposit now" },
+  { id: "full", label: "Full now" },
+];
+
+/** O que o cliente paga agora, a partir do modo e da porcentagem escolhidos no formulário. */
+export function chargeNowPercent(mode: JobChargeMode | string | undefined, percent: string | number | undefined): number {
+  if (mode === "full") return 100;
+  if (mode !== "deposit") return 0;
+  const n = Math.round(Number(percent));
+  if (!Number.isFinite(n)) return 50;
+  return Math.min(99, Math.max(1, n));
+}
+
+/** Como o cliente é cobrado neste job: na conclusão, sinal agora (com %) ou total agora. */
+export function JobCreateModalChargeMode({
+  mode,
+  percent,
+  total,
+  onModeChange,
+  onPercentChange,
+}: {
+  mode: JobChargeMode;
+  percent: string;
+  total: number;
+  onModeChange: (value: JobChargeMode) => void;
+  onPercentChange: (value: string) => void;
+}) {
+  const pct = chargeNowPercent(mode, percent);
+  const now = Math.round(Math.max(0, total) * pct) / 100;
+  const later = Math.round((Math.max(0, total) - now) * 100) / 100;
+
+  return (
+    <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/20 px-2.5 py-2.5 space-y-2 min-w-0">
+      <div className="flex items-center gap-1.5">
+        <p className="text-[11px] font-medium text-text-secondary">Client payment</p>
+        <FixfyHintIcon text={CHARGE_MODE_HINT} />
+      </div>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Client payment">
+        {CHARGE_MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            role="radio"
+            aria-checked={mode === m.id}
+            onClick={() => onModeChange(m.id)}
+            className={cn(
+              "rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
+              mode === m.id
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border-light bg-card text-text-secondary hover:bg-surface-hover",
+            )}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {mode === "deposit" ? (
+        <div className="min-w-0 max-w-[8rem]">
+          <p className="mb-1 text-[11px] text-text-tertiary">Deposit %</p>
+          <Input
+            type="number"
+            value={percent}
+            onChange={(e) => onPercentChange(e.target.value)}
+            min="1"
+            max="99"
+            step="1"
+            placeholder="50"
+          />
+        </div>
+      ) : null}
+      <p className="text-[11px] leading-snug text-text-tertiary">
+        {pct === 0
+          ? "Nothing is requested now. The invoice goes out when the job is completed."
+          : total > 0.02
+            ? `${formatCurrency(now)} requested by email now${later > 0.02 ? `, ${formatCurrency(later)} on completion` : ""}.`
+            : "Set the price to see the amount requested now."}
+      </p>
+    </div>
+  );
+}
+
 /** Full pricing editor — used inside the pricing modal. */
 export function JobCreateModalPricingFields(props: JobCreateModalPricingFieldsProps) {
   const {
