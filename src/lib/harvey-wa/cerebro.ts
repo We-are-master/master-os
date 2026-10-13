@@ -683,6 +683,17 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };
   }
   if (nome === "create_payment_link") {
+    // Um preço por conversa, de verdade (dono, 13/10/2026): se alguém da equipe já deu preço neste chat,
+    // o link do catálogo só sai quando o total do catálogo é esse mesmo número. Foi assim que uma cliente
+    // recebeu £90 e £240 pela mesma porta e fechou com outro.
+    const daEquipe = precosDaEquipe(ctx.conversa ?? []);
+    if (daEquipe.length) {
+      const q = await site({ action: "quote", selection: a.selection, postcode: a.postcode });
+      const total = typeof q.data.total === "number" ? Math.round(q.data.total * 100) / 100 : null;
+      if (total === null || !daEquipe.some((p) => Math.abs(p - total) < 0.005)) {
+        return { error: `The team already gave a price in this chat (${daEquipe.map((p) => `£${p}`).join(", ")}). Do not send a different price. If the customer agreed to the team's price, use book_team_price with it; otherwise hand off to the team.` };
+      }
+    }
     // O modelo às vezes pula a pergunta e manda o link direto: sem escolha, não sai.
     const nomeDaPessoa = `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim();
     const booking = {
