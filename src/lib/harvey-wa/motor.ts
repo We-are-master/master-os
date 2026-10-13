@@ -10,6 +10,7 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem } from "./etapa-da-passagem";
 import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
@@ -329,6 +330,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     await sb.from("harvey_wa_conversas").insert({ conversation_id: conversa.id, user_id: msg.author.userId ?? null, phone: telefone, name: msg.author.displayName ?? null });
   }
 
+  const comecou = Date.now();
   await digitando(conversa.id);
   // Quem digita em rajada: espera um pouco e responde tudo junto (a mensagem mais nova manda).
   await new Promise((r) => setTimeout(r, 2500));
@@ -367,10 +369,24 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   // segundos pensando. Se nesse meio tempo a conversa saiu dele ou alguém da
   // equipe escreveu depois da mensagem do cliente, a resposta dele é descartada.
   if (r.resposta) {
+    // O ritmo de uma pessoa: o tempo de ler, pensar e digitar, com "digitando" aparecendo enquanto isso.
+    const falta = faltaEsperar(
+      esperaHumana({ caracteres: r.resposta.length, temMidia: msg.content.type !== "text", primeiraResposta: !sessao.some((m) => ehDoHarvey(m)) }),
+      Date.now() - comecou,
+    );
+    for (let resta = falta; resta > 0; resta -= 6_000) {
+      await digitando(conversa.id);
+      await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
+    }
     const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
     const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
     const equipeEscreveu = depois.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
     if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
+    // O cliente mandou mais alguma coisa enquanto o Harvey escrevia (texto e logo depois a foto): a mensagem
+    // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
+    // resposta que é só texto: link de pagamento, cotação e passagem já aconteceram e precisam ser ditos.
+    const clienteEscreveuDeNovo = depois.some((m) => m.author.type === "user" && m.id !== msg.id);
+    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
     await enviarTexto(conversa.id, r.resposta, voz);
   }
 
