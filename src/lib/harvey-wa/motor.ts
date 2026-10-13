@@ -10,6 +10,7 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
 import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem } from "./etapa-da-passagem";
@@ -84,7 +85,7 @@ function pedidoDoCheckatrade(c: { id: string; full_name: string | null; phone: s
 export async function contextoDaPessoa(
   sb: ReturnType<typeof createServiceClient>,
   telefone: string | null,
-  extra: { nomeNoWhatsApp?: string | null; fotos?: string[] } = {},
+  extra: { nomeNoWhatsApp?: string | null; fotos?: string[]; /** quem da equipe falava nesta conversa, se alguém */ falaComo?: string | null } = {},
 ) {
   const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
   const contas: Contas = {
@@ -92,6 +93,7 @@ export async function contextoDaPessoa(
     pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
     custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
     registrarEmpresa: (dados) => registrarEmpresa(sb, telefone, dados),
+    reservarPrecoDaEquipe: async (r) => reservarPrecoDaEquipe(sb, { ...r, telefone, ticketId: await ticketPeloTelefone(telefone).catch(() => null), quemDeuOPreco: extra.falaComo ?? null }),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
@@ -353,7 +355,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const voz = vozDaConversa(msgs);
   const sessao = voz ? msgs : sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
-  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
+  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
   // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
   const sobreQuem =
     [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null, telefone ? await contextoDaRetomada(sb, telefone) : null].filter(Boolean).join(" ") || undefined;

@@ -279,7 +279,7 @@ Before any written quote for made to measure or multi day work, give a rough ran
 
 One price per conversation. If anyone from the team has already given a price in this chat, that is the price: repeat it, never offer a different number, and never re-quote the same job from the catalogue. A customer received £90 and then £240 for the same door within five minutes, asked what the £90 was for, and booked someone else.
 
-When a person from the team has priced the job and hands the chat back to you, your job is to close: confirm the day and the arrival window, get the full address with postcode, and tell them how the booking is secured. Do not reopen the price or the scope.`,
+When a person from the team has priced the job and hands the chat back to you, your job is to close. Confirm the day and the arrival window, get their full name and the full address with postcode, then call book_team_price with the exact price the team gave and send the link it returns: half now by card to hold the slot, the other half after the job. Do not reopen the price or the scope, and never put your own number in that tool. If the tool refuses, hand off to the team.`,
   },
   {
     id: "never",

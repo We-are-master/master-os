@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { janelaParaOJob, precoConfere, precosDaEquipe } from "./preco-da-equipe";
 import { fichaDaFerramenta, type FichaDoJob } from "./ficha-do-job";
 import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
 import { textoDasRegras } from "./regras";
@@ -26,6 +27,8 @@ export type Contas = {
   registrarEmpresa?: (dados: import("./empresa").DadosDaEmpresa) => Promise<unknown>;
   situacaoDoParceiro?: () => Promise<unknown>;
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
+  /** Job com o preço que a equipe deu no chat + link do sinal de 50% (ver `reserva-da-equipe.ts`). */
+  reservarPrecoDaEquipe?: (r: Omit<import("./reserva-da-equipe").ReservaDaEquipe, "telefone" | "ticketId">) => Promise<import("./reserva-da-equipe").ResultadoDaReserva>;
 };
 
 export type Contexto = {
@@ -45,6 +48,8 @@ export type Contexto = {
   horasSemResposta?: number;
   /** Preenchido pelo pensar(): tudo que o cliente escreveu (para conferir dado que o modelo diz ter recebido). */
   textoDoCliente?: string;
+  /** Preenchido pelo pensar(): a conversa inteira, para conferir o preço que a equipe deu. */
+  conversa?: Fala[];
   /** As fotos que o cliente mandou nesta conversa (data URLs, as mais recentes), para o Harvey ver. */
   fotos?: string[];
   /** Preenchido pelo pensar(): a última foto/PDF que a pessoa mandou nesta conversa. */
@@ -247,6 +252,29 @@ const FERRAMENTAS_CLIENTE = [
   {
     type: "function",
     function: {
+      name: "book_team_price",
+      description:
+        "Books a job at the price a PERSON FROM THE TEAM already gave in this chat (a price outside the catalogue), and returns the secure card link for the 50% deposit. Use it only after the customer agreed to that price and you have the day, the arrival window, their full name and the full address with postcode. Never use it for a price you worked out yourself: for catalogue prices use create_payment_link.",
+      parameters: {
+        type: "object",
+        properties: {
+          price: { type: "number", description: "the exact price in pounds the team member wrote in this chat" },
+          service: { type: "string", description: "the trade, e.g. General Maintenance, Carpenter, Painter, Plumber" },
+          scope: { type: "string", description: "what was agreed, in English, in plain sentences: what needs doing, what the customer supplies, access notes" },
+          date: { type: "string", description: "the agreed day as YYYY-MM-DD" },
+          window: { type: "string", description: "the agreed arrival window, e.g. 9am to 12pm" },
+          fullName: { type: "string", description: "the customer's full name as they gave it" },
+          email: { type: "string", description: "only if they gave one" },
+          addressLine1: { type: "string", description: "flat or house number and street" },
+          postcode: { type: "string" },
+        },
+        required: ["price", "scope", "date", "window", "fullName", "addressLine1", "postcode"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "request_quote",
       description:
         "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Before calling it, collect everything the team needs, one question per message: the full address (house number, street, postcode), photos of every area involved, exactly what needs doing (for painting: which rooms, walls/ceilings/woodwork, same colour or new colour; for repairs: what is broken and where; for cleaning: bedrooms, bathrooms, empty or furnished), whether the property is empty or lived in, and when they want it done. Never quote bespoke or made-to-measure work yourself, and decline work at height (gutters, roofs, high ladders). Then tell them the team will send the quote and hand off happens automatically.",
@@ -428,7 +456,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const ferramentas = (parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE).filter((f) => ferramentaLiberada(f.function.name, ajustes));
   // As regras do OS (/rules): o que vale para este público, lido a cada 30 s.
   const regrasDoOs = await textoDasRegras(parceiro ? "parceiro" : "cliente");
-  ctx = { ...ctx, ajustes, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
+  ctx = { ...ctx, ajustes, conversa, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
   const sobre = [
     ctx.nomeNoWhatsApp ? `Their WhatsApp name is "${ctx.nomeNoWhatsApp}" (may not be their real name).` : null,
     ctx.telefone ? `Their phone (from WhatsApp): ${ctx.telefone}.` : null,
@@ -559,6 +587,29 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       newTotal: d.novoTotal,
       note: `Tell them you can take ${d.percent}% off: £${d.novoTotal.toFixed(2)} instead of £${total.toFixed(2)}. When you create the payment link, pass discount_percent: ${d.percent}.`,
     };
+  }
+  if (nome === "book_team_price") {
+    if (!ctx.contas?.reservarPrecoDaEquipe) return { error: "not available here: hand off to the team" };
+    // O Harvey nunca escolhe o número: tem que ser um valor que alguém da equipe escreveu nesta conversa.
+    if (!precoConfere(a.price, ctx.conversa ?? [])) {
+      const dados = precosDaEquipe(ctx.conversa ?? []);
+      return { error: dados.length ? `That is not a price the team gave in this chat. The team gave: ${dados.map((p) => `£${p}`).join(", ")}.` : "Nobody from the team has given a price in this chat. Use the catalogue (get_quote, create_payment_link) or hand off to the team." };
+    }
+    const data = String(a.date ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data) || Number.isNaN(Date.parse(data)) || Date.parse(`${data}T23:59:59Z`) < Date.now()) return { error: "date must be a future day as YYYY-MM-DD. Confirm the day with the customer." };
+    const janela = janelaParaOJob(a.window);
+    if (!janela) return { error: "window must be a clear arrival window, e.g. 9am to 12pm. Confirm it with the customer." };
+    const disse = ctx.textoDoCliente?.replace(/\s+/g, "").toUpperCase() ?? "";
+    const postcode = String(a.postcode ?? "").trim().toUpperCase();
+    if (!postcode || !disse.includes(postcode.replace(/\s+/g, ""))) return { error: "Ask the customer for the full postcode first (they have not written it in this chat)." };
+    const nomeCompleto = String(a.fullName ?? "").trim();
+    const endereco = String(a.addressLine1 ?? "").trim();
+    if (nomeCompleto.split(/\s+/).length < 2) return { error: "Ask for their full name (first and last) first." };
+    if (endereco.length < 4) return { error: "Ask for the flat or house number and street first." };
+    const email = typeof a.email === "string" && a.email.includes("@") ? a.email.trim() : null;
+    const feito = await ctx.contas.reservarPrecoDaEquipe({ preco: Math.round(Number(a.price) * 100) / 100, servico: String(a.service || "General Maintenance").trim(), escopo: String(a.scope ?? "").trim(), data, janela, nome: nomeCompleto, email, endereco, postcode });
+    if ("error" in feito) return feito;
+    return { ...feito, note: "Send this exact link. Say in one line: half now by card on a secure page to hold the slot, the other half after the job. Then stop: the team will confirm the professional." };
   }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
