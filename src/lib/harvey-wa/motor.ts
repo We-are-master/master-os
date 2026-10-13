@@ -10,6 +10,7 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem } from "./etapa-da-passagem";
 import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -418,6 +419,9 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       .filter(Boolean)
       .join("\n");
     const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    // O que o Harvey já sabe entra nos campos do formulário de Job: a equipe confere e aperta a macro.
+    const feitoFicha = await preencherFormularioDoJob(sb, telefone, r.fichaDoJob ? { nome: msg.author.displayName ?? null, ...semVazios(r.fichaDoJob) } : null).catch((e) => `ficha falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] ficha do job:", feitoFicha);
     // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
     // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
     // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
@@ -528,4 +532,9 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
     console.error("[harvey-wa] aviso de pagamento", err);
     return false;
   }
+}
+
+/** Tira o que veio vazio, para o nome do WhatsApp só valer quando o Harvey não tem o nome completo. */
+function semVazios<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")) as Partial<T>;
 }
