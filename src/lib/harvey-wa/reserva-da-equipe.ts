@@ -8,6 +8,7 @@
  * para a trava do valor.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { directConsumerAccountIds } from "@/lib/direct-consumer-accounts";
 import { getFixfyAccountId } from "@/lib/fixfy-account";
 import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 
@@ -33,11 +34,40 @@ export type ResultadoDaReserva = { reference: string; jobId: string; payUrl: str
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+const digitos = (t: string | null | undefined) => String(t ?? "").replace(/\D/g, "").slice(-10);
+
+/**
+ * O lead comprado já tem cadastro numa conta de cliente direto (hoje "Checkatrade").
+ * A reserva tem de cair nesse mesmo cadastro: mandar para a conta Fixfy criaria um
+ * segundo cliente e tiraria a venda da conta de onde o lead veio. Sem cadastro
+ * achado devolve null, e a reserva segue para a conta Fixfy como sempre. Nunca lança.
+ */
+export async function contaDoLead(sb: SupabaseClient, telefone?: string | null, email?: string | null): Promise<string | null> {
+  try {
+    const contas = [...directConsumerAccountIds()];
+    const tel = digitos(telefone);
+    const mail = String(email ?? "").trim().toLowerCase();
+    if (!contas.length || (tel.length < 10 && !mail)) return null;
+    const { data } = await sb
+      .from("clients")
+      .select("source_account_id, phone, email")
+      .in("source_account_id", contas)
+      .order("created_at", { ascending: false })
+      .limit(2000);
+    const achado = ((data ?? []) as Array<{ source_account_id: string | null; phone: string | null; email: string | null }>).find(
+      (c) => (tel.length === 10 && digitos(c.phone) === tel) || (mail !== "" && String(c.email ?? "").trim().toLowerCase() === mail),
+    );
+    return achado?.source_account_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function reservarPrecoDaEquipe(sb: SupabaseClient, r: ReservaDaEquipe): Promise<ResultadoDaReserva> {
   const chave = process.env.MASTER_OS_JOB_WEBHOOK_API_KEY?.trim();
   if (!chave) return { error: "booking is not configured (job key missing): hand off to the team" };
   const base = (process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.getfixfy.com").replace(/\/$/, "");
-  const accountId = await getFixfyAccountId(sb);
+  const accountId = (await contaDoLead(sb, r.telefone, r.email)) ?? (await getFixfyAccountId(sb));
 
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",

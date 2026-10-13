@@ -24,13 +24,16 @@
  *   5. Conta de origem = a conta corporativa "Fixfy" (`FIXFY_ACCOUNT_ID`,
  *      ou a conta chamada Fixfy): é a que o site B2C e o Harvey carimbam
  *      em toda reserva                                                    → A.
- *   6. Qualquer outra conta (Housekeep, Fantastic, Checkatrade, Express,
- *      imobiliária, plataforma)                                           → B.
+ *   6. Conta de cliente direto (`direct-consumer-accounts.ts`): hoje a
+ *      "Checkatrade", o lead comprado que fecha e paga direto conosco      → A.
+ *   7. Qualquer outra conta (Housekeep, Fantastic, Express, imobiliária,
+ *      plataforma)                                                        → B.
  *
- * Conta de empresa é o que decide, não o canal: um job da Checkatrade que
- * chegou por WhatsApp continua B, porque está ligado à conta Checkatrade.
+ * Conta de empresa é o que decide, não o canal: uma reserva da Express que
+ * chegou por WhatsApp continua B, porque está ligada à conta Express.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 import { tryGetFixfyAccountId } from "@/lib/fixfy-account";
 
 export type WorkSchedule = "A" | "B";
@@ -78,6 +81,7 @@ export function classifyWorkSchedule(input: ScheduleInput, opts?: ScheduleOption
   if (!source) return "A";
   const fixfy = String(input.fixfyAccountId ?? "").trim();
   if (fixfy && source === fixfy) return "A";
+  if (isDirectConsumerAccount(source)) return "A";
   return "B";
 }
 

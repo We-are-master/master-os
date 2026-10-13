@@ -83,8 +83,8 @@ const CLUBE_COMECA_DIAS = 14;
  * `MARKETING_CONTAS_EXTRA` segue abrindo exceção por id, separado por vírgula.
  */
 const CONTAS_POR_DECISAO = [
-  "38b48520-f116-4263-90e5-8cd5a7d39ecf", // Checkatrade
-  "8060fcf3-a538-4e5a-9318-1b49ee59f432", // Express (o Express da própria Checkatrade)
+  "38b48520-f116-4263-90e5-8cd5a7d39ecf", // Express (reservas da plataforma; chamava "Checkatrade" até 13/10/2026)
+  "8060fcf3-a538-4e5a-9318-1b49ee59f432", // Checkatrade (leads que pagam direto; chamava "Express" até 13/10/2026)
 ];
 
 export function contasNossas(): Set<string> {
