@@ -175,7 +175,7 @@ describe("buildInvoiceEmailSubject", () => {
       },
       "JOB-1",
     );
-    assert.equal(s, "JOB-1 Your billing is ready");
+    assert.equal(s, "Your invoice RCP-1 is ready");
   });
 });
 

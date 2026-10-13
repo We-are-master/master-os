@@ -3,6 +3,7 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee } from "@/lib/invoice-trade-fee-split";
+import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import { buildAgentReceiptView } from "@/lib/agent-model/receipt-view";
 import { displayBillingReference } from "@/lib/billing-reference";
@@ -106,14 +107,22 @@ export async function loadInvoicePdfData(
       })
     : undefined;
 
+  // Conta que pede a fatura em nome da razão social, com VAT só sobre a taxa da Fixfy (mig 323).
+  const accountFormat = agentParty
+    ? null
+    : await loadAccountInvoiceFormat(admin, inv.source_account_id ?? billing?.sourceAccountId ?? null, fee);
+
   const logoSource =
     resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
   const logoUrl = (await resolveLogoDataUri(logoSource)) ?? undefined;
 
   return {
     reference: displayBillingReference(inv.reference),
-    documentTitle: agent ? (paid ? "Receipt" : "Statement of Charges") : paid ? "Payment Receipt" : "Statement of Charges",
-    clientName: billing?.displayName ?? inv.client_name,
+    documentTitle: agent ? (paid ? "Receipt" : "Statement of Charges") : paid ? "Payment Receipt" : accountFormat ? "Invoice" : "Statement of Charges",
+    clientName: accountFormat?.billTo.legalName ?? billing?.displayName ?? inv.client_name,
+    contactName: accountFormat ? (billing?.displayName ?? inv.client_name) : undefined,
+    billTo: accountFormat?.billTo,
+    feeVat: accountFormat?.feeVat,
     jobTitle: job?.title ?? inv.job_reference ?? "Job",
     jobReference: inv.job_reference?.trim() ?? job?.reference ?? "",
     propertyAddress: job?.property_address ?? undefined,
