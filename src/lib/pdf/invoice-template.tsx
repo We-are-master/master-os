@@ -2,6 +2,8 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
+import { FIXFY_LEGAL_ENTITY } from "@/lib/agent-model/commission";
 import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import type { AgentReceiptView } from "@/lib/agent-model/receipt-view";
 import type { FeeVatBreakdown, InvoiceBillTo } from "@/lib/invoice-fee-vat";
@@ -39,6 +41,8 @@ export interface InvoicePdfData {
   feeAmount: number;
   /** Data URI or https URL for header logo. */
   logoUrl?: string;
+  /** Logo para fundo branco (a fatura de uma página, estilo contábil). */
+  logoDarkUrl?: string;
   /** When set (partial request), amount due now — may be less than full balance. */
   amountDueNow?: number;
   /** % of base requested (for PDF note). */
@@ -255,6 +259,15 @@ function firstNameOf(name: string): string {
 
 export function InvoicePDF({ data }: { data: InvoicePdfData }) {
   if (data.agent) return <AgentReceiptPDF data={data} agent={data.agent} />;
+  return <InvoiceSheetPDF data={data} />;
+}
+
+/**
+ * Layout antigo (faixa azul, cartões, duas a três páginas). Fica aqui só como
+ * referência enquanto o layout de uma página se prova; ninguém mais o chama.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function LegacyInvoicePDF({ data }: { data: InvoicePdfData }) {
   const isPaid = data.paid;
   const eyebrow = isPaid ? "PAYMENT RECEIPT" : data.feeVat ? "INVOICE" : "STATEMENT OF CHARGES";
   const intro = isPaid
@@ -476,6 +489,256 @@ export function InvoicePDF({ data }: { data: InvoicePdfData }) {
           <Text style={styles.footerText}>
             Getfixfy Ltd · Co. No. 15406523{"\n"}
             124 City Road, London EC1V 2NX, United Kingdom · getfixfy.com
+          </Text>
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Fatura de uma página (dono, 13/10/2026: "queria algo look like Xero, tá muito
+ * feio em duas, três páginas, não tá profissional").
+ *
+ * Folha branca, logo no canto, três colunas no topo (para quem, os números, de
+ * quem), uma tabela de linhas e os totais à direita. Cabe em uma página A4.
+ * O recibo do modelo de agente (Schedule A) continua no layout dele.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const sheet = StyleSheet.create({
+  page: { fontFamily: "Helvetica", fontSize: 9, color: TEXT, paddingTop: 44, paddingBottom: 64, paddingHorizontal: 48 },
+  top: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 26 },
+  title: { fontSize: 24, fontFamily: "Helvetica-Bold", color: NAVY, letterSpacing: 0.4 },
+  logo: { height: 28, objectFit: "contain" },
+  wordmark: { fontSize: 20, fontFamily: "Helvetica-Bold", color: NAVY },
+  cols: { flexDirection: "row", marginBottom: 26 },
+  colTo: { width: "40%", paddingRight: 14 },
+  colMeta: { width: "27%", paddingRight: 14 },
+  colFrom: { width: "33%" },
+  name: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 3 },
+  line: { fontSize: 9, color: MUTED, lineHeight: 1.45 },
+  metaLabel: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY, marginTop: 6 },
+  metaLabelFirst: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY },
+  metaValue: { fontSize: 9, color: MUTED, marginTop: 1 },
+  th: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: NAVY, paddingBottom: 5 },
+  thText: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY },
+  tr: { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: BORDER, paddingVertical: 7 },
+  cDesc: { flex: 1, paddingRight: 10 },
+  cQty: { width: 52, textAlign: "right" },
+  cUnit: { width: 72, textAlign: "right" },
+  cVat: { width: 58, textAlign: "right" },
+  cAmt: { width: 78, textAlign: "right" },
+  desc: { fontSize: 9, color: TEXT },
+  descSub: { fontSize: 8, color: LABEL, marginTop: 2, lineHeight: 1.4 },
+  totals: { marginTop: 8, marginLeft: "52%" },
+  totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
+  totalLabel: { fontSize: 9, color: MUTED },
+  totalValue: { fontSize: 9, color: TEXT },
+  grandRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: 1, borderTopColor: NAVY, marginTop: 2 },
+  grandLabel: { fontSize: 10, fontFamily: "Helvetica-Bold", color: NAVY },
+  grandValue: { fontSize: 10, fontFamily: "Helvetica-Bold", color: NAVY },
+  dueRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderTopWidth: 1, borderTopColor: NAVY, borderBottomWidth: 1, borderBottomColor: NAVY, marginTop: 2 },
+  dueLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: NAVY },
+  dueValue: { fontSize: 11, fontFamily: "Helvetica-Bold", color: ORANGE },
+  payWrap: { marginTop: 30 },
+  payTitle: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 6 },
+  payBox: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: BORDER, paddingTop: 8 },
+  payCol: { width: "50%", paddingRight: 14 },
+  payKey: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY, marginTop: 5 },
+  payKeyFirst: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY },
+  payVal: { fontSize: 9, color: MUTED, marginTop: 1 },
+  note: { fontSize: 8, color: LABEL, lineHeight: 1.45, marginTop: 14 },
+  paidStamp: { marginTop: 14, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1D9E75", borderRadius: 3, paddingVertical: 4, paddingHorizontal: 9 },
+  paidStampText: { fontSize: 9, fontFamily: "Helvetica-Bold", color: "#1D9E75", letterSpacing: 0.6 },
+  footer: { position: "absolute", left: 48, right: 48, bottom: 26, borderTopWidth: 0.5, borderTopColor: BORDER, paddingTop: 7 },
+  footerText: { fontSize: 7, color: LABEL, textAlign: "center", lineHeight: 1.45 },
+});
+
+/** Endereço em linhas de dois pedaços ("5th Floor, 1 Exchange Quay"), para não virar uma coluna comprida. */
+function paresDeLinhas(linhas: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < linhas.length; i += 2) out.push(linhas.slice(i, i + 2).join(", "));
+  return out;
+}
+
+type SheetLine = { titulo: string; sub?: string; qtd?: string; unit?: string; vat?: string; valor: number };
+
+function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
+  const paid = data.paid;
+  const comVat = Boolean(data.feeVat) && !paid;
+  const title = paid ? "RECEIPT" : "INVOICE";
+  const reference = displayBillingReference(data.reference);
+  const f = FIXFY_LEGAL_ENTITY;
+
+  const fullDue = data.balanceDue > 0 ? data.balanceDue : data.amount;
+  const dueNow = !paid && data.amountDueNow != null && data.amountDueNow > 0 ? data.amountDueNow : fullDue;
+  const partialRequest = !paid && data.amountDueNow != null && data.amountDueNow > 0.02 && Math.abs(data.amountDueNow - fullDue) > 0.02;
+
+  const servico = [data.jobTitle, data.propertyAddress].filter(Boolean).join(" · ");
+  const quando = data.completionDate ? `Completed on ${data.completionDate}` : "";
+  const sub = [servico, quando].filter(Boolean).join("\n");
+
+  const linhas: SheetLine[] = data.feeVat
+    ? [
+        { titulo: "Trade services (passed through at cost)", sub, qtd: "1.00", unit: plainMoney(data.tradeAmount).slice(1), vat: "No VAT", valor: data.tradeAmount },
+        { titulo: "Fixfy management fee", sub: "Coordination, vetting and quality assurance", qtd: "1.00", unit: plainMoney(data.feeVat.net).slice(1), vat: `${data.feeVat.ratePct}%`, valor: data.feeVat.net },
+      ]
+    : [
+        { titulo: "Trade services", sub, valor: data.tradeAmount },
+        ...(data.feeAmount > 0.004 ? [{ titulo: "Fixfy management fee", sub: "Coordination, vetting and quality assurance", valor: data.feeAmount }] : []),
+      ];
+  const subtotal = data.feeVat ? Math.round((data.tradeAmount + data.feeVat.net) * 100) / 100 : data.amount;
+
+  const billName = data.billTo?.legalName ?? (data.clientName.trim() || "Client");
+  const attention = data.billTo && data.contactName && data.contactName.trim() !== billName ? data.contactName.trim() : null;
+
+  return (
+    <Document>
+      <Page size="A4" style={sheet.page}>
+        <View style={sheet.top}>
+          <Text style={sheet.title}>{title}</Text>
+          {data.logoDarkUrl ? <Image src={data.logoDarkUrl} style={sheet.logo} /> : <Text style={sheet.wordmark}>Fixfy</Text>}
+        </View>
+
+        <View style={sheet.cols}>
+          <View style={sheet.colTo}>
+            <Text style={sheet.name}>{billName}</Text>
+            {attention ? <Text style={sheet.line}>Attention: {attention}</Text> : null}
+            {paresDeLinhas(data.billTo?.addressLines ?? []).map((l, i) => (
+              <Text key={i} style={sheet.line}>{l}</Text>
+            ))}
+            {data.billTo?.companyNumber ? <Text style={sheet.line}>Company No. {data.billTo.companyNumber}</Text> : null}
+          </View>
+          <View style={sheet.colMeta}>
+            <Text style={sheet.metaLabelFirst}>{paid ? "Receipt Date" : "Invoice Date"}</Text>
+            <Text style={sheet.metaValue}>{paid && data.paymentDate ? data.paymentDate : data.issueDate}</Text>
+            <Text style={sheet.metaLabel}>{paid ? "Receipt Number" : "Invoice Number"}</Text>
+            <Text style={sheet.metaValue}>{reference}</Text>
+            {data.jobReference ? (
+              <>
+                <Text style={sheet.metaLabel}>Reference</Text>
+                <Text style={sheet.metaValue}>{[data.jobReference, data.quoteReference].filter(Boolean).join(" · ")}</Text>
+              </>
+            ) : null}
+            {data.feeVat ? (
+              <>
+                <Text style={sheet.metaLabel}>VAT Number</Text>
+                <Text style={sheet.metaValue}>{data.feeVat.vatNumber}</Text>
+              </>
+            ) : null}
+          </View>
+          <View style={sheet.colFrom}>
+            <Text style={sheet.name}>Getfixfy Ltd</Text>
+            {f.addressLines.map((l) => (
+              <Text key={l} style={sheet.line}>{l}</Text>
+            ))}
+            <Text style={sheet.line}>support@getfixfy.com</Text>
+          </View>
+        </View>
+
+        <View style={sheet.th}>
+          <Text style={[sheet.thText, sheet.cDesc]}>Description</Text>
+          {data.feeVat ? (
+            <>
+              <Text style={[sheet.thText, sheet.cQty]}>Quantity</Text>
+              <Text style={[sheet.thText, sheet.cUnit]}>Unit Price</Text>
+              <Text style={[sheet.thText, sheet.cVat]}>VAT</Text>
+            </>
+          ) : null}
+          <Text style={[sheet.thText, sheet.cAmt]}>Amount GBP</Text>
+        </View>
+        {linhas.map((l) => (
+          <View key={l.titulo} style={sheet.tr} wrap={false}>
+            <View style={sheet.cDesc}>
+              <Text style={sheet.desc}>{l.titulo}</Text>
+              {l.sub ? <Text style={sheet.descSub}>{l.sub}</Text> : null}
+            </View>
+            {data.feeVat ? (
+              <>
+                <Text style={[sheet.desc, sheet.cQty]}>{l.qtd}</Text>
+                <Text style={[sheet.desc, sheet.cUnit]}>{l.unit}</Text>
+                <Text style={[sheet.desc, sheet.cVat]}>{l.vat}</Text>
+              </>
+            ) : null}
+            <Text style={[sheet.desc, sheet.cAmt]}>{plainMoney(l.valor).slice(1)}</Text>
+          </View>
+        ))}
+
+        <View style={sheet.totals} wrap={false}>
+          {data.feeVat ? (
+            <>
+              <View style={sheet.totalRow}>
+                <Text style={sheet.totalLabel}>Subtotal</Text>
+                <Text style={sheet.totalValue}>{plainMoney(subtotal).slice(1)}</Text>
+              </View>
+              <View style={sheet.totalRow}>
+                <Text style={sheet.totalLabel}>Total VAT {data.feeVat.ratePct}%</Text>
+                <Text style={sheet.totalValue}>{plainMoney(data.feeVat.vat).slice(1)}</Text>
+              </View>
+            </>
+          ) : null}
+          <View style={sheet.grandRow}>
+            <Text style={sheet.grandLabel}>{data.feeVat ? "TOTAL GBP" : "TOTAL GBP (inc VAT)"}</Text>
+            <Text style={sheet.grandValue}>{plainMoney(data.amount).slice(1)}</Text>
+          </View>
+          {!paid && data.paidAmount > 0.02 ? (
+            <View style={sheet.totalRow}>
+              <Text style={sheet.totalLabel}>Less amount paid</Text>
+              <Text style={sheet.totalValue}>{plainMoney(data.paidAmount).slice(1)}</Text>
+            </View>
+          ) : null}
+          {paid ? (
+            <View style={sheet.dueRow}>
+              <Text style={sheet.dueLabel}>AMOUNT PAID GBP</Text>
+              <Text style={[sheet.dueValue, { color: "#1D9E75" }]}>{plainMoney(data.amount).slice(1)}</Text>
+            </View>
+          ) : (
+            <View style={sheet.dueRow}>
+              <Text style={sheet.dueLabel}>{partialRequest ? "AMOUNT DUE NOW GBP" : "AMOUNT DUE GBP"}</Text>
+              <Text style={sheet.dueValue}>{plainMoney(dueNow).slice(1)}</Text>
+            </View>
+          )}
+        </View>
+
+        {paid ? (
+          <View style={sheet.paidStamp}>
+            <Text style={sheet.paidStampText}>PAID{data.paymentDate ? ` · ${data.paymentDate}` : ""}</Text>
+          </View>
+        ) : (
+          <View style={sheet.payWrap} wrap={false}>
+            <Text style={sheet.payTitle}>Due Date: {data.dueDate}</Text>
+            <View style={sheet.payBox}>
+              <View style={sheet.payCol}>
+                {FIXFY_CLIENT_BANK_DETAIL_ROWS.filter((r) => r.label !== "IBAN").map((r, i) => (
+                  <View key={r.label}>
+                    <Text style={i === 0 ? sheet.payKeyFirst : sheet.payKey}>{r.label}</Text>
+                    <Text style={sheet.payVal}>{r.value}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={sheet.payCol}>
+                <Text style={sheet.payKeyFirst}>Payment reference</Text>
+                <Text style={sheet.payVal}>{reference}</Text>
+                <Text style={sheet.payKey}>IBAN</Text>
+                <Text style={sheet.payVal}>{FIXFY_CLIENT_BANK_DETAIL_ROWS.find((r) => r.label === "IBAN")?.value ?? ""}</Text>
+                <Text style={sheet.payKey}>Pay online by card</Text>
+                <Text style={sheet.payVal}>{invoicePayLinkUrl(data.reference).replace(/^https?:\/\//, "")}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        <Text style={sheet.note}>
+          {comVat || data.feeVat
+            ? "VAT is charged on the Fixfy management fee only. Trade services are passed through at cost, with no VAT added by Fixfy."
+            : "Prices include VAT where it applies. Need a VAT invoice? Reply to the email this came with, or write to support@getfixfy.com."}
+          {partialRequest && data.requestPercent ? ` This request is for ${Math.round(data.requestPercent)}% of the invoice.` : ""}
+        </Text>
+
+        <View style={sheet.footer} fixed>
+          <Text style={sheet.footerText}>
+            {f.legalName} · Registered in England and Wales, Company No. {f.companyNumber} · VAT No. {f.vatNumber}{"\n"}
+            Registered office: {f.addressLines.join(", ")} · getfixfy.com
           </Text>
         </View>
       </Page>

@@ -15,7 +15,8 @@ import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
-import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, zendeskApi } from "@/lib/zendesk";
+import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
 
 function escapeHtml(s: string): string {
@@ -330,11 +331,18 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
   // O mesmo assunto de toda fatura ("Your invoice INV-… is ready"); recibo quando já está paga.
   const emailSubject = includeInvoice && invoiceRow ? buildInvoiceEmailSubject(invoiceRow, ref) : `Job ${ref} — final update`;
 
+  // Cópia pedida pela conta (o financeiro do cliente), só quando a fatura vai junto (mig 324).
+  const ccDaConta = includeInvoice && invoiceRow ? await copiasDaFaturaDaConta(admin, invoiceRow.source_account_id ?? billing.sourceAccountId ?? null, [emailTo]) : [];
+
   let channel: "zendesk" | "resend";
   let resendId: string | undefined;
 
   if (useZendesk) {
     try {
+      // No Zendesk a cópia é do ticket: quem está em CC recebe a resposta pública.
+      if (ccDaConta.length) {
+        await zendeskApi(`tickets/${zdTicketId}.json`, { method: "PUT", body: { ticket: { email_ccs: ccDaConta.map((e) => ({ user_email: e, action: "put" })) } } }).catch((e) => console.warn("final-review-email cc:", e instanceof Error ? e.message : e));
+      }
       await zdSendCustomerComment({
         ticketId:    zdTicketId!,
         htmlBody:    html,
@@ -353,6 +361,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
     const { data: sent, error: sendErr } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
+      ...(ccDaConta.length ? { cc: ccDaConta } : {}),
       subject: emailSubject,
       html,
       attachments: attachments.length > 0 ? attachments : undefined,

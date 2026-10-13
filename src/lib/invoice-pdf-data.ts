@@ -14,6 +14,7 @@ import {
 } from "@/lib/frontend-setup";
 import {
   DEFAULT_INVOICE_PDF_LOGO_URL,
+  readPublicLogoDataUri,
   resolveLogoDataUri,
 } from "@/lib/pdf/resolve-logo-data-uri";
 import type { InvoicePdfData } from "@/lib/pdf/invoice-template";
@@ -115,6 +116,8 @@ export async function loadInvoicePdfData(
   const logoSource =
     resolveInvoiceStatementLogoUrl(setup, companyRow?.logo_url) || DEFAULT_INVOICE_PDF_LOGO_URL;
   const logoUrl = (await resolveLogoDataUri(logoSource)) ?? undefined;
+  // Logo para a folha branca da fatura de uma página.
+  const logoDarkUrl = readPublicLogoDataUri("logos/fixfy-wordmark-navy-trim.png");
 
   return {
     reference: displayBillingReference(inv.reference),
@@ -144,6 +147,7 @@ export async function loadInvoicePdfData(
     tradeAmount: trade,
     feeAmount: fee,
     logoUrl,
+    logoDarkUrl,
     amountDueNow: opts?.amountDueNow,
     requestPercent: opts?.requestPercent,
     agent,

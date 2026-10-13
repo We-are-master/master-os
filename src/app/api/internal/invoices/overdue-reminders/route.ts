@@ -8,6 +8,7 @@
  * Chamado pelo n8n uma vez por dia (manhã de Londres). Auth: x-internal-secret =
  * INTERNAL_SYNC_SECRET. ?dry-run=1 só lista o que mandaria.
  */
+import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
@@ -109,6 +110,7 @@ export async function POST(req: NextRequest) {
     if (ensaio) { out.push(`${inv.reference}: would send stage ${stage} (${copy.subject}) to ${to}`); continue; }
     if (!resendKey || !fromEmail) return NextResponse.json({ error: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" }, { status: 503 });
 
+    const ccDaConta = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
     const pdf = await renderInvoicePdfBuffer(admin, inv.id);
     const html = `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1a1a2e;max-width:560px">
 <p>Hi ${esc(ctx.billing.displayName ?? "there")},</p>
@@ -122,6 +124,8 @@ ${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:${copy
     const { error } = await resend.emails.send({
       from: fromEmail,
       to: [to],
+      // O financeiro da conta acompanha a cobrança, como acompanha a fatura (mig 324).
+      ...(ccDaConta.length ? { cc: ccDaConta } : {}),
       replyTo: "hello@getfixfy.com",
       subject: copy.subject,
       html,
