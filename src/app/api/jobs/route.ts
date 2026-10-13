@@ -367,7 +367,9 @@ export async function POST(req: NextRequest) {
   // `let` because create_zendesk_ticket mints a fresh ticket further down
   // (after validation/pricing) and threads its id through the same path an
   // incoming ticket_id would take.
-  let ticketId          = str(body.ticket_id) || null;
+  // The id is all digits, so callers send it as a JSON number as often as a
+  // string. A number used to be dropped here and the job was born unlinked.
+  let ticketId          = ticketIdFrom(body.ticket_id);
   // When true and no ticket_id came in, the OS opens a brand-new Zendesk
   // ticket itself and links it at insert time (external_source/external_ref),
   // so callers like the Checkatrade RPA never touch Zendesk directly.
@@ -1509,6 +1511,12 @@ async function fetchAccountServiceOverride(
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** Zendesk ticket id from the body: a string or a positive integer. */
+function ticketIdFrom(v: unknown): string | null {
+  if (typeof v === "number") return Number.isSafeInteger(v) && v > 0 ? String(v) : null;
+  return str(v) || null;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */
