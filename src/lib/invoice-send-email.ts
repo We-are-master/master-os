@@ -1,4 +1,5 @@
 import "server-only";
+import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
@@ -164,7 +165,10 @@ export async function sendInvoiceEmail(
   };
   const emailTo = ctx.billing.documentEmail!.trim();
   const ccEmail = resolveInvoiceCcEmail(company?.email);
-  const ccList = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
+  const ccDaCasa = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
+  // Cópia pedida pela conta (o financeiro do cliente): entra em toda fatura dela (mig 324).
+  const ccDaConta = await copiasDaFaturaDaConta(admin, ctx.invoice.source_account_id ?? ctx.billing.sourceAccountId ?? null, [emailTo, ...ccDaCasa]);
+  const ccList = [...ccDaCasa, ...ccDaConta];
 
   const { invoice: inv, job, quoteReference, billing } = ctx;
   const request =
