@@ -7,6 +7,7 @@
  *  - a receber separa o vencido de verdade das plataformas, que pagam no ciclo delas
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 import { resolveJobCompletionYmd } from "@/lib/job-completion-anchor";
 import { leadsDoMes, metaMensal, somarDias, urgentesAgora, ymdDeLondres, STATUS_ENTREGUE, type Urgente } from "@/lib/placar-diario";
 
@@ -141,7 +142,7 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
   const grupo = (j: JobDoMes): PulseCeo["origem"][number]["nome"] => {
     const conta = j.client_id ? contaDoCliente.get(j.client_id) ?? null : null;
     if (conta && plataformas.has(conta)) return "Platforms";
-    if (!conta || contaFixfy.has(conta)) return "B2C";
+    if (!conta || contaFixfy.has(conta) || isDirectConsumerAccount(conta)) return "B2C";
     return "B2B accounts";
   };
   const origem = (["B2B accounts", "Platforms", "B2C"] as const).map((nome) => {

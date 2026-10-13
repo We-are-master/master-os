@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 import { tryGetFixfyAccountId } from "@/lib/fixfy-account";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 
@@ -97,7 +98,7 @@ async function fetchAccountForBilling(
   return null;
 }
 
-/** Fixfy corporate account is always B2C — never bill Victor / ops inbox as the quote customer. */
+/** Fixfy corporate account and the direct consumer accounts are always B2C — never bill Victor / ops inbox as the quote customer. */
 async function accountQuoteBillingMode(
   supabase: SupabaseClient,
   accountId: string,
@@ -105,6 +106,7 @@ async function accountQuoteBillingMode(
 ): Promise<AccountBillingAddresseeMode> {
   const fixfyId = await tryGetFixfyAccountId(supabase);
   if (fixfyId && accountId === fixfyId) return "end_client";
+  if (isDirectConsumerAccount(accountId)) return "end_client";
   return billingType === "account" ? "account" : "end_client";
 }
 
