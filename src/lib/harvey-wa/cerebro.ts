@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { fichaDaFerramenta, type FichaDoJob } from "./ficha-do-job";
 import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
 import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
@@ -87,6 +88,8 @@ export type Resultado = {
   ferramentas: string[];
   /** O que o Harvey já sabe, para a nota interna do ticket quando passa para a equipe. */
   notaParaEquipe?: string | null;
+  /** O mesmo, em campos: vai para o formulário de Job do ticket, para a equipe não digitar de novo. */
+  fichaDoJob?: FichaDoJob | null;
   /** Documentos de parceiro gravados nesta resposta (para o log). */
   documentos: unknown[];
 };
@@ -220,6 +223,22 @@ const FERRAMENTAS_CLIENTE = [
           reason: { type: "string", description: "one line in English: what is needed and why" },
           need: { type: "string", enum: ["call", "quote", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: a person has to price the job (electrical, gas, building work, anything outside the catalogue). other: complaint, bank transfer, existing booking, anything else" },
           details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
+          job: {
+            type: "object",
+            description: "what you already know about the job, so the team does not type it again. Fill in only what the customer actually told you; leave out anything you do not know. Never guess.",
+            properties: {
+              customer_name: { type: "string", description: "full name as they gave it" },
+              email: { type: "string" },
+              address: { type: "string", description: "house or flat number and street" },
+              postcode: { type: "string" },
+              service: { type: "string", description: "the trade or service, e.g. General Maintenance, Carpenter, Painter, Plumber, Deep Clean" },
+              scope: { type: "string", description: "what needs doing, in English, in plain sentences" },
+              price: { type: "number", description: "the price in pounds already given to the customer, if any" },
+              rate: { type: "string", enum: ["fixed", "hourly"] },
+              date: { type: "string", description: "the agreed day as YYYY-MM-DD, only if a day was agreed" },
+              window: { type: "string", description: "the agreed arrival window, e.g. 9am to 12pm" },
+            },
+          },
         },
         required: ["reason"],
       },
@@ -570,6 +589,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     if (q.reference) {
       r.passarParaEquipe = `quote requested on WhatsApp: ${q.reference}`;
       r.notaParaEquipe = `Quote ${q.reference} created in the OS with the photos.\nJob: ${a.description}\nPostcode: ${a.postcode}${a.address ? `\nAddress: ${a.address}` : ""}`;
+      r.fichaDoJob = fichaDaFerramenta({ customer_name: a.name, email: a.email, address: a.address, postcode: a.postcode, service: a.service_type, scope: a.description });
     }
     return { ...q, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
   }
@@ -608,6 +628,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     r.passarParaEquipe = String(a.reason || "Harvey asked for a person");
     r.precisaDe = typeof a.need === "string" ? a.need : null;
     r.notaParaEquipe = typeof a.details === "string" ? a.details : null;
+    r.fichaDoJob = fichaDaFerramenta(a.job);
     return { ok: true, note: "The team has been told. Send one short line saying you are getting someone, then stop." };
   }
   if (nome === "create_payment_link") {
