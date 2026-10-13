@@ -54,7 +54,7 @@ export async function loadInvoicePdfData(
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, partner_id, created_at, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, partner_id, created_at, property_address, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -137,7 +137,9 @@ export async function loadInvoicePdfData(
     partial,
     paidAmount: paidAmt,
     quoteReference: quoteReference ?? undefined,
-    serviceType: (job as { service_type?: string | null } | null)?.service_type ?? undefined,
+    // `jobs.service_type` não existe em produção: pedi-la derrubava a consulta inteira e a fatura
+    // saía sem o job (sem endereço, sem data, taxa da Fixfy em £0). O serviço é o título do job.
+    serviceType: job?.title ?? undefined,
     completionDate: job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
     tradeAmount: trade,
     feeAmount: fee,
