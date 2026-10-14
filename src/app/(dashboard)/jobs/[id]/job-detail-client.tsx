@@ -7385,7 +7385,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               label: "Add visit",
                               icon: CalendarPlus,
                               onSelect: () => {
-                                setDetailTab(0);
+                                setDetailTab(1);
                                 setVisitOpenCreateSignal((k) => k + 1);
                               },
                             }]
@@ -7919,7 +7919,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
-                            onClick={() => setDetailTab(0)}
+                            onClick={() => setDetailTab(1)}
                             className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
                             title="Open the visits tab"
                           >
@@ -8156,6 +8156,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
+                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 1 as const }] : []),
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     { label: "Notes", index: 4 as const },
@@ -8480,8 +8481,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
+              </div>
+              ) : null}
+
+              {/* Sempre montada (só escondida): o "Add visit" do menu manda um sinal
+                  que a aba lê ao montar; remontar a cada troca reabriria o formulário. */}
               {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                <div className="pt-2 border-t border-border">
+                <div hidden={detailTab !== 1}>
                   <VisitsTab
                     job={job}
                     openCreateSignal={visitOpenCreateSignal}
@@ -8515,8 +8521,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     }}
                   />
                 </div>
-              ) : null}
-              </div>
               ) : null}
 
               {detailTab === 2 && job ? <JobDocumentsPanel job={job} onUpdate={handleJobUpdate} /> : null}
