@@ -32,7 +32,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
       { label: "Live view", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
-      { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
     ],
   },
   {
@@ -66,7 +65,6 @@ export const NAVIGATION: NavGroup[] = [
       // O motor de preço (Catalog/Labour/Materials/Quote) mora em Settings →
       // Services; este atalho existe porque cotar é rotina de Finance (dono,
       // 17/08/2026), e /services redireciona pra lá.
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       // Payouts (/payout) hidden for now — billing + expenses cover partner payments.
     ],
   },

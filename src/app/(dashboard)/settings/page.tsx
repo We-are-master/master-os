@@ -41,16 +41,7 @@ import { BrandingImageUpload } from "@/components/settings/branding-image-upload
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
 import { LeadOriginsTab } from "./lead-origins-tab";
-import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
-const settingsAdminTabs = [
-  { id: "ai-briefs", label: "AI & Daily brief" },
-  { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
-  { id: "lead-origins", label: "Lead origins" },
-  { id: "navigation", label: "Navigation" },
-  { id: "permissions", label: "Roles & permissions" },
-  { id: "team", label: "Users access" },
-  { id: "system", label: "System" },
-] as const;
+import { SETTINGS_PAGE_TABS, useSettingsTabs } from "@/components/settings/settings-tabs-bar";
 
 export default function SettingsPage() {
   return (
@@ -67,27 +58,19 @@ function SettingsPageInner() {
   const { loading: configLoading } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
 
-  const visibleTabs = useMemo(() => {
-    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My profile" }];
-    if (isAdmin) {
-      tabs.push(
-        ...settingsAdminTabs.map((t) => ({
-          id: t.id,
-          label: t.label,
-          count: "count" in t ? t.count : undefined,
-        })),
-      );
-    }
-    return tabs;
-  }, [isAdmin]);
+  const visibleTabs = useSettingsTabs();
 
   const tabFromUrl = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState("profile");
 
   useEffect(() => {
-    // Services mora só na página dele (Finance → Services).
+    // Agents e Services são abas que moram nas páginas deles.
     if (tabFromUrl === "service-catalog" || tabFromUrl === "services") {
       router.replace("/services");
+      return;
+    }
+    if (tabFromUrl === "agents") {
+      router.replace("/agents");
       return;
     }
     if (tabFromUrl === "tiers") {
@@ -107,6 +90,10 @@ function SettingsPageInner() {
   }, [tabFromUrl, visibleTabs, configLoading, activeTab, router]);
 
   const handleTabChange = (id: string) => {
+    if (SETTINGS_PAGE_TABS[id]) {
+      router.push(SETTINGS_PAGE_TABS[id]!);
+      return;
+    }
     setActiveTab(id);
     const params = new URLSearchParams(searchParams.toString());
     if (id === "profile") params.delete("tab");

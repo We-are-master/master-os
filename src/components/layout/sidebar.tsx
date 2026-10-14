@@ -107,7 +107,11 @@ const navLogoComponents: Record<string, (props: { className?: string }) => React
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
 const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/leads"]);
 
+/** Páginas que são abas do Settings (Agents, Services): acendem o Settings na lateral. */
+const SETTINGS_TAB_PATHS = ["/agents", "/services"];
+
 function pathMatchesHref(pathname: string, href: string): boolean {
+  if (href === "/settings" && SETTINGS_TAB_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return true;
   return pathname === href || (href !== "/" && pathname.startsWith(href));
 }
 
