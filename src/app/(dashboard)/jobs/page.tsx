@@ -4909,35 +4909,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <span className="truncate">{pricingModeLabel("hourly")}</span>
               </button>
             </div>
-            {form.job_type === "fixed" ? (
-              // O acordo por trás do preço fixo (mig 281): Day rate e Half day
-              // são o MESMO fixed; o rótulo é o que o parceiro lê no email.
-              <div className="flex flex-wrap gap-1">
-                {[
-                  { id: "fixed", label: "Fixed price" },
-                  { id: "daily", label: "Day rate" },
-                  { id: "half_day", label: "Half day" },
-                ].map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => update("rate_basis", b.id)}
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                      (form.rate_basis ?? "fixed") === b.id
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border-light text-text-secondary hover:bg-surface-hover",
-                    )}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <div
               className={cn(
                 "grid gap-2 min-w-0",
-                catalogPricingPresetOptions.length > 0 ? "grid-cols-1 @md:grid-cols-2" : "grid-cols-1",
+                catalogPricingPresetOptions.length > 0 || form.job_type === "fixed"
+                  ? "grid-cols-1 @md:grid-cols-[minmax(0,1fr)_minmax(0,11rem)]"
+                  : "grid-cols-1",
               )}
             >
               <div className="min-w-0 space-y-1">
@@ -5011,6 +4988,25 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </>
                 )}
               </div>
+              {form.job_type === "fixed" ? (
+                // O acordo por trás do preço fixo (mig 281): Day rate e Half day são o
+                // MESMO fixed; o rótulo é o que o parceiro lê no email.
+                <div className="min-w-0 space-y-1">
+                  <label htmlFor="create-job-rate-basis" className="block text-[11px] font-medium text-text-secondary">
+                    Rate
+                  </label>
+                  <select
+                    id="create-job-rate-basis"
+                    value={form.rate_basis ?? "fixed"}
+                    onChange={(e) => update("rate_basis", e.target.value)}
+                    className="h-9 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary"
+                  >
+                    <option value="fixed">Fixed price</option>
+                    <option value="daily">Day rate</option>
+                    <option value="half_day">Half day</option>
+                  </select>
+                </div>
+              ) : null}
               {catalogPricingPresetOptions.length > 0 && !isStackablePricing ? (
                 <div className="space-y-1 min-w-0">
                   <div className="flex items-center gap-1">
