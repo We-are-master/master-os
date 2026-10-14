@@ -181,8 +181,9 @@ export async function chargeJobBalanceOnSavedCard(
 }
 
 /**
- * Sinal pago com `metadata.save_card = "1"`: guarda o cliente e o cartão da Stripe no
- * job e no cliente do OS, para o restante ser cobrado no final review.
+ * Pagamento pelo link com `metadata.save_card = "1"` (sinal ou cheio): guarda o cliente e o
+ * cartão da Stripe no job e no cliente do OS, para o restante, o extra aprovado ou o
+ * cancelamento tardio sair dele.
  */
 export async function saveCardFromCheckoutSession(
   admin: SupabaseClient,

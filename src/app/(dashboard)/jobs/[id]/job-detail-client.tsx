@@ -14,6 +14,7 @@ import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobScheduleTimingChip } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { JobZendeskStatus } from "@/components/jobs/job-zendesk-status";
@@ -1622,14 +1623,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const policy = accountFinalEmailPolicyFromRow(acc);
         if (cancelled) return;
         setAccountEmailPolicy(policy);
-        // Conta que paga no cartão não recebe fatura no e-mail (o restante é cobrado no cartão salvo).
-        const pagaNoCartao = acc?.collection_mode === "card_upfront";
-        setIncludeInvoiceInEmail(policy.canIncludeInvoice && !pagaNoCartao);
+        // Fatura + relatório saem por e-mail por padrão quando o job é aprovado, nunca durante o
+        // final check (dono, 09/10 e 14/10/2026). Vale também para quem paga no cartão: com cartão
+        // salvo o restante é cobrado antes e o e-mail leva o recibo; sem cartão salvo leva o que
+        // falta, com o sinal descontado e o Pay now, e a fatura entra nos lembretes. Antes o B2C
+        // sem cartão saía sem nada para pagar. A equipe ainda pode trocar antes de aprovar.
+        setIncludeInvoiceInEmail(policy.canIncludeInvoice);
         setIncludeReportInEmail(policy.canIncludeReport);
-        // Conta que paga por fatura: fatura + relatório saem por e-mail por padrão no fim do final check
-        // (dono, 09/10/2026). A equipe ainda pode trocar antes de aprovar.
-        const faturaAutomatica = !!acc && !pagaNoCartao && canSendClientEmailWithPack(policy);
-        setCompletionDelivery(faturaAutomatica ? "email" : canSendClientEmailWithPack(policy) ? null : "stage_only");
+        setCompletionDelivery(canSendClientEmailWithPack(policy) ? "email" : "stage_only");
       } catch {
         if (!cancelled) {
           const fallback: AccountFinalEmailPolicy = { canIncludeInvoice: true, canIncludeReport: true };
@@ -7201,6 +7202,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
                 </div>
                 <JobOverdueBadge job={job} size="sm" />
+                <JobCardRefusedBadge job={job} size="sm" />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {healthMissingPartner ? (

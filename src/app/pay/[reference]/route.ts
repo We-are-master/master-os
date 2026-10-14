@@ -152,9 +152,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     const clientName = inv.client_name?.trim();
     const stripe = requireStripe();
 
-    // Sinal de quem paga no cartão (conta card_upfront ou sem conta): a Stripe guarda o
-    // cartão e o restante é cobrado sozinho no final review (Fase 0, dono 09/10/2026).
-    const saveCard = CARD_ON_FILE_ON() && pct < 100 && !!jobId && (await accountPaysByCard(admin, jobClientId));
+    // Quem paga no cartão (conta card_upfront ou sem conta) sempre deixa o cartão salvo:
+    // no sinal o restante é cobrado sozinho no final review (Fase 0, dono 09/10/2026); no
+    // pagamento cheio ele fica para extra aprovado ou cancelamento tardio (dono, 14/10/2026).
+    const saveCard = CARD_ON_FILE_ON() && !!jobId && (await accountPaysByCard(admin, jobClientId));
     let savedCustomerId: string | null = null;
     if (saveCard && jobClientId) {
       const { data: cli } = await admin.from("clients").select("stripe_customer_id").eq("id", jobClientId).maybeSingle();
@@ -187,7 +188,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
             payment_intent_data: { setup_future_usage: "off_session" as const },
             custom_text: {
               submit: {
-                message: `You pay the ${pct}% deposit now. Your card is saved securely by Stripe and the remaining balance (£${balanceAfter.toFixed(2)}) is charged automatically when your job is completed and checked. Extra work or materials you approve, or a late-cancellation charge under our booking terms, may also be charged to this card.`,
+                message:
+                  pct < 100
+                    ? `You pay the ${pct}% deposit now. Your card is saved securely by Stripe and the remaining balance (£${balanceAfter.toFixed(2)}) is charged automatically when your job is completed and checked. Extra work or materials you approve, or a late-cancellation charge under our booking terms, may also be charged to this card.`
+                    : `You pay in full now. Your card is saved securely by Stripe and is only charged again for extra work or materials you approve, or a late-cancellation charge under our booking terms.`,
               },
             },
           }
