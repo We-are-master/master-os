@@ -106,7 +106,7 @@ function MoneyInReadyListInner({
 
         return (
           <div key={group.accountKey}>
-            <div className="bl-ledger-partner flex items-center gap-2 px-5 py-2.5">
+            <div className="bl-ledger-partner flex items-center gap-2 px-5 py-1.5">
               {groupSelectableIds.length > 0 ? (
                 <input
                   type="checkbox"
@@ -130,16 +130,16 @@ function MoneyInReadyListInner({
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 shrink-0 text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 truncate text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                       {group.maxDaysLate > 0 ? ` · ${group.maxDaysLate}d late` : ""}
                       {group.nextExpectedPayYmd

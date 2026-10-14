@@ -2926,10 +2926,23 @@ function SelfBillGroupedLedger({
           </div>
           {section.groups.map((week) => (
         <div key={week.weekKey}>
-          <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-text-primary">{week.weekTitle}</p>
-              {week.weekSubtitle ? <p className="text-xs text-text-secondary">{week.weekSubtitle}</p> : null}
+          <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+              {(() => {
+                // Grupo cujo dia de pagar já passou e ainda tem coisa aberta: é atraso, não "próximo".
+                const due = /^\d{4}-\d{2}-\d{2}$/.test(week.weekKey) ? week.weekKey : null;
+                const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+                const hasOpen = week.partners.some((pg) =>
+                  pg.rows.some((sb) => sb.status !== "paid" && sb.status !== "rejected" && !isSelfBillPayoutVoided(sb)),
+                );
+                const late = due !== null && due < today && hasOpen;
+                return late ? (
+                  <p className="m-0 text-[13px] font-semibold text-[var(--bad)]">Late · was due {formatDate(due)}</p>
+                ) : (
+                  <p className="m-0 text-[13px] font-semibold text-text-primary">{week.weekTitle}</p>
+                );
+              })()}
+              {week.weekSubtitle ? <p className="m-0 text-[12px] text-text-tertiary">{week.weekSubtitle}</p> : null}
             </div>
             <div className="flex items-center gap-3">
               <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(week.weekTotal)}</p>
@@ -3012,7 +3025,7 @@ function SelfBillGroupedLedger({
             return (
             <div key={partnerGroupKey}>
               {collapsiblePartners ? (
-                <div className="bl-ledger-partner flex items-center gap-2 px-4 py-2.5">
+                <div className="bl-ledger-partner flex items-center gap-2 px-4 py-1.5">
                   {partnerSelectableIds.length > 0 ? (
                     <input
                       type="checkbox"
@@ -3043,9 +3056,9 @@ function SelfBillGroupedLedger({
                         partnerName={partner.partnerName}
                         partnerAvatarById={partnerAvatarById}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-text-primary">{partner.partnerName}</p>
-                        <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{partner.partnerName}</p>
+                        <p className="m-0 shrink-0 text-[12px] text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -3092,9 +3105,9 @@ function SelfBillGroupedLedger({
                         partnerName={partner.partnerName}
                         partnerAvatarById={partnerAvatarById}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-text-primary">{partner.partnerName}</p>
-                        <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{partner.partnerName}</p>
+                        <p className="m-0 shrink-0 text-[12px] text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
                     <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(partner.partnerTotal)}</p>
