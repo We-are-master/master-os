@@ -27,11 +27,11 @@ type OpsJob = Pick<
 
 const IN_PROGRESS_STATUSES = new Set<Job["status"]>(["in_progress"]);
 const PIPELINE_DEFS = [
-  { id: "ready", label: "Ready to Book", color: "bg-amber-500", match: (j: OpsJob) => j.status === "unassigned" },
+  { id: "ready", label: "Ready to book", color: "bg-amber-500", match: (j: OpsJob) => j.status === "unassigned" },
   { id: "scheduled", label: "Scheduled", color: "bg-sky-500", match: (j: OpsJob) => j.status === "scheduled" || j.status === "late" },
-  { id: "progress", label: "In Progress", color: "bg-orange-500", match: (j: OpsJob) => IN_PROGRESS_STATUSES.has(j.status) },
-  { id: "final", label: "Final Checks", color: "bg-violet-500", match: (j: OpsJob) => j.status === "final_check" },
-  { id: "awaiting", label: "Awaiting Payment", color: "bg-rose-500", match: (j: OpsJob) => j.status === "awaiting_payment" },
+  { id: "progress", label: "In progress", color: "bg-orange-500", match: (j: OpsJob) => IN_PROGRESS_STATUSES.has(j.status) },
+  { id: "final", label: "Final checks", color: "bg-violet-500", match: (j: OpsJob) => j.status === "final_check" },
+  { id: "awaiting", label: "Awaiting payment", color: "bg-rose-500", match: (j: OpsJob) => j.status === "awaiting_payment" },
 ] as const;
 
 function startOfDay(d: Date): Date {
@@ -473,8 +473,8 @@ export function OperationsStatus() {
           />
           <Select
             options={[
-              { value: "this_week", label: "This Week" },
-              { value: "this_month", label: "This Month" },
+              { value: "this_week", label: "This week" },
+              { value: "this_month", label: "This month" },
               { value: "last_30_days", label: "Last 30 Days" },
               { value: "custom", label: "Custom" },
             ]}
@@ -626,9 +626,9 @@ export function OperationsStatus() {
               <div className="mt-2">
                 <Select
                   options={[
-                    { value: "this_month", label: "This Month" },
+                    { value: "this_month", label: "This month" },
                     { value: "last_30_days", label: "Last 30 Days" },
-                    { value: "all_time", label: "All Time" },
+                    { value: "all_time", label: "All time" },
                   ]}
                   value={topJobsWindow}
                   onChange={(e) => setTopJobsWindow(e.target.value as ChartWindow)}
@@ -672,9 +672,9 @@ export function OperationsStatus() {
               <div className="mt-2">
                 <Select
                   options={[
-                    { value: "this_month", label: "This Month" },
+                    { value: "this_month", label: "This month" },
                     { value: "last_30_days", label: "Last 30 Days" },
-                    { value: "all_time", label: "All Time" },
+                    { value: "all_time", label: "All time" },
                   ]}
                   value={serviceWindow}
                   onChange={(e) => setServiceWindow(e.target.value as ChartWindow)}

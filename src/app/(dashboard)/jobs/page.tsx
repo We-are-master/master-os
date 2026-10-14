@@ -708,13 +708,13 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
-  completed: { label: "Paid & Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
-  cancelled: { label: "Lost & Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
+  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
+  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  completed: { label: "Paid & completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
+  cancelled: { label: "Lost & cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
@@ -1727,11 +1727,11 @@ function JobsPageContent() {
     // "Active jobs" hidden for now: it is the union of the tabs beside it, so it
     // duplicated every row and made the strip read as eight filters when there
     // are seven. `status === "all"` still works from a link.
-    { id: "action_required", label: "Action Required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
+    { id: "action_required", label: "Action required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
     { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
-    { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
-    { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting Payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "in_progress", label: "In progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
+    { id: "final_check", label: "Final checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
@@ -2183,7 +2183,7 @@ function JobsPageContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             partnerId: result.partner_id,
-            title: "Job Assigned",
+            title: "Job assigned",
             body: `${result.title} — ${result.property_address}`,
             data: { type: "job_assigned", jobId: result.id },
           }),
@@ -2779,7 +2779,7 @@ function JobsPageContent() {
     },
     {
       key: "client_name",
-      label: "Client / Property",
+      label: "Client / property",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
       sortable: true,
@@ -3059,7 +3059,7 @@ function JobsPageContent() {
     },
     {
       key: "margin_percent",
-      label: "Job Amount",
+      label: "Job amount",
       minWidth: "112px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
@@ -3074,7 +3074,7 @@ function JobsPageContent() {
     },
     {
       key: "amount_due",
-      label: "Amount Due",
+      label: "Amount due",
       minWidth: "96px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
@@ -3273,9 +3273,9 @@ function JobsPageContent() {
   }, [scheduleWindowLine]);
 
   return (
-    <PageTransition className="flex min-h-0 flex-col -mt-2 sm:-mt-3 lg:-mt-4 h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)] overflow-hidden">
+    <PageTransition className="flex min-h-0 flex-col h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)] overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2 sm:pt-3 lg:pt-4">
-        <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
+        <PageHeader title="Jobs management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DateRangeFilter
               value={{
@@ -4774,7 +4774,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           <Button
             type="submit"
             form="create-job-form"
-            className="bg-[#020040] hover:bg-[#13105c] text-white border-[#020040] hover:border-[#13105c]"
+            className="bg-primary hover:bg-primary-hover text-white border-primary hover:border-primary-hover"
           >
             Create job
           </Button>
@@ -4885,7 +4885,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "fixed"
-                    ? "bg-[#1DB87A] text-white shadow-sm"
+                    ? "bg-success text-white shadow-sm"
                     : "text-text-secondary hover:bg-surface-hover",
                 )}
               >
@@ -5111,7 +5111,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
                           selected
-                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
+                            ? "border-success bg-success-light text-success"
                             : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                         )}
                       >
@@ -5284,7 +5284,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "manual"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5300,7 +5300,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "auto"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5319,7 +5319,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   <label
                     className={cn(
                       "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
+                      !form.partner_id ? "border-success bg-success-light" : "border-border hover:border-success",
                     )}
                   >
                     <div className="min-w-0">
@@ -5346,10 +5346,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
                           selected
-                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
+                          ? "border-success bg-success-light"
                             : match
-                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
-                            : "border-border hover:border-[#1DB87A]/35",
+                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-success"
+                            : "border-border hover:border-success",
                         )}
                       >
                         <div className="min-w-0">

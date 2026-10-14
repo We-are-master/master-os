@@ -46,16 +46,16 @@ export default function DashboardLayoutClient({
         <ProfileContext.Provider value={profileState}>
           <AdminConfigProvider>
             <DuplicateConfirmProvider>
-              <div className="min-h-screen bg-surface-secondary">
+              <div className="min-h-screen bg-[var(--bg)]">
                 <Sidebar />
                 <div
                   className={cn(
                     "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left] duration-300 ease-in-out",
-                    collapsed ? "lg:ml-[72px]" : "lg:ml-64",
+                    collapsed ? "lg:ml-[66px]" : "lg:ml-[216px]",
                   )}
                 >
                   <Header />
-                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8">
+                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-[14px] pt-[10px] pb-24 sm:px-6 sm:pb-14">
                     {children}
                   </main>
                   <MasterBrainAssistant />

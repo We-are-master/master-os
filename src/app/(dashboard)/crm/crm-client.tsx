@@ -237,7 +237,7 @@ export function CrmClient() {
   return (
     // Altura da tela inteira, colado no header (mesmo padrão da tela de Jobs):
     // cada coluna do quadro rola sozinha.
-    <div className="-mt-2 flex h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] min-h-0 flex-col gap-3 overflow-hidden sm:-mt-3 lg:-mt-4 lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)]">
+    <div className="flex h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] min-h-0 flex-col gap-3 overflow-hidden lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)]">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div className="mr-1 flex items-center gap-2">
           <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">Leads</h1>

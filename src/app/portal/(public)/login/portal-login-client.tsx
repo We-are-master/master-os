@@ -126,7 +126,7 @@ export function PortalLoginClient() {
               className="w-12 h-12 object-contain"
             />
           </div>
-          <h1 className="text-3xl font-black text-white tracking-tight">Account Portal</h1>
+          <h1 className="text-3xl font-black text-white tracking-tight">Account portal</h1>
           <p className="text-white/55 text-sm mt-1">Sign in to manage your account with Fixfy</p>
         </div>
 

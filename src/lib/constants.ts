@@ -23,14 +23,14 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Learn",
     items: [
-      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "NEW" },
+      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "New" },
     ],
   },
   {
     label: "Overview",
     items: [
       { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
-      { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
+      { label: "Live view", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
       { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
     ],

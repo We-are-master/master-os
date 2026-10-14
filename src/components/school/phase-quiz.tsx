@@ -177,7 +177,7 @@ function QuestionReviewCard({
             "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
             submitted && isCorrect && "bg-emerald-500 text-white",
             submitted && isWrong && "bg-red-500 text-white",
-            !submitted && "bg-[#E94A02]/10 text-[#E94A02]",
+            !submitted && "bg-[#E94A02]/10 text-text-primary",
           )}
         >
           {submitted && isCorrect ? (
@@ -200,7 +200,7 @@ function QuestionReviewCard({
               key={optIdx}
               className={cn(
                 "flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm",
-                !submitted && chosen && "border-[#E94A02] bg-[#FFF4ED]/80 dark:bg-[#2a1508]/50",
+                !submitted && chosen && "border-text-primary bg-[#FFF4ED]/80 dark:bg-[#2a1508]/50",
                 !submitted && !chosen && "border-border-light",
                 submitted && correct && "border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30 font-medium",
                 submitted && chosen && !correct && "border-red-400 bg-red-50/50 dark:bg-red-950/20",
@@ -319,7 +319,7 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
       {/* Header */}
       <div className="rounded-2xl border border-border-light bg-card p-5 sm:p-6 space-y-4 text-center">
         <div className="space-y-1">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-[#E94A02] m-0">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-text-primary m-0">
             {phase.subtitle} · Final quiz
           </p>
           <h1 className="text-xl sm:text-2xl font-bold text-text-primary m-0">{phase.title}</h1>
@@ -416,9 +416,9 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
                 aria-label={`Question ${idx + 1}${answered ? ", answered" : ", unanswered"}`}
                 className={cn(
                   "h-9 min-w-[2.25rem] px-2 rounded-lg text-xs font-bold tabular-nums transition-all border",
-                  active && "border-[#E94A02] bg-[#FFF4ED] text-[#E94A02] scale-105 shadow-sm",
+                  active && "border-text-primary bg-[#FFF4ED] text-text-primary scale-105 shadow-sm",
                   !active && answered && "border-emerald-300 bg-emerald-50 text-emerald-700",
-                  !active && !answered && "border-border-light bg-card text-text-tertiary hover:border-[#E94A02]/40",
+                  !active && !answered && "border-border-light bg-card text-text-tertiary hover:border-text-primary",
                 )}
               >
                 {idx + 1}
@@ -445,7 +445,7 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
       ) : !submitted && current ? (
         <div className="rounded-2xl border border-border-light bg-card p-5 sm:p-6 space-y-5 shadow-sm">
           <div className="flex flex-col items-center gap-1 text-center sm:flex-row sm:justify-between sm:text-left">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#E94A02] m-0">
+            <p className="text-xs font-semibold uppercase tracking-wider text-text-primary m-0">
               Question {step + 1} of {total}
             </p>
             {answers[current.id] !== undefined ? (
@@ -475,20 +475,20 @@ export function PhaseQuiz({ phase, progress: initialProgress }: Props) {
                   className={cn(
                     "w-full flex items-start gap-3 rounded-xl border-2 px-4 py-3.5 text-left text-sm transition-all",
                     chosen
-                      ? "border-[#E94A02] bg-[#FFF4ED] dark:bg-[#2a1508]/50 shadow-sm"
-                      : "border-border-light hover:border-[#E94A02]/35 hover:bg-surface-hover/60",
+                      ? "border-text-primary bg-[#FFF4ED] dark:bg-[#2a1508]/50 shadow-sm"
+                      : "border-border-light hover:border-text-primary hover:bg-surface-hover/60",
                   )}
                 >
                   <span
                     className={cn(
                       "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-bold",
-                      chosen ? "bg-[#E94A02] text-white" : "bg-surface-tertiary text-text-secondary",
+                      chosen ? "bg-primary text-white" : "bg-surface-tertiary text-text-secondary",
                     )}
                   >
                     {OPTION_LETTERS[optIdx] ?? "?"}
                   </span>
                   <span className="flex-1 pt-1 text-text-primary leading-relaxed">{opt}</span>
-                  {chosen && <Check className="h-5 w-5 shrink-0 text-[#E94A02] mt-1.5" />}
+                  {chosen && <Check className="h-5 w-5 shrink-0 text-text-primary mt-1.5" />}
                 </button>
               );
             })}

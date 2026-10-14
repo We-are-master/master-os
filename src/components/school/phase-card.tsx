@@ -72,7 +72,7 @@ export function PhaseCard({ phase, progress }: Props) {
       className={cn(
         "relative rounded-2xl border p-5 sm:p-6 transition-all duration-300 h-full flex flex-col",
         unlocked
-          ? cn("border-border-light hover:border-[#E94A02]/40 hover:shadow-md cursor-pointer", accent.bg)
+          ? cn("border-border-light hover:border-text-primary hover:shadow-md cursor-pointer", accent.bg)
           : "border-dashed border-border-light bg-surface-hover/40 opacity-75",
         complete && unlocked && "ring-2 ring-emerald-500/25",
       )}
@@ -147,7 +147,7 @@ export function PhaseCard({ phase, progress }: Props) {
       </div>
 
       {unlocked && (
-        <div className="mt-4 flex items-center justify-between text-sm font-semibold text-[#E94A02]">
+        <div className="mt-4 flex items-center justify-between text-sm font-semibold text-text-primary">
           <span className="inline-flex items-center gap-1">
             {complete ? (
               <>

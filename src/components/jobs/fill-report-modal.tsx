@@ -314,7 +314,7 @@ export function FillReportModal({
     startTime !== "" && finishTime !== "" && durationMinutes === null;
 
   const inputClass =
-    "w-full rounded-[6px] border px-3 py-2 text-[13px] text-[#020040] placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/20 focus:border-[#ED4B00]";
+    "w-full rounded-[6px] border px-3 py-2 text-[13px] text-text-primary placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-text-primary/20 focus:border-text-primary";
 
   const renderField = (f: ReportField) => {
     if (!isFieldVisible(f, data)) return null;
@@ -430,7 +430,7 @@ export function FillReportModal({
           // PDF, ou a assinatura ainda não chegou: um tile calmo em vez do
           // quadrado de imagem quebrada.
           <div
-            className="flex h-16 flex-col items-center justify-center rounded-[6px] border bg-[#FAFAFB] p-1.5"
+            className="flex h-16 flex-col items-center justify-center rounded-[6px] border bg-surface-secondary p-1.5"
             style={{ borderColor: BORDER }}
           >
             <FileText className="h-4 w-4" style={{ color: NAVY }} />
@@ -457,7 +457,7 @@ export function FillReportModal({
       return (
         <div
           key={`${slot}-${i}`}
-          className="relative flex h-16 flex-col items-center justify-center rounded-[6px] border bg-[#FAFAFB] p-1.5"
+          className="relative flex h-16 flex-col items-center justify-center rounded-[6px] border bg-surface-secondary p-1.5"
           style={{ borderColor: BORDER }}
         >
           <FileText className="h-4 w-4" style={{ color: NAVY }} />

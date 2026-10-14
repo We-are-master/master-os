@@ -98,12 +98,12 @@ export function FinancialSnapshot() {
   }, [boundsKey]);
 
   const items = [
-    { label: "Accounts Receivable",  value: data.receivable,    trend: `${data.pendingCount + data.overdueCount} invoices`, positive: true },
-    { label: "Partner Payouts",      value: data.payable,       trend: `${data.partnerPayoutsCount} pending`,               positive: true },
-    { label: "Paid This Period",     value: data.paidTotal,     trend: "Collected",                                         positive: true },
-    { label: "Pending Collection",   value: data.pendingTotal,  trend: `${data.pendingCount} invoices`,                     positive: false },
-    { label: "Partner Payouts Due",  value: data.partnerPayouts,trend: `${data.partnerPayoutsCount} partners`,              positive: true },
-    { label: "Overdue Invoices",     value: data.overdue,       trend: `${data.overdueCount} invoices`,                     positive: false },
+    { label: "Accounts receivable",  value: data.receivable,    trend: `${data.pendingCount + data.overdueCount} invoices`, positive: true },
+    { label: "Partner payouts",      value: data.payable,       trend: `${data.partnerPayoutsCount} pending`,               positive: true },
+    { label: "Paid this period",     value: data.paidTotal,     trend: "Collected",                                         positive: true },
+    { label: "Pending collection",   value: data.pendingTotal,  trend: `${data.pendingCount} invoices`,                     positive: false },
+    { label: "Partner payouts due",  value: data.partnerPayouts,trend: `${data.partnerPayoutsCount} partners`,              positive: true },
+    { label: "Overdue invoices",     value: data.overdue,       trend: `${data.overdueCount} invoices`,                     positive: false },
   ];
 
   return (

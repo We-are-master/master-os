@@ -48,7 +48,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className={cn(
         "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-        checked ? "bg-[#ED4B00]" : "bg-[#D8D8DD]",
+        checked ? "bg-primary" : "bg-[#D8D8DD]",
         disabled && "opacity-50 cursor-not-allowed",
       )}
     >
@@ -84,7 +84,7 @@ function ServiceCard({
     <div
       className={cn(
         "rounded-xl border p-3 flex flex-col gap-3 min-h-[88px]",
-        enabled ? "border-[#ED4B00]/40 bg-[#FFF8F5]" : "border-border-light bg-surface",
+        enabled ? "border-text-primary bg-[#FFF8F5]" : "border-border-light bg-surface",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -105,7 +105,7 @@ function ServiceCard({
           onClick={onMakePrimary}
           className={cn(
             "text-left text-xs font-medium transition-colors",
-            isPrimary ? "text-[#ED4B00]" : "text-[#ED4B00]/80 hover:text-[#ED4B00]",
+            isPrimary ? "text-text-primary" : "text-text-primary/80 hover:text-text-primary",
           )}
         >
           {isPrimary ? `Primary ${primaryLabel.toLowerCase()}` : `Make primary`}
@@ -335,7 +335,7 @@ export function CatalogTradesSkillsTab(props: Props) {
           {canEdit ? (
             <button
               type="button"
-              className="text-xs font-medium text-[#ED4B00] hover:underline"
+              className="text-xs font-medium text-text-primary hover:underline"
               onClick={() => toggleCategory(rows, !tudo)}
             >
               {tudo ? "Clear all" : "Select all"}

@@ -425,7 +425,7 @@ function ClientsPageInner() {
       },
     },
     {
-      key: "total_spent", label: "Total Spent", align: "right" as const,
+      key: "total_spent", label: "Total spent", align: "right" as const,
       render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.total_spent)}</span>,
     },
     {
@@ -462,7 +462,7 @@ function ClientsPageInner() {
           {accountIdFilter ? (
             <Link
               href="/clients"
-              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
+              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
             >
               Clear account filter
             </Link>
@@ -1568,7 +1568,7 @@ function CreateClientForm({
               <Input
                 value={newSourceForm.industry}
                 onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
-                placeholder="Residential Services"
+                placeholder="Residential services"
               />
             </div>
           </div>
@@ -1681,8 +1681,8 @@ function CreateClientForm({
           { value: "direct", label: "Direct" },
           { value: "referral", label: "Referral" },
           { value: "website", label: "Website" },
-          { value: "partner", label: "Via Partner" },
-          { value: "corporate", label: "Corporate Account" },
+          { value: "partner", label: "Via partner" },
+          { value: "corporate", label: "Corporate account" },
           { value: "other", label: "Other" },
         ]}
       />

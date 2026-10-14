@@ -125,8 +125,6 @@ function NavLink({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const { style } = useTheme();
-  const minimal = style === "minimal";
   const childActive = item.children?.some((c) => pathMatchesHref(pathname, c.href)) ?? false;
   const selfActive = pathMatchesHref(pathname, item.href);
   const isParentOfActive = !nested && Boolean(item.children?.length) && childActive && !selfActive;
@@ -137,44 +135,31 @@ function NavLink({
   const LogoComponent = navLogoComponents[item.href];
   const iconClassName = cn(
     "h-4 w-4 shrink-0 transition-colors",
-    rowHighlight ? "text-nav-accent opacity-100" : "text-nav-text opacity-85 group-hover:text-nav-text-strong"
+    rowHighlight ? "text-nav-text-strong" : "text-nav-text group-hover:text-nav-text-strong"
   );
 
   return (
     <Link href={item.href} onClick={onNavigate}>
       <motion.div
-        whileHover={{ x: minimal || nested ? 0 : 2 }}
-        whileTap={{ scale: minimal ? 1 : 0.98 }}
         className={cn(
-          "group relative flex items-center gap-2.5 font-medium transition-colors duration-200",
-          minimal ? "rounded-md text-[13px]" : "rounded-md text-[13.5px]",
+          // VOS UNO sidebar item: 5×8, radius 6, 14/500, gap 9; active 600 with the 3px coral rule.
+          "group relative flex items-center gap-[9px] rounded-[6px] text-[14px] font-medium transition-colors duration-150",
           nested
-            ? cn("pl-6 pr-2.5 ml-2 border-l border-nav-border-strong", minimal ? "py-1" : "py-1.5")
-            : minimal ? "px-2.5 py-1.5" : "px-2.5 py-2",
+            ? "ml-2 border-l border-nav-border-strong py-[4px] pl-5 pr-2 text-[13px]"
+            : "px-2 py-[5px]",
           collapsed && "justify-center px-2",
           rowHighlight
-            ? "text-nav-text-strong bg-nav-active-bg"
+            ? "text-nav-text-strong bg-nav-active-bg font-semibold"
             : "text-nav-text hover:text-nav-text-strong hover:bg-nav-hover"
         )}
       >
         {showStripe && (
-          minimal ? (
-            <div
-              className={cn(
-                "absolute w-[2px] bg-nav-accent rounded-r",
-                nested ? "-left-2 top-1 bottom-1" : "-left-3 top-1.5 bottom-1.5"
-              )}
-            />
-          ) : (
-            <motion.div
-              layoutId={nested ? `sidebar-active-${item.href}` : "sidebar-active"}
-              className={cn(
-                "absolute w-[3px] bg-fx-coral rounded-r",
-                nested ? "-left-2 top-1.5 bottom-1.5" : "-left-3 top-1.5 bottom-1.5"
-              )}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            />
-          )
+          <div
+            className={cn(
+              "absolute w-[3px] rounded-r bg-nav-accent",
+              nested ? "-left-2 top-[5px] bottom-[5px]" : "-left-3 top-[5px] bottom-[5px]"
+            )}
+          />
         )}
         {LogoComponent ? (
           <LogoComponent className={iconClassName} />
@@ -187,7 +172,7 @@ function NavLink({
               initial={{ opacity: 0, width: 0 }}
               animate={{ opacity: 1, width: "auto" }}
               exit={{ opacity: 0, width: 0 }}
-              className={cn("truncate whitespace-nowrap", nested && "text-[13px] font-medium")}
+              className="truncate whitespace-nowrap"
             >
               {item.label}
             </motion.span>
@@ -197,7 +182,7 @@ function NavLink({
           <motion.span
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="ml-auto fx-kk text-fx-coral bg-fx-coral/15 px-1.5 py-0.5 rounded-sm"
+            className="ml-auto rounded-[6px] bg-white/10 px-2 py-[2px] text-[11px] font-medium text-nav-text-strong"
           >
             {item.badge}
           </motion.span>
@@ -228,29 +213,17 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
           alt={title}
           className={cn(
             "object-contain object-left shrink-0",
-            collapsed ? "h-9 w-9 rounded-lg" : "h-9 max-h-9 max-w-[200px] w-auto"
+            collapsed ? "h-6 w-6 rounded-[6px]" : "h-5 max-h-5 max-w-[160px] w-auto"
           )}
           onError={() => setImgErr(true)}
         />
       ) : (
         <>
-          <div className="h-6 w-6 rounded-md bg-fx-coral flex items-center justify-center shrink-0 font-mono font-semibold text-[13px] text-white leading-none">
-            f
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.div
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: "auto" }}
-                exit={{ opacity: 0, width: 0 }}
-                className="overflow-hidden"
-              >
-                <span className="text-[15px] font-semibold text-nav-text-strong tracking-[-0.01em] whitespace-nowrap">
-                  {title}
-                </span>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {collapsed ? (
+            <img src="/favicon.svg" alt={title} className="h-6 w-6 shrink-0 rounded-[6px]" />
+          ) : (
+            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} className="h-4 w-auto shrink-0" />
+          )}
         </>
       )}
     </Link>
@@ -292,7 +265,7 @@ function SidebarNavGroups({
                     [group.label]: !prev[group.label],
                   }))
                 }
-                className="group mb-2 flex w-full items-center justify-between px-2 font-mono text-[9.5px] font-medium uppercase tracking-[0.18em] text-nav-muted transition-colors hover:text-nav-text"
+                className="group mb-1 flex w-full items-center justify-between px-2 pt-2 text-[11px] font-medium text-nav-muted transition-colors hover:text-nav-text"
               >
                 <span>{group.label}</span>
                 {collapsedSections[group.label] ? (
@@ -365,11 +338,11 @@ export function Sidebar() {
 
   const sidebarShell = (opts: { collapsed: boolean; showCollapse: boolean; onNavigate?: () => void }) => (
     <>
-      <div className={cn("flex items-center h-14 px-5 pt-1", opts.collapsed && "justify-center px-2")}>
+      <div className={cn("flex h-10 items-center border-b border-nav-border px-4", opts.collapsed && "justify-center px-2")}>
         <SidebarBrand collapsed={opts.collapsed} />
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
+      <nav className="flex-1 overflow-y-auto px-3 pt-2 pb-3 space-y-2">
         <SidebarNavGroups
           navGroups={navGroups}
           collapsed={opts.collapsed}
@@ -383,7 +356,7 @@ export function Sidebar() {
         <div className="p-3 border-t border-nav-border">
           <button
             onClick={toggle}
-            className="w-full flex items-center justify-center h-9 rounded-lg text-nav-muted hover:text-nav-text-strong hover:bg-nav-hover transition-colors"
+            className="w-full flex items-center justify-center h-[30px] rounded-[6px] text-nav-muted hover:text-nav-text-strong hover:bg-nav-hover transition-colors"
           >
             <motion.div
               animate={{ rotate: opts.collapsed ? 180 : 0 }}
@@ -401,7 +374,7 @@ export function Sidebar() {
     <>
       <motion.aside
         initial={false}
-        animate={{ width: collapsed ? 72 : 256 }}
+        animate={{ width: collapsed ? 66 : 216 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
         className="fixed left-0 top-0 bottom-0 z-50 bg-nav-bg hidden lg:flex flex-col border-r border-nav-border"
       >

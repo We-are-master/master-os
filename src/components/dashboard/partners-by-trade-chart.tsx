@@ -341,7 +341,7 @@ export function PartnersByTradeChart({ compact = false }: { compact?: boolean })
                 <div className="space-y-1.5 max-h-[190px] overflow-y-auto pr-1">
                   {visiblePartners.map((p) => (
                     <div key={p.id} className="flex items-center gap-2 rounded-md bg-surface-hover/50 px-2 py-1.5">
-                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#020040] text-[10px] font-semibold text-white">
+                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white">
                         {p.initials}
                       </span>
                       <span className="text-[11px] text-text-secondary truncate flex-1">{p.name}</span>

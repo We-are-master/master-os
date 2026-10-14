@@ -14,12 +14,12 @@ const paddingStyles = {
   none: "",
   sm: "p-4",
   md: "p-5",
-  lg: "p-6",
+  lg: "p-8",
 };
 
 const variantStyles = {
   default: "bg-card border border-card-border shadow-soft",
-  glass: "bg-card/70 glass border border-card-border/40 shadow-soft",
+  glass: "bg-card border border-card-border shadow-soft",
   outlined: "bg-card border border-border shadow-none",
   elevated: "bg-card border border-card-border shadow-card",
 };
@@ -29,13 +29,11 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
     return (
       <motion.div
         ref={ref}
-        whileHover={hover ? { y: -2, boxShadow: "0 8px 25px -5px rgba(0,0,0,0.08)" } : undefined}
-        transition={{ duration: 0.2, ease: "easeOut" }}
         className={cn(
           "rounded-xl transition-colors duration-200",
           variantStyles[variant],
           paddingStyles[padding],
-          hover && "cursor-pointer",
+          hover && "cursor-pointer hover:border-[var(--line-2)]",
           className
         )}
         {...props}
@@ -70,7 +68,7 @@ export function CardTitle({
   children: React.ReactNode;
 }) {
   return (
-    <h3 className={cn("text-sm font-semibold text-text-primary", className)}>
+    <h3 className={cn("text-[14px] font-semibold text-text-primary", className)}>
       {children}
     </h3>
   );

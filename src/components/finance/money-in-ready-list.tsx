@@ -138,7 +138,7 @@ function MoneyInReadyListInner({
                     </div>
                   )}
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
                     <p className="text-xs text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                       {group.maxDaysLate > 0 ? ` · ${group.maxDaysLate}d late` : ""}
@@ -202,7 +202,7 @@ function MoneyInReadyListInner({
                             a cobranca) e a data de emissao (quem cobra quer saber
                             quando o trabalho foi feito e quando o dinheiro entra,
                             nao quando o papel foi gerado). */}
-                        <p className="text-sm font-semibold text-[#020040]">
+                        <p className="text-sm font-semibold text-text-primary">
                           {row.clientName}
                           {job?.title?.trim() ? ` - ${job.title.trim()}` : ""}
                         </p>

@@ -38,11 +38,11 @@ const LABELS: Record<string, string> = {
   email_unverified: "Email not verified",
   onboarding_not_started: "Onboarding not started",
   archived: "Archived",
-  missing_documents: "Missing Documents",
-  low_compliance_score: "Low Compliance Score",
-  expired_docs: "Expired Docs",
-  on_break: "On Break",
-  force_activated: "Force Activated",
+  missing_documents: "Missing documents",
+  low_compliance_score: "Low compliance score",
+  expired_docs: "Expired docs",
+  on_break: "On break",
+  force_activated: "Force activated",
   was_activated: "Activated",
 };
 

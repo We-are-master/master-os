@@ -15,14 +15,14 @@ import { cn } from "@/lib/utils";
 const actionConfig: Record<string, { icon: typeof Plus; color: string; label: string }> = {
   created: { icon: Plus, color: "bg-emerald-100 text-emerald-600", label: "Created" },
   updated: { icon: Edit3, color: "bg-blue-100 text-blue-600", label: "Updated" },
-  status_changed: { icon: ArrowRightLeft, color: "bg-amber-100 text-amber-600", label: "Status Changed" },
-  phase_advanced: { icon: ChevronUp, color: "bg-purple-100 text-purple-600", label: "Phase Advanced" },
+  status_changed: { icon: ArrowRightLeft, color: "bg-amber-100 text-amber-600", label: "Status changed" },
+  phase_advanced: { icon: ChevronUp, color: "bg-purple-100 text-purple-600", label: "Phase advanced" },
   assigned: { icon: User, color: "bg-indigo-100 text-indigo-600", label: "Assigned" },
   deleted: { icon: AlertCircle, color: "bg-red-100 text-red-600", label: "Deleted" },
-  note: { icon: FileText, color: "bg-surface-tertiary text-text-secondary", label: "Note Added" },
-  document_added: { icon: FileText, color: "bg-teal-100 text-teal-600", label: "Document Added" },
+  note: { icon: FileText, color: "bg-surface-tertiary text-text-secondary", label: "Note added" },
+  document_added: { icon: FileText, color: "bg-teal-100 text-teal-600", label: "Document added" },
   payment: { icon: CreditCard, color: "bg-emerald-100 text-emerald-600", label: "Payment" },
-  bulk_update: { icon: Users, color: "bg-orange-100 text-orange-600", label: "Bulk Update" },
+  bulk_update: { icon: Users, color: "bg-orange-100 text-orange-600", label: "Bulk update" },
 };
 
 const fieldLabels: Record<string, string> = {

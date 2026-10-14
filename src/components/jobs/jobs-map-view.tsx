@@ -552,8 +552,8 @@ export function JobsMapView({
         }
         bottomLeftOverlay={
           autoRoutes.length > 0 ? (
-            <div className="max-w-[300px] space-y-1 rounded-lg border border-[#E4E4E8] bg-white/95 p-2 shadow-lg backdrop-blur">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">Routes today</p>
+            <div className="max-w-[300px] space-y-1 rounded-lg border border-border bg-white/95 p-2 shadow-lg backdrop-blur">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Routes today</p>
               {autoRoutes.map((r) => (
                 <button
                   key={r.partnerId}
@@ -562,8 +562,8 @@ export function JobsMapView({
                   className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[#F1F5F9]"
                 >
                   <span className="h-2 w-5 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
-                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-[#020040]">{r.partnerName}</span>
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-[#64748B]">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-text-primary">{r.partnerName}</span>
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-tertiary">
                     {r.stops} stop{r.stops === 1 ? "" : "s"} · {formatDistanceMiles(r.totalM)} · {formatDuration(r.totalSec)}
                   </span>
                 </button>
@@ -670,25 +670,25 @@ function NearestPartnersPanel({
   }, [job, partners, roteaveisPorParceiro]);
 
   return (
-    <div className="w-[290px] max-w-[80vw] space-y-2 rounded-lg border border-[#E4E4E8] bg-white/95 p-2.5 shadow-lg backdrop-blur">
+    <div className="w-[290px] max-w-[80vw] space-y-2 rounded-lg border border-border bg-white/95 p-2.5 shadow-lg backdrop-blur">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9A2A00]">Nearest partners</p>
-          <p className="truncate text-[12px] font-semibold text-[#020040]">
+          <p className="truncate text-[12px] font-semibold text-text-primary">
             {job.reference} · {job.title}
           </p>
         </div>
-        <button type="button" onClick={onClose} className="shrink-0 text-[10px] font-medium text-[#64748B] hover:text-[#020040]">
+        <button type="button" onClick={onClose} className="shrink-0 text-[10px] font-medium text-text-tertiary hover:text-text-primary">
           Clear ✕
         </button>
       </div>
       {onOpenJob ? (
-        <button type="button" onClick={() => onOpenJob(job)} className="text-[10px] font-medium text-[#020040] hover:underline">
+        <button type="button" onClick={() => onOpenJob(job)} className="text-[10px] font-medium text-text-primary hover:underline">
           Open job details →
         </button>
       ) : null}
       {ranking.length === 0 ? (
-        <p className="text-[11px] text-[#64748B]">No partner with a saved base address to measure from.</p>
+        <p className="text-[11px] text-text-tertiary">No partner with a saved base address to measure from.</p>
       ) : (
         <div className="max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-0.5">
           {ranking.map(({ p, detourM: d, stops }, i) => (
@@ -696,11 +696,11 @@ function NearestPartnersPanel({
               key={p.id}
               onMouseEnter={() => onHoverPartner(p)}
               onMouseLeave={() => onHoverPartner(null)}
-              className="flex items-center gap-2 rounded-md border border-[#E4E4E8] bg-[#FAFAFB] px-2 py-1.5 transition-colors hover:border-[#ED4B00]/50"
+              className="flex items-center gap-2 rounded-md border border-border bg-surface-secondary px-2 py-1.5 transition-colors hover:border-text-primary"
             >
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[11px] font-medium text-[#020040]">{p.name}</span>
-                <span className="block text-[10px] text-[#64748B]">
+                <span className="block truncate text-[11px] font-medium text-text-primary">{p.name}</span>
+                <span className="block text-[10px] text-text-tertiary">
                   {i === 0 && nearestDrive?.partnerId === p.id
                     ? `${formatDistanceMiles(nearestDrive.m)} · ${formatDuration(nearestDrive.sec)} drive`
                     : `+${(d / 1609).toFixed(1)} mi off route`}
@@ -711,7 +711,7 @@ function NearestPartnersPanel({
               <button
                 type="button"
                 onClick={() => onAssign(p.id)}
-                className="shrink-0 rounded-md bg-[#020040] px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-[#0A0A5E]"
+                className="shrink-0 rounded-md bg-primary px-2 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-[#0A0A5E]"
               >
                 Assign
               </button>
@@ -719,7 +719,7 @@ function NearestPartnersPanel({
           ))}
         </div>
       )}
-      <p className="text-[10px] text-[#64748B]">
+      <p className="text-[10px] text-text-tertiary">
         Top result is real driving from home · others are straight-line detour on today&apos;s route.
       </p>
     </div>

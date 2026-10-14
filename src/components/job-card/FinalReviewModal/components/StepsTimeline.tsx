@@ -69,7 +69,7 @@ function MarkSentManually({ jobUuid, onMarcado }: { jobUuid: string; onMarcado: 
         type="button"
         onClick={() => void marcar()}
         disabled={salvando}
-        className="rounded-[6px] border border-[#D8D8DD] bg-white px-2.5 py-[3px] text-[11px] font-semibold text-[#020040] transition-colors hover:bg-[#F4F4F6] disabled:opacity-50"
+        className="rounded-[6px] border border-[var(--line-2)] bg-white px-2.5 py-[3px] text-[11px] font-semibold text-text-primary transition-colors hover:bg-[#F4F4F6] disabled:opacity-50"
       >
         {salvando ? "Marking…" : "Sent Manually"}
       </button>
@@ -256,7 +256,7 @@ export function StepsTimeline({
             <button
               type="button"
               onClick={onEditReport}
-              className="rounded-[6px] border border-[#ED4B00]/30 bg-[#FFF1EB] px-2.5 py-[3px] text-[11px] font-semibold text-[#ED4B00] transition-colors hover:bg-[#FFE4D8]"
+              className="rounded-[6px] border border-text-primary bg-[var(--pick-bg)] px-2.5 py-[3px] text-[11px] font-semibold text-text-primary transition-colors hover:bg-[#FFE4D8]"
             >
               Fill the report
             </button>

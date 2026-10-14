@@ -29,10 +29,10 @@ const STAGES = ["lead", "qualified", "meeting", "proposal", "negotiation", "clos
 const stageConfig: Record<string, { title: string; color: string }> = {
   lead: { title: "Lead", color: "bg-stone-400" },
   qualified: { title: "Qualified", color: "bg-blue-500" },
-  meeting: { title: "Meeting Scheduled", color: "bg-amber-500" },
-  proposal: { title: "Proposal Sent", color: "bg-purple-500" },
+  meeting: { title: "Meeting scheduled", color: "bg-amber-500" },
+  proposal: { title: "Proposal sent", color: "bg-purple-500" },
   negotiation: { title: "Negotiation", color: "bg-primary" },
-  closed: { title: "Contract Signed", color: "bg-emerald-500" },
+  closed: { title: "Contract signed", color: "bg-emerald-500" },
 };
 
 const categoryColors: Record<string, string> = {
@@ -103,9 +103,9 @@ export default function CorporatePipelinePage() {
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <KpiCard title="Total Pipeline" value={totalPipelineValue} format="currency" icon={DollarSign} accent="primary" />
-          <KpiCard title="Closed Won" value={closedValue} format="currency" icon={TrendingUp} accent="emerald" />
-          <KpiCard title="In Negotiation" value={dealsInNegotiation} format="number" description="deals in late stages" icon={Clock} accent="blue" />
+          <KpiCard title="Total pipeline" value={totalPipelineValue} format="currency" icon={DollarSign} accent="primary" />
+          <KpiCard title="Closed won" value={closedValue} format="currency" icon={TrendingUp} accent="emerald" />
+          <KpiCard title="In negotiation" value={dealsInNegotiation} format="number" description="deals in late stages" icon={Clock} accent="blue" />
         </StaggerContainer>
 
         <div className="flex items-center gap-3 mb-2">

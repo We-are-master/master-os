@@ -866,9 +866,9 @@ export function OverviewExecutiveBundle() {
 
   return (
     <div className="space-y-4">
-      <Card padding="none" className="overflow-hidden border-border-light bg-[#FAFAFB] shadow-sm ring-1 ring-border-light/20">
+      <Card padding="none" className="overflow-hidden border-border-light bg-surface-secondary shadow-sm ring-1 ring-border-light/20">
         {/* Header — always locked to current month */}
-        <div className="px-4 py-2.5 border-b border-border-light flex items-center justify-between gap-2 bg-[#FAFAFB]">
+        <div className="px-4 py-2.5 border-b border-border-light flex items-center justify-between gap-2 bg-surface-secondary">
           <p className="text-xs font-bold text-text-primary tracking-tight">
             Monthly Overview — <span className="text-primary">{currentMonthLabel}</span>
           </p>

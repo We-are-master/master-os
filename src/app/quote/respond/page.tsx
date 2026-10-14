@@ -427,7 +427,7 @@ function QuoteRespondContent() {
                   rows={4}
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-[#ED4B00] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/25"
+                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-text-primary focus:outline-none focus:ring-2 focus:ring-text-primary/20"
                   style={{ borderColor: FIXFY_BORDER, color: FIXFY_NAVY }}
                   placeholder="e.g. Going with another provider, budget changed, timeline no longer works..."
                 />

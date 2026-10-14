@@ -976,9 +976,9 @@ export function WorkforcePersonDrawer({
           </div>
         </div>
         <p className="text-sm text-text-secondary rounded-xl bg-white/70 dark:bg-black/20 border border-primary/15 px-3 py-2.5">
-          <strong className="text-[#020040] dark:text-text-primary">{selfBillSchedule.payableDays}</strong> day
+          <strong className="text-text-primary dark:text-text-primary">{selfBillSchedule.payableDays}</strong> day
           {selfBillSchedule.payableDays === 1 ? "" : "s"} ·{" "}
-          <strong className="text-[#020040] dark:text-text-primary">{formatCurrency(selfBillSchedule.fixedPreview)}</strong>{" "}
+          <strong className="text-text-primary dark:text-text-primary">{formatCurrency(selfBillSchedule.fixedPreview)}</strong>{" "}
           {WORKFORCE_CONTRACTOR_FEE_LABEL.toLowerCase()}
           {commissionEnabled && commissionPreview ? (
             <>
@@ -1113,7 +1113,7 @@ export function WorkforcePersonDrawer({
         </div>
         <div className="sm:col-span-2">
           <Select
-            label="Business Unit"
+            label="Business unit"
             value={buId}
             onChange={(e) => setBuId(e.target.value)}
             options={[
@@ -1244,9 +1244,9 @@ export function WorkforcePersonDrawer({
 
       {commissionEnabled && commissionRate.trim() ? (
         <p className="text-sm text-text-secondary rounded-lg bg-primary/5 border border-primary/15 px-3 py-2">
-          <strong className="text-[#020040] dark:text-text-primary">{formatCurrency(Number(amount) || 0)}</strong> {feeLabel.toLowerCase()}
+          <strong className="text-text-primary dark:text-text-primary">{formatCurrency(Number(amount) || 0)}</strong> {feeLabel.toLowerCase()}
           {" + "}
-          <strong className="text-[#020040] dark:text-text-primary">{commissionRate}%</strong> commission on {commissionBasisLabel}
+          <strong className="text-text-primary dark:text-text-primary">{commissionRate}%</strong> commission on {commissionBasisLabel}
           {commissionPreview ? (
             <>
               {" "}
@@ -1257,7 +1257,7 @@ export function WorkforcePersonDrawer({
         </p>
       ) : (
         <p className="text-sm text-text-secondary rounded-lg bg-primary/5 border border-primary/15 px-3 py-2">
-          {feeLabel} only: <strong className="text-[#020040] dark:text-text-primary">{formatCurrency(Number(amount) || 0)}</strong>
+          {feeLabel} only: <strong className="text-text-primary dark:text-text-primary">{formatCurrency(Number(amount) || 0)}</strong>
         </p>
       )}
 

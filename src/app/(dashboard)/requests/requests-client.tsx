@@ -111,8 +111,8 @@ const statusConfig: Record<string, { label: string; variant: "default" | "primar
   new: { label: "New", variant: "primary" },
   approved: { label: "Approved", variant: "success" },
   declined: { label: "Declined", variant: "danger" },
-  converted_to_quote: { label: "Converted to Quote", variant: "info" },
-  converted_to_job: { label: "Converted to Job", variant: "success" },
+  converted_to_quote: { label: "Converted to quote", variant: "info" },
+  converted_to_job: { label: "Converted to job", variant: "success" },
 };
 
 const priorityConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }> = {
@@ -387,12 +387,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   }, [selectedRequest, drawerFields, refreshSilent]);
 
   const tabs = [
-    { id: "all", label: "All Requests", count: statusCounts.all ?? 0 },
+    { id: "all", label: "All requests", count: statusCounts.all ?? 0 },
     { id: "new", label: "New", count: statusCounts.new ?? 0 },
     { id: "approved", label: "Approved", count: statusCounts.approved ?? 0 },
-    { id: "converted_to_quote", label: "Converted to Quote", count: statusCounts.converted_to_quote ?? 0 },
-    { id: "converted_to_job", label: "Converted to Job", count: statusCounts.converted_to_job ?? 0 },
-    { id: "declined", label: "Not Qualified", count: statusCounts.declined ?? 0 },
+    { id: "converted_to_quote", label: "Converted to quote", count: statusCounts.converted_to_quote ?? 0 },
+    { id: "converted_to_job", label: "Converted to job", count: statusCounts.converted_to_job ?? 0 },
+    { id: "declined", label: "Not qualified", count: statusCounts.declined ?? 0 },
   ];
 
   const handleBulkStatusChange = async (newStatus: string) => {
@@ -884,7 +884,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                         size="sm"
                         className={cn(
                           "h-8 justify-center px-3 text-[11px] font-medium rounded-[6px]",
-                          scheduleDatePreset !== id && "text-[#020040]",
+                          scheduleDatePreset !== id && "text-text-primary",
                         )}
                         onClick={() => {
                           setScheduleDatePreset(id);
@@ -929,7 +929,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
           <KpiCard
-            className="min-h-[128px] h-full bg-[#FAFAFB]"
+            className="min-h-[128px] h-full bg-surface-secondary"
             title="New requests"
             value={requestKpis.newReq}
             format="number"
@@ -939,7 +939,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full bg-[#FAFAFB]"
+            className="min-h-[128px] h-full bg-surface-secondary"
             title="Approval rate"
             value={requestKpis.approvalPct ?? "—"}
             format={requestKpis.approvalPct != null ? "percent" : "none"}
@@ -953,7 +953,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full bg-[#FAFAFB]"
+            className="min-h-[128px] h-full bg-surface-secondary"
             title="Request → quote"
             value={requestKpis.quotePct ?? "—"}
             format={requestKpis.quotePct != null ? "percent" : "none"}
@@ -967,7 +967,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
             descriptionAsTooltip
           />
           <KpiCard
-            className="min-h-[128px] h-full bg-[#FAFAFB]"
+            className="min-h-[128px] h-full bg-surface-secondary"
             title="Request → job"
             value={requestKpis.jobPct ?? "—"}
             format={requestKpis.jobPct != null ? "percent" : "none"}
@@ -1243,7 +1243,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
                     <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Service &amp; pricing</p>
                     {resolveRequestKind(selectedRequest) === "work" ? (
                       <ServiceCatalogSelect
-                        label="Call Out type"
+                        label="Call out type"
                         emptyOptionLabel="Select call out type..."
                         catalog={catalogServices}
                         value={drawerFields.catalog_service_id}
@@ -2149,27 +2149,27 @@ function InvitePartnerToQuote({
     >
       <div className="flex min-h-0 flex-col gap-2.5 p-3 sm:gap-3 sm:p-4">
         {/* Request details — compact bar + expand */}
-        <div className="shrink-0 overflow-hidden rounded-[8px] border border-[#E4E4E8] bg-[#FAFAFB]">
+        <div className="shrink-0 overflow-hidden rounded-[8px] border border-border bg-surface-secondary">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-2.5 py-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Request details</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Request details</span>
             <div className="flex items-center gap-1">
               {photoThumbUrls.map((url, i) => (
                 <div
                   key={`${url}-${i}`}
-                  className="h-5 w-5 shrink-0 overflow-hidden rounded border border-[#E4E4E8] bg-white"
+                  className="h-5 w-5 shrink-0 overflow-hidden rounded border border-border bg-white"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" />
                 </div>
               ))}
               {summaryImageUrls.length === 0 ? (
-                <span className="text-[10px] text-[#6B6B70]">No photos</span>
+                <span className="text-[10px] text-text-tertiary">No photos</span>
               ) : (
-                <span className="text-[10px] tabular-nums text-[#6B6B70]">{totalPhotoCount} photos</span>
+                <span className="text-[10px] tabular-nums text-text-tertiary">{totalPhotoCount} photos</span>
               )}
             </div>
-            <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-[#D8D8DD] bg-white px-2 py-1 text-[11px] font-medium text-[#020040] hover:bg-[#F4F5FB]">
-              <LayoutGrid className="h-3 w-3 shrink-0 text-[#6B6B70]" aria-hidden />
+            <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-[var(--line-2)] bg-white px-2 py-1 text-[11px] font-medium text-text-primary hover:bg-[#F4F5FB]">
+              <LayoutGrid className="h-3 w-3 shrink-0 text-text-tertiary" aria-hidden />
               Add photos
               <input
                 type="file"
@@ -2193,22 +2193,22 @@ function InvitePartnerToQuote({
             <button
               type="button"
               onClick={() => setRequestDetailsExpanded((v) => !v)}
-              className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-[#020040] hover:underline"
+              className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-text-primary hover:underline"
             >
               View details
               <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", requestDetailsExpanded && "rotate-180")} />
             </button>
           </div>
           {requestDetailsExpanded && (
-            <div className="space-y-3 border-t border-[#E4E4E8] bg-white px-2.5 py-2.5">
-              <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-[#020040]">
-                <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">
+            <div className="space-y-3 border-t border-border bg-white px-2.5 py-2.5">
+              <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-text-primary">
+                <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                   Scope
                 </span>
                 {request.description?.trim() || "—"}
               </p>
               <div className="min-w-0 space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Client &amp; property *</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Client &amp; property *</p>
                 <ClientAddressPicker
                   value={clientAddress}
                   onChange={setClientAddress}
@@ -2225,7 +2225,7 @@ function InvitePartnerToQuote({
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block aspect-square min-w-0 overflow-hidden rounded border border-[#E4E4E8] bg-card hover:ring-2 hover:ring-[#020040]/20"
+                      className="block aspect-square min-w-0 overflow-hidden rounded border border-border bg-card hover:ring-2 hover:ring-text-primary/20"
                       title="Open full size"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2234,11 +2234,11 @@ function InvitePartnerToQuote({
                   ))}
                 </div>
               )}
-              <p className="text-[10px] text-[#6B6B70]">Up to 8 extra images for the partner app.</p>
+              <p className="text-[10px] text-text-tertiary">Up to 8 extra images for the partner app.</p>
               {invitePhotoPreviews.length > 0 && (
                 <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
                   {invitePhotoPreviews.map((src, i) => (
-                    <div key={src} className="relative aspect-square min-w-0 overflow-hidden rounded border border-[#E4E4E8] bg-[#FAFAFB]">
+                    <div key={src} className="relative aspect-square min-w-0 overflow-hidden rounded border border-border bg-surface-secondary">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={src} alt="" className="h-full w-full object-cover" />
                       <button
@@ -2265,8 +2265,8 @@ function InvitePartnerToQuote({
           )}
         </div>
 
-        <div className="shrink-0 rounded-[8px] border border-[#E4E4E8] bg-white px-2.5 py-2">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">Duration *</p>
+        <div className="shrink-0 rounded-[8px] border border-border bg-white px-2.5 py-2">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Duration *</p>
           <div className="flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-stretch">
             <Input
               type="number"
@@ -2288,7 +2288,7 @@ function InvitePartnerToQuote({
               ]}
             />
           </div>
-          <p className="mt-1 text-[10px] text-[#6B6B70]">Expected time on site for this job.</p>
+          <p className="mt-1 text-[10px] text-text-tertiary">Expected time on site for this job.</p>
         </div>
 
         {/* Search + segment */}
@@ -2300,15 +2300,15 @@ function InvitePartnerToQuote({
             onChange={(e) => setSearchTerm(e.target.value)}
             className="min-w-0 flex-1 text-sm"
           />
-          <div className="flex shrink-0 rounded-lg border border-[#E4E4E8] bg-white p-0.5">
+          <div className="flex shrink-0 rounded-lg border border-border bg-white p-0.5">
             <button
               type="button"
               onClick={() => setPartnerListFilter("matched")}
               className={cn(
                 "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
                 partnerListFilter === "matched"
-                  ? "bg-[#020040] text-white"
-                  : "text-[#6B6B70] hover:text-[#020040]",
+                  ? "bg-primary text-white"
+                  : "text-text-tertiary hover:text-text-primary",
               )}
             >
               Matched ({serviceRelated.length})
@@ -2319,8 +2319,8 @@ function InvitePartnerToQuote({
               className={cn(
                 "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
                 partnerListFilter === "all"
-                  ? "bg-[#020040] text-white"
-                  : "text-[#6B6B70] hover:text-[#020040]",
+                  ? "bg-primary text-white"
+                  : "text-text-tertiary hover:text-text-primary",
               )}
             >
               All ({filtered.length})
@@ -2330,13 +2330,13 @@ function InvitePartnerToQuote({
 
         {!partnersLoading && partners.length > 0 && (
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
-            <span className="text-[11px] text-[#020040]">
+            <span className="text-[11px] text-text-primary">
               {serviceRelated.length} matched partners for {requestTypeStr}
             </span>
             <div className="flex items-center gap-1.5 text-[11px]">
               <button
                 type="button"
-                className="font-medium text-[#020040] hover:underline disabled:opacity-40"
+                className="font-medium text-text-primary hover:underline disabled:opacity-40"
                 disabled={partnerListFilter === "matched" ? serviceRelated.length === 0 : filtered.length === 0}
                 onClick={selectAllVisible}
               >
@@ -2345,14 +2345,14 @@ function InvitePartnerToQuote({
               <span className="text-[#D8D8DD]" aria-hidden>
                 |
               </span>
-              <button type="button" className="font-medium text-[#6B6B70] hover:underline" onClick={() => setSelectedIds(new Set())}>
+              <button type="button" className="font-medium text-text-tertiary hover:underline" onClick={() => setSelectedIds(new Set())}>
                 Clear
               </button>
             </div>
           </div>
         )}
 
-        <div className="min-h-0 max-h-[min(42vh,360px)] space-y-1 overflow-y-auto rounded-[8px] border border-[#E4E4E8] bg-[#FAFAFB] p-1.5">
+        <div className="min-h-0 max-h-[min(42vh,360px)] space-y-1 overflow-y-auto rounded-[8px] border border-border bg-surface-secondary p-1.5">
           {!partnersLoading &&
             (() => {
               if (partners.length === 0) return null;
@@ -2369,8 +2369,8 @@ function InvitePartnerToQuote({
                       "flex cursor-pointer items-center gap-2 rounded-[8px] border px-[10px] py-2 transition-colors",
                       isMatch
                         ? "border-[#D8DBEE] bg-[#F4F5FB]"
-                        : "border-[#E4E4E8] bg-white hover:bg-[#FAFAFB]",
-                      isSelected && "ring-1 ring-[#020040]/25",
+                        : "border-border bg-white hover:bg-surface-secondary",
+                      isSelected && "ring-1 ring-text-primary/25",
                     )}
                   >
                     <input
@@ -2384,18 +2384,18 @@ function InvitePartnerToQuote({
                           return next;
                         });
                       }}
-                      className="h-3.5 w-3.5 shrink-0 rounded border-[#D8D8DD] text-[#020040] focus:ring-[#020040]/20"
+                      className="h-3.5 w-3.5 shrink-0 rounded border-[var(--line-2)] text-text-primary focus:ring-text-primary/20"
                     />
                     <Avatar name={p.company_name} size="sm" className="!h-[26px] !w-[26px] !text-[11px] !leading-none" />
                     <div className="min-w-0 flex-1">
-                      <p className="break-words text-[12px] font-medium leading-tight text-[#020040]">{p.company_name}</p>
-                      <p className="break-words text-[10px] leading-snug text-[#6B6B70]">
+                      <p className="break-words text-[12px] font-medium leading-tight text-text-primary">{p.company_name}</p>
+                      <p className="break-words text-[10px] leading-snug text-text-tertiary">
                         {typeLine}
                         <span> · {loc}</span>
                       </p>
                     </div>
                     {isMatch ? (
-                      <span className="shrink-0 rounded-full bg-[#D8DBEE] px-2 py-0.5 text-[10px] font-medium text-[#020040]">
+                      <span className="shrink-0 rounded-full bg-[#D8DBEE] px-2 py-0.5 text-[10px] font-medium text-text-primary">
                         Match
                       </span>
                     ) : null}
@@ -2404,7 +2404,7 @@ function InvitePartnerToQuote({
               };
               if (partnerListFilter === "matched") {
                 return serviceRelated.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-[#6B6B70]">No partners match this search for this trade.</p>
+                  <p className="py-6 text-center text-sm text-text-tertiary">No partners match this search for this trade.</p>
                 ) : (
                   serviceRelated.map((p) => row(p, true))
                 );
@@ -2414,7 +2414,7 @@ function InvitePartnerToQuote({
                   {serviceRelated.map((p) => row(p, true))}
                   {others.length > 0 ? (
                     <>
-                      <p className="px-1 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[#6B6B70]">
+                      <p className="px-1 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                         Other partners
                       </p>
                       {others.map((p) => row(p, false))}
@@ -2423,26 +2423,26 @@ function InvitePartnerToQuote({
                 </>
               );
             })()}
-          {partnersLoading && <p className="py-6 text-center text-sm text-[#6B6B70]">Loading partners…</p>}
+          {partnersLoading && <p className="py-6 text-center text-sm text-text-tertiary">Loading partners…</p>}
           {!partnersLoading && partners.length === 0 && (
-            <p className="py-6 text-center text-sm text-[#6B6B70]">No partners returned — check your connection or try again.</p>
+            <p className="py-6 text-center text-sm text-text-tertiary">No partners returned — check your connection or try again.</p>
           )}
           {!partnersLoading && partners.length > 0 && filtered.length === 0 && (
-            <p className="py-6 text-center text-sm text-[#6B6B70]">No partners match this search — clear the search to see all.</p>
+            <p className="py-6 text-center text-sm text-text-tertiary">No partners match this search — clear the search to see all.</p>
           )}
         </div>
 
-        <div className="shrink-0 space-y-2 border-t border-[#E4E4E8] pt-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#E4E4E8] bg-[#FAFAFB] px-2.5 py-1.5">
+        <div className="shrink-0 space-y-2 border-t border-border pt-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-secondary px-2.5 py-1.5">
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Deposit required</span>
-              <span className="text-[11px] text-[#6B6B70]">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">Deposit required</span>
+              <span className="text-[11px] text-text-tertiary">
                 {depositRequired
                   ? "Customer pays a deposit on accept (Awaiting payment)."
                   : "Accept converts directly to a job (no deposit)."}
               </span>
             </div>
-            <div className="inline-flex shrink-0 rounded-lg border border-[#D8D8DD] bg-white p-0.5">
+            <div className="inline-flex shrink-0 rounded-lg border border-[var(--line-2)] bg-white p-0.5">
               {([true, false] as const).map((v) => (
                 <button
                   key={String(v)}
@@ -2450,7 +2450,7 @@ function InvitePartnerToQuote({
                   onClick={() => setDepositRequired(v)}
                   className={cn(
                     "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    depositRequired === v ? "bg-[#020040] text-white" : "text-[#6B6B70] hover:text-[#020040]",
+                    depositRequired === v ? "bg-primary text-white" : "text-text-tertiary hover:text-text-primary",
                   )}
                 >
                   {v ? "Yes" : "No"}
@@ -2460,8 +2460,8 @@ function InvitePartnerToQuote({
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Send via</span>
-              <div className="flex rounded-lg border border-[#E4E4E8] bg-white p-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">Send via</span>
+              <div className="flex rounded-lg border border-border bg-white p-0.5">
                 {(["email", "app", "both"] as const).map((m) => (
                   <button
                     key={m}
@@ -2469,7 +2469,7 @@ function InvitePartnerToQuote({
                     onClick={() => setSendMethod(m)}
                     className={cn(
                       "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                      sendMethod === m ? "bg-[#020040] text-white" : "text-[#6B6B70] hover:text-[#020040]",
+                      sendMethod === m ? "bg-primary text-white" : "text-text-tertiary hover:text-text-primary",
                     )}
                   >
                     {m === "both" ? "Both" : m.charAt(0).toUpperCase() + m.slice(1)}
@@ -2478,12 +2478,12 @@ function InvitePartnerToQuote({
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <span className="text-[12px] tabular-nums text-[#6B6B70]">
+              <span className="text-[12px] tabular-nums text-text-tertiary">
                 {selectedIds.size} selected
               </span>
               <Button
                 size="sm"
-                className="!border-0 !bg-[#020040] !text-white shadow-none hover:!bg-[#0a0860]"
+                className="!border-0 !bg-primary !text-white shadow-none hover:!bg-[#0a0860]"
                 icon={<Send className="h-3.5 w-3.5" />}
                 loading={inviting}
                 disabled={
@@ -2615,7 +2615,7 @@ function ManualQuoteModal({
               <div key={idx} className="p-3 bg-surface-hover rounded-xl">
                 <div className="flex gap-2 items-start">
                   <div className="flex-1 space-y-1.5">
-                    <Input placeholder="Service / Description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs" />
+                    <Input placeholder="Service / description" value={item.description} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], description: e.target.value }; setLineItems(n); }} className="text-xs" />
                     <div className="flex gap-2 items-center">
                       <Input type="number" placeholder="Qty" value={item.quantity} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], quantity: e.target.value }; setLineItems(n); }} className="text-xs w-20" />
                       <Input type="number" placeholder="Unit price" value={item.unitPrice} onChange={(e) => { const n = [...lineItems]; n[idx] = { ...n[idx], unitPrice: e.target.value }; setLineItems(n); }} className="text-xs flex-1" />
@@ -2646,7 +2646,7 @@ function ManualQuoteModal({
 
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-text-primary">
-            Duration <span className="text-[#ED4B00]">*</span>
+            Duration <span className="text-text-primary">*</span>
           </p>
           <div className="flex flex-col gap-2 min-[400px]:flex-row min-[400px]:items-stretch">
             <Input
@@ -2689,7 +2689,7 @@ function ManualQuoteModal({
                 onClick={() => setDepositRequired(v)}
                 className={cn(
                   "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
-                  depositRequired === v ? "bg-[#020040] text-white" : "text-text-secondary hover:text-text-primary",
+                  depositRequired === v ? "bg-primary text-white" : "text-text-secondary hover:text-text-primary",
                 )}
               >
                 {v ? "Yes" : "No"}
@@ -3097,7 +3097,7 @@ function ConvertToJobModal({
           <Button
             type="submit"
             form="convert-to-job-form"
-            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+            className="bg-primary hover:bg-primary-hover text-white border-text-primary hover:border-text-primary"
           >
             <Briefcase className="h-3.5 w-3.5" /> Create job
           </Button>
@@ -3445,8 +3445,8 @@ const REQUEST_SOURCES: { value: ServiceRequest["source"]; label: string }[] = [
 ];
 
 const REQUEST_KIND_OPTIONS = [
-  { value: "quote", label: "Quote Request" },
-  { value: "work", label: "Work Request" },
+  { value: "quote", label: "Quote request" },
+  { value: "work", label: "Work request" },
 ] as const;
 
 function CreateRequestModal({
@@ -3616,7 +3616,7 @@ function CreateRequestModal({
             </label>
             <div className="mt-[6px] grid grid-cols-1 sm:grid-cols-2 gap-[10px]">
               {([
-                { value: "work", title: "Work Request", sub: "Fixed price · 60s confirm", Icon: Wrench, accent: "#020040", bg: "#020040" },
+                { value: "work", title: "Work request", sub: "Fixed price · 60s confirm", Icon: Wrench, accent: "#020040", bg: "#020040" },
                 { value: "quote", title: "Quote", sub: "Survey first · same-day", Icon: MessageSquarePlus, accent: "#ED4B00", bg: "#FFF1EB" },
               ] as const).map(({ value, title, sub, Icon, accent, bg }) => {
                 const active = form.request_kind === value;

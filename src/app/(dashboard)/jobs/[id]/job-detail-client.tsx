@@ -332,11 +332,11 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
+  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
+  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
@@ -415,17 +415,17 @@ function getStatusColors(
   if (s === "on_hold") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
-      topBadgeClass: "bg-[#fef3c7] text-[#92400e] border border-[#d97706]",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
+      topBadgeClass: "bg-warning-light text-[var(--warn-ink)] border border-warning",
       completedAllSteps: false,
     };
   }
   if (s === "awaiting_payment") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
       topBadgeClass: "",
       completedAllSteps: false,
     };
@@ -610,13 +610,13 @@ const selfBillStatusConfig: Record<
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
 > = {
   draft: { label: "Draft", variant: "default" },
-  accumulating: { label: "Open Week", variant: "default" },
-  pending_review: { label: "Approve Report", variant: "primary" },
-  needs_attention: { label: "Needs Attention", variant: "danger" },
-  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
-  ready_to_pay: { label: "Ready To Pay", variant: "info" },
+  accumulating: { label: "Open week", variant: "default" },
+  pending_review: { label: "Approve report", variant: "primary" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
   paid: { label: "Paid", variant: "success" },
-  audit_required: { label: "Audit Required", variant: "danger" },
+  audit_required: { label: "Audit required", variant: "danger" },
   rejected: { label: "Rejected", variant: "default" },
 };
 
@@ -751,10 +751,10 @@ function JobDetailSelfBillPanel({
 /** Six-stage pipeline shown on job detail (matches ops mental model). */
 const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
-  { label: "On Site", statuses: ["in_progress"], icon: HardHat },
-  { label: "On Hold", statuses: ["on_hold"], icon: PauseCircle },
-  { label: "Final Checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
-  { label: "Awaiting Payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "On site", statuses: ["in_progress"], icon: HardHat },
+  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
   { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
@@ -7110,7 +7110,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="w-full bg-[#fdfdfd] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
+      <div className="w-full bg-surface-secondary py-4 px-4 dark:bg-[#0f1115] sm:px-5">
         <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
@@ -7451,7 +7451,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   {canReverseStage ? (
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#ddd] bg-transparent px-2.5 py-1 text-xs text-[#888] transition-colors hover:border-[#d97706] hover:bg-[#fef3c7] hover:text-[#d97706]"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-transparent px-2.5 py-1 text-xs text-text-tertiary transition-colors hover:border-warning hover:bg-warning-light hover:text-[var(--warn-ink)]"
                       onClick={() => {
                         if (!previousStageStatus) return;
                         void handleStatusChange(job, previousStageStatus);
@@ -7920,15 +7920,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           <button
                             type="button"
                             onClick={() => setDetailTab(0)}
-                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
-                            title="Open the Visits tab"
+                            className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            title="Open the visits tab"
                           >
-                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
                               <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
                               {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
                               {nextVisit.partnerName ? (
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                                <span className="text-text-tertiary dark:text-text-tertiary"> · {nextVisit.partnerName}</span>
                               ) : null}
                             </span>
                           </button>
@@ -8151,8 +8151,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Scope / photos / reports / financial — tabbed */}
-            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fdfdfd] shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
-              <div className="flex flex-wrap border-b border-border-light bg-[#fdfdfd] dark:border-[#2b313d] dark:bg-[#141922]">
+            <div className="overflow-hidden rounded-xl border border-border-light bg-surface-secondary shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
+              <div className="flex flex-wrap border-b border-border-light bg-surface-secondary dark:border-[#2b313d] dark:bg-[#141922]">
                 {(
                   [
                     { label: "Details", index: 0 as const },
@@ -8178,7 +8178,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
+              <div className="p-3 space-y-3 bg-surface-secondary dark:bg-[#161c26]">
               {detailTab === 0 ? (
               <div className="space-y-3">
               <div className="space-y-1.5 border-t border-border pt-2">
@@ -9965,7 +9965,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
             <div className="rounded-xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-rose-500/30 dark:from-rose-950/35 dark:to-[#141922]">
               <div className="flex items-center gap-2 border-b border-rose-200/60 pb-2 dark:border-rose-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040] text-white shadow-sm">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-sm">
                   <HardHat className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -10474,7 +10474,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <>
                     <div>
                       <TimeSelect
-                        label="Arrival Time"
+                        label="Arrival time"
                         value={resumeArrivalTime}
                         disabled={resumeSaving}
                         onChange={(v) => setResumeArrivalTime(v)}
@@ -10567,7 +10567,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "manual"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -10581,7 +10581,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "auto"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -11100,7 +11100,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className={cn(
                   "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "fixed"
-                    ? "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
+                    ? "border-[#333] bg-surface-secondary text-text-primary dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
                     : "border-border-light bg-card text-text-tertiary hover:border-[#333]/60 hover:text-text-primary",
                 )}
               >
@@ -11425,7 +11425,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                         "flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
                         active
-                          ? "border-[#1DB87A] bg-[#ecfff6] text-[#157a55] dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                          ? "border-success bg-success-light text-success dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
                           : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                       )}
                     >
@@ -11438,7 +11438,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <span
                         className={cn(
                           "flex-shrink-0 h-5 w-9 rounded-full border p-0.5 transition-colors",
-                          active ? "border-[#1DB87A] bg-[#1DB87A]" : "border-border bg-border-light",
+                          active ? "border-success bg-success" : "border-border bg-border-light",
                         )}
                       >
                         <span
@@ -11682,7 +11682,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <>
                 <div>
                   <TimeSelect
-                    label="Arrival Time"
+                    label="Arrival time"
                     value={qrTime}
                     disabled={quickRescheduleSaving}
                     onChange={(v) => setQrTime(v)}

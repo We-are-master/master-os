@@ -410,7 +410,7 @@ export function PartnerUploadClient() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-100">
-        <Loader2 className="h-8 w-8 animate-spin text-[#e93701]" aria-hidden />
+        <Loader2 className="h-8 w-8 animate-spin text-text-primary" aria-hidden />
       </div>
     );
   }
@@ -447,7 +447,7 @@ export function PartnerUploadClient() {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logo} alt="" className="h-10 w-auto max-w-[160px] object-contain" />
             ) : (
-              <span className="text-xs font-bold tracking-widest text-[#e93701] uppercase">{brand}</span>
+              <span className="text-xs font-bold tracking-widest text-text-primary uppercase">{brand}</span>
             )}
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
@@ -570,7 +570,7 @@ export function PartnerUploadClient() {
 
         <section className="rounded-2xl border border-zinc-800 bg-[#121212] p-6 sm:p-8 shadow-lg shadow-black/30">
           <div className="flex items-center gap-2 mb-2">
-            <User className="h-5 w-5 text-[#e93701]" />
+            <User className="h-5 w-5 text-text-primary" />
             <h2 className="text-lg font-semibold text-white">Your details</h2>
           </div>
           <p className="text-sm text-zinc-500 mb-6">
@@ -679,7 +679,7 @@ export function PartnerUploadClient() {
             <button
               type="submit"
               disabled={profileSaving}
-              className="w-full sm:w-auto rounded-xl bg-[#e93701] py-2.5 px-8 text-sm font-semibold text-white hover:bg-[#cf3101] disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-[#e93701]/10"
+              className="w-full sm:w-auto rounded-xl bg-primary py-2.5 px-8 text-sm font-semibold text-white hover:bg-[#cf3101] disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-[#e93701]/10"
             >
               {profileSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Save details

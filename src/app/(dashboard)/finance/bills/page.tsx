@@ -542,13 +542,13 @@ export default function BillsPage() {
           </div>
           <div className="mt-2.5 grid grid-cols-3 gap-2 sm:gap-3">
             <div className="rounded-lg border border-border-light bg-card/80 backdrop-blur px-3 py-2.5 flex items-start gap-2.5 min-w-0">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-text-primary">
                 <CalendarRange className="h-3.5 w-3.5" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnMonthly)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnMonthly)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/m</span>
                 </p>
               </div>
@@ -560,7 +560,7 @@ export default function BillsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Weekly</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnWeekly)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnWeekly)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/w</span>
                 </p>
               </div>
@@ -572,7 +572,7 @@ export default function BillsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Daily</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnDaily)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnDaily)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/d</span>
                 </p>
               </div>
@@ -616,7 +616,7 @@ export default function BillsPage() {
         ) : (
           <div className="rounded-xl border border-border-light bg-card overflow-hidden">
             {compactRows.map((row, index) => (
-              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7] dark:bg-white/[0.04]")}>
+              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-surface-secondary dark:bg-white/[0.04]")}>
                 <div className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
                   <div className="min-w-0 flex items-start gap-2">
                     <button
@@ -1200,7 +1200,7 @@ function BillModal({
             disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
-              { value: "weekly_friday", label: "Every Friday" },
+              { value: "weekly_friday", label: "Every friday" },
               { value: "biweekly_friday", label: "Every 2 Fridays" },
               { value: "monthly", label: "Monthly" },
               { value: "quarterly", label: "Quarterly" },
