@@ -318,7 +318,7 @@ const CHARGE_MODE_HINT =
 
 const CHARGE_MODES: { id: JobChargeMode; label: string }[] = [
   { id: "completion", label: "On completion" },
-  { id: "deposit", label: "Deposit now" },
+  { id: "deposit", label: "Deposit" },
   { id: "full", label: "Full now" },
 ];
 
@@ -353,52 +353,55 @@ export function JobCreateModalChargeMode({
   const now = Math.round(Math.max(0, total) * pct) / 100;
   const later = Math.round((Math.max(0, total) - now) * 100) / 100;
 
+  const summary =
+    pct === 0
+      ? "Invoice goes out when the job is done"
+      : total > 0.02
+        ? `${formatCurrency(now)} now${later > 0.02 ? ` · ${formatCurrency(later)} when done` : ""}`
+        : "Set the price to see the amount";
+
   return (
-    <div className="rounded-lg border border-dashed border-border-light bg-surface-hover/20 px-2.5 py-2.5 space-y-2 min-w-0">
-      <div className="flex items-center gap-1.5">
-        <p className="text-[11px] font-medium text-text-secondary">Client payment</p>
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex items-center gap-1">
+        <p className="m-0 text-[12px] font-medium text-text-secondary">Client payment</p>
         <FixfyHintIcon text={CHARGE_MODE_HINT} />
       </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Client payment">
-        {modes.map((m) => (
-          <button
-            key={m.id}
-            type="button"
-            role="radio"
-            aria-checked={mode === m.id}
-            onClick={() => onModeChange(m.id)}
-            className={cn(
-              "rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
-              mode === m.id
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border-light bg-card text-text-secondary hover:bg-surface-hover",
-            )}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-      {mode === "deposit" ? (
-        <div className="min-w-0 max-w-[8rem]">
-          <p className="mb-1 text-[11px] text-text-tertiary">Deposit %</p>
-          <Input
-            type="number"
-            value={percent}
-            onChange={(e) => onPercentChange(e.target.value)}
-            min="1"
-            max="99"
-            step="1"
-            placeholder="50"
-          />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-lg bg-surface-secondary p-0.5" role="radiogroup" aria-label="Client payment">
+          {modes.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              role="radio"
+              aria-checked={mode === m.id}
+              onClick={() => onModeChange(m.id)}
+              className={cn(
+                "h-8 rounded-md px-3 text-[12px] font-medium transition-colors",
+                mode === m.id ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
-      ) : null}
-      <p className="text-[11px] leading-snug text-text-tertiary">
-        {pct === 0
-          ? "Nothing is requested now. The invoice goes out when the job is completed."
-          : total > 0.02
-            ? `${formatCurrency(now)} requested by email now${later > 0.02 ? `, ${formatCurrency(later)} on completion` : ""}.`
-            : "Set the price to see the amount requested now."}
-      </p>
+        {mode === "deposit" ? (
+          <label className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-card px-2 text-[12px] text-text-secondary">
+            <input
+              type="number"
+              value={percent}
+              onChange={(e) => onPercentChange(e.target.value)}
+              min="1"
+              max="99"
+              step="1"
+              placeholder="50"
+              aria-label="Deposit percent"
+              className="w-10 bg-transparent text-right tabular-nums text-text-primary outline-none"
+            />
+            %
+          </label>
+        ) : null}
+        <span className="ml-auto text-[12px] tabular-nums text-text-tertiary">{summary}</span>
+      </div>
     </div>
   );
 }

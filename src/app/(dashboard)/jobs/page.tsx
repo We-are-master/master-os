@@ -5170,16 +5170,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 onOpenChange={setPricingOpen}
               />
             ) : null}
-            {form.job_kind !== "recurring" ? (
-              <JobCreateModalChargeMode
-                mode={form.charge_mode}
-                percent={form.charge_percent}
-                total={invoiceTotalPreview}
-                onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
-                onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
-                paysUpfront={clientPaysUpfront}
-              />
-            ) : null}
             {form.job_type === "hourly" ? (
               <JobCreateModalExtraPayment
                 extraPayment={form.extra_payment}
@@ -5386,7 +5376,17 @@ function CreateJobModal({ open, onClose, onCreate }: {
             )}
           </JobCreateModalSection>
 
-          <JobCreateModalSection id="access" title="Parking and congestion" badge="optional">
+          <JobCreateModalSection id="access" title="Charges" badge="optional">
+            {form.job_kind !== "recurring" ? (
+              <JobCreateModalChargeMode
+                mode={form.charge_mode}
+                percent={form.charge_percent}
+                total={invoiceTotalPreview}
+                onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
+                onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
+                paysUpfront={clientPaysUpfront}
+              />
+            ) : null}
             <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
               <button
                 type="button"
