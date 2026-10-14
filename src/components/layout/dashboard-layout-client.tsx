@@ -55,7 +55,7 @@ export default function DashboardLayoutClient({
                   )}
                 >
                   <Header />
-                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-[14px] pt-[10px] pb-24 sm:px-6 sm:pb-14">
+                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-[14px] pt-5 pb-24 sm:px-6 sm:pb-14">
                     {children}
                   </main>
                   <MasterBrainAssistant />

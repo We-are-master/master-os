@@ -99,7 +99,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-        <h1 className="m-0 text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">
+        <h1 className="m-0 font-display text-[20px] font-bold leading-none tracking-tight text-text-primary">
           {greeting}, {firstName}.
         </h1>
         <p className="m-0 text-[12px] leading-none text-fx-mute">

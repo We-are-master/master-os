@@ -7190,7 +7190,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="w-full bg-surface-secondary py-4 px-4 dark:bg-[#0f1115] sm:px-5">
+      <div className="w-full pb-4">
         <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
