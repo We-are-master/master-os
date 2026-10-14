@@ -1574,7 +1574,7 @@ function BillingStandaloneInner() {
   const renderBuildingRun = (run: (typeof buildingRuns)[number]) => {
     const short = (ymd: string) =>
       new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-    const open = !(collapsedRuns[run.due] ?? false);
+    const open = !(collapsedRuns[run.due] ?? !run.isCurrent);
     return (
       <div key={run.due} className="border-b border-border-light">
         <RunHeader
@@ -1911,7 +1911,7 @@ function BillingStandaloneInner() {
                       <p className="px-5 py-8 text-center text-sm text-text-tertiary">No draft invoices.</p>
                     ) : (
                       draftInRuns.map((run) => {
-                        const open = !(collapsedInRuns[`d:${run.key}`] ?? false);
+                        const open = !(collapsedInRuns[`d:${run.key}`] ?? run.kind !== 0);
                         const short = (ymd: string) =>
                           new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
                         return (
@@ -1953,7 +1953,7 @@ function BillingStandaloneInner() {
                     <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing to collect right now.</p>
                   ) : (
                     moneyInRuns.map((run) => {
-                      const open = !(collapsedInRuns[run.key] ?? false);
+                      const open = !(collapsedInRuns[run.key] ?? run.kind !== 0);
                       const short = (ymd: string) =>
                         new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
                       const range = run.start && run.end ? `${short(run.start)} – ${short(run.end)}` : "";
@@ -3199,8 +3199,8 @@ function SelfBillGroupedLedger({
               return (
                 <div className="min-w-0 flex-1">
                   <RunHeader
-                    open={!(collapsedWeeks[week.weekKey] ?? false)}
-                    onToggle={() => setCollapsedWeeks((c) => ({ ...c, [week.weekKey]: !(c[week.weekKey] ?? false) }))}
+                    open={!(collapsedWeeks[week.weekKey] ?? !isNext)}
+                    onToggle={() => setCollapsedWeeks((c) => ({ ...c, [week.weekKey]: !(c[week.weekKey] ?? !isNext) }))}
                     title={
                       late && due
                         ? `Late · was due ${shortDay(due)}`
@@ -3271,7 +3271,7 @@ function SelfBillGroupedLedger({
               })() : null}
             </div>
           </div>
-          <div hidden={collapsedWeeks[week.weekKey] ?? false}>
+          <div hidden={collapsedWeeks[week.weekKey] ?? !isNext}>
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
             const partnerOpen = !collapsiblePartners || collapsiblePartners.expandedKeys.has(partnerGroupKey);
