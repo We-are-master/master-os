@@ -45,7 +45,7 @@ import { invoicePayLinkForAmount, invoicePayLinkUrl } from "./pay-link-url";
 
 test("a URL do valor fixo sai com duas casas", () => {
   const u = invoicePayLinkForAmount("RCP-1234", 50);
-  assert.match(u!, /\/pay\/RCP-1234\?amount=50\.00$/);
+  assert.match(u!, /\/pay\/INV-1234\?amount=50\.00$/);
   assert.match(invoicePayLinkForAmount("RCP-1234", 33.333)!, /amount=33\.33$/);
 });
 
@@ -57,6 +57,6 @@ test("sem referência ou sem valor não há URL, e não uma URL quebrada", () =>
 });
 
 test("o link de porcentagem continua como era", () => {
-  assert.match(invoicePayLinkUrl("RCP-1234", 50), /\/pay\/RCP-1234\?pct=50$/);
-  assert.match(invoicePayLinkUrl("RCP-1234"), /\/pay\/RCP-1234$/);
+  assert.match(invoicePayLinkUrl("RCP-1234", 50), /\/pay\/INV-1234\?pct=50$/);
+  assert.match(invoicePayLinkUrl("RCP-1234"), /\/pay\/INV-1234$/);
 });

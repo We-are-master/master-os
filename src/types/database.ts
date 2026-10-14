@@ -991,6 +991,12 @@ export interface Account {
   email_include_invoice_on_final?: boolean;
   /** If true, final email may attach report PDFs. */
   email_include_report_on_final?: boolean;
+  /** Razão social no "Bill to" da fatura (mig 323). */
+  billing_legal_name?: string | null;
+  /** Fatura com VAT só na taxa da Fixfy (mig 323). */
+  invoice_fee_vat?: boolean;
+  /** Quem recebe cópia de toda fatura desta conta (mig 324). */
+  invoice_cc_emails?: string[];
   /** Business Unit responsible for this account — drives request/quote/job filtering. */
   bu_id?: string | null;
   total_revenue: number;

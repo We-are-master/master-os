@@ -10,6 +10,9 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
+import { esperaHumana, faltaEsperar } from "./ritmo";
+import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem } from "./etapa-da-passagem";
 import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -82,7 +85,7 @@ function pedidoDoCheckatrade(c: { id: string; full_name: string | null; phone: s
 export async function contextoDaPessoa(
   sb: ReturnType<typeof createServiceClient>,
   telefone: string | null,
-  extra: { nomeNoWhatsApp?: string | null; fotos?: string[] } = {},
+  extra: { nomeNoWhatsApp?: string | null; fotos?: string[]; /** quem da equipe falava nesta conversa, se alguém */ falaComo?: string | null } = {},
 ) {
   const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
   const contas: Contas = {
@@ -90,6 +93,7 @@ export async function contextoDaPessoa(
     pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
     custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
     registrarEmpresa: (dados) => registrarEmpresa(sb, telefone, dados),
+    reservarPrecoDaEquipe: async (r) => reservarPrecoDaEquipe(sb, { ...r, telefone, ticketId: await ticketPeloTelefone(telefone).catch(() => null), quemDeuOPreco: extra.falaComo ?? null }),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
@@ -328,6 +332,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     await sb.from("harvey_wa_conversas").insert({ conversation_id: conversa.id, user_id: msg.author.userId ?? null, phone: telefone, name: msg.author.displayName ?? null });
   }
 
+  const comecou = Date.now();
   await digitando(conversa.id);
   // Quem digita em rajada: espera um pouco e responde tudo junto (a mensagem mais nova manda).
   await new Promise((r) => setTimeout(r, 2500));
@@ -350,7 +355,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const voz = vozDaConversa(msgs);
   const sessao = voz ? msgs : sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
-  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos });
+  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
   // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
   const sobreQuem =
     [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null, telefone ? await contextoDaRetomada(sb, telefone) : null].filter(Boolean).join(" ") || undefined;
@@ -366,10 +371,24 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   // segundos pensando. Se nesse meio tempo a conversa saiu dele ou alguém da
   // equipe escreveu depois da mensagem do cliente, a resposta dele é descartada.
   if (r.resposta) {
+    // O ritmo de uma pessoa: o tempo de ler, pensar e digitar, com "digitando" aparecendo enquanto isso.
+    const falta = faltaEsperar(
+      esperaHumana({ caracteres: r.resposta.length, temMidia: msg.content.type !== "text", primeiraResposta: !sessao.some((m) => ehDoHarvey(m)) }),
+      Date.now() - comecou,
+    );
+    for (let resta = falta; resta > 0; resta -= 6_000) {
+      await digitando(conversa.id);
+      await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
+    }
     const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
     const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
     const equipeEscreveu = depois.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
     if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
+    // O cliente mandou mais alguma coisa enquanto o Harvey escrevia (texto e logo depois a foto): a mensagem
+    // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
+    // resposta que é só texto: link de pagamento, cotação e passagem já aconteceram e precisam ser ditos.
+    const clienteEscreveuDeNovo = depois.some((m) => m.author.type === "user" && m.id !== msg.id);
+    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
     await enviarTexto(conversa.id, r.resposta, voz);
   }
 
@@ -418,6 +437,9 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       .filter(Boolean)
       .join("\n");
     const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    // O que o Harvey já sabe entra nos campos do formulário de Job: a equipe confere e aperta a macro.
+    const feitoFicha = await preencherFormularioDoJob(sb, telefone, r.fichaDoJob ? { nome: msg.author.displayName ?? null, ...semVazios(r.fichaDoJob) } : null).catch((e) => `ficha falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] ficha do job:", feitoFicha);
     // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
     // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
     // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
@@ -528,4 +550,9 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
     console.error("[harvey-wa] aviso de pagamento", err);
     return false;
   }
+}
+
+/** Tira o que veio vazio, para o nome do WhatsApp só valer quando o Harvey não tem o nome completo. */
+function semVazios<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")) as Partial<T>;
 }

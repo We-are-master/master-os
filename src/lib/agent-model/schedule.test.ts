@@ -28,6 +28,10 @@ describe("classifyWorkSchedule", () => {
 
   it("client under any other account (Housekeep, Checkatrade, agents): B", () => {
     assert.equal(classifyWorkSchedule({ hasClient: true, sourceAccountId: HOUSEKEEP, fixfyAccountId: FIXFY }, on), "B");
+    // Express: reserva da plataforma, continua conta de empresa.
+    assert.equal(classifyWorkSchedule({ hasClient: true, sourceAccountId: "38b48520-f116-4263-90e5-8cd5a7d39ecf", fixfyAccountId: FIXFY }, on), "B");
+    // Checkatrade: lead que paga direto, é cliente nosso.
+    assert.equal(classifyWorkSchedule({ hasClient: true, sourceAccountId: "8060fcf3-a538-4e5a-9318-1b49ee59f432", fixfyAccountId: FIXFY }, on), "A");
     // Sem conta Fixfy conhecida, conta de origem qualquer continua B.
     assert.equal(classifyWorkSchedule({ hasClient: true, sourceAccountId: HOUSEKEEP, fixfyAccountId: null }, on), "B");
   });

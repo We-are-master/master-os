@@ -18,6 +18,9 @@ import {
   JobCreateModalPricingControl,
   JobCreateModalPricingFields,
   JobCreateModalExtraPayment,
+  JobCreateModalChargeMode,
+  chargeNowPercent,
+  type JobChargeMode,
   JOB_CREATE_MODAL_STEPS,
   JOB_CREATE_MODAL_SECTION_IDS,
 } from "@/components/jobs/job-create-modal-sections";
@@ -1787,6 +1790,8 @@ function JobsPageContent() {
       paymentPlanTemplate?: PaymentPlanTemplate | null;
       partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       recordExtraPaymentReceived?: { amount: number; note?: string };
+      /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
+      chargeNow?: { percent: number };
     },
   ) => {
     // ─── Zendesk: open a new ticket when the modal asked us to ──────────
@@ -2136,6 +2141,20 @@ function JobsPageContent() {
           console.error("Failed to record extra payment on new job:", err);
           toast.error("Job created, but failed to record the extra payment as received. Add it manually from the job.");
         });
+      }
+      if (opts?.chargeNow) {
+        const pct = opts.chargeNow.percent;
+        void fetch(`/api/jobs/${result.id}/charge-on-create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ percent: pct }),
+        })
+          .then(async (res) => {
+            const j = (await res.json().catch(() => ({}))) as { to?: string; error?: string };
+            if (res.ok) toast.success(`Payment request sent to ${j.to ?? "the client"}`);
+            else toast.error(`Job created, but the payment request was not sent: ${j.error ?? "unknown error"}`);
+          })
+          .catch(() => toast.error("Job created, but the payment request was not sent."));
       }
       setCreateOpen(false);
       toast.success("Job created");
@@ -3963,6 +3982,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       /** Smart pricing: record extra charge as deposit received after job is created. */
       recordExtraPaymentReceived?: { amount: number; note?: string };
+      /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
+      chargeNow?: { percent: number };
     },
   ) => void;
 }) {
@@ -3994,6 +4015,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
     billed_hours: "2",
     extra_payment: "",
     extra_payment_received: false,
+    charge_mode: "completion" as JobChargeMode,
+    charge_percent: "50",
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -4366,7 +4389,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const extrasTotal = Math.round((accessSurcharge + manualExtra) * 100) / 100;
     const jobInvoiceTotal = Math.round((clientPriceOut + extrasTotal) * 100) / 100;
     const extraAlreadyReceived = isHourly && form.extra_payment_received && manualExtra > 0.02;
-    const scheduledDeposit = extraAlreadyReceived ? manualExtra : 0;
+    // Cobrança na criação: sinal (%) ou total agora. Série recorrente usa o payment plan, não isto.
+    const chargePct = form.job_kind === "recurring" ? 0 : chargeNowPercent(form.charge_mode, form.charge_percent);
+    const chargeNowAmount = Math.round(jobInvoiceTotal * chargePct) / 100;
+    const scheduledDeposit = extraAlreadyReceived ? manualExtra : chargePct > 0 ? chargeNowAmount : 0;
+    const chargeNow = chargePct > 0 && chargeNowAmount > 0.02 ? { percent: chargePct } : undefined;
     const scheduledFinal = Math.max(0, Math.round((jobInvoiceTotal - scheduledDeposit) * 100) / 100);
 
     const partnerCapPreview = partnerCapForJobForm({
@@ -4489,6 +4516,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
       : {
           pendingSitePhotos,
           recordExtraPaymentReceived,
+          chargeNow,
         });
     setSitePhotoFiles([]);
     setPaymentPlanEnabled(false);
@@ -4523,6 +4551,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       billed_hours: "2",
       extra_payment: "",
       extra_payment_received: false,
+      charge_mode: "completion" as JobChargeMode,
+      charge_percent: "50",
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -5001,6 +5031,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 estimatedMarginPct={estimatedMarginPct}
                 open={pricingOpen}
                 onOpenChange={setPricingOpen}
+              />
+            ) : null}
+            {form.job_kind !== "recurring" ? (
+              <JobCreateModalChargeMode
+                mode={form.charge_mode}
+                percent={form.charge_percent}
+                total={invoiceTotalPreview}
+                onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
+                onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
               />
             ) : null}
             {form.job_type === "hourly" ? (

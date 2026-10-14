@@ -47,6 +47,7 @@ export const FERRAMENTA_DO_ACESSO: Record<string, keyof AjustesDoHarvey["acessos
   get_my_account: "parceiro",
   save_document: "parceiro",
   create_payment_link: "link",
+  book_team_price: "link",
 };
 
 /** A ferramenta está liberada pelos ajustes? */

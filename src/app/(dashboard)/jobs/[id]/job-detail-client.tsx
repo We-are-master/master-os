@@ -82,7 +82,7 @@ import {
   Pencil,
   MoreVertical,
   XCircle,
-  UserX, Layers,
+  UserX, Layers, Undo2,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -199,6 +199,7 @@ import {
 } from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel";
+import { JobRefundModal } from "@/components/jobs/job-refund-modal";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
 import { notifyPartnerJobChange } from "@/lib/notify-partner-job-zendesk";
@@ -1205,6 +1206,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const router = useRouter();
   const id = params?.id as string | undefined;
   const { profile } = useProfile();
+  const [refundOpen, setRefundOpen] = useState(false);
   const {
     jobOnHoldPresets,
     officeCancellationPresets,
@@ -9306,8 +9308,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ) : null}
                     {customerPayments.map((p) => {
                       const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                      const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                      const scheduleTag = p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
+                      const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note).replace(/ · req [A-Za-z0-9-]+$/, "");
+                      const isRefund = Number(p.amount) < 0;
+                      const scheduleTag = isRefund ? "Refund" : p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
                       return (
                       <div key={p.id} className="flex items-start justify-between gap-1.5 rounded-md bg-surface-hover/40 px-2 py-1.5">
                         <div className="min-w-0">
@@ -9315,7 +9318,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <span className="text-[10px] font-semibold text-text-tertiary uppercase">
                               {ledgerTag ?? scheduleTag}
                             </span>
-                            <Badge variant="success" size="sm">Received</Badge>
+                            {isRefund ? <Badge variant="danger" size="sm">Refunded</Badge> : <Badge variant="success" size="sm">Received</Badge>}
                             {p.payment_method && (
                               <span className="text-[10px] text-text-tertiary">
                                 ·{" "}
@@ -10173,6 +10176,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
                     ) : null}
                   </>
+                ) : null}
+                {isAdmin && customerPaidTotal > 0.02 ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="w-full min-h-[2.25rem]"
+                    icon={<Undo2 className="h-3.5 w-3.5" />}
+                    title="Give money back to the customer: to the card through Stripe, or record a bank transfer"
+                    onClick={() => setRefundOpen(true)}
+                  >
+                    Refund customer
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -11124,6 +11140,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       </Modal>
 
       {/* DELETE PAYMENT CONFIRMATION MODAL */}
+      <JobRefundModal
+        open={refundOpen}
+        jobId={job.id}
+        jobReference={job.reference}
+        clientName={job.client_name}
+        onClose={() => setRefundOpen(false)}
+        onDone={refreshJobFinance}
+      />
+
       <Modal
         open={!!deletePaymentTarget}
         onClose={() => setDeletePaymentTarget(null)}

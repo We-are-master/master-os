@@ -9,12 +9,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
-import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
+import { buildInvoiceEmailSubject, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
+import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
-import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, zendeskApi } from "@/lib/zendesk";
+import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
 
 function escapeHtml(s: string): string {
@@ -88,7 +90,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, service_type, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
+      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -262,6 +264,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         }
       : null;
 
+  // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
+  const agentParty = await loadAgentReceiptParty(admin, {
+    id: typeof j.id === "string" ? j.id : null,
+    client_id: clientId,
+    created_at: typeof j.created_at === "string" ? j.created_at : null,
+    partner_id: typeof j.partner_id === "string" ? j.partner_id : null,
+  });
+  // Conta com VAT só na taxa (mig 323): corpo e PDF no mesmo formato.
+  const formatoDaConta =
+    includeInvoice && invoiceRow && !agentParty
+      ? await loadAccountInvoiceFormat(admin, invoiceRow.source_account_id ?? billing.sourceAccountId ?? null, 0)
+      : null;
+  const feeVat = formatoDaConta ? { ratePct: formatoDaConta.feeVat.ratePct, vatNumber: formatoDaConta.feeVat.vatNumber } : null;
+
+  // A fatura vai em PDF junto: é o documento que o cliente guarda, e é o mesmo do botão "Send via email".
+  if (includeInvoice && invoiceRow) {
+    const pdf = await renderInvoicePdfBuffer(admin, invoiceRow.id);
+    if ("error" in pdf) console.error("final-review-email invoice PDF:", pdf.error);
+    else attachments.push({ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" });
+  }
+
   let html: string;
   if (includeInvoice && invoiceRow) {
     html = buildInvoiceEmailHTML(
@@ -270,7 +293,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         clientName: billing.displayName,
         jobTitle: title,
         propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
-        serviceType: typeof j.service_type === "string" ? j.service_type : null,
+        // `jobs.service_type` não existe em produção: pedi-la fazia a rota inteira responder "Job not found".
+        serviceType: title,
         completionDate:
           typeof j.completed_date === "string"
             ? j.completed_date
@@ -282,12 +306,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         reportAttachmentCount: includeReport ? attachments.length : 0,
         missingReportNote: missingReportNote || undefined,
         // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
-        agentParty: await loadAgentReceiptParty(admin, {
-          id: typeof j.id === "string" ? j.id : null,
-          client_id: clientId,
-          created_at: typeof j.created_at === "string" ? j.created_at : null,
-          partner_id: typeof j.partner_id === "string" ? j.partner_id : null,
-        }),
+        agentParty,
+        feeVat,
       },
     );
   } else {
@@ -308,17 +328,21 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
 </body></html>`;
   }
 
-  const emailSubject = includeInvoice && invoiceRow
-    ? isInvoicePaymentVerified(invoiceRow)
-      ? `Payment receipt — ${invoiceRow.reference}`
-      : `Invoice ${invoiceRow.reference} — ${ref}`
-    : `Job ${ref} — final update`;
+  // O mesmo assunto de toda fatura ("Your invoice INV-… is ready"); recibo quando já está paga.
+  const emailSubject = includeInvoice && invoiceRow ? buildInvoiceEmailSubject(invoiceRow, ref) : `Job ${ref} — final update`;
+
+  // Cópia pedida pela conta (o financeiro do cliente), só quando a fatura vai junto (mig 324).
+  const ccDaConta = includeInvoice && invoiceRow ? await copiasDaFaturaDaConta(admin, invoiceRow.source_account_id ?? billing.sourceAccountId ?? null, [emailTo]) : [];
 
   let channel: "zendesk" | "resend";
   let resendId: string | undefined;
 
   if (useZendesk) {
     try {
+      // No Zendesk a cópia é do ticket: quem está em CC recebe a resposta pública.
+      if (ccDaConta.length) {
+        await zendeskApi(`tickets/${zdTicketId}.json`, { method: "PUT", body: { ticket: { email_ccs: ccDaConta.map((e) => ({ user_email: e, action: "put" })) } } }).catch((e) => console.warn("final-review-email cc:", e instanceof Error ? e.message : e));
+      }
       await zdSendCustomerComment({
         ticketId:    zdTicketId!,
         htmlBody:    html,
@@ -337,6 +361,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
     const { data: sent, error: sendErr } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
+      ...(ccDaConta.length ? { cc: ccDaConta } : {}),
       subject: emailSubject,
       html,
       attachments: attachments.length > 0 ? attachments : undefined,
@@ -351,6 +376,21 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
   }
 
   const now = new Date().toISOString();
+  // A fatura saiu para o cliente: marca o envio (libera o lembrete de cobrança) e deixa no histórico.
+  if (includeInvoice && invoiceRow) {
+    const { error: sentErr } = await admin.from("invoices").update({ sent_at: now }).eq("id", invoiceRow.id);
+    if (sentErr) console.warn("final-review-email sent_at:", sentErr.message);
+    const { error: auditErr } = await admin.from("audit_logs").insert({
+      entity_type: "invoice",
+      entity_id: invoiceRow.id,
+      entity_ref: invoiceRow.reference,
+      action: "bulk_update",
+      field_name: "email_sent",
+      new_value: emailTo,
+      metadata: { email_to: emailTo, channel, source: "final_review", job: ref },
+    });
+    if (auditErr) console.warn("final-review-email audit:", auditErr.message);
+  }
   const { error: upErr } = await admin
     .from("jobs")
     .update({ review_sent_at: now, review_send_method: channel === "zendesk" ? "zendesk" : "email" })

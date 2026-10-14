@@ -1,5 +1,6 @@
 "use client";
 
+import { limparCopias } from "@/lib/invoice-account-cc";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, Suspense } from "react";
 import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
@@ -1126,6 +1127,10 @@ function AccountDetailDrawer({
   const [emailIncludeInvoiceOnFinal, setEmailIncludeInvoiceOnFinal] = useState(true);
   const [collectionMode, setCollectionMode] = useState<"invoice" | "card_upfront">("invoice");
   const [emailIncludeReportOnFinal, setEmailIncludeReportOnFinal] = useState(true);
+  // Fatura desta conta (migrations 323 e 324): razão social, VAT só na taxa e quem recebe cópia.
+  const [billingLegalName, setBillingLegalName] = useState("");
+  const [invoiceFeeVat, setInvoiceFeeVat] = useState(false);
+  const [invoiceCcEmails, setInvoiceCcEmails] = useState("");
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
     company_name: "",
@@ -1152,6 +1157,9 @@ function AccountDetailDrawer({
     setEmailIncludeInvoiceOnFinal(a.email_include_invoice_on_final !== false);
     setCollectionMode(a.collection_mode === "card_upfront" ? "card_upfront" : "invoice");
     setEmailIncludeReportOnFinal(a.email_include_report_on_final !== false);
+    setBillingLegalName(typeof a.billing_legal_name === "string" ? a.billing_legal_name : "");
+    setInvoiceFeeVat(a.invoice_fee_vat === true);
+    setInvoiceCcEmails(Array.isArray(a.invoice_cc_emails) ? (a.invoice_cc_emails as string[]).join(", ") : "");
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
@@ -1396,6 +1404,9 @@ function AccountDetailDrawer({
         collection_mode: collectionMode,
         email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
         email_include_report_on_final: emailIncludeReportOnFinal,
+        billing_legal_name: billingLegalName.trim() || null,
+        invoice_fee_vat: invoiceFeeVat,
+        invoice_cc_emails: limparCopias(invoiceCcEmails.split(/[,;\s]+/)),
         default_client_cancel_fee_gbp:
           Number(edit.default_client_cancel_fee_gbp) > 0
             ? Math.round(Number(edit.default_client_cancel_fee_gbp) * 100) / 100
@@ -2059,6 +2070,36 @@ function AccountDetailDrawer({
                     placeholder="billing@company.com"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-border-light px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Invoice for this account</span>
+                  <FixfyHintIcon text="How the invoice is addressed and who receives a copy. Leave everything empty to keep the standard invoice." />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Legal name on the invoice</span>
+                      <FixfyHintIcon text="The company the invoice is billed to, e.g. LF Europe Ltd. The address and company number above are printed with it." />
+                    </div>
+                    <Input value={billingLegalName} onChange={(e) => setBillingLegalName(e.target.value)} placeholder="Company Ltd" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Invoice copies (CC)</span>
+                      <FixfyHintIcon text="These emails get a copy of every invoice, overdue reminder and completion email with invoice for this account. Separate with commas." />
+                    </div>
+                    <Input value={invoiceCcEmails} onChange={(e) => setInvoiceCcEmails(e.target.value)} placeholder="finance@company.com, accounts@company.com" />
+                  </div>
+                </div>
+                <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                  <input type="checkbox" className="mt-0.5 rounded border-border" checked={invoiceFeeVat} onChange={(e) => setInvoiceFeeVat(e.target.checked)} />
+                  <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
+                    Show VAT on the Fixfy fee only
+                    <FixfyHintIcon text="The invoice shows trade services passed through with no VAT, and the Fixfy management fee as net plus 20% VAT. The total does not change." />
+                  </span>
+                </label>
               </div>
 
               {(() => {

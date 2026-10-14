@@ -1,4 +1,9 @@
 import "server-only";
+import { buildBookingPaymentEmailHTML, buildBookingPaymentSubject, type BookingPaymentEmailInput } from "@/lib/booking-payment-email";
+import { rotuloDaJanela, rotuloDoDia } from "@/lib/client-confirmation/professional-email";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
+import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
+import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import {
@@ -134,7 +139,14 @@ export type SendInvoiceEmailResult =
 export async function sendInvoiceEmail(
   admin: SupabaseClient,
   invoiceId: string,
-  options: { userId: string; userName: string; requestPercent?: number; jobId?: string | null },
+  options: {
+    userId: string;
+    userName: string;
+    requestPercent?: number;
+    jobId?: string | null;
+    /** "booking": e-mail de "almost there" da cobrança na criação do job, em vez do e-mail de fatura. */
+    variant?: "booking";
+  },
 ): Promise<SendInvoiceEmailResult> {
   const ctx = await loadInvoiceSendContext(admin, invoiceId, { jobId: options.jobId });
   if ("error" in ctx && "status" in ctx) {
@@ -163,7 +175,10 @@ export async function sendInvoiceEmail(
   };
   const emailTo = ctx.billing.documentEmail!.trim();
   const ccEmail = resolveInvoiceCcEmail(company?.email);
-  const ccList = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
+  const ccDaCasa = ccEmail.toLowerCase() !== emailTo.toLowerCase() ? [ccEmail] : [];
+  // Cópia pedida pela conta (o financeiro do cliente): entra em toda fatura dela (mig 324).
+  const ccDaConta = await copiasDaFaturaDaConta(admin, ctx.invoice.source_account_id ?? ctx.billing.sourceAccountId ?? null, [emailTo, ...ccDaCasa]);
+  const ccList = [...ccDaCasa, ...ccDaConta];
 
   const { invoice: inv, job, quoteReference, billing } = ctx;
   const request =
@@ -176,9 +191,12 @@ export async function sendInvoiceEmail(
       : undefined;
   // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
   const agentParty = await loadAgentReceiptParty(admin, job);
+  // Conta com VAT só na taxa (mig 323): o corpo do e-mail acompanha o PDF.
+  const formatoDaConta = agentParty ? null : await loadAccountInvoiceFormat(admin, inv.source_account_id ?? billing.sourceAccountId ?? null, 0);
+  const feeVat = formatoDaConta ? { ratePct: formatoDaConta.feeVat.ratePct, vatNumber: formatoDaConta.feeVat.vatNumber } : null;
   const emailOpts = emailOptsBase
-    ? { ...emailOptsBase, tradeFeeOptions, agentParty }
-    : { tradeFeeOptions, agentParty };
+    ? { ...emailOptsBase, tradeFeeOptions, agentParty, feeVat }
+    : { tradeFeeOptions, agentParty, feeVat };
 
   const pdfResult = await renderInvoicePdfBuffer(admin, invoiceId, emailOptsBase);
   if ("error" in pdfResult) {
@@ -191,7 +209,7 @@ export async function sendInvoiceEmail(
       clientName: billing.displayName,
       jobTitle: job?.title ?? inv.job_reference ?? "Job",
       propertyAddress: job?.property_address ?? null,
-      serviceType: (job as { service_type?: string | null } | null)?.service_type ?? null,
+      serviceType: job?.title ?? null,
       completionDate: job?.completed_date ?? inv.created_at,
       quoteReference,
     },
@@ -200,7 +218,29 @@ export async function sendInvoiceEmail(
   );
 
   const jobRef = job?.reference ?? inv.job_reference ?? "Job";
-  const subject = buildInvoiceEmailSubject(inv, jobRef);
+  let subject = buildInvoiceEmailSubject(inv, jobRef);
+  let bodyHtml = html;
+  // Reserva ainda não paga: o cliente recebe o convite para confirmar, não uma fatura.
+  if (options.variant === "booking" && job && request.amountDueNow > 0.02) {
+    const dayLabel = rotuloDoDia(job.scheduled_date ?? job.scheduled_start_at ?? null);
+    const pct = request.percent;
+    const booking: BookingPaymentEmailInput = {
+      clientName: billing.displayName,
+      jobReference: job.reference,
+      invoiceReference: inv.reference,
+      serviceTitle: job.title?.trim() || "Your booking",
+      scope: job.scope?.trim() || null,
+      dayLabel,
+      windowLabel: rotuloDaJanela(job.scheduled_start_at, job.scheduled_end_at),
+      address: job.property_address ?? null,
+      total: Number(inv.amount ?? 0),
+      amountDueNow: request.amountDueNow,
+      percent: pct,
+      payLink: invoicePayLinkUrl(inv.reference, pct < 100 ? pct : undefined),
+    };
+    subject = buildBookingPaymentSubject(booking);
+    bodyHtml = buildBookingPaymentEmailHTML(booking);
+  }
   const safeName = pdfResult.reference.replace(/[^\w.-]+/g, "_");
 
   const resend = new Resend(resendKey);
@@ -209,7 +249,7 @@ export async function sendInvoiceEmail(
     to: [emailTo],
     cc: ccList.length > 0 ? ccList : undefined,
     subject,
-    html,
+    html: bodyHtml,
     attachments: [
       {
         filename: `${safeName}.pdf`,
@@ -237,7 +277,14 @@ export async function sendInvoiceEmail(
     }
   }
 
-  void admin.from("audit_logs").insert({
+  // Marca que o cliente recebeu a fatura: é o que libera o lembrete de cobrança
+  // (dono, 13/10/2026). Coluna da migration 323; sem ela o registro abaixo ainda vale.
+  const { error: sentErr } = await admin.from("invoices").update({ sent_at: new Date().toISOString() }).eq("id", invoiceId);
+  if (sentErr) console.warn("[invoice-send-email] sent_at não gravado:", sentErr.message);
+
+  // ESPERADO, não solto: na Vercel a função morre depois da resposta e um `void`
+  // aqui nunca gravou nada (zero `email_sent` de fatura em produção até 13/10/2026).
+  const { error: auditErr } = await admin.from("audit_logs").insert({
     entity_type: "invoice",
     entity_id: invoiceId,
     entity_ref: inv.reference,
@@ -255,6 +302,7 @@ export async function sendInvoiceEmail(
       amount_due_now: request?.amountDueNow ?? invoiceAmountDueForRequest(inv, 100).amountDueNow,
     },
   });
+  if (auditErr) console.warn("[invoice-send-email] histórico não gravado:", auditErr.message);
 
   return { ok: true, to: emailTo, cc: ccList, resendId: emailResult?.id };
 }
