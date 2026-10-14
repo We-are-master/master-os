@@ -1616,31 +1616,41 @@ function BillingStandaloneInner() {
           total={run.total}
         />
         {open
-          ? run.rows.map((sb) => (
-              <button
-                key={sb.id}
-                type="button"
-                onClick={() => void openSelfBill(sb)}
-                className="flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
-              >
-                <span className="w-3.5 shrink-0" aria-hidden />
-                <PartnerGroupAvatar
-                  partnerKey={sb.partner_id ?? sb.partner_name ?? sb.id}
-                  partnerName={sb.partner_name ?? "Partner"}
-                  partnerAvatarById={data.partnerAvatarById}
-                />
-                <span className="truncate text-[13px] font-semibold text-text-primary">{sb.partner_name}</span>
-                <span className="shrink-0 text-[12px] text-text-tertiary">{sb.reference}</span>
-                {sb.bill_origin === "internal" ? (
-                  <Badge variant="info" size="sm">Internal</Badge>
-                ) : sb.approved_at ? (
-                  <Badge variant="success" size="sm">Approved</Badge>
-                ) : null}
-                <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">
-                  {formatCurrency(Number(sb.net_payout ?? 0))}
-                </span>
-              </button>
-            ))
+          ? (() => {
+              // Uma linha por parceiro, como no Ready.
+              const byPartner = new Map<string, SelfBill[]>();
+              for (const sb of run.rows) {
+                const k = sb.partner_id ?? sb.partner_name ?? sb.id;
+                byPartner.set(k, [...(byPartner.get(k) ?? []), sb]);
+              }
+              return [...byPartner.entries()].map(([k, bills]) => {
+                const first = bills[0]!;
+                const sum = bills.reduce((t, b) => t + Number(b.net_payout ?? 0), 0);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => void openSelfBill(first)}
+                    title={bills.map((b) => b.reference).join(", ")}
+                    className="bl-ledger-partner flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
+                  >
+                    <span className="w-3.5 shrink-0" aria-hidden />
+                    <PartnerGroupAvatar
+                      partnerKey={first.partner_id ?? first.partner_name ?? first.id}
+                      partnerName={first.partner_name ?? "Partner"}
+                      partnerAvatarById={data.partnerAvatarById}
+                    />
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="truncate text-[13px] font-semibold text-text-primary">{first.partner_name}</span>
+                      <span className="shrink-0 text-[12px] text-text-tertiary">
+                        {bills.length} self-bill{bills.length === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                    <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">{formatCurrency(sum)}</span>
+                  </button>
+                );
+              });
+            })()
           : null}
       </div>
     );
@@ -2887,7 +2897,7 @@ function InvoiceGroupedLedger({
             {collapsibleAccounts ? (
               <button
                 type="button"
-                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-primary/[0.04]"
+                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-1.5 text-left hover:bg-primary/[0.04]"
                 onClick={() => collapsibleAccounts.onToggle(group.accountKey)}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -2896,58 +2906,52 @@ function InvoiceGroupedLedger({
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 shrink-0 text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
-                    {groupOutstanding > 0 ? (
-                      <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
-                    ) : null}
-                  </div>
+                  <p className="m-0 text-[13px] font-semibold tabular-nums text-text-secondary" title={groupOutstanding > 0.02 && Math.abs(groupOutstanding - groupTotal) > 0.02 ? `${formatCurrency(groupOutstanding)} still due` : undefined}>
+                    {formatCurrency(groupOutstanding > 0.02 ? groupOutstanding : groupTotal)}
+                  </p>
                   <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", groupOpen && "rotate-180")} />
                 </div>
               </button>
             ) : (
-              <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5">
+              <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-1.5">
                 <div className="flex min-w-0 items-center gap-2.5">
                   {logoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-text-primary">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 shrink-0 text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
-                  {groupOutstanding > 0 ? (
-                    <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
-                  ) : null}
-                </div>
+                  <p className="m-0 text-[13px] font-semibold tabular-nums text-text-secondary" title={groupOutstanding > 0.02 && Math.abs(groupOutstanding - groupTotal) > 0.02 ? `${formatCurrency(groupOutstanding)} still due` : undefined}>
+                  {formatCurrency(groupOutstanding > 0.02 ? groupOutstanding : groupTotal)}
+                </p>
               </div>
             )}
             {groupOpen ? (
