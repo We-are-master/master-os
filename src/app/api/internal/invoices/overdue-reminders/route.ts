@@ -15,7 +15,7 @@ import { Resend } from "resend";
 import { createServiceClient } from "@/lib/supabase/service";
 import { loadInvoiceSendContext, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
-import { invoicePayLinkUrl } from "@/lib/pay-link-url";
+import { invoicePayLinkForAmount, invoicePayLinkUrl } from "@/lib/pay-link-url";
 import { daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage, reminderCopy } from "@/lib/invoice-overdue-reminders";
 import type { Invoice } from "@/types/database";
 
@@ -71,8 +71,20 @@ export async function POST(req: NextRequest) {
   const out: string[] = [];
 
   for (const inv of (rows ?? []) as (Invoice & { overdue_reminder_stage?: number; source_account_id?: string | null })[]) {
-    const balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
-    if (balance <= 0.02 || !inv.due_date) continue;
+    const saldo = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
+    if (saldo <= 0.02 || !inv.due_date) continue;
+    // Fatura parcelada (mig 326): o atraso é o das parcelas vencidas, não o saldo inteiro.
+    const { data: parcelas } = await admin
+      .from("invoice_payment_installments")
+      .select("amount, due_date, status")
+      .eq("invoice_id", inv.id)
+      .neq("status", "cancelled");
+    const plano = (parcelas ?? []) as { amount: number; due_date: string; status: string }[];
+    const vencidas = plano
+      .filter((r) => r.status === "pending" && String(r.due_date).slice(0, 10) < today)
+      .reduce((acc, r) => acc + Number(r.amount), 0);
+    const balance = plano.length > 0 ? Math.min(saldo, Math.round(vencidas * 100) / 100) : saldo;
+    if (balance <= 0.02) continue;
     const ultimo = (inv as { overdue_reminder_last_at?: string | null }).overdue_reminder_last_at;
     const desdeUltimo = ultimo ? daysOverdue(londonTodayYmd(new Date(ultimo)), today) : null;
     const atraso = daysOverdue(inv.due_date.slice(0, 10), today);
@@ -98,7 +110,11 @@ export async function POST(req: NextRequest) {
     if (!to) { out.push(`${inv.reference}: skip (no billing email)`); continue; }
 
     const dueLabel = new Date(`${inv.due_date.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
-    const payUrl = inv.reference ? invoicePayLinkUrl(inv.reference) : null;
+    const payUrl = inv.reference
+      ? plano.length > 0
+        ? invoicePayLinkForAmount(inv.reference, balance)
+        : invoicePayLinkUrl(inv.reference)
+      : null;
     const copy = reminderCopy(stage, {
       name: ctx.billing.displayName ?? "there",
       reference: inv.reference ?? "",

@@ -642,6 +642,8 @@ export interface Job {
   customer_final_payment: number;
   customer_final_paid: boolean;
   self_bill_id?: string;
+  /** Mig 326: parceiro recebe em parcelas, num self-bill próprio do job. */
+  partner_paid_in_instalments?: boolean;
   invoice_id?: string;
   scope?: string;
   /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
@@ -1122,6 +1124,8 @@ export interface SelfBill {
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
   /** True when self_bill_payment_installments define payout schedule (mig 235). */
+  /** Mig 326: self-bill próprio de um job parcelado (fora do balde da quinzena). */
+  dedicated_job_id?: string | null;
   payment_plan_active?: boolean;
   /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
   email_sent_at?: string | null;

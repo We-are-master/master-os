@@ -2156,6 +2156,23 @@ function JobsPageContent() {
           if (invoice) {
             await createPaymentPlan(invoice.id, Number(invoice.amount ?? 0), opts.paymentPlanTemplate.installments);
           }
+          /**
+           * Parceiro parcelado também (dono, 15/10/2026): o job sai do self-bill da
+           * quinzena e vai para um só dele, com as parcelas espelhando as do cliente.
+           */
+          const sb = getSupabase();
+          const { error: flagErr } = await sb
+            .from("jobs")
+            .update({ partner_paid_in_instalments: true })
+            .eq("id", result.id);
+          if (flagErr) throw flagErr;
+          if (result.partner_id?.trim()) {
+            const { data: fresh } = await sb.from("jobs").select("*").eq("id", result.id).maybeSingle();
+            const job = (fresh ?? { ...result, partner_paid_in_instalments: true }) as Job;
+            const antigo = job.self_bill_id?.trim() || null;
+            const novo = await ensureWeeklySelfBillForJob({ ...job, partner_paid_in_instalments: true });
+            if (antigo && antigo !== novo) await refreshSelfBillPayoutState(antigo).catch(() => undefined);
+          }
         } catch (planErr) {
           console.error("one-off instalment plan setup failed", planErr);
           toast.error(getErrorMessage(planErr, "Job created, but the instalments could not be saved. Add them from the job."));

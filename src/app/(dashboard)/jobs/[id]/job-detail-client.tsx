@@ -112,6 +112,8 @@ import {
   selfBillJobPayoutStateLabel,
   syncSelfBillAfterJobChange,
   updateSelfBill,
+  setJobPartnerInstalments,
+  refreshSelfBillPayoutState,
 } from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
@@ -209,6 +211,7 @@ import {
 } from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel";
+import { listInstallmentsForInvoice } from "@/services/invoice-payment-plan";
 import { JobRefundModal } from "@/components/jobs/job-refund-modal";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
@@ -9338,7 +9341,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   dueText="still to pay"
                 />
                 {(() => {
-                  if (!showsJobPaymentPlan) return null;
+                  // Avulso também mostra: o plano do cliente numa fatura só (mig 326).
                   const primaryInv =
                     (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
                     jobInvoices[0];
@@ -9351,7 +9354,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         totalAmount={Number(primaryInv.amount ?? billableRevenue)}
                         amountPaid={customerPaidTotal}
                         canEdit={primaryInv.status !== "paid"}
-                        onUpdated={refreshJobFinance}
+                        onUpdated={async () => {
+                          // Avulso: plano do cliente liga/desliga o parcelado do parceiro, que espelha as parcelas.
+                          if (!isRecurringSeriesJob && (job.job_kind ?? "one_off") === "one_off") {
+                            const temPlano = (await listInstallmentsForInvoice(primaryInv.id)).some((i) => i.status !== "cancelled");
+                            const ligado = job.partner_paid_in_instalments === true;
+                            try {
+                              if (temPlano !== ligado) await setJobPartnerInstalments(job.id, temPlano);
+                              else if (ligado && job.self_bill_id) await refreshSelfBillPayoutState(job.self_bill_id);
+                            } catch (e) {
+                              toast.error(getErrorMessage(e, "Partner instalments could not be updated"));
+                            }
+                          }
+                          await refreshJobFinance();
+                        }}
                       />
                     </div>
                   );
@@ -9499,7 +9515,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <span className="font-semibold tabular-nums">{formatCurrencyPrecise(partnerClawbackOwed > 0.02 ? -partnerClawbackOwed : 0)}</span>
                   </div>
                 ) : null}
-                {showsJobPaymentPlan &&
+                {/* Parceiro: série, ou avulso parcelado (self-bill próprio). No balde da quinzena, plano dividiria o balde inteiro. */}
+                {(showsJobPaymentPlan || job.partner_paid_in_instalments === true) &&
                 job.self_bill_id?.trim() &&
                 job.partner_id?.trim() &&
                 job.status !== "cancelled" ? (
@@ -9509,7 +9526,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       entityId={job.self_bill_id}
                       totalAmount={Math.max(0, Number(jobSelfBill?.net_payout ?? partnerCashOutTotal))}
                       amountPaid={partnerPaidTotal}
-                      canEdit={!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status)}
+                      canEdit={
+                        job.partner_paid_in_instalments !== true &&
+                        (!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status))
+                      }
                       onUpdated={refreshJobFinance}
                     />
                   </div>

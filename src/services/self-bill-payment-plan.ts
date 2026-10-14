@@ -393,3 +393,4 @@ export async function applySelfBillWiseInstallmentPayment(
   const { error: sbErr } = await supabase.from("self_bills").update(update).eq("id", selfBillId);
   if (sbErr) throw sbErr;
 }
+

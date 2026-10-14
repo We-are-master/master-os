@@ -1559,6 +1559,25 @@ function BillingStandaloneInner() {
    * A que contém hoje vai no topo da lista, com barra verde do quanto já passou; as
    * seguintes (ex.: folha interna) vão no fim, sem barra. Sem checkbox: não dá pra pagar.
    */
+  /**
+   * Quanto sai na data do documento. Com parcelas (job parcelado, mig 326), é a
+   * próxima parcela em aberto: o `due_date` já é o dela, e o resto vai aparecer
+   * na data de cada uma.
+   */
+  const selfBillAmountOnDue = useCallback(
+    (sb: SelfBill) => {
+      const inst = data.installmentsBySelfBillId[sb.id];
+      if (hasActiveSelfBillPaymentPlan(inst)) {
+        const next = (inst ?? [])
+          .filter((i) => i.status !== "paid" && i.status !== "cancelled")
+          .sort((x, y) => x.sequence - y.sequence)[0];
+        if (next) return Number(next.amount ?? 0);
+      }
+      return Number(sb.net_payout ?? 0);
+    },
+    [data.installmentsBySelfBillId],
+  );
+
   const buildingRuns = useMemo(() => {
     const rows = data.selfBills.filter(
       (sb) =>
@@ -1594,10 +1613,10 @@ function BillingStandaloneInner() {
           end,
           pct,
           isCurrent,
-          total: list.reduce((t, r) => t + Number(r.net_payout ?? 0), 0),
+          total: list.reduce((t, r) => t + selfBillAmountOnDue(r), 0),
         };
       });
-  }, [data.selfBills, todayYmd]);
+  }, [data.selfBills, todayYmd, selfBillAmountOnDue]);
 
   const renderBuildingRun = (run: (typeof buildingRuns)[number]) => {
     const short = (ymd: string) =>
@@ -1625,7 +1644,7 @@ function BillingStandaloneInner() {
               }
               return [...byPartner.entries()].map(([k, bills]) => {
                 const first = bills[0]!;
-                const sum = bills.reduce((t, b) => t + Number(b.net_payout ?? 0), 0);
+                const sum = bills.reduce((t, b) => t + selfBillAmountOnDue(b), 0);
                 return (
                   <button
                     key={k}

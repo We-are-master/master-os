@@ -28,6 +28,10 @@
     {
       "path": "/api/cron/confirmacao-atrasada",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/parcelas-cliente",
+      "schedule": "0 8 * * *"
     }
   ]
 }
