@@ -46,9 +46,11 @@ import {
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
 import { CashflowWeekDetailModal } from "@/components/finance/cashflow-week-detail-modal";
-import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
+import { workPeriodBoundsForPayoutFriday, workPeriodForJobStartYmd } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
+  type AttentionAccountGroup,
+  type WorklistRow,
   buildInvoiceLedgerAccountGroups,
   computeAgingTotals,
   computeBillingKpis,
@@ -185,7 +187,13 @@ function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const { setup: frontendSetup, refetch: refetchFrontendSetup } = useFrontendSetup();
+  const {
+    setup: frontendSetup,
+    refetch: refetchFrontendSetup,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+  } = useFrontendSetup();
+  const [collapsedInRuns, setCollapsedInRuns] = useState<Record<string, boolean>>({});
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(defaultBillingStandaloneFilter);
   const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("billing_kpis_visible_v1");
   const data = useBillingStandaloneData();
@@ -813,6 +821,66 @@ function BillingStandaloneInner() {
       periodBounds,
     ],
   );
+
+  /**
+   * Money In por quinzena (mesmo calendário dos parceiros): cada fatura cai na quinzena
+   * da data em que se espera receber. Em cima a quinzena atual, depois as atrasadas,
+   * depois as futuras. Dentro de cada uma, as contas como antes.
+   */
+  const moneyInRuns = useMemo(() => {
+    type Run = { key: string; start: string; end: string; rows: WorklistRow[] };
+    const runs = new Map<string, Run>();
+    for (const g of attentionAccountGroups) {
+      for (const row of g.rows) {
+        const period = row.expectedPayYmd
+          ? workPeriodForJobStartYmd(row.expectedPayYmd, partnerPayoutStandardTerms, partnerPayoutReferenceYmd)
+          : null;
+        const key = period ? period.periodStartYmd : "no-date";
+        const run = runs.get(key) ?? { key, start: period?.periodStartYmd ?? "", end: period?.periodEndYmd ?? "", rows: [] };
+        run.rows.push(row);
+        runs.set(key, run);
+      }
+    }
+    const toGroups = (rows: WorklistRow[]): AttentionAccountGroup[] => {
+      const by = new Map<string, AttentionAccountGroup>();
+      for (const row of rows) {
+        const src = attentionAccountGroups.find((g) => g.accountKey === row.accountKey);
+        const g =
+          by.get(row.accountKey) ??
+          {
+            accountKey: row.accountKey,
+            accountId: src?.accountId ?? null,
+            accountName: row.accountName,
+            invoiceCount: 0,
+            totalDue: 0,
+            maxDaysLate: 0,
+            nextExpectedPayYmd: null,
+            rows: [],
+          };
+        g.rows.push(row);
+        g.invoiceCount += 1;
+        g.totalDue = Math.round((g.totalDue + row.balanceDue) * 100) / 100;
+        g.maxDaysLate = Math.max(g.maxDaysLate, row.daysLate);
+        if (row.expectedPayYmd && (!g.nextExpectedPayYmd || row.expectedPayYmd < g.nextExpectedPayYmd)) {
+          g.nextExpectedPayYmd = row.expectedPayYmd;
+        }
+        by.set(row.accountKey, g);
+      }
+      return [...by.values()].sort(
+        (a, b) => b.maxDaysLate - a.maxDaysLate || b.totalDue - a.totalDue || a.accountName.localeCompare(b.accountName),
+      );
+    };
+    const kind = (r: Run) =>
+      !r.start ? 3 : r.start <= todayYmd && todayYmd <= r.end ? 0 : r.end < todayYmd ? 1 : 2;
+    return [...runs.values()]
+      .sort((a, b) => kind(a) - kind(b) || a.start.localeCompare(b.start))
+      .map((r) => ({
+        ...r,
+        kind: kind(r),
+        total: Math.round(r.rows.reduce((t, x) => t + x.balanceDue, 0) * 100) / 100,
+        groups: toGroups(r.rows),
+      }));
+  }, [attentionAccountGroups, partnerPayoutStandardTerms, partnerPayoutReferenceYmd, todayYmd]);
 
   const selectableReadyInvoiceIds = useMemo(() => {
     const ids: string[] = [];
@@ -1786,16 +1854,54 @@ function BillingStandaloneInner() {
                   ) : null}
                 </div>
                 <div className="min-h-0 flex-1 divide-y divide-border-light overflow-y-auto">
-                  <MoneyInReadyList
-                    groups={attentionAccountGroups}
-                    accountLogoById={data.accountLogoById}
-                    jobsByRef={data.jobsByRef}
-                    selectedInvoiceIds={selectedInvoiceIds}
-                    resetKey={moneyInReadyResetKey}
-                    onToggleInvoiceSelection={toggleInvoiceSelection}
-                    onOpenInvoice={openInvoice}
-                    onMarkReceived={handleMarkInvoiceReceived}
-                  />
+                  {moneyInRuns.length === 0 ? (
+                    <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing to collect right now.</p>
+                  ) : (
+                    moneyInRuns.map((run) => {
+                      const open = !(collapsedInRuns[run.key] ?? false);
+                      const short = (ymd: string) =>
+                        new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                      const range = run.start && run.end ? `${short(run.start)} – ${short(run.end)}` : "";
+                      return (
+                        <div key={run.key} className="border-b border-border-light">
+                          <button
+                            type="button"
+                            onClick={() => setCollapsedInRuns((c) => ({ ...c, [run.key]: open }))}
+                            aria-expanded={open}
+                            className="flex w-full items-center gap-2 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
+                          >
+                            <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
+                            {run.kind === 0 ? (
+                              <span className="text-[13px] font-semibold text-[var(--ok)]">Due this fortnight</span>
+                            ) : run.kind === 1 ? (
+                              <span className="text-[13px] font-semibold text-[var(--bad)]">Late</span>
+                            ) : run.kind === 2 ? (
+                              <span className="text-[13px] font-semibold text-text-primary">Due</span>
+                            ) : (
+                              <span className="text-[13px] font-semibold text-text-primary">No due date</span>
+                            )}
+                            {range ? <span className="truncate text-[12px] text-text-tertiary">{range}</span> : null}
+                            <span className="shrink-0 text-[12px] text-text-tertiary">
+                              · {run.rows.length} invoice{run.rows.length === 1 ? "" : "s"}
+                            </span>
+                            <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(run.total)}</span>
+                          </button>
+                          {open ? (
+                            <MoneyInReadyList
+                              groups={run.groups}
+                              accountLogoById={data.accountLogoById}
+                              jobsByRef={data.jobsByRef}
+                              selectedInvoiceIds={selectedInvoiceIds}
+                              resetKey={`${moneyInReadyResetKey}:${run.key}`}
+                              onToggleInvoiceSelection={toggleInvoiceSelection}
+                              onOpenInvoice={openInvoice}
+                              onMarkReceived={handleMarkInvoiceReceived}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
                 {inactivePeriodInvoices.length > 0 ? (
                   <div className="shrink-0 border-t border-border-light bg-surface-hover/20">
