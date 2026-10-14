@@ -649,6 +649,8 @@ function BillingStandaloneInner() {
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
   const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
+  /** Runway por quinzena (padrão) ou por semana; quinzena = duas semanas somadas. */
+  const [runwayGranularity, setRunwayGranularity] = useState<"fortnight" | "week">("fortnight");
   const [runwayView, setRunwayView] = useState<RunwayViewMode>("accrual");
   const [cashflowDetailWeekStart, setCashflowDetailWeekStart] = useState<string | null>(null);
   const [savingRunwayOpening, setSavingRunwayOpening] = useState(false);
@@ -1035,8 +1037,11 @@ function BillingStandaloneInner() {
 
   const cashflowWeekStart = useMemo(() => {
     const monday = startOfWeekMondayFromYmd(todayYmd);
-    return addDaysYmd(monday, cashflowWeekOffset * 7);
-  }, [todayYmd, cashflowWeekOffset]);
+    const start = addDaysYmd(monday, cashflowWeekOffset * 7);
+    if (runwayGranularity !== "fortnight") return start;
+    // Encaixa no começo da quinzena dos parceiros, para cada coluna ser uma quinzena inteira.
+    return workPeriodForJobStartYmd(start, partnerPayoutStandardTerms, partnerPayoutReferenceYmd)?.periodStartYmd ?? start;
+  }, [todayYmd, cashflowWeekOffset, runwayGranularity, partnerPayoutStandardTerms, partnerPayoutReferenceYmd]);
 
   const paymentOrgCtx = useMemo(() => orgCtxFromSetup(frontendSetup), [frontendSetup]);
 
@@ -1072,7 +1077,7 @@ function BillingStandaloneInner() {
           runwayView === "cash" || runwayView === "accrual" ? runwayCashBalanceOptions : undefined,
         startYmd: periodBounds?.from ?? cashflowWeekStart,
         endYmd: periodBounds?.to,
-        weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
+        weekCount: periodBounds ? undefined : runwayGranularity === "fortnight" ? CASHFLOW_WINDOW_WEEKS * 2 : CASHFLOW_WINDOW_WEEKS,
       }),
     [
       runwayView,
@@ -1096,14 +1101,39 @@ function BillingStandaloneInner() {
       runwayCashBalanceOptions,
       periodBounds,
       cashflowWeekStart,
+      runwayGranularity,
     ],
   );
 
+  /** Colunas do gráfico: as semanas como vêm, ou de duas em duas na vista por quinzena. */
+  const cashflowShown = useMemo(() => {
+    if (runwayGranularity !== "fortnight") return cashflow;
+    const dm = (ymd: string) =>
+      new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const out: typeof cashflow = [];
+    for (let i = 0; i < cashflow.length; i += 2) {
+      const a = cashflow[i]!;
+      const b = cashflow[i + 1];
+      const end = addDaysYmd(a.weekStart, b ? 13 : 6);
+      out.push({
+        ...a,
+        moneyIn: a.moneyIn + (b?.moneyIn ?? 0),
+        moneyOut: a.moneyOut + (b?.moneyOut ?? 0),
+        isCurrentWeek: a.isCurrentWeek || !!b?.isCurrentWeek,
+        closingBalance: b ? b.closingBalance : a.closingBalance,
+        label: "Fortnight",
+        dayNum: `${dm(a.weekStart)} – ${dm(end)}`,
+        title: `Fortnight ${dm(a.weekStart)} – ${dm(end)}`,
+      });
+    }
+    return out;
+  }, [cashflow, runwayGranularity]);
+
   const cashflowRangeLabel = useMemo(() => {
-    if (!cashflow.length) return "";
-    if (cashflow.length === 1) return cashflow[0]!.title;
-    return `${cashflow[0]!.dayNum} – ${cashflow[cashflow.length - 1]!.dayNum}`;
-  }, [cashflow]);
+    if (!cashflowShown.length) return "";
+    if (cashflowShown.length === 1) return cashflowShown[0]!.title;
+    return `${cashflowShown[0]!.dayNum} – ${cashflowShown[cashflowShown.length - 1]!.dayNum}`;
+  }, [cashflowShown]);
 
   const cashflowBuildArgs = useMemo(
     () => ({
@@ -1147,14 +1177,26 @@ function BillingStandaloneInner() {
   );
 
   const cashflowDetailWeek = useMemo(
-    () => (cashflowDetailWeekStart ? cashflow.find((w) => w.weekStart === cashflowDetailWeekStart) : undefined),
-    [cashflow, cashflowDetailWeekStart],
+    () => (cashflowDetailWeekStart ? cashflowShown.find((w) => w.weekStart === cashflowDetailWeekStart) : undefined),
+    [cashflowShown, cashflowDetailWeekStart],
   );
 
   const cashflowDetailBreakdown = useMemo(() => {
     if (!cashflowDetailWeekStart) return null;
-    return buildRunwayWeekBreakdown(runwayView, cashflowDetailWeekStart, cashflowBuildArgs);
-  }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView]);
+    const first = buildRunwayWeekBreakdown(runwayView, cashflowDetailWeekStart, cashflowBuildArgs);
+    if (runwayGranularity !== "fortnight" || !first) return first;
+    // Quinzena: as linhas das duas semanas juntas.
+    const second = buildRunwayWeekBreakdown(runwayView, addDaysYmd(cashflowDetailWeekStart, 7), cashflowBuildArgs);
+    if (!second) return first;
+    return {
+      ...first,
+      title: cashflowDetailWeek?.title ?? first.title,
+      moneyIn: first.moneyIn + second.moneyIn,
+      moneyOut: first.moneyOut + second.moneyOut,
+      inLines: [...first.inLines, ...second.inLines],
+      outLines: [...first.outLines, ...second.outLines],
+    };
+  }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView, runwayGranularity, cashflowDetailWeek]);
 
   const handleSaveRunwayOpeningBalance = useCallback(
     async (weekStart: string, amount: number) => {
@@ -1476,7 +1518,7 @@ function BillingStandaloneInner() {
     [activePeriodSelfBills],
   );
 
-  const cfMax = Math.max(1, ...cashflow.flatMap((d) => [d.moneyIn, d.moneyOut]));
+  const cfMax = Math.max(1, ...cashflowShown.flatMap((d) => [d.moneyIn, d.moneyOut]));
 
   /**
    * Quinzenas abertas: self-bills ainda acumulando (aprovados ao fim de cada job).
@@ -1631,7 +1673,7 @@ function BillingStandaloneInner() {
                       type="button"
                       className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Previous week"
-                      onClick={() => setCashflowWeekOffset((o) => o - 1)}
+                      onClick={() => setCashflowWeekOffset((o) => o - (runwayGranularity === "fortnight" ? 2 : 1))}
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </button>
@@ -1649,8 +1691,8 @@ function BillingStandaloneInner() {
                     ) : null}
                     <p className="mt-0.5 text-[11px] text-text-tertiary">
                       {runwayView === "cash" || runwayView === "accrual"
-                        ? "Click a week to see line items and edit Em caixa (opening balance)"
-                        : "Click a week to see what is due in and out"}
+                        ? `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to see line items and edit Em caixa (opening balance)`
+                        : `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to see what is due in and out`}
                     </p>
                   </div>
                   {!periodBounds ? (
@@ -1658,7 +1700,7 @@ function BillingStandaloneInner() {
                       type="button"
                       className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Next week"
-                      onClick={() => setCashflowWeekOffset((o) => o + 1)}
+                      onClick={() => setCashflowWeekOffset((o) => o + (runwayGranularity === "fortnight" ? 2 : 1))}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </button>
@@ -1674,10 +1716,16 @@ function BillingStandaloneInner() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
+                    <RunwayTabBtn active={runwayGranularity === "fortnight"} onClick={() => { setRunwayGranularity("fortnight"); setCashflowDetailWeekStart(null); }} label="Fortnight" />
+                    <RunwayTabBtn active={runwayGranularity === "week"} onClick={() => { setRunwayGranularity("week"); setCashflowDetailWeekStart(null); }} label="Week" />
+                  </div>
                   <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
                     <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Accrual" />
                     <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash" />
                     <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="P&L" />
+                  </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                     {runwayView === "cash" ? (
@@ -1709,14 +1757,14 @@ function BillingStandaloneInner() {
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
-                {cashflow.map((w, idx) => {
+                {cashflowShown.map((w, idx) => {
                   const ih = w.moneyIn ? Math.max(6, Math.round((w.moneyIn / cfMax) * 44)) : 0;
                   const oh = w.moneyOut ? Math.max(6, Math.round((w.moneyOut / cfMax) * 44)) : 0;
                   const isSelected = cashflowDetailWeekStart === w.weekStart;
                   const weekNet = cashflowWeekNet(w.moneyIn, w.moneyOut);
                   const weekHasActivity = cashflowWeekHasActivity(w.moneyIn, w.moneyOut);
                   const showRunwayBalance = runwayView === "cash" || runwayView === "accrual";
-                  const prevClosing = idx > 0 ? cashflow[idx - 1]?.closingBalance : undefined;
+                  const prevClosing = idx > 0 ? cashflowShown[idx - 1]?.closingBalance : undefined;
                   const topLabel =
                     showRunwayBalance && w.closingBalance !== undefined
                       ? formatCashRunwayClosing(w.closingBalance)
