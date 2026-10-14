@@ -15,10 +15,10 @@ import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
-import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, zendeskApi } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, ticketDoWhatsApp, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
-import { umTicketEmail } from "@/lib/um-ticket/flags";
+import { umTicketEmail, umTicketWhatsAppLigado } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
@@ -350,7 +350,13 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
   let resendId: string | undefined;
   let ticketUsado: string | number | undefined = zdTicketId ?? undefined;
 
-  if (useZendesk) {
+  // Ticket de WhatsApp ligado ao job (ONE_TICKET_WA_LINKED_ON): a janela de 24 h decide
+  // entre o comentário público (WhatsApp) e a conversa lateral por e-mail no mesmo ticket.
+  if (useZendesk && umTicketWhatsAppLigado() && (await ticketDoWhatsApp(zdTicketId!))) {
+    achado = { tipo: "ticket", id: Number(zdTicketId), origem: "job", canal: "whatsapp", status: "open", candidatos: [], b2b: false, email: emailTo, telefone: null };
+  }
+
+  if (useZendesk && !achado) {
     try {
       // No Zendesk a cópia é do ticket: quem está em CC recebe a resposta pública.
       if (ccDaConta.length) {
@@ -370,6 +376,8 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
       );
     }
   } else if (achado) {
+    // Falha aqui com o ticket já ligado ao job: devolve erro, como o caminho do Zendesk sempre fez.
+    const ligado = useZendesk;
     try {
       const r = await entregarEmailNoTicket({
         ticket: achado,
@@ -383,6 +391,13 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
       ticketUsado = r.ticketId;
       console.log(`[final-review-email] ${ref}: no ticket #${r.ticketId} do cliente (${r.modo}), sem ticket novo`);
     } catch (err) {
+      if (ligado) {
+        console.error("final-review-email Zendesk:", err);
+        return NextResponse.json(
+          { error: "Failed to deliver via Zendesk", detail: err instanceof Error ? err.message : String(err) },
+          { status: 502 },
+        );
+      }
       // O cliente não pode ficar sem o e-mail: cai para a Resend como antes.
       console.error("[final-review-email] ticket do cliente falhou, segue pela Resend:", err);
     }

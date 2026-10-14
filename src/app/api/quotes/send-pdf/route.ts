@@ -11,13 +11,13 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, getTicketRequester, setTicketRequester } from "@/lib/zendesk";
+import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, getTicketRequester, setTicketRequester, ticketDoWhatsApp } from "@/lib/zendesk";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
 import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
-import { umTicketEmail } from "@/lib/um-ticket/flags";
+import { umTicketEmail, umTicketWhatsAppLigado } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
@@ -458,16 +458,28 @@ export async function POST(req: NextRequest) {
           rejectUrl,
           agentModel:      agentModelQuote,
         });
-        await zdSendCustomerComment({
-          ticketId:       zdTicketId!,
-          customStatusId: ZD_STATUS_AWAITING_APPROVAL,
-          htmlBody:       html,
-          attachments: [{
-            filename:    `${pdfAttachmentBase}_quote.pdf`,
-            content:     pdfBuffer,
-            contentType: "application/pdf",
-          }],
-        });
+        const anexo = { filename: `${pdfAttachmentBase}_quote.pdf`, content: pdfBuffer, contentType: "application/pdf" };
+        // Ticket de WhatsApp com a janela de 24 h fechada (ONE_TICKET_WA_LINKED_ON): a proposta
+        // sai por e-mail numa conversa lateral do mesmo ticket. Fora isso, comentário público como sempre.
+        const destino = (recipientTrimmed || pdfClientEmail).trim();
+        if (umTicketWhatsAppLigado() && destino.includes("@") && (await ticketDoWhatsApp(zdTicketId!))) {
+          const r = await entregarEmailNoTicket({
+            ticket: { id: Number(zdTicketId), origem: "quote", canal: "whatsapp" },
+            para: { email: destino, nome: pdfClientName || null },
+            assunto: `Your quote ${quote.reference} from Fixfy`,
+            html,
+            anexos: [anexo],
+            customStatusId: ZD_STATUS_AWAITING_APPROVAL,
+          });
+          console.log("[send-pdf] ticket de WhatsApp", zdTicketId, "→", r.modo);
+        } else {
+          await zdSendCustomerComment({
+            ticketId:       zdTicketId!,
+            customStatusId: ZD_STATUS_AWAITING_APPROVAL,
+            htmlBody:       html,
+            attachments: [anexo],
+          });
+        }
         console.log("[send-pdf] Zendesk ticket", zdTicketId, "updated for quote", quote.reference);
       } catch (err) {
         console.error("[send-pdf] Zendesk delivery failed for ticket", zdTicketId, ":", err);

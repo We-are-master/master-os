@@ -10,6 +10,9 @@
  *  - ONE_TICKET_EMAIL_ON        3. e-mail do OS ao cliente entra no ticket que já existe
  *  - ONE_TICKET_JOB_REUSE_ON    4. job novo usa o ticket do pedido em vez de abrir outro
  *  - ONE_TICKET_CALL_NOTE_ON    5. ligação vira nota no ticket aberto do cliente (script)
+ *  - ONE_TICKET_WA_LINKED_ON    6. proposta e e-mail final em ticket de WhatsApp LIGADO ao job
+ *                                  ou à cotação: janela de 24 h fechada = conversa lateral por
+ *                                  e-mail no mesmo ticket (dono, 14/10/2026)
  */
 
 function ligado(nome: string): boolean {
@@ -22,6 +25,7 @@ export const umTicketNotaDoMerge = (): boolean => ligado("ONE_TICKET_MERGE_NOTE_
 export const umTicketEmail = (): boolean => ligado("ONE_TICKET_EMAIL_ON");
 export const umTicketJob = (): boolean => ligado("ONE_TICKET_JOB_REUSE_ON");
 export const umTicketLigacao = (): boolean => ligado("ONE_TICKET_CALL_NOTE_ON");
+export const umTicketWhatsAppLigado = (): boolean => ligado("ONE_TICKET_WA_LINKED_ON");
 
 /** Tag da conversa do WhatsApp que tem um lead aberto espelhando (Harvey atendendo). */
 export const TAG_CONVERSA_ESPELHADA = "lead_mirrored";

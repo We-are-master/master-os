@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { escolherTicketDoPedido, modoDeEntrega, ehCanalDeMensagem, emailDoCliente, type CandidatoDoPedido } from "./escolha";
+import { escolherTicketDoPedido, modoDeEntrega, ehCanalDeMensagem, emailDoCliente, janelaDoWhatsAppAberta, type CandidatoDoPedido } from "./escolha";
 
 const c = (x: Partial<CandidatoDoPedido> & { id: number }): CandidatoDoPedido => ({ status: "open", canal: "email", origem: "cliente", ...x });
 
@@ -79,4 +79,21 @@ test("ensaio: ignora o próprio ticket e o que nasceu depois", () => {
     { excluir: [1], criadoAntesDe: "2026-10-11T00:00:00Z", exigirUnico: true },
   );
   assert.equal(e.tipo === "ticket" && e.id, 2);
+});
+
+test("WhatsApp: janela aberta = comentário público; fechada ou sem registro = conversa lateral", () => {
+  assert.equal(modoDeEntrega({ canal: "whatsapp", para: "ana@x.com", janelaAberta: true }), "comentario_publico");
+  assert.equal(modoDeEntrega({ canal: "whatsapp", para: "ana@x.com", janelaAberta: false }), "conversa_lateral");
+  assert.equal(modoDeEntrega({ canal: "whatsapp", para: "ana@x.com", janelaAberta: null }), "conversa_lateral");
+  // Sem e-mail do cliente não há conversa lateral: fica como hoje.
+  assert.equal(modoDeEntrega({ canal: "whatsapp", para: "", janelaAberta: false }), "comentario_publico");
+  assert.equal(modoDeEntrega({ canal: "whatsapp", para: "team@getfixfy.com", janelaAberta: false }), "comentario_publico");
+});
+
+test("janela de 24 h do WhatsApp", () => {
+  const agora = new Date("2026-10-14T12:00:00Z");
+  assert.equal(janelaDoWhatsAppAberta("2026-10-13T12:30:00Z", agora), true);
+  assert.equal(janelaDoWhatsAppAberta("2026-10-13T11:30:00Z", agora), false);
+  assert.equal(janelaDoWhatsAppAberta(null, agora), null);
+  assert.equal(janelaDoWhatsAppAberta("lixo", agora), null);
 });

@@ -105,3 +105,43 @@ console.log(`\n4. Job no ticket do pedido (ONE_TICKET_JOB_REUSE_ON)`);
 console.log(`   tickets de job abertos pelo OS: ${deJob.length}, teriam usado o ticket do pedido: ${evitados4}, ambíguos: ${ambiguos4}`);
 console.log(`   teto (cliente B2C com algum ticket nos 30 dias antes, aberto ou já resolvido hoje): ${teto4}`);
 for (const l of linhas4) console.log(l);
+
+// ─── 6. WhatsApp ligado com a janela fechada ────────────────────────────
+// PDF (proposta, fatura, relatório) que o OS mandou como comentário público num
+// ticket de WhatsApp. Lido das auditorias do Zendesk: o OS não guarda a hora do
+// envio (quotes.customer_pdf_sent_at vazio, jobs.review_sent_at nem existe).
+// Mede com a última mensagem do cliente de AGORA: se ela é de mais de 24 h antes
+// do envio, a janela estava fechada com certeza; quem escreveu depois conta como
+// aberta. É o piso.
+const { janelaDoWhatsAppAberta } = await import("../src/lib/um-ticket/escolha");
+const { ultimaDoClienteNoWhatsApp } = await import("../src/lib/um-ticket/entregar");
+const conversas: T[] = [];
+let urlW: string | null = `search/export.json?query=${encodeURIComponent(`type:ticket updated>=${desde}`)}&filter[type]=ticket&page[size]=100`;
+while (urlW) {
+  const r: { results: T[]; meta?: { has_more?: boolean }; links?: { next?: string } } = await zendeskApi(urlW);
+  conversas.push(...(r.results ?? []).filter((t) => t.via?.channel === "whatsapp"));
+  urlW = r.meta?.has_more && r.links?.next ? r.links.next.replace(/^.*\/api\/v2\//, "") : null;
+}
+type Audit = { created_at: string; via?: { channel?: string }; events: Array<{ type: string; public?: boolean; attachments?: Array<{ file_name: string }> }> };
+const envios: Array<{ ticket: number; em: string; arquivo: string }> = [];
+for (const t of conversas) {
+  const { audits } = await zendeskApi<{ audits: Audit[] }>(`tickets/${t.id}/audits.json`);
+  for (const a of audits ?? []) {
+    if (a.via?.channel !== "api" || a.created_at < desde) continue;
+    const c = a.events.find((e) => e.type === "Comment" && e.public && (e.attachments ?? []).some((x) => /\.pdf$/i.test(x.file_name)));
+    if (c) envios.push({ ticket: t.id, em: a.created_at, arquivo: (c.attachments ?? []).map((x) => x.file_name).join(", ") });
+  }
+}
+let fechada6 = 0;
+let semRegistro6 = 0;
+const linhas6: string[] = [];
+for (const e of envios) {
+  const ultima = await ultimaDoClienteNoWhatsApp(e.ticket).catch(() => null);
+  const aberta = ultima && new Date(ultima) > new Date(e.em) ? true : janelaDoWhatsAppAberta(ultima, new Date(e.em));
+  if (!ultima) semRegistro6++;
+  else if (aberta === false) fechada6++;
+  linhas6.push(`   #${e.ticket} ${e.em.slice(0, 16)} ${e.arquivo.slice(0, 40)}, última do cliente ${ultima?.slice(0, 16) ?? "sem registro"} → ${aberta ? "WhatsApp (janela aberta)" : "conversa lateral por e-mail"}`);
+}
+console.log(`\n6. Ticket de WhatsApp ligado, janela fechada (ONE_TICKET_WA_LINKED_ON)`);
+console.log(`   tickets de WhatsApp mexidos: ${conversas.length}, PDFs mandados como comentário público: ${envios.length}, janela fechada com certeza: ${fechada6}, sem registro da conversa: ${semRegistro6}`);
+for (const l of linhas6) console.log(l);

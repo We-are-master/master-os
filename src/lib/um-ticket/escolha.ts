@@ -74,19 +74,33 @@ export function escolherTicketDoPedido(
 
 export type ModoDeEntrega = "comentario_publico" | "conversa_lateral";
 
+/** A janela de 24 h do WhatsApp: aberta quando o cliente escreveu nas últimas 24 h. null = não se sabe. */
+export function janelaDoWhatsAppAberta(ultimaDoCliente: string | null | undefined, agora: Date = new Date()): boolean | null {
+  if (!ultimaDoCliente) return null;
+  const t = new Date(ultimaDoCliente).getTime();
+  if (!Number.isFinite(t)) return null;
+  return agora.getTime() - t < 24 * 3600_000;
+}
+
 /**
  * Como o e-mail chega ao cliente dentro do ticket escolhido.
- *  - Comentário público quando o ticket é de e-mail/api/web E o solicitante é a
- *    pessoa que tem que receber: o Zendesk manda pelo canal do ticket.
+ *  - Comentário público quando:
+ *     . o ticket é de e-mail/api/web E o solicitante é a pessoa que tem que
+ *       receber: o Zendesk manda pelo canal do ticket;
+ *     . o ticket é de WhatsApp com a janela de 24 h ABERTA: vai no WhatsApp,
+ *       como sempre foi (dono, 14/10/2026).
  *  - Conversa lateral por e-mail, no MESMO ticket, quando:
- *     . o ticket é de WhatsApp: comentário público iria para o WhatsApp, que fora
- *       da janela de 24 h não entrega (foi por isso que o e-mail da Gifty abriu
- *       o #51286 em 13/10/2026);
+ *     . o ticket é de WhatsApp com a janela fechada (ou sem registro): o
+ *       WhatsApp não entrega (foi por isso que o e-mail da Gifty abriu o #51286
+ *       em 13/10/2026). Sem e-mail válido do cliente, fica o comentário público;
  *     . o solicitante é outro (team@ dos tickets que o OS abre, o gerente da conta
  *       quando a fatura vai para o financeiro): o comentário iria para ele.
  */
-export function modoDeEntrega(e: { canal: string | null; solicitante?: string | null; para: string }): ModoDeEntrega {
-  if (ehCanalDeMensagem(e.canal)) return "conversa_lateral";
+export function modoDeEntrega(e: { canal: string | null; solicitante?: string | null; para: string; janelaAberta?: boolean | null }): ModoDeEntrega {
+  if (ehCanalDeMensagem(e.canal)) {
+    if (e.janelaAberta === true) return "comentario_publico";
+    return emailDoCliente(e.para) ? "conversa_lateral" : "comentario_publico";
+  }
   const quem = (e.solicitante ?? "").trim().toLowerCase();
   return quem && quem === e.para.trim().toLowerCase() ? "comentario_publico" : "conversa_lateral";
 }
