@@ -2750,7 +2750,7 @@ function InvoiceLedgerRow({
       className={cn("bl-inv-row cursor-pointer", stripeAlt && "bl-inv-row--alt")}
       onClick={() => onOpen(inv)}
     >
-      <td className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+      <td className={cn("w-8", compact ? "py-1.5 pl-4 pr-1" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
         {canSelect ? (
           <input
             type="checkbox"
@@ -2765,67 +2765,66 @@ function InvoiceLedgerRow({
           />
         ) : null}
       </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-        <p className="font-semibold">{displayBillingReference(inv.reference)}</p>
-        <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
+      <td className={cn("max-w-0 w-full whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")}>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="shrink-0 text-[13px] font-semibold text-text-primary">{displayBillingReference(inv.reference)}</span>
+          {inv.job_reference ? (
+            <span className="truncate text-[12px] text-text-tertiary">· {inv.job_reference}</span>
+          ) : null}
+        </span>
       </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
+      <td className={cn("whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")}>
         <InvoiceStatusPill status={st} />
       </td>
-      <td className={cn("text-right font-medium tabular-nums", compact ? "px-4 py-2" : "px-3 py-2")}>
+      <td className={cn("whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-text-primary", compact ? "px-3 py-1.5" : "px-3 py-2")}>
         {formatCurrency(total)}
       </td>
-      <td className={cn("text-right tabular-nums text-emerald-700", compact ? "px-4 py-2" : "px-3 py-2")}>
-        {paid > 0 ? formatCurrency(paid) : "—"}
+      <td
+        className={cn("whitespace-nowrap text-right text-[12px] tabular-nums text-[var(--warn-ink)]", compact ? "px-3 py-1.5" : "px-3 py-2")}
+        title={paid > 0 ? `${formatCurrency(paid)} already paid` : undefined}
+      >
+        {/* Só quando entrou parte; senão repetiria o total. */}
+        {paid > 0.02 && outstanding > 0.02 ? `${formatCurrency(outstanding)} left` : ""}
       </td>
       <td
         className={cn(
-          "text-right font-medium tabular-nums",
-          outstanding > 0 ? "text-amber-800" : "text-text-tertiary",
-          compact ? "px-4 py-2" : "px-3 py-2",
+          "whitespace-nowrap text-right text-[12px] tabular-nums",
+          nextDue.overdue ? "font-medium text-[var(--bad)]" : nextDue.text === "—" ? "text-text-tertiary" : "text-text-secondary",
+          compact ? "px-3 py-1.5" : "px-3 py-2",
         )}
       >
-        {outstanding > 0 ? formatCurrency(outstanding) : "—"}
+        {(() => {
+          const ymd = invoiceDisplayDueYmd(inv, installments);
+          if (nextDue.text === "—" || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return nextDue.text;
+          return `Due ${shortDay(ymd)}`;
+        })()}
       </td>
-      <td
-        className={cn(
-          "text-right text-sm tabular-nums",
-          nextDue.overdue ? "font-medium text-red-700" : nextDue.text === "—" ? "text-text-tertiary" : "text-text-secondary",
-          compact ? "px-4 py-2" : "px-3 py-2",
-        )}
-      >
-        {nextDue.text}
-      </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-end gap-1">
+      <td className={cn("whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1">
           {canMarkPaid ? (
             <button
               type="button"
-              title="Mark paid"
-              className="rounded border border-border-light p-1 hover:bg-emerald-50"
+              title="Mark this invoice as received"
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium text-[var(--ok)] hover:bg-[var(--success-light)]"
               onClick={(e) => {
                 e.stopPropagation();
                 onMarkPaid(inv.id);
               }}
             >
-              <Check className="h-3.5 w-3.5 text-emerald-700" />
+              <Check className="h-3.5 w-3.5" />
+              Received
             </button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             title="View PDF"
-            icon={<FileText className="h-3.5 w-3.5" />}
+            aria-label="View PDF"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface-hover"
             onClick={() => openInvoicePdf(inv.id)}
           >
-            PDF
-          </Button>
+            <FileText className="h-3.5 w-3.5" />
+          </button>
         </div>
-      </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
-        <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>
-          Open
-        </Button>
       </td>
     </tr>
   );
