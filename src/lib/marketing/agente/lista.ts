@@ -17,8 +17,8 @@
  * ── A rampa ────────────────────────────────────────────────────────────────
  *
  * `news.getfixfy.com` só mandou 527 e-mails na vida. Soltar 3.000 de uma vez é
- * o jeito mais rápido de ir para o spam e não voltar. Então a lista cresce a
- * cada edição: 600, 1.000, 1.500, 2.200, e só em novembro a base inteira.
+ * o jeito mais rápido de ir para o spam e não voltar. Então a lista cresce em
+ * degraus: 1.000, depois +1.000 por dia até 5 mil (regra do dono em 14/10).
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
@@ -33,19 +33,22 @@ export const NOME_DO_SEGMENTO = "Fixfy Clients";
 /** Recebe só a edição de terça: lead antigo (C). */
 export const NOME_DO_SEGMENTO_SEMANAL = "Fixfy Clients · Weekly";
 
+// Dono, 14/10/2026: até 1.000 de uma vez, depois +1.000 por dia, até 5 mil;
+// dali para cima só quando ele mandar (MARKETING_CLUBE_TETO).
 const RAMPA: Array<{ ate: string; teto: number }> = [
-  { ate: "2026-10-20", teto: 600 },
-  { ate: "2026-10-23", teto: 1000 },
-  { ate: "2026-10-27", teto: 1500 },
-  { ate: "2026-11-03", teto: 2200 },
+  { ate: "2026-10-15", teto: 1000 },
+  { ate: "2026-10-16", teto: 2000 },
+  { ate: "2026-10-17", teto: 3000 },
+  { ate: "2026-10-18", teto: 4000 },
 ];
+const TETO_FINAL = 5000;
 
 /** Quantos contatos a lista pode ter hoje. `MARKETING_CLUBE_TETO` passa por cima. */
 export function tetoDaLista(agora = new Date()): number {
   const fixo = Number(process.env.MARKETING_CLUBE_TETO?.trim());
   if (Number.isFinite(fixo) && fixo > 0) return fixo;
   const degrau = RAMPA.find((d) => agora.getTime() < Date.parse(`${d.ate}T09:00:00Z`));
-  return degrau ? degrau.teto : Number.POSITIVE_INFINITY;
+  return degrau ? degrau.teto : TETO_FINAL;
 }
 
 type ClienteBruto = {
