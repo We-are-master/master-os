@@ -106,7 +106,7 @@ function MoneyInReadyListInner({
 
         return (
           <div key={group.accountKey}>
-            <div className="bl-ledger-partner flex items-center gap-2 px-5 py-1.5">
+            <div className="bl-ledger-partner flex items-center gap-2 px-4 py-1.5">
               {groupSelectableIds.length > 0 ? (
                 <input
                   type="checkbox"
