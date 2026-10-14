@@ -1440,6 +1440,7 @@ function AccountDetailDrawer({
     <Drawer
       open
       onClose={onClose}
+      width="w-[760px]"
       title={account.company_name}
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
       headerExtra={
