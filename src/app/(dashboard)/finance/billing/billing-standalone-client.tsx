@@ -1947,8 +1947,8 @@ function BillingStandaloneInner() {
                             <RunHeader
                               open={open}
                               onToggle={() => setCollapsedInRuns((c) => ({ ...c, [`d:${run.key}`]: open }))}
-                              title={run.kind === 0 ? "This fortnight" : run.kind === 1 ? "Earlier" : run.kind === 2 ? "Coming" : "No date"}
-                              tone={run.kind === 0 ? "ok" : "plain"}
+                              title={run.kind === 0 ? "Due this fortnight" : run.kind === 1 ? "Late" : run.kind === 2 ? "Due" : "No due date"}
+                              tone={run.kind === 0 ? "ok" : run.kind === 1 ? "bad" : "plain"}
                               range={run.start && run.end ? `${shortDay(run.start)} – ${shortDay(run.end)}` : ""}
                               count={run.invoices.length}
                               noun="invoice"
