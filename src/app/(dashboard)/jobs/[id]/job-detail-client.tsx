@@ -13,6 +13,7 @@ import { PageTransition } from "@/components/layout/page-transition";
 import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
+import { PaymentDetailHover } from "@/components/finance/payment-detail-hover";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
@@ -9299,7 +9300,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     return (
                       <FinLedgerRow
                         key={p.id}
-                        label={isRefund ? `Refunded${p.payment_method === "stripe" ? " to card · Stripe" : ""}` : finPaymentMethodLabel(p.payment_method, "client")}
+                        label={
+                          <PaymentDetailHover payment={p}>
+                            {isRefund ? `Refunded${p.payment_method === "stripe" ? " to card · Stripe" : ""}` : finPaymentMethodLabel(p.payment_method, "client")}
+                          </PaymentDetailHover>
+                        }
                         meta={[formatBritishDate(p.payment_date), ledgerTag ?? scheduleTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
                           .filter(Boolean)
                           .join(" · ")}
@@ -9404,7 +9409,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     return (
                       <FinLedgerRow
                         key={p.id}
-                        label={finPaymentMethodLabel(p.payment_method, "partner")}
+                        label={<PaymentDetailHover payment={p}>{finPaymentMethodLabel(p.payment_method, "partner")}</PaymentDetailHover>}
                         meta={[formatBritishDate(p.payment_date), ledgerTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
                           .filter(Boolean)
                           .join(" · ")}
@@ -9544,12 +9549,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* Fully paid */}
-              {job.customer_final_paid && (
-                <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 dark:bg-emerald-950/30">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                  <p className="text-xs font-medium text-emerald-700">Job fully paid</p>
+              {/* Uma fonte só: o que foi lançado. A marca do job sozinha não diz que entrou dinheiro. */}
+              {amountDue <= 0.02 && customerPaidTotal > 0.02 ? (
+                <div className="flex items-center gap-1.5 rounded-lg bg-[var(--success-light)] px-2.5 py-2 text-[12px] font-medium text-[var(--ok-ink)]">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  Job fully paid
                 </div>
-              )}
+              ) : job.customer_final_paid ? (
+                <div className="flex items-center gap-1.5 rounded-lg bg-[var(--warning-light)] px-2.5 py-2 text-[12px] font-medium text-[var(--warn-ink)]">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Marked as paid, but no payment is recorded
+                  <FixfyHintIcon text="The job is flagged as paid, yet no payment line exists. Record the payment received (Actions › Client payment) so the numbers match, or the flag is wrong." />
+                </div>
+              ) : null}
               {markedPaidBy ? (
                 <div className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 dark:border-sky-500/35 dark:bg-sky-950/20">
                   <p className="text-[11px] font-medium text-sky-800 dark:text-sky-200">Marked as paid by {markedPaidBy}</p>
