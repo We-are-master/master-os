@@ -1401,6 +1401,117 @@ function BillingStandaloneInner() {
 
   const cfMax = Math.max(1, ...cashflow.flatMap((d) => [d.moneyIn, d.moneyOut]));
 
+  /**
+   * Quinzenas abertas: self-bills ainda acumulando (aprovados ao fim de cada job).
+   * A que contém hoje vai no topo da lista, com barra verde do quanto já passou; as
+   * seguintes (ex.: folha interna) vão no fim, sem barra. Sem checkbox: não dá pra pagar.
+   */
+  const buildingRuns = useMemo(() => {
+    const rows = data.selfBills.filter(
+      (sb) =>
+        !isSelfBillPayoutVoided(sb) &&
+        sb.status !== "paid" &&
+        !sb.wise_paid_at &&
+        !selfBillCountsAsReady(sb) &&
+        Number(sb.net_payout ?? 0) > 0.005 &&
+        (!hideInternalPayouts || sb.bill_origin !== "internal") &&
+        /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
+    );
+    const byDue = new Map<string, SelfBill[]>();
+    for (const sb of rows) {
+      const k = String(sb.due_date);
+      byDue.set(k, [...(byDue.get(k) ?? []), sb]);
+    }
+    return [...byDue.entries()]
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([due, list]) => {
+        const start = list.map((r) => r.week_start ?? "").filter(Boolean).sort()[0] ?? null;
+        const end = list.map((r) => r.week_end ?? "").filter(Boolean).sort().slice(-1)[0] ?? null;
+        let pct = 0;
+        if (start && end) {
+          const t0 = new Date(`${start.slice(0, 10)}T00:00:00`).getTime();
+          const t1 = new Date(`${end.slice(0, 10)}T23:59:59`).getTime();
+          pct = Math.max(0, Math.min(100, Math.round(((Date.now() - t0) / (t1 - t0)) * 100)));
+        }
+        const isCurrent = !!start && !!end && start.slice(0, 10) <= todayYmd && todayYmd <= end.slice(0, 10);
+        return {
+          due,
+          rows: [...list].sort((x, y) => String(x.partner_name ?? "").localeCompare(String(y.partner_name ?? ""))),
+          start,
+          end,
+          pct,
+          isCurrent,
+          total: list.reduce((t, r) => t + Number(r.net_payout ?? 0), 0),
+        };
+      });
+  }, [data.selfBills, hideInternalPayouts, todayYmd]);
+
+  const renderBuildingRun = (run: (typeof buildingRuns)[number]) => {
+    const short = (ymd: string) =>
+      new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    const open = !(collapsedRuns[run.due] ?? false);
+    return (
+      <div key={run.due} className="border-b border-border-light">
+        <button
+          type="button"
+          onClick={() => setCollapsedRuns((c) => ({ ...c, [run.due]: open }))}
+          className="flex w-full flex-col gap-1.5 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
+          aria-expanded={open}
+        >
+          <span className="flex w-full items-center gap-2">
+            <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
+            <span className={cn("text-[13px] font-semibold", run.isCurrent ? "text-[var(--ok)]" : "text-text-primary")}>
+              {run.isCurrent ? "This fortnight · " : ""}Pay · {formatDate(run.due)}
+            </span>
+            {run.start && run.end ? (
+              <span className="truncate text-[12px] text-text-tertiary">
+                Work · {short(run.start)} – {short(run.end)}
+              </span>
+            ) : null}
+            <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(run.total)}</span>
+          </span>
+          {run.isCurrent ? (
+            <span className="flex items-center gap-2 pl-5">
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--success-light)]">
+                <span className="block h-full rounded-full bg-[var(--ok)]" style={{ width: `${run.pct}%` }} />
+              </span>
+              <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">
+                {run.pct}% · closes {run.end ? short(run.end) : ""}
+              </span>
+            </span>
+          ) : null}
+        </button>
+        {open
+          ? run.rows.map((sb) => (
+              <button
+                key={sb.id}
+                type="button"
+                onClick={() => void openSelfBill(sb)}
+                className="flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
+              >
+                <span className="w-3.5 shrink-0" aria-hidden />
+                <PartnerGroupAvatar
+                  partnerKey={sb.partner_id ?? sb.partner_name ?? sb.id}
+                  partnerName={sb.partner_name ?? "Partner"}
+                  partnerAvatarById={data.partnerAvatarById}
+                />
+                <span className="truncate text-[13px] font-semibold text-text-primary">{sb.partner_name}</span>
+                <span className="shrink-0 text-[12px] text-text-tertiary">{sb.reference}</span>
+                {sb.bill_origin === "internal" ? (
+                  <Badge variant="info" size="sm">Internal</Badge>
+                ) : sb.approved_at ? (
+                  <Badge variant="success" size="sm">Approved</Badge>
+                ) : null}
+                <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">
+                  {formatCurrency(Number(sb.net_payout ?? 0))}
+                </span>
+              </button>
+            ))
+          : null}
+      </div>
+    );
+  };
+
   const dateLabel = formatBritishDate(new Date());
 
   return (
@@ -1967,6 +2078,7 @@ function BillingStandaloneInner() {
                           </div>
                         </div>
                         <div className="min-h-0 flex-1 overflow-y-auto">
+                          {buildingRuns.filter((r) => r.isCurrent).map((r) => renderBuildingRun(r))}
                           <SelfBillGroupedLedger
                             mode="payQueue"
                             variant="compact"
@@ -1991,99 +2103,7 @@ function BillingStandaloneInner() {
                             }}
                             emptyLabel="Nothing ready to pay in this period."
                           />
-                          {(() => {
-                            // Quinzenas abertas: self-bills ainda acumulando (aprovados ao fim de cada job).
-                            // Ficam aqui, abaixo do Ready, até a quinzena fechar no domingo. Sem checkbox:
-                            // ainda não dá pra pagar.
-                            const building = data.selfBills.filter(
-                              (sb) =>
-                                !isSelfBillPayoutVoided(sb) &&
-                                sb.status !== "paid" &&
-                                !sb.wise_paid_at &&
-                                !selfBillCountsAsReady(sb) &&
-                                Number(sb.net_payout ?? 0) > 0.005 &&
-                                (!hideInternalPayouts || sb.bill_origin !== "internal") &&
-                                /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
-                            );
-                            if (building.length === 0) return null;
-                            const byDue = new Map<string, SelfBill[]>();
-                            for (const sb of building) {
-                              const k = String(sb.due_date);
-                              byDue.set(k, [...(byDue.get(k) ?? []), sb]);
-                            }
-                            const short = (ymd: string) =>
-                              new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-                            return [...byDue.entries()]
-                              .sort(([x], [y]) => x.localeCompare(y))
-                              .map(([due, rows]) => {
-                                const start = rows.map((r) => r.week_start ?? "").filter(Boolean).sort()[0] ?? null;
-                                const end = rows.map((r) => r.week_end ?? "").filter(Boolean).sort().slice(-1)[0] ?? null;
-                                let pct = 0;
-                                if (start && end) {
-                                  const t0 = new Date(`${start.slice(0, 10)}T00:00:00`).getTime();
-                                  const t1 = new Date(`${end.slice(0, 10)}T23:59:59`).getTime();
-                                  pct = Math.max(0, Math.min(100, Math.round(((Date.now() - t0) / (t1 - t0)) * 100)));
-                                }
-                                const total = rows.reduce((t, r) => t + Number(r.net_payout ?? 0), 0);
-                                const open = !(collapsedRuns[due] ?? false);
-                                return (
-                                  <div key={due} className="border-t border-border-light">
-                                    <button
-                                      type="button"
-                                      onClick={() => setCollapsedRuns((c) => ({ ...c, [due]: open }))}
-                                      className="flex w-full flex-col gap-1.5 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
-                                      aria-expanded={open}
-                                    >
-                                      <span className="flex w-full items-center gap-2">
-                                        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
-                                        <span className="text-[13px] font-semibold text-text-primary">Pay · {formatDate(due)}</span>
-                                        {start && end ? (
-                                          <span className="truncate text-[12px] text-text-tertiary">
-                                            Work · {short(start)} – {short(end)} · closes {short(end)}
-                                          </span>
-                                        ) : null}
-                                        <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(total)}</span>
-                                      </span>
-                                      <span className="flex items-center gap-2 pl-5">
-                                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--line-2)]/50">
-                                          <span className="block h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-                                        </span>
-                                        <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">{pct}% of the fortnight</span>
-                                      </span>
-                                    </button>
-                                    {open
-                                      ? rows
-                                          .sort((x, y) => String(x.partner_name ?? "").localeCompare(String(y.partner_name ?? "")))
-                                          .map((sb) => (
-                                            <button
-                                              key={sb.id}
-                                              type="button"
-                                              onClick={() => void openSelfBill(sb)}
-                                              className="flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
-                                            >
-                                              <span className="w-3.5 shrink-0" aria-hidden />
-                                              <PartnerGroupAvatar
-                                                partnerKey={sb.partner_id ?? sb.partner_name ?? sb.id}
-                                                partnerName={sb.partner_name ?? "Partner"}
-                                                partnerAvatarById={data.partnerAvatarById}
-                                              />
-                                              <span className="truncate text-[13px] font-semibold text-text-primary">{sb.partner_name}</span>
-                                              <span className="shrink-0 text-[12px] text-text-tertiary">{sb.reference}</span>
-                                              {sb.bill_origin === "internal" ? (
-                                                <Badge variant="info" size="sm">Internal</Badge>
-                                              ) : sb.approved_at ? (
-                                                <Badge variant="success" size="sm">Approved</Badge>
-                                              ) : null}
-                                              <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">
-                                                {formatCurrency(Number(sb.net_payout ?? 0))}
-                                              </span>
-                                            </button>
-                                          ))
-                                      : null}
-                                  </div>
-                                );
-                              });
-                          })()}
+                          {buildingRuns.filter((r) => !r.isCurrent).map((r) => renderBuildingRun(r))}
                         </div>
                       </>
                     );
@@ -2968,6 +2988,7 @@ function SelfBillGroupedLedger({
   const draftQueue = mode === "draftQueue";
   const approveQueue = mode === "approveQueue";
   const manageQueue = mode === "manageQueue";
+  const [collapsedWeeks, setCollapsedWeeks] = useState<Record<string, boolean>>({});
   const queueMode = payQueue || draftQueue || approveQueue || manageQueue;
   const showWeekApproveAndSend = approveQueue && !!onApproveAndSend;
   const showWeekBulkActions =
@@ -3003,7 +3024,19 @@ function SelfBillGroupedLedger({
           {section.groups.map((week) => (
         <div key={week.weekKey}>
           <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-2">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+            <button
+              type="button"
+              onClick={() => setCollapsedWeeks((c) => ({ ...c, [week.weekKey]: !(c[week.weekKey] ?? false) }))}
+              aria-expanded={!(collapsedWeeks[week.weekKey] ?? false)}
+              className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left"
+            >
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+              <ChevronDown
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0 self-center text-text-tertiary transition-transform",
+                  (collapsedWeeks[week.weekKey] ?? false) && "-rotate-90",
+                )}
+              />
               {(() => {
                 // Grupo cujo dia de pagar já passou e ainda tem coisa aberta: é atraso, não "próximo".
                 const due = /^\d{4}-\d{2}-\d{2}$/.test(week.weekKey) ? week.weekKey : null;
@@ -3013,13 +3046,25 @@ function SelfBillGroupedLedger({
                 );
                 const late = due !== null && due < today && hasOpen;
                 return late ? (
-                  <p className="m-0 text-[13px] font-semibold text-[var(--bad)]">Late · was due {formatDate(due)}</p>
+                  <span className="text-[13px] font-semibold text-[var(--bad)]">Late · was due {formatDate(due)}</span>
                 ) : (
-                  <p className="m-0 text-[13px] font-semibold text-text-primary">{week.weekTitle}</p>
+                  <span className="text-[13px] font-semibold text-text-primary">{week.weekTitle}</span>
                 );
               })()}
-              {week.weekSubtitle ? <p className="m-0 text-[12px] text-text-tertiary">{week.weekSubtitle}</p> : null}
-            </div>
+              {week.weekSubtitle ? <span className="text-[12px] text-text-tertiary">{week.weekSubtitle}</span> : null}
+            </span>
+            {(() => {
+              // Só os atrasados levam barra (vermelha, cheia): o prazo já passou.
+              const due = /^\d{4}-\d{2}-\d{2}$/.test(week.weekKey) ? week.weekKey : null;
+              const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+              const hasOpen = week.partners.some((pg) =>
+                pg.rows.some((sb) => sb.status !== "paid" && sb.status !== "rejected" && !isSelfBillPayoutVoided(sb)),
+              );
+              return due !== null && due < today && hasOpen ? (
+                <span className="block h-1.5 w-full rounded-full bg-[var(--bad)]" aria-hidden />
+              ) : null;
+            })()}
+            </button>
             <div className="flex items-center gap-3">
               <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(week.weekTotal)}</p>
               {showWeekBulkActions && onApproveAndSend ? (() => {
@@ -3073,6 +3118,7 @@ function SelfBillGroupedLedger({
               })() : null}
             </div>
           </div>
+          <div hidden={collapsedWeeks[week.weekKey] ?? false}>
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
             const partnerOpen = !collapsiblePartners || collapsiblePartners.expandedKeys.has(partnerGroupKey);
@@ -3479,6 +3525,7 @@ function SelfBillGroupedLedger({
             </div>
           );
           })}
+          </div>
         </div>
           ))}
         </div>
