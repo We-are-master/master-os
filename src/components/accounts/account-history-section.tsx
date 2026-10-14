@@ -146,7 +146,7 @@ export function AccountHistorySection({
           <div>
             <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Year breakdown</p>
             <p className="text-[11px] text-text-tertiary mt-1">
-              Completed jobs and revenue by calendar year — legacy imports plus Master OS.
+              Completed jobs and revenue by calendar year — older imports plus the OS.
             </p>
           </div>
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary shrink-0" /> : null}
@@ -345,7 +345,7 @@ export function AccountHistorySection({
         </div>
       ) : (
         <p className="text-xs text-text-tertiary px-1">
-          Only admins can edit pre–Master OS history.
+          Only admins can edit history from before the OS.
         </p>
       )}
     </div>

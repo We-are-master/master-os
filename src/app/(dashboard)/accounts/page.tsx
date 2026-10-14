@@ -875,13 +875,8 @@ export default function AccountsPage() {
             }
           />
           {sortedListData.length > 0 ? (
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              <span>
-                Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
-              </span>
-              <span className="tabular-nums">
-                Total revenue {formatCurrency(combinedTotalRevenue)} · Active jobs {totalJobs}
-              </span>
+            <div className="border-t border-border-light px-4 py-2.5 text-[12px] text-text-tertiary sm:px-5">
+              Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
             </div>
           ) : null}
         </motion.div>
@@ -1772,7 +1767,7 @@ function AccountDetailDrawer({
                   />
                 </DrawerSection>
 
-                <DrawerSection title="Portal & history" summary="Client logins and legacy revenue">
+                <DrawerSection title="Portal & history" summary="Client logins and revenue by year">
                   <div className="space-y-6">
                     <AccountHistorySection
                       account={account}
@@ -2092,23 +2087,9 @@ function AccountDetailDrawer({
               })()}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Credit limit</p>
-                <p className="text-lg font-bold tabular-nums">{formatCurrency(account.credit_limit)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Terms</p>
-                <p className="text-sm font-semibold mt-1">{account.payment_terms}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total revenue</p>
-                <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(account.total_revenue)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Open invoices</p>
-                <p className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(outstandingInvoices)}</p>
-              </div>
+            <div className="flex items-center justify-between rounded-lg bg-[var(--warning-light)] px-3 py-2 text-[12px] text-[var(--warn-ink)]">
+              <span className="font-medium">Open invoices</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(outstandingInvoices)}</span>
             </div>
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-text-secondary flex items-center gap-2">
@@ -2173,25 +2154,6 @@ function AccountDetailDrawer({
   );
 }
 
-function DetailRow({
-  icon: Icon,
-  label,
-  children,
-}: {
-  icon?: React.ComponentType<{ className?: string }>;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex gap-3 px-4 py-3">
-      {Icon ? <Icon className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" /> : <span className="w-4 shrink-0" />}
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{label}</p>
-        <div className="text-sm text-text-primary mt-1">{children}</div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Portal users tab content ──────────────────────────────────────────────
 function PortalUsersTabSection({ accountId, accountName }: { accountId: string; accountName: string }) {
@@ -2583,12 +2545,6 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             />
           </div>
 
-          <div className="rounded-lg bg-primary/5 border border-primary/15 px-3 py-2">
-            <p className="text-[10px] font-medium text-text-primary/60 uppercase mb-0.5">Encoded as</p>
-            <p className="text-xs font-mono font-semibold text-text-primary">
-              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday, refDate || undefined)}
-            </p>
-          </div>
         </div>
       )}
     </div>

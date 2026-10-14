@@ -63,7 +63,7 @@ export function AccountOverviewGlance({
             {legacyRevenue > 0 ? (
               <span className="text-text-secondary">
                 {" "}
-                · incl. {formatCurrency(legacyRevenue)} pre–Master OS
+                · incl. {formatCurrency(legacyRevenue)} before the OS
               </span>
             ) : null}
           </p>
@@ -93,7 +93,7 @@ export function AccountOverviewGlance({
 
       <div>
         <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-2">
-          Master OS · Billable {formatCurrency(account.total_revenue)}
+          Billed in the OS {formatCurrency(account.total_revenue)}
         </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-text-secondary">
           <span className="flex items-center gap-1.5">
