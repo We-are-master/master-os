@@ -769,9 +769,15 @@ function BillingStandaloneInner() {
     return { cancelled, paid };
   }, [inactivePeriodInvoices]);
 
+  /** Rascunho de job cancelado nunca vai virar dinheiro: fica fora do Draft (14/10/2026). */
   const draftPeriodInvoices = useMemo(
-    () => periodInvoices.filter((inv) => inv.status === "draft"),
-    [periodInvoices],
+    () =>
+      periodInvoices.filter((inv) => {
+        if (inv.status !== "draft") return false;
+        const ref = inv.job_reference?.trim();
+        return !(ref && data.jobsByRef[ref]?.status === "cancelled");
+      }),
+    [periodInvoices, data.jobsByRef],
   );
 
   const draftInvoiceLedgerGroups = useMemo(
