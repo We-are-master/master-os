@@ -13,6 +13,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
+import { depoisDaResposta } from "@/lib/depois-da-resposta";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import {
   createTicket,
@@ -1279,12 +1280,14 @@ export async function POST(req: NextRequest) {
   // manda é a política da conta (mig 259); a Fantastic está desligada porque
   // ela paga o call-out quando o cliente não está.
   //
-  // Fire-and-forget: a checagem de entrega no WhatsApp leva segundos e quem
-  // criou o job não pode esperar por ela. O resultado, inclusive o motivo de
-  // não ter mandado, fica em `client_confirmation_sent_at` / `_skipped`.
-  void enviarConfirmacaoDoCliente(supabase, String(inserted.id)).catch((err) => {
-    console.error("[api/jobs] client confirmation failed:", err);
-  });
+  // Depois da resposta: quem criou o job não espera pelo WhatsApp. O resultado,
+  // inclusive o motivo de não ter mandado, fica em `client_confirmation_sent_at`
+  // / `_skipped`. `after()` (via depoisDaResposta) e não `void`: `void` morre na
+  // Vercel. E roda depois da rota fixa abaixo, então job que nasce com parceiro
+  // roteado já é visto com parceiro.
+  await depoisDaResposta("api/jobs: confirmação do cliente", () =>
+    enviarConfirmacaoDoCliente(supabase, String(inserted.id)),
+  );
 
   // ─── Rota fixa: atribui o parceiro do serviço e avisa na hora ────────
   // Roda antes do leilão e o dispensa: onde há parceiro nomeado para o
