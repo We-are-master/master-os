@@ -49,36 +49,36 @@ type Row = {
 
 const ROWS: { group: string; rows: Row[] }[] = [
   {
-    group: "When the job is done",
+    group: "Job done · email",
     rows: [
       {
         key: "email_include_report_on_final",
         icon: FileText,
-        label: "Send the job report",
-        hint: "The completion email carries the report PDFs (photos, notes, sign-off). Goes out at final check, to the client or to the account's finance email depending on Billing.",
+        label: "Report",
+        hint: "Sends the job report by email when the job is done. The completion email carries the report PDFs (photos, notes, sign-off). Goes out at final check, to the client or to the account's finance email depending on Billing.",
       },
       {
         key: "email_include_invoice_on_final",
         icon: Receipt,
-        label: "Send the invoice",
-        hint: "The completion email carries our invoice and the pay link. Turn off when the account pays through its own self-bill. With report and invoice both off, no completion email goes out.",
+        label: "Invoice",
+        hint: "Sends our invoice by email when the job is done, with the pay link. Turn off when the account pays through its own self-bill. With report and invoice both off, no completion email goes out.",
       },
     ],
   },
   {
-    group: "Clients under this account",
+    group: "Clients · WhatsApp",
     rows: [
       {
         key: "client_confirmation_whatsapp",
         icon: MessageCircle,
-        label: "WhatsApp confirmations",
-        hint: "The end client gets a WhatsApp when the job is booked with a partner, when it is rescheduled, and the evening before. Needs a partner assigned and the client's phone.",
+        label: "Confirmations",
+        hint: "WhatsApp to the end client. They get a message when the job is booked with a partner, when it is rescheduled, and the evening before. Needs a partner assigned and the client's phone.",
       },
       {
         key: "client_feedback_whatsapp",
         icon: Star,
-        label: "WhatsApp feedback request",
-        hint: "The day after the job, the end client is asked how it went. Fixfy direct clients always get it; this switch is for clients of other accounts.",
+        label: "Feedback",
+        hint: "WhatsApp to the end client the day after the job, asking how it went. Fixfy direct clients always get it; this switch is for clients of other accounts.",
       },
     ],
   },
@@ -94,8 +94,8 @@ const ROWS: { group: string; rows: Row[] }[] = [
       {
         key: "overdue_reminders",
         icon: BellRing,
-        label: "Overdue reminders",
-        hint: "Emails on days 1, 3, 4 and 7 after an invoice is overdue, to the billing contact and the invoice copies. Only for invoices that were actually sent.",
+        label: "Reminders",
+        hint: "Overdue invoice reminders by email on days 1, 3, 4 and 7 after the due date, to the billing contact and the invoice copies. Only for invoices that were actually sent.",
       },
     ],
   },
@@ -185,7 +185,7 @@ export function AccountAutomations({
       </div>
       {bothEmailOff ? (
         <p className="m-0 mt-3 rounded-lg bg-[var(--warning-light)] px-2.5 py-1.5 text-[12px] text-[var(--warn-ink)]">
-          Report and invoice are both off, so no completion email goes out for this account.
+          Report and invoice off: no completion email.
         </p>
       ) : null}
     </section>

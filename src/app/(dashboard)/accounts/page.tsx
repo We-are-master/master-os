@@ -23,6 +23,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
+  FileText,
   Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar, BarChart3,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
   Minus, ArrowRight, Share2,
@@ -1440,7 +1441,6 @@ function AccountDetailDrawer({
     <Drawer
       open
       onClose={onClose}
-      width="w-[760px]"
       title={account.company_name}
       subtitle={`Corporate account · ${clientsTotal} clients · ${jobs.length} jobs`}
       headerExtra={
@@ -1454,7 +1454,7 @@ function AccountDetailDrawer({
           <p className="text-xs text-text-tertiary">No services selected — choose them in Trades &amp; Skills.</p>
         )
       }
-      width="w-[min(580px,calc(100vw-1rem))]"
+      width="w-[min(760px,calc(100vw-1rem))]"
       footer={
         isAdmin && (tab === "overview" || tab === "finance") ? (
           <DrawerFooter
@@ -1616,14 +1616,8 @@ function AccountDetailDrawer({
               </div>
             </div>
 
-            {/* ── ASSETS card ─────────────────────────────────────── */}
-            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Assets</p>
-
-              <div className="grid grid-cols-2 gap-5">
-                {/* Contract */}
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">Contract</label>
+            {/* ── Assets: duas linhas, ações à direita ─────────────── */}
+            <section className="rounded-xl border border-border bg-card">
                   <input
                     ref={contractFileRef}
                     type="file"
@@ -1648,59 +1642,6 @@ function AccountDetailDrawer({
                       }
                     }}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full justify-center"
-                    disabled={uploadingContract || saving}
-                    onClick={() => contractFileRef.current?.click()}
-                    icon={uploadingContract ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  >
-                    {uploadingContract ? "Uploading…" : "Upload contract"}
-                  </Button>
-                  {edit.contract_url.trim() && (
-                    <div className="flex gap-2 mt-2">
-                      <Button type="button" variant="outline" size="sm" className="flex-1 justify-center"
-                        onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
-                        icon={<ExternalLink className="h-3.5 w-3.5" />}>
-                        Preview
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" disabled={uploadingContract}
-                        onClick={async () => {
-                          if (!account || !isAdmin) return;
-                          setUploadingContract(true);
-                          try {
-                            try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
-                            const updated = await updateAccount(account.id, { contract_url: null });
-                            const fresh = await getAccount(account.id);
-                            onAccountUpdated(fresh ?? updated);
-                            setEdit((p) => ({ ...p, contract_url: "" }));
-                            toast.success("Contract removed");
-                          } catch (err) {
-                            toast.error(err instanceof Error ? err.message : "Failed");
-                          } finally {
-                            setUploadingContract(false);
-                          }
-                        }}
-                        icon={<Trash2 className="h-3.5 w-3.5" />}>
-                      </Button>
-                    </div>
-                  )}
-                  <p className="text-[10px] text-text-tertiary mt-1.5">PDF · DOC · DOCX · max 10MB</p>
-                </div>
-
-                {/* Logo — centered like partner avatar */}
-                <div className="flex flex-col items-center text-center">
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
-                    Logo
-                  </label>
-                  <Avatar
-                    name={account.company_name}
-                    size="lg"
-                    src={(edit.logo_url.trim() || account.logo_url) ?? undefined}
-                    className="shrink-0"
-                  />
                   <input
                     ref={logoFileRef}
                     type="file"
@@ -1708,37 +1649,94 @@ function AccountDetailDrawer({
                     className="hidden"
                     onChange={(ev) => void handleLogoUpload(ev)}
                   />
-                  <div className="mt-2 flex flex-col items-center gap-1.5">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px] h-7 px-3"
-                      disabled={uploadingLogo || saving}
-                      onClick={() => logoFileRef.current?.click()}
-                    >
-                      {uploadingLogo
-                        ? "Uploading…"
-                        : (edit.logo_url.trim() || account.logo_url)
-                          ? "Change"
-                          : "Upload logo"}
-                    </Button>
-                    {(edit.logo_url.trim() || account.logo_url) ? (
-                      <button
-                        type="button"
-                        disabled={uploadingLogo}
-                        onClick={() => void handleRemoveLogo()}
-                        className="inline-flex items-center gap-1 text-[10px] font-medium text-text-tertiary transition-colors hover:text-red-600 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <p className="text-[10px] text-text-tertiary mt-1.5">PNG · SVG · max 5MB</p>
-                </div>
+              <div className="flex items-center gap-3 px-4 py-2.5">
+                <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-primary">
+                  Contract
+                  <FixfyHintIcon text="PDF, DOC or DOCX, up to 10 MB." />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">
+                  {edit.contract_url.trim() ? "Uploaded" : "Not uploaded"}
+                </span>
+                {edit.contract_url.trim() ? (
+                  <button
+                    type="button"
+                    aria-label="Open contract"
+                    title="Open contract"
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingContract || saving}
+                  onClick={() => contractFileRef.current?.click()}
+                  icon={uploadingContract ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                >
+                  {uploadingContract ? "Uploading…" : edit.contract_url.trim() ? "Replace" : "Upload"}
+                </Button>
+                {edit.contract_url.trim() ? (
+                  <button
+                    type="button"
+                    aria-label="Remove contract"
+                    title="Remove contract"
+                    disabled={uploadingContract}
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={async () => {
+                      if (!account || !isAdmin) return;
+                      setUploadingContract(true);
+                      try {
+                        try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
+                        const updated = await updateAccount(account.id, { contract_url: null });
+                        const fresh = await getAccount(account.id);
+                        onAccountUpdated(fresh ?? updated);
+                        setEdit((p) => ({ ...p, contract_url: "" }));
+                        toast.success("Contract removed");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Failed");
+                      } finally {
+                        setUploadingContract(false);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
-            </div>
+              <div className="flex items-center gap-3 border-t border-border px-4 py-2.5">
+                <Avatar name={account.company_name} size="sm" src={(edit.logo_url.trim() || account.logo_url) ?? undefined} className="shrink-0" />
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-primary">
+                  Logo
+                  <FixfyHintIcon text="PNG or SVG, up to 5 MB. Shows on the client portal and documents." />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">{(edit.logo_url.trim() || account.logo_url) ? "Set" : "Not set"}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingLogo || saving}
+                  onClick={() => logoFileRef.current?.click()}
+                >
+                  {uploadingLogo ? "Uploading…" : (edit.logo_url.trim() || account.logo_url) ? "Change" : "Upload"}
+                </Button>
+                {(edit.logo_url.trim() || account.logo_url) ? (
+                  <button
+                    type="button"
+                    aria-label="Remove logo"
+                    title="Remove logo"
+                    disabled={uploadingLogo}
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={() => void handleRemoveLogo()}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            </section>
 
             {account ? (
               <DrawerSectionList>
