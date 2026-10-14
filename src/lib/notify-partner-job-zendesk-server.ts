@@ -352,6 +352,10 @@ export async function notifyPartnerJobZendesk(
   // job booked (`assigned` / `booked`), job finished (`completed`), on-hold
   // (`on_hold`), and office cancel (`cancelled` → buildPartnerJobStatusUpdateEmail).
   // Terminal customer notices on the main ticket still come from zendesk-lifecycle.
+  //
+  // `rescheduled` entrou em 14/10/2026 (dono): a remarcação sai como resposta na
+  // MESMA conversa do job confirmado, com a agenda antiga riscada. Antes era só
+  // push, e push some da bandeja.
   const PARTNER_EMAIL_KINDS = new Set<NotifyKind>([
     "assigned",
     "confirmation_request",
@@ -359,8 +363,25 @@ export async function notifyPartnerJobZendesk(
     "completed",
     "on_hold",
     "cancelled",
+    "rescheduled",
   ]);
-  const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind);
+  /**
+   * "Job concluído" ao parceiro sai uma vez por job. Ele dispara sozinho quando
+   * o job entra em Awaiting Payment (sync-status) e de novo se alguém marcar
+   * Completed na mão: o segundo vira só push.
+   */
+  let conclusaoJaFoi = false;
+  if (kind === "completed") {
+    const { data: antes } = await supabase
+      .from("job_zendesk_events")
+      .select("id")
+      .eq("job_id", job.id)
+      .eq("kind", "completed")
+      .eq("zendesk_ok", true)
+      .limit(1);
+    conclusaoJaFoi = Boolean(antes?.length);
+  }
+  const partnerEmailEnabled = PARTNER_EMAIL_KINDS.has(kind) && !conclusaoJaFoi;
 
   /**
    * Os tokens de anexo, calculados uma vez para os três caminhos abaixo.
@@ -428,7 +449,7 @@ export async function notifyPartnerJobZendesk(
     }
   } else if (zendeskTicketId && !partnerEmailEnabled) {
     // Intentional policy skip — not an error (partner email only on assign + complete).
-    zendeskResult = { ok: true, skipped: `kind_${kind}` };
+    zendeskResult = { ok: !conclusaoJaFoi, skipped: conclusaoJaFoi ? "completed_already_emailed" : `kind_${kind}` };
   } else if (!zendeskTicketId && partnerEmailEnabled && partner.email) {
     /**
      * Job SEM ticket: o email sai pelo Resend, direto pro parceiro.

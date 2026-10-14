@@ -20,6 +20,11 @@ export type EmailNoTicket = {
   html: string;
   anexos?: Array<{ filename: string; content: Buffer; contentType?: string }>;
   customStatusId?: number;
+  /**
+   * Ticket de WhatsApp: nunca comentário público, que viraria texto no WhatsApp.
+   * Sai como conversa lateral por e-mail mesmo com a janela de 24 h aberta.
+   */
+  soEmail?: boolean;
 };
 
 export type EntregaNoTicket = { modo: ModoDeEntrega; ticketId: number; conversaLateralId?: string };
@@ -49,7 +54,9 @@ export async function entregarEmailNoTicket(e: EmailNoTicket): Promise<EntregaNo
   const canal = solicitante.channel ?? e.ticket.canal;
   // Ticket de WhatsApp: a janela de 24 h decide se o comentário público chega (dono, 14/10/2026).
   const janelaAberta = ehCanalDeMensagem(canal)
-    ? janelaDoWhatsAppAberta(await ultimaDoClienteNoWhatsApp(ticketId).catch(() => null))
+    ? e.soEmail
+      ? false
+      : janelaDoWhatsAppAberta(await ultimaDoClienteNoWhatsApp(ticketId).catch(() => null))
     : null;
   const modo = modoDeEntrega({ canal, solicitante: solicitante.requesterEmail, para: e.para.email, janelaAberta });
   if (modo === "comentario_publico") {

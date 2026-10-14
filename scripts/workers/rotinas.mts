@@ -9,7 +9,7 @@
  * daqui estiver errado, o script lista e não manda.
  *
  *   rotina                    janela do próprio script         agenda aqui
- *   lembrete-24h              18h-22h Londres                  18, 19, 20, 21h
+ *   lembrete-24h              9h-17h Londres                   10, 12, 14, 16h
  *   aviso-job-confirmado      (sem janela)                     a cada 10 min
  *   partner-tomorrow          16h-20h Londres ("o disparo é 17h")  17h
  *   partner-missing-reports   20h-22h Londres                  20h e 21h (trava de 1 por dia)
@@ -42,7 +42,7 @@ export const ROTINAS: Rotina[] = [
   {
     nome: "lembrete-24h",
     rotulo: "com.fixfy.lembrete-24h",
-    agenda: { tipo: "diario", horarios: ["18:00", "19:00", "20:00", "21:00"] },
+    agenda: { tipo: "diario", horarios: ["10:00", "12:00", "14:00", "16:00"] },
     script: "scripts/confirmacao-24h.mts",
     args: ["--enviar"],
     runtime: "tsx",

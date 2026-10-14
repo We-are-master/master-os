@@ -32,13 +32,14 @@ function banco() {
   });
 }
 
-const ENV = ["CLIENT_MESSAGING_ENABLED", "SUNSHINE_APP_ID", "SUNSHINE_KEY_ID", "SUNSHINE_KEY_SECRET", "FIXFY_AGENT_MODEL"];
+const ENV = ["CLIENT_MESSAGING_ENABLED", "SUNSHINE_APP_ID", "SUNSHINE_KEY_ID", "SUNSHINE_KEY_SECRET", "FIXFY_AGENT_MODEL", "CONFIRMACAO_WHATSAPP"];
 let salvo: Record<string, string | undefined> = {};
 
 describe("recuperarConfirmacoes", () => {
   beforeEach(() => {
     salvo = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
     process.env.CLIENT_MESSAGING_ENABLED = "1";
+    process.env.CONFIRMACAO_WHATSAPP = "on";
     process.env.SUNSHINE_APP_ID = "a"; process.env.SUNSHINE_KEY_ID = "b"; process.env.SUNSHINE_KEY_SECRET = "c";
     delete process.env.FIXFY_AGENT_MODEL;
   });

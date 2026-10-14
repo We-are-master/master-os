@@ -245,8 +245,15 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
    * escreve a outra na mesma chamada: duas escritas separadas é como elas
    * divergem de novo.
    */
+  // Pago (no cartão, transferência, o que for): o chip "Card declined" sai e as
+  // novas tentativas no cartão param (dono, 14/10/2026).
+  const cartao = (job as Job & { card_charge_status?: string | null }).card_charge_status;
+  const limpaCartao =
+    cartao === "refused" || cartao === "requires_action"
+      ? { card_charge_status: "skipped", card_retry_at: null }
+      : {};
   await client
     .from("jobs")
-    .update({ status: "completed", finance_status: "paid", payment_status: "paid" })
+    .update({ status: "completed", finance_status: "paid", payment_status: "paid", ...limpaCartao })
     .eq("id", jobId);
 }

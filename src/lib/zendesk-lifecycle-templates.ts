@@ -65,22 +65,28 @@ function shell(args: { tone: "success" | "warn" | "neutral"; eyebrow: string; he
   return compactHtml(html);
 }
 
-export function buildJobCompletedHtml(args: CommonArgs): string {
+export function buildJobCompletedHtml(args: CommonArgs & { photoCount?: number }): string {
   const fname = escapeHtmlSafeName(args.customerName);
+  const fotos = args.photoCount ?? 0;
+  const fotosLinha = fotos > 0
+    ? `
+  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
+    We've attached ${fotos === 1 ? "a photo" : `${fotos} photos`} from the finished job so you can see the result.
+  </p>`
+    : "";
   const body = `
   <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
     Hi ${escapeHtml(fname)}, your job <strong>#${escapeHtml(args.reference)}</strong>
-    (${escapeHtml(args.title)}) has been marked complete by our team.
-  </p>
+    (${escapeHtml(args.title)}) is complete. Our team has checked the report and signed it off.
+  </p>${fotosLinha}
   <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    A full report and final invoice will be sent shortly. If anything looks off
-    when you receive them, just reply to this email and we'll sort it out.
+    Your invoice follows separately. If anything doesn't look right, just reply to this email and we'll sort it out.
   </p>
   <p style="margin:0;font-size:13px;line-height:20px;color:#6B6B85;">
-    Thanks for choosing us.
+    Thanks for choosing Fixfy.
   </p>
   `;
-  return shell({ tone: "success", eyebrow: "✓ Job completed", heading: "All done — thanks!", body });
+  return shell({ tone: "success", eyebrow: "✓ Job completed", heading: "All done. Thanks!", body });
 }
 
 export function buildJobCancelledHtml(args: CommonArgs): string {
