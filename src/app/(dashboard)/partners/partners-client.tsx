@@ -36,7 +36,8 @@ import { SegmentedControl } from "@/components/shared/segmented-control";
 import { DrawerSection, DrawerSectionList } from "@/components/shared/drawer-section";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import Link from "next/link";
 import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -870,7 +871,26 @@ interface PartnerSelfBill {
   net_payout: number;
   status: string;
   created_at: string;
+  week_start?: string | null;
+  week_end?: string | null;
+  week_label?: string | null;
+  paid_at?: string | null;
 }
+
+/** Período de um self-bill em texto curto: "6 Oct – 19 Oct 26", senão o rótulo da semana ou o mês. */
+function selfBillPeriodLabel(sb: PartnerSelfBill): string {
+  const fmt = (d: string, withYear: boolean) =>
+    new Date(`${d.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(withYear ? { year: "2-digit" } : {}) });
+  if (sb.week_start && sb.week_end) return `${fmt(sb.week_start, false)} – ${fmt(sb.week_end, true)}`;
+  return sb.week_label?.trim() || sb.period;
+}
+
+const SELF_BILL_STATUS: Record<string, { label: string; variant: BadgeVariant }> = {
+  paid: { label: "Paid", variant: "success" },
+  audit_required: { label: "Audit required", variant: "danger" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+};
 
 const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   draft: { label: "Draft", variant: "default" },
@@ -4276,6 +4296,7 @@ function PartnerDetailDrawer({
   const [notes, setNotes] = useState<PartnerNote[]>([]);
   const [partnerJobs, setPartnerJobs] = useState<PartnerJobRow[]>([]);
   const [selfBills, setSelfBills] = useState<PartnerSelfBill[]>([]);
+  const [jobSearch, setJobSearch] = useState("");
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -5498,8 +5519,9 @@ function PartnerDetailDrawer({
             ? documents.length
             : undefined,
     },
-    { id: "financial", label: "Finance", count: selfBills.length },
+    { id: "financial", label: "Finance" },
     { id: "jobs", label: "Jobs", count: realJobsCount },
+    { id: "selfbills", label: "Self-bills", count: selfBills.length },
   ];
 
   return (
@@ -6423,75 +6445,122 @@ function PartnerDetailDrawer({
         )}
 
         {/* ========== JOBS ========== */}
-        {tab === "jobs" && (
-          <div className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{realJobsCount} Jobs</p>
-                <p className="text-xs text-text-tertiary">{completedJobs} completed, {activeJobs} in progress</p>
+        {tab === "jobs" && (() => {
+          const q = jobSearch.trim().toLowerCase();
+          const shown = q
+            ? partnerJobs.filter((j) =>
+                [j.reference, j.title, j.client_name, j.property_address, jobStatusConfig[j.status]?.label ?? j.status]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(q)),
+              )
+            : partnerJobs;
+          return (
+            <div className="space-y-3 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="m-0 text-[12px] text-text-tertiary">
+                  <span className="font-semibold text-text-primary">{realJobsCount} jobs</span> · {completedJobs} completed · {activeJobs} in progress
+                </p>
+                <div className="ml-auto w-64 max-w-full">
+                  <SearchInput
+                    value={jobSearch}
+                    onChange={(e) => setJobSearch(e.target.value)}
+                    placeholder="Search job, client, address"
+                    aria-label="Search this partner's jobs"
+                  />
+                </div>
               </div>
+
+              {loadingJobs ? (
+                <div className="space-y-1.5">
+                  {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-11 animate-pulse rounded-lg bg-surface-hover" />)}
+                </div>
+              ) : shown.length === 0 ? (
+                <p className="py-10 text-center text-[13px] text-text-tertiary">
+                  {q ? "No job matches this search" : "No jobs for this partner yet"}
+                </p>
+              ) : (
+                <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
+                  {shown.map((job) => {
+                    const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
+                    const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
+                    const when = formatJobScheduleLine(job);
+                    return (
+                      <Link
+                        key={job.id}
+                        href={`/jobs/${job.id}`}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left no-underline transition-colors hover:bg-surface-hover sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[12px] font-semibold text-text-primary">{job.reference}</span>
+                            <Badge variant={jConfig.variant} size="sm">{jConfig.label}</Badge>
+                            <span className="truncate text-[12px] text-text-secondary">{job.title}</span>
+                          </div>
+                          <p className="m-0 truncate text-[11px] text-text-tertiary">
+                            {[job.client_name, job.property_address, when].filter(Boolean).join(" · ")}
+                          </p>
+                        </div>
+                        <div className="hidden text-right text-[11px] leading-tight text-text-tertiary sm:block">
+                          <div>Client <span className="font-medium tabular-nums text-text-primary">{formatCurrency(Number(job.client_price))}</span></div>
+                          <div>Partner <span className="font-medium tabular-nums text-text-primary">{formatCurrency(Number(job.partner_cost))}</span></div>
+                        </div>
+                        <span className={cn("text-right text-[12px] font-semibold tabular-nums", profit >= 0 ? "text-[var(--ok)]" : "text-[var(--bad)]")} title="Profit">
+                          {formatCurrency(profit)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+          );
+        })()}
 
-            {loadingJobs && (
-              <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="animate-pulse h-20 bg-surface-hover rounded-xl" />)}
+        {tab === "selfbills" && (
+          <div className="space-y-3 p-4 sm:p-5">
+            <p className="m-0 text-[12px] text-text-tertiary">
+              <span className="font-semibold text-text-primary">{selfBills.length} self-bills</span>
+              {selfBills.length > 0 ? (
+                <> · {formatCurrency(selfBills.filter((x) => x.status === "paid").reduce((t, x) => t + Number(x.net_payout), 0))} paid</>
+              ) : null}
+            </p>
+            {loadingFinance ? (
+              <div className="space-y-1.5">
+                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-hover" />)}
+              </div>
+            ) : selfBills.length === 0 ? (
+              <p className="py-10 text-center text-[13px] text-text-tertiary">No self-bills for this partner yet</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[560px] border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-surface-secondary text-[11px] text-text-tertiary">
+                      <th className="px-3 py-2 text-left font-medium">Self-bill</th>
+                      <th className="px-3 py-2 text-left font-medium">Period</th>
+                      <th className="px-3 py-2 text-center font-medium">Jobs</th>
+                      <th className="px-3 py-2 text-right font-medium">Net payout</th>
+                      <th className="px-3 py-2 text-center font-medium">Status</th>
+                      <th className="px-3 py-2 text-right font-medium">Paid on</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selfBills.map((sb) => {
+                      const st = SELF_BILL_STATUS[sb.status] ?? { label: sb.status, variant: "default" as BadgeVariant };
+                      return (
+                        <tr key={sb.id} className="border-t border-border/60">
+                          <td className="px-3 py-2 font-semibold text-text-primary">{sb.reference}</td>
+                          <td className="px-3 py-2 text-text-secondary">{selfBillPeriodLabel(sb)}</td>
+                          <td className="px-3 py-2 text-center tabular-nums text-text-secondary">{sb.jobs_count}</td>
+                          <td className="px-3 py-2 text-right font-semibold tabular-nums text-text-primary">{formatCurrency(Number(sb.net_payout))}</td>
+                          <td className="px-3 py-2 text-center"><Badge variant={st.variant} size="sm">{st.label}</Badge></td>
+                          <td className="px-3 py-2 text-right tabular-nums text-text-tertiary">{sb.paid_at ? formatDate(sb.paid_at) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
-
-            {!loadingJobs && partnerJobs.length === 0 && (
-              <div className="py-12 text-center">
-                <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No jobs found for this partner</p>
-              </div>
-            )}
-
-            {!loadingJobs && partnerJobs.map((job) => {
-              const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
-              const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
-              const partnerSchedLine = formatJobScheduleLine(job);
-              return (
-                <motion.div key={job.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-text-primary">{job.reference}</p>
-                        <Badge variant={jConfig.variant} dot size="sm">{jConfig.label}</Badge>
-                      </div>
-                      <p className="text-xs text-text-tertiary mt-0.5">{job.title}</p>
-                      <p className="text-xs text-text-tertiary">{job.client_name} — {job.property_address}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 mt-3">
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Client Price</p>
-                      <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(job.client_price))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Partner Cost</p>
-                      <p className="text-sm font-semibold text-emerald-600">{formatCurrency(Number(job.partner_cost))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Materials</p>
-                      <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(job.materials_cost))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Profit</p>
-                      <p className={`text-sm font-semibold ${profit >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatCurrency(profit)}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-3">
-                    <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1" />
-                    <span className="text-xs font-medium text-text-tertiary">{job.progress}%</span>
-                    <span className="text-[10px] text-text-tertiary">
-                      Phase {job.current_phase}/{Math.max(job.total_phases, 1)}
-                    </span>
-                  </div>
-                  {partnerSchedLine ? (
-                    <p className="text-[10px] text-text-secondary mt-2 leading-snug">{partnerSchedLine}</p>
-                  ) : null}
-                </motion.div>
-              );
-            })}
           </div>
         )}
 
@@ -6967,52 +7036,7 @@ function PartnerDetailDrawer({
                 </div>
             </div>
 
-            <p className="text-sm font-semibold text-text-primary">{selfBills.length} Self-Bills</p>
-
-            {loadingFinance && (
-              <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}
-              </div>
-            )}
-
-            {!loadingFinance && selfBills.length === 0 && (
-              <div className="py-10 text-center">
-                <DollarSign className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No self-bills found</p>
-              </div>
-            )}
-
-            {!loadingFinance && selfBills.map((sb) => (
-              <motion.div key={sb.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-text-primary">{sb.reference}</p>
-                    <Badge variant={sb.status === "paid" ? "success" : sb.status === "audit_required" ? "danger" : sb.status === "ready_to_pay" ? "info" : "warning"} size="sm" dot>
-                      {sb.status === "paid" ? "Paid" : sb.status === "audit_required" ? "Audit Required" : sb.status === "ready_to_pay" ? "Ready to Pay" : "Awaiting Payment"}
-                    </Badge>
-                  </div>
-                  <span className="text-xs text-text-tertiary">{sb.period}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Jobs</p>
-                    <p className="text-sm font-semibold text-text-primary">{sb.jobs_count}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Job Value</p>
-                    <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(sb.job_value))}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Commission</p>
-                    <p className="text-sm font-semibold text-red-500">-{formatCurrency(Number(sb.commission))}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Net Payout</p>
-                    <p className="text-sm font-bold text-emerald-600">{formatCurrency(Number(sb.net_payout))}</p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+            <p className="m-0 text-[12px] text-text-tertiary">The full list of self-bills is in the Self-bills tab.</p>
           </div>
         )}
 
