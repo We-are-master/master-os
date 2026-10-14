@@ -45,7 +45,7 @@ export const TEMPLATE_DO_WHATSAPP = {
   nome: "fixfy_flash_offer",
   idioma: "en_GB",
   categoria: "MARKETING",
-  corpo: "Hi {{1}}, it's the Fixfy team. For the next 36 hours only: {{2}}.\n\nUse code {{3}} at getfixfy.com before {{4}}. Fixed prices, VAT included, vetted and insured pros.\n\nReply here with any question.",
+  corpo: "Hi {{1}}, it's the Fixfy team. For the next 36 hours only: {{2}}.\n\nUse code {{3}} at getfixfy.com before {{4}}. Fixed prices, vetted and insured pros.\n\nReply here with any question.",
   botoes: [
     { tipo: "URL", texto: "Book online", url: `${SITE}/?promo={{1}}` },
     { tipo: "QUICK_REPLY", texto: "Stop promotions" },
