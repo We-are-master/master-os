@@ -13,6 +13,7 @@ import { PageTransition } from "@/components/layout/page-transition";
 import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
 import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
@@ -9704,27 +9705,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Billing documents — client invoice vs partner self-bill */}
-            <div className="space-y-3 border-t border-border-light pt-3 dark:border-[#2f3642]">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-text-primary flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
-                    Billing documents
-                  </p>
-                  <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-                    Invoice the client · Self-bill the partner
-                  </p>
-                </div>
-              </div>
+            <div className="space-y-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+              <p className="m-0 flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
+                <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
+                Billing documents
+                <FixfyHintIcon text="Invoice the client. Self-bill the partner." />
+              </p>
 
-            <div className="rounded-xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-emerald-500/30 dark:from-emerald-950/35 dark:to-[#141922]">
-              <div className="flex items-center gap-2 border-b border-emerald-200/60 pb-2 dark:border-emerald-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm dark:bg-emerald-700">
+            <div className="rounded-xl border border-border bg-card p-2.5 space-y-2 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--success-light)] text-[var(--ok)]">
                   <Building2 className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-bold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">Client invoice</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="m-0 text-[12px] font-semibold text-text-primary">Client invoice</p>
                     {invoiceLifecycleBadge ? (
                       <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", invoiceLifecycleBadge.className)}>
                         {invoiceLifecycleBadge.label}
@@ -9734,10 +9729,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         Not created
                       </span>
                     )}
+                    <FixfyHintIcon
+                      text={[
+                        "Money in. We invoice the client.",
+                        financeBillingContact
+                          ? `Billing goes to: ${financeBillingContact.mode === "account" ? "this account" : "the end customer"}.`
+                          : "",
+                        showEndCustomerBillingHint
+                          ? `End customer billing uses the client email, not Finance > Billing email. Edit ${job.client_name?.trim() || "this client"} under Accounts > Clients.`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n")}
+                    />
                   </div>
-                  <p className="text-[10px] text-emerald-800/80 dark:text-emerald-200/70 leading-snug mt-0.5">
-                    Money in · We invoice the <strong className="font-semibold">client</strong>
-                  </p>
                 </div>
               </div>
               <div className="space-y-2">
@@ -9930,7 +9935,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               </div>
 
-              <div className="border-t border-emerald-200/60 pt-3 dark:border-emerald-500/20 space-y-2">
+              <div className="space-y-1">
                 {financeBillingLoading ? (
                   <p className="text-[11px] leading-snug text-text-tertiary">Loading billing contact…</p>
                 ) : financeBillingLoadError ? (
@@ -9943,16 +9948,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       {" "}
                       ({financeBillingContact.mode === "account" ? "This account" : "End customer"})
                     </span>
-                  </p>
-                ) : financeBillingContact ? (
-                  <p className="text-[11px] leading-snug text-text-tertiary">
-                    Billing: {financeBillingContact.mode === "account" ? "This account" : "End customer"}
-                  </p>
-                ) : null}
-                {showEndCustomerBillingHint ? (
-                  <p className="text-[11px] leading-snug text-text-tertiary">
-                    End customer billing uses the client email — not Finance → Billing Email. Edit{" "}
-                    {job.client_name?.trim() || "this client"} under Accounts → Clients or /clients.
                   </p>
                 ) : null}
                 {showHeaderBillingMismatch ? (
@@ -9967,23 +9962,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             </div>
 
-            <div className="rounded-xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-rose-500/30 dark:from-rose-950/35 dark:to-[#141922]">
-              <div className="flex items-center gap-2 border-b border-rose-200/60 pb-2 dark:border-rose-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-white shadow-sm">
+            <div className="rounded-xl border border-border bg-card p-2.5 space-y-2 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary text-white">
                   <HardHat className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-bold uppercase tracking-wide text-rose-900 dark:text-rose-100">Partner self-bill</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="m-0 text-[12px] font-semibold text-text-primary">Partner self-bill</p>
                     {selfBillLifecycleBadge ? (
                       <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", selfBillLifecycleBadge.className)}>
                         {selfBillLifecycleBadge.label}
                       </span>
                     ) : null}
+                    <FixfyHintIcon text="Money out. We pay the partner through the self-bill." />
                   </div>
-                  <p className="text-[10px] text-rose-800/80 dark:text-rose-200/70 leading-snug mt-0.5">
-                    Money out · We pay the <strong className="font-semibold">partner</strong>
-                  </p>
                 </div>
                 {job.partner_id?.trim() ? (
                   <Button
@@ -9991,13 +9984,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     size="sm"
                     variant="outline"
                     loading={refreshingJob || loadingSelfBill}
-                    className="h-7 shrink-0 text-[10px] px-2"
-                    icon={<RefreshCw className="h-3 w-3" />}
+                    className="h-7 w-7 shrink-0 p-0"
+                    icon={<RefreshCw className="h-3.5 w-3.5" />}
                     onClick={() => void refreshJobFinance().then(() => toast.success("Partner finance synced"))}
-                    title="Reload job finance and recalculate self-bill totals from the server"
-                  >
-                    Sync
-                  </Button>
+                    title="Sync: reload job finance and recalculate self-bill totals"
+                    aria-label="Sync partner finance"
+                  />
                 ) : null}
               </div>
               {!job.partner_id?.trim() ? (
