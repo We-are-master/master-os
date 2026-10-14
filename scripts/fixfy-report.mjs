@@ -35,6 +35,9 @@ for (const arq of [".env.local", ".env"]) {
     }
   } catch {}
 }
+// Sem .env.local/.env (Railway), o ambiente do processo completa o que faltou.
+// O arquivo continua vencendo quando existe, então no Mac nada muda.
+for (const [k, v] of Object.entries(process.env)) if (!env[k] && v) env[k] = v;
 const SB = env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY = env.SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY;
 const SH = { apikey: KEY, authorization: `Bearer ${KEY}` };
