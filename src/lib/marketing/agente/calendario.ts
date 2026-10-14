@@ -3,12 +3,10 @@
  *
  * Duas coisas moram aqui, e só aqui:
  *
- *   CLUBE        26 edições, terça e sexta às 10h de Londres. As peças vêm da
- *                agenda (`email-sequences/agenda.ts`), mas a DATA de cada uma é
- *                escolhida à mão: o índice automático da agenda adiantava o
- *                Natal para novembro. Só entram peças do que a vitrine vende
- *                (limpeza, reparos, pintura, certificados); forno avulso,
- *                carpete, janela, boiler e limpeza regular ficaram de fora.
+ *   CLUBE        26 edições, terça e sexta às 10h de Londres. Cada uma mostra
+ *                um serviço (`clube-servicos.ts`), em rodízio: limpeza,
+ *                reparos, pintura e certificados. Nada de mudança de casa nem
+ *                dica genérica (dono, 14/10/2026).
  *
  *   RELAMPAGOS   promoção de 36 horas, quarta 11h até quinta 23:59, por e-mail
  *                e WhatsApp, fechando no site com o código já aplicado no link.
@@ -57,34 +55,34 @@ export type EdicaoDoClube = { dia: string; key: string };
 export const HORA_DO_CLUBE = 10;
 
 export const CLUBE: EdicaoDoClube[] = [
-  { dia: "2026-10-16", key: "welcome_notes" },
-  { dia: "2026-10-20", key: "moving_autumn" },
-  { dia: "2026-10-23", key: "condensation" },
+  { dia: "2026-10-16", key: "meet_fixfy" },
+  { dia: "2026-10-20", key: "half_day_list" },
+  { dia: "2026-10-23", key: "room_450" },
   { dia: "2026-10-27", key: "autumn_deep_clean" },
-  { dia: "2026-10-30", key: "five_minute_jobs" },
-  { dia: "2026-11-03", key: "landlord_autumn" },
-  { dia: "2026-11-06", key: "radiators_bleed" },
-  { dia: "2026-11-10", key: "handyman_list" },
-  { dia: "2026-11-13", key: "draughts" },
-  { dia: "2026-11-17", key: "deposit_guide" },
-  { dia: "2026-11-20", key: "damp_vs_condensation" },
+  { dia: "2026-10-30", key: "bathroom_refresh" },
+  { dia: "2026-11-03", key: "touch_ups" },
+  { dia: "2026-11-06", key: "gas_safety" },
+  { dia: "2026-11-10", key: "after_builders" },
+  { dia: "2026-11-13", key: "hang_it_all" },
+  { dia: "2026-11-17", key: "room_two_days" },
+  { dia: "2026-11-20", key: "clean_extras" },
   { dia: "2026-11-24", key: "fixfy_friday" },
-  { dia: "2026-11-27", key: "kitchen_deep" },
-  { dia: "2026-12-01", key: "paint_before_family" },
-  { dia: "2026-12-04", key: "gutters_leaves" },
-  { dia: "2026-12-08", key: "guest_ready_day" },
-  { dia: "2026-12-11", key: "festive_deep_clean" },
-  { dia: "2026-12-15", key: "declutter" },
-  { dia: "2026-12-18", key: "christmas_cover" },
-  { dia: "2026-12-22", key: "new_year_slots" },
+  { dia: "2026-11-27", key: "flat_pack" },
+  { dia: "2026-12-01", key: "doors_and_woodwork" },
+  { dia: "2026-12-04", key: "festive_deep_clean" },
+  { dia: "2026-12-08", key: "before_guests_list" },
+  { dia: "2026-12-11", key: "spare_room" },
+  { dia: "2026-12-15", key: "eicr" },
+  { dia: "2026-12-18", key: "january_list" },
+  { dia: "2026-12-22", key: "january_colour" },
   // 25/12 não sai nada. A semana do Natal tem uma edição só.
-  { dia: "2026-12-29", key: "between_reset" },
+  { dia: "2026-12-29", key: "quiet_week_reset" },
   // 01/01 é feriado: a edição vai para o sábado.
-  { dia: "2027-01-02", key: "fridge_reset" },
+  { dia: "2027-01-02", key: "what_broke" },
   { dia: "2027-01-05", key: "january_reset" },
-  { dia: "2027-01-08", key: "mould_after_holidays" },
-  { dia: "2027-01-12", key: "landlord_january" },
-  { dia: "2027-01-15", key: "frozen_pipes" },
+  { dia: "2027-01-08", key: "hallway" },
+  { dia: "2027-01-12", key: "landlord_bundle" },
+  { dia: "2027-01-15", key: "full_day" },
 ];
 
 export function quandoSaiAEdicao(e: EdicaoDoClube): Date {
@@ -117,27 +115,27 @@ const REGRAS = "Prices include VAT and are fixed before you book. Every pro is v
 
 export const RELAMPAGOS: Relampago[] = [
   {
-    slug: "move15",
+    slug: "paint15",
     dia: "2026-10-21",
-    codigo: "MOVE15",
+    codigo: "PAINT15",
     nome: "Fixfy · 36 hour offer",
     percentual: 15,
     maxUsos: 25,
-    linha: "15% off any Fixfy booking, including end of tenancy cleaning from £200",
+    linha: "15% off any Fixfy booking, including a room painted from £450",
     email: {
-      assunto: "36 hours only: 15% off your move-out clean",
-      preheader: "Code MOVE15, until Thursday midnight. First 25 bookings.",
+      assunto: "36 hours only: 15% off painting",
+      preheader: "Code PAINT15, until Thursday midnight. First 25 bookings.",
       titulo: "15% off, until Thursday midnight",
       blocos: [
-        t("This one is short on purpose. From now until <strong>Thursday at midnight</strong>, code <strong>MOVE15</strong> takes <strong>15% off any Fixfy booking</strong>. You book now and choose any date that suits you."),
-        l("Fixed prices before the 15%", [
-          "End of tenancy cleaning from £200, oven included",
-          "Deep cleaning from £174",
-          "After builders cleaning from £204",
+        t("This one is short on purpose. From now until <strong>Thursday at midnight</strong>, code <strong>PAINT15</strong> takes <strong>15% off any Fixfy booking</strong>. Book now and choose any date that suits you."),
+        l("Painting, before the 15%", [
+          "Touch-ups (up to 3.5 hours): £215",
+          "A room, walls, two coats: £450",
+          "A full day of painting: £465",
         ]),
         t(REGRAS),
       ],
-      cta: "Book with MOVE15",
+      cta: "Book with PAINT15",
     },
   },
   {

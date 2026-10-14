@@ -8,7 +8,7 @@
  *   npx tsx scripts/agente-marketing.mts --clube --agendar --aplicar   # e põe a hora em cada um
  *   npx tsx scripts/agente-marketing.mts --manha [--aplicar]     # a rotina da manhã inteira
  *   npx tsx scripts/agente-marketing.mts --tarde [--aplicar]     # o WhatsApp do relâmpago no ar
- *   npx tsx scripts/agente-marketing.mts --teste-wa=447700900123 --relampago=move15   # UM WhatsApp, para o seu número
+ *   npx tsx scripts/agente-marketing.mts --teste-wa=447700900123 --relampago=paint15   # UM WhatsApp, para o seu número
  *   npx tsx scripts/agente-marketing.mts --b2b-onda=1 [--aplicar]             # segmento "Fixfy B2B · Wave 1" com 200 agências
  *   npx tsx scripts/agente-marketing.mts --b2b=1 [--agendar] [--aplicar]      # os 16 broadcasts da onda no Resend
  *   npx tsx scripts/agente-marketing.mts --template              # o texto do template para submeter à Meta

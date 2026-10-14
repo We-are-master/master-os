@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { AGENDA } from "@/lib/email-sequences/agenda";
+import { PECAS_DO_CLUBE } from "./clube-servicos";
 import { acharCupom } from "@/lib/marketing/cupons";
 import { CLUBE, RELAMPAGOS, abreEm, fechaEm, horaDeLondres, quandoSaiAEdicao, relampagoDoDia, relampagoNoAr } from "./calendario";
 import { htmlDaEdicao, pecaDaEdicao } from "./clube";
@@ -17,7 +17,8 @@ test("o clube tem 26 edições em três meses, em ordem, sem peça repetida e to
   assert.equal(new Set(CLUBE.map((e) => e.key)).size, 26);
   const datas = CLUBE.map((e) => quandoSaiAEdicao(e).getTime());
   assert.deepEqual(datas, [...datas].sort((a, b) => a - b));
-  for (const e of CLUBE) assert.ok(AGENDA.some((p) => p.key === e.key), e.key);
+  for (const e of CLUBE) assert.ok(PECAS_DO_CLUBE.some((p) => p.key === e.key), e.key);
+  assert.equal(PECAS_DO_CLUBE.length, 26);
   assert.ok(!CLUBE.some((e) => e.dia === "2026-12-25" || e.dia === "2027-01-01"));
 });
 
@@ -51,9 +52,9 @@ test("relâmpago abre quarta 11h, fecha quinta 23:59 e não cai em dia de clube"
 });
 
 test("relâmpago do dia e relâmpago no ar", () => {
-  assert.equal(relampagoDoDia(new Date("2026-10-21T06:00:00Z"))?.slug, "move15");
+  assert.equal(relampagoDoDia(new Date("2026-10-21T06:00:00Z"))?.slug, "paint15");
   assert.equal(relampagoDoDia(new Date("2026-10-22T06:00:00Z")), null);
-  assert.equal(relampagoNoAr(new Date("2026-10-21T15:00:00Z"))?.slug, "move15");
+  assert.equal(relampagoNoAr(new Date("2026-10-21T15:00:00Z"))?.slug, "paint15");
   assert.equal(relampagoNoAr(new Date("2026-10-21T08:00:00Z")), null);
   // Faltando menos de 3 horas não sai mais WhatsApp.
   assert.equal(relampagoNoAr(new Date("2026-10-22T21:30:00Z")), null);
@@ -97,4 +98,15 @@ test("agências: a onda põe pessoa antes de caixa geral e pula bloqueado e quem
   const lista = [c("info@a.co.uk", "A Lettings Team"), c("jane@b.co.uk", "Jane"), c("sam@c.co.uk", "Sam"), c("x@d.co.uk", "X", true), c("tom@e.co.uk", "Tom")];
   const onda = escolherOnda(lista, new Set(["sam@c.co.uk"]), new Set(["tom@e.co.uk"]), 2);
   assert.deepEqual(onda.map((o) => o.email), ["jane@b.co.uk", "info@a.co.uk"]);
+});
+
+test("clube B2C: nenhuma peça fala de mudança de casa, e não repete o mesmo serviço em edições seguidas", () => {
+  const proibido = /end of tenancy|move-out|moving|deposit|check-out|gutter/i;
+  for (const e of CLUBE) {
+    const html = htmlDaEdicao(pecaDaEdicao(e));
+    assert.ok(!proibido.test(html.replace(/https?:[^"]+/g, "")), e.key);
+    assert.ok(!html.includes("—"), `${e.key} tem travessão`);
+  }
+  const tipos = CLUBE.map((e) => pecaDaEdicao(e).etiqueta);
+  for (let i = 1; i < tipos.length; i++) assert.notEqual(tipos[i], tipos[i - 1], `${CLUBE[i].dia} repete ${tipos[i]}`);
 });

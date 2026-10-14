@@ -11,9 +11,9 @@
  * contato na hora do envio.
  */
 
-import { AGENDA, type PecaDaAgenda } from "@/lib/email-sequences/agenda";
 import { ofertaDaPeca } from "@/lib/email-sequences/render";
 import { renderCampanha, type Bloco, type OfertaNoEmail } from "@/lib/emails/campanha-layout";
+import { pecaDoClube, type PecaDoClube } from "./clube-servicos";
 import { CLUBE, SITE, quandoSaiAEdicao, type EdicaoDoClube } from "./calendario";
 import { agendarBroadcast, broadcasts, criarBroadcast, type BroadcastResend } from "./resend";
 
@@ -45,19 +45,17 @@ export function htmlDoBroadcast(p: {
   });
 }
 
-export function pecaDaEdicao(e: EdicaoDoClube): PecaDaAgenda {
-  const peca = AGENDA.find((p) => p.key === e.key);
-  if (!peca) throw new Error(`calendário aponta para a peça "${e.key}", que não existe na agenda`);
-  return peca;
+export function pecaDaEdicao(e: EdicaoDoClube): PecaDoClube {
+  return pecaDoClube(e.key);
 }
 
-export function linkDaEdicao(peca: PecaDaAgenda): string {
+export function linkDaEdicao(peca: PecaDoClube): string {
   const q = new URLSearchParams({ utm_source: "email", utm_medium: "club", utm_campaign: `club_${peca.key}` });
   if (peca.cupom) q.set("promo", peca.cupom);
   return `${SITE}/?${q.toString()}`;
 }
 
-export function htmlDaEdicao(peca: PecaDaAgenda): string {
+export function htmlDaEdicao(peca: PecaDoClube): string {
   return htmlDoBroadcast({
     preheader: peca.preheader,
     etiqueta: peca.etiqueta,
