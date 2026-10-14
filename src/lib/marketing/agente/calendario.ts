@@ -102,6 +102,8 @@ export type Relampago = {
   maxUsos: number;
   /** A oferta em uma linha, que entra no WhatsApp: "15% off any Fixfy clean". */
   linha: string;
+  /** O serviço que a home abre selecionado (ver `preset` em clube-servicos.ts). */
+  preset: string;
   email: { assunto: string; preheader: string; titulo: string; blocos: Bloco[]; cta: string };
 };
 
@@ -116,6 +118,7 @@ const REGRAS = "Prices include VAT and are fixed before you book. Every pro is v
 export const RELAMPAGOS: Relampago[] = [
   {
     slug: "paint15",
+    preset: "s=paint&paint=rooms:1",
     dia: "2026-10-21",
     codigo: "PAINT15",
     nome: "Fixfy · 36 hour offer",
@@ -140,6 +143,7 @@ export const RELAMPAGOS: Relampago[] = [
   },
   {
     slug: "deep15",
+    preset: "s=clean&size=1&kind=deep",
     dia: "2026-11-04",
     codigo: "DEEP15",
     nome: "Fixfy · 36 hour offer",
@@ -165,6 +169,7 @@ export const RELAMPAGOS: Relampago[] = [
   },
   {
     slug: "fix15",
+    preset: "s=fix&fix=half",
     dia: "2026-11-18",
     codigo: "FIX15",
     nome: "Fixfy · 36 hour offer",
@@ -189,6 +194,7 @@ export const RELAMPAGOS: Relampago[] = [
   },
   {
     slug: "xmas15",
+    preset: "s=clean&size=2&kind=deep",
     dia: "2026-12-09",
     codigo: "XMAS15",
     nome: "Fixfy · 36 hour offer",
@@ -238,6 +244,7 @@ export function relampagoNoAr(agora = new Date()): Relampago | null {
 
 /** O link que fecha a venda: o site lê `promo` e aplica o código sozinho. */
 export function linkDoRelampago(r: Relampago, canal: "email" | "whatsapp"): string {
-  const q = new URLSearchParams({ promo: r.codigo, utm_source: canal, utm_medium: "flash", utm_campaign: `flash_${r.slug}` });
+  const q = new URLSearchParams(r.preset);
+  for (const [k, v] of Object.entries({ promo: r.codigo, utm_source: canal, utm_medium: "flash", utm_campaign: `flash_${r.slug}` })) q.set(k, v);
   return `${SITE}/?${q.toString()}`;
 }

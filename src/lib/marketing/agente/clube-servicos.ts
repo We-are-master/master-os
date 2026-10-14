@@ -24,6 +24,12 @@ export type PecaDoClube = {
   blocos: Bloco[];
   cta: string;
   cupom?: string;
+  /**
+   * O que a home do site abre já selecionado (`quotePreset` do site). Sem isto
+   * a home abre no padrão dela, que é saída de imóvel: exatamente o que o
+   * clube B2C não vende.
+   */
+  preset: string;
 };
 
 const t = (html: string): Bloco => ({ tipo: "texto", html });
@@ -32,6 +38,7 @@ const l = (titulo: string, itens: string[]): Bloco => ({ tipo: "lista", titulo, 
 export const PECAS_DO_CLUBE: PecaDoClube[] = [
   {
     key: "meet_fixfy",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Fixfy",
     assunto: "Stop calling three people to sort one home",
     preheader: "Cleaner, handyman and painter in one booking. 10% off your first job.",
@@ -52,6 +59,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "half_day_list",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "What fits in half a day with our handyman",
     preheader: "3.5 hours, £180, and usually the whole list.",
@@ -71,6 +79,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "room_450",
+    preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "What £450 buys you: one room, painted properly",
     preheader: "Two coats, edges cut in by hand, furniture back in place.",
@@ -89,6 +98,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "autumn_deep_clean",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Cleaning",
     assunto: "The autumn deep clean, 15% off this month",
     preheader: "Windows shut, heating on, and everything the weekly clean skips.",
@@ -108,6 +118,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "bathroom_refresh",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "The bathroom refresh, without a new bathroom",
     preheader: "Silicone, grout, taps and the extractor. Half a day.",
@@ -126,6 +137,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "touch_ups",
+    preset: "s=paint&paint=touchup",
     etiqueta: "Painting",
     assunto: "The scuffs in the hallway, gone in one visit",
     preheader: "Touch-ups from £215: walls, doors and skirting.",
@@ -144,6 +156,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "gas_safety",
+    preset: "s=cert&cert=gas",
     etiqueta: "Certificates",
     assunto: "Gas Safety certificate, £79",
     preheader: "A Gas Safe registered engineer, the certificate by email.",
@@ -163,6 +176,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "after_builders",
+    preset: "s=clean&size=1&kind=after",
     etiqueta: "Cleaning",
     assunto: "The builders left. The dust did not.",
     preheader: "After builders cleaning from £204, top to bottom.",
@@ -181,6 +195,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "hang_it_all",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "TV, mirrors, shelves, blinds: all up in one visit",
     preheader: "Level, secure and the right fixings for London walls.",
@@ -199,6 +214,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "room_two_days",
+    preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "£50 off a room, painted before the holidays",
     preheader: "Book now for November or December. Code PAINT50.",
@@ -218,6 +234,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "clean_extras",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Cleaning",
     assunto: "Five things you can add to any clean",
     preheader: "Carpets, the fridge, windows and more, same visit.",
@@ -237,6 +254,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "fixfy_friday",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Fixfy",
     assunto: "Fixfy Friday: 15% off everything, this week only",
     preheader: "Cleaning, repairs, painting and certificates. Book now, use it before March.",
@@ -255,6 +273,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "flat_pack",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "Bought it flat. We will build it.",
     preheader: "Wardrobes, beds, desks and drawers, assembled and fixed to the wall.",
@@ -273,6 +292,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "doors_and_woodwork",
+    preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "Doors, frames and skirting: the fastest way to lift a home",
     preheader: "A full day of painting, £465. Woodwork that looks new.",
@@ -291,6 +311,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "festive_deep_clean",
+    preset: "s=clean&size=2&kind=deep",
     etiqueta: "Cleaning",
     assunto: "House full this Christmas? 10% off the deep clean",
     preheader: "The last two weeks of December always go first.",
@@ -310,6 +331,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "before_guests_list",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "Six things to fix before the family arrives",
     preheader: "The handle, the blind, the tap. One half day.",
@@ -331,6 +353,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "spare_room",
+    preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "The spare room, painted in time for guests",
     preheader: "£50 off with PAINT50. Last December slots.",
@@ -350,6 +373,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "eicr",
+    preset: "s=cert&cert=eicr",
     etiqueta: "Certificates",
     assunto: "Before the lights go up: what an EICR checks",
     preheader: "Electrical Installation Condition Report from £129.",
@@ -368,6 +392,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "january_list",
+    preset: "s=fix&fix=day",
     etiqueta: "Repairs",
     assunto: "Start January with the list already booked",
     preheader: "Book now for the first weeks of the year.",
@@ -387,6 +412,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "january_colour",
+    preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "New year, new colour: book your room for January",
     preheader: "£50 off with PAINT50. January slots open now.",
@@ -405,6 +431,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "quiet_week_reset",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Cleaning",
     assunto: "The quiet week reset, 10% off",
     preheader: "Our diary is free, your home is not. Good timing for both of us.",
@@ -418,6 +445,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "what_broke",
+    preset: "s=fix&fix=half",
     etiqueta: "Repairs",
     assunto: "Whatever broke over Christmas, we can fix",
     preheader: "The blind, the hinge, the toilet seat. Half a day.",
@@ -437,6 +465,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "january_reset",
+    preset: "s=clean&size=1&kind=deep",
     etiqueta: "Cleaning",
     assunto: "Start the year with the home sorted: 15% off",
     preheader: "Our biggest January discount, on the deep clean.",
@@ -456,6 +485,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "hallway",
+    preset: "s=paint&paint=touchup",
     etiqueta: "Painting",
     assunto: "The most scuffed wall in every home",
     preheader: "Hallway and stairs, refreshed in one visit.",
@@ -474,6 +504,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "landlord_bundle",
+    preset: "s=cert&cert=gas,eicr,epc",
     etiqueta: "Certificates",
     assunto: "Landlords: gas, EICR and EPC in one booking",
     preheader: "10% off the bundle with LANDLORD10.",
@@ -492,6 +523,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   },
   {
     key: "full_day",
+    preset: "s=fix&fix=day",
     etiqueta: "Repairs",
     assunto: "One full day, the whole list done",
     preheader: "7 hours of handyman time for £329.",

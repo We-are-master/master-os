@@ -50,7 +50,8 @@ export function pecaDaEdicao(e: EdicaoDoClube): PecaDoClube {
 }
 
 export function linkDaEdicao(peca: PecaDoClube): string {
-  const q = new URLSearchParams({ utm_source: "email", utm_medium: "club", utm_campaign: `club_${peca.key}` });
+  const q = new URLSearchParams(peca.preset);
+  for (const [k, v] of Object.entries({ utm_source: "email", utm_medium: "club", utm_campaign: `club_${peca.key}` })) q.set(k, v);
   if (peca.cupom) q.set("promo", peca.cupom);
   return `${SITE}/?${q.toString()}`;
 }
