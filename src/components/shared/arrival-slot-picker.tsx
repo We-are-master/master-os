@@ -62,7 +62,7 @@ export function ArrivalSlotPicker({
   const control = cn(
     "w-full rounded-md border font-semibold tabular-nums",
     rowLayout
-      ? "h-10 min-h-10 px-2 text-xs"
+      ? "h-[var(--field-h,38px)] min-h-0 px-2.5 text-[13px]"
       : compact
         ? "px-2 py-1 text-[11px] leading-tight"
         : "px-2 py-2 text-xs",
@@ -72,7 +72,7 @@ export function ArrivalSlotPicker({
     return (
       <div className={className}>
         {!hideLabel && (
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">
+          <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
             <span className="inline-flex items-center gap-1">
               Arrival Time *
               {labelHint ? <FixfyHintIcon text={labelHint} /> : null}
@@ -97,7 +97,7 @@ export function ArrivalSlotPicker({
       {!hideLabel && (
         <label
           htmlFor="arrival-slot"
-          className="block text-xs font-medium text-text-secondary mb-1.5"
+          className="mb-1.5 block text-[12px] font-medium text-text-secondary"
         >
           <span className="inline-flex items-center gap-1">
             Arrival Time *
