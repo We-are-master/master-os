@@ -33,19 +33,21 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
   {
     key: "meet_fixfy",
     etiqueta: "Fixfy",
-    assunto: "Cleaning, repairs and painting. One team, fixed prices",
-    preheader: "Twice a week we will show you one thing we do. Here is the first.",
-    titulo: "One team for the whole home",
+    assunto: "Stop calling three people to sort one home",
+    preheader: "Cleaner, handyman and painter in one booking. 10% off your first job.",
+    titulo: "One booking. Cleaned, fixed and painted.",
     blocos: [
-      t("Fixfy is the team London calls when the home needs something done properly. Three things, done by vetted and insured professionals, at a price you see before you book."),
-      l("What we do", [
-        "<strong>Cleaning</strong>: deep cleans from £174 and after builders cleans from £204",
-        "<strong>Repairs</strong>: a handyman for half a day (£180) or a full day (£329)",
-        "<strong>Painting</strong>: touch-ups from £215 and a full room from £450",
+      t("You know how it goes. One person to clean, another to fix the tap, a third to paint the hallway. Three quotes, three diaries, three people who may or may not turn up."),
+      t("Fixfy is one team for all of it. You book online, see the price before you pay, and a vetted, insured professional turns up on the day you chose."),
+      l("What you can book today", [
+        "<strong>Deep cleaning</strong> from £174, products and equipment included",
+        "<strong>A handyman</strong> for half a day (£180) or a full day (£329)",
+        "<strong>Painting</strong>: touch-ups from £215, a full room from £450",
+        "<strong>Certificates</strong>: Gas Safety £79, EICR from £129, EPC from £95",
       ]),
-      t("Twice a week we will show you one of them up close: what is included, what it costs and what most people book it for. To start, <strong>10% off your first booking</strong> with the code below."),
+      t("If something is not right, we come back free of charge. And your first booking is <strong>10% off</strong> with the code below."),
     ],
-    cta: "See our prices",
+    cta: "Book with 10% off",
     cupom: "WELCOME10",
   },
   {
