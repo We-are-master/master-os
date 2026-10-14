@@ -413,7 +413,7 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
     }
   }
   return (
-    <div className="mt-0.5 w-full space-y-0.5 text-left">
+    <div className="mt-0.5 w-full space-y-0.5 text-center">
       <p className="text-[11px] font-semibold tabular-nums tracking-tight text-text-secondary">{formatOfficeTimer(secs)}</p>
       {startedSub ? <p className="text-[10px] leading-snug text-text-tertiary">{startedSub}</p> : null}
     </div>
@@ -2913,8 +2913,8 @@ function JobsPageContent() {
         const timingKind = getJobScheduleTimingKind(item);
         const hasChip = Boolean(timingKind);
         return (
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+          <div className="min-w-0 text-center">
+            <div className="flex flex-wrap items-center justify-center gap-1.5 min-w-0">
               {hasChip ? (
                 <JobScheduleTimingChip job={item} title={detail} />
               ) : line ? (
