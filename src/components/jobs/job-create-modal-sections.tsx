@@ -311,7 +311,7 @@ export function JobCreateModalExtraPayment({
   );
 }
 
-export type JobChargeMode = "completion" | "deposit" | "full";
+export type JobChargeMode = "completion" | "deposit" | "full" | "instalments";
 
 const CHARGE_MODE_HINT =
   "How the client is charged. Full or Deposit sends the payment request by email as soon as the job is created, with a pay button and the bank transfer details. On completion sends nothing now. Clients who pay by card (no account, or an account set to card) always pay before: deposit or full, and the card stays saved for the balance.";
@@ -320,6 +320,7 @@ const CHARGE_MODES: { id: JobChargeMode; label: string }[] = [
   { id: "completion", label: "On completion" },
   { id: "deposit", label: "Deposit" },
   { id: "full", label: "Full now" },
+  { id: "instalments", label: "Instalments" },
 ];
 
 /** O que o cliente paga agora, a partir do modo e da porcentagem escolhidos no formulário. */
@@ -339,6 +340,7 @@ export function JobCreateModalChargeMode({
   onModeChange,
   onPercentChange,
   paysUpfront = false,
+  instalmentsEditor,
 }: {
   mode: JobChargeMode;
   percent: string;
@@ -347,6 +349,8 @@ export function JobCreateModalChargeMode({
   onPercentChange: (value: string) => void;
   /** Cliente que paga no cartão (sem conta ou conta card_upfront): sem "On completion" (dono, 14/10/2026). */
   paysUpfront?: boolean;
+  /** Editor das parcelas, mostrado embaixo quando o modo é Instalments. */
+  instalmentsEditor?: ReactNode;
 }) {
   const modes = paysUpfront ? CHARGE_MODES.filter((m) => m.id !== "completion") : CHARGE_MODES;
   const pct = chargeNowPercent(mode, percent);
@@ -354,7 +358,9 @@ export function JobCreateModalChargeMode({
   const later = Math.round((Math.max(0, total) - now) * 100) / 100;
 
   const summary =
-    pct === 0
+    mode === "instalments"
+      ? "Each instalment is charged on its date"
+      : pct === 0
       ? "Invoice goes out when the job is done"
       : total > 0.02
         ? `${formatCurrency(now)} now${later > 0.02 ? ` · ${formatCurrency(later)} when done` : ""}`
@@ -402,6 +408,7 @@ export function JobCreateModalChargeMode({
         ) : null}
         <span className="ml-auto text-[12px] tabular-nums text-text-tertiary">{summary}</span>
       </div>
+      {mode === "instalments" && instalmentsEditor ? <div className="pt-1">{instalmentsEditor}</div> : null}
     </div>
   );
 }

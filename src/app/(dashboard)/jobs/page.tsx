@@ -1,5 +1,6 @@
 "use client";
 
+import { splitEqually } from "@/lib/invoice-payment-plan";
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
@@ -144,6 +145,7 @@ import {
 } from "@/lib/partner-payment-plan-create";
 import {
   defaultPaymentPlanRows,
+  PaymentPlanEditor,
   type PaymentPlanEditorRow,
 } from "@/components/finance/payment-plan-editor";
 import { templateFromDrafts, validateInstallmentsSum } from "@/lib/invoice-payment-plan";
@@ -2146,6 +2148,18 @@ function JobsPageContent() {
           console.error("Failed to record extra payment on new job:", err);
           toast.error("Job created, but failed to record the extra payment as received. Add it manually from the job.");
         });
+      }
+      if (opts?.paymentPlanTemplate?.enabled && opts.paymentPlanTemplate.installments.length > 0) {
+        // Uma fatura só, com as parcelas dentro dela.
+        try {
+          const { invoice } = await ensureDraftInvoiceForJob(result);
+          if (invoice) {
+            await createPaymentPlan(invoice.id, Number(invoice.amount ?? 0), opts.paymentPlanTemplate.installments);
+          }
+        } catch (planErr) {
+          console.error("one-off instalment plan setup failed", planErr);
+          toast.error(getErrorMessage(planErr, "Job created, but the instalments could not be saved. Add them from the job."));
+        }
       }
       if (opts?.chargeNow) {
         const pct = opts.chargeNow.percent;
@@ -4456,7 +4470,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       materials_cost: Number(form.materials_cost) || 0,
     });
 
-    if (form.job_kind === "recurring" && paymentPlanEnabled) {
+    const planActive = (form.job_kind === "recurring" || form.charge_mode === "instalments") && paymentPlanEnabled;
+    if (planActive) {
       if (paymentPlanRows.length < 1) {
         toast.error("Add at least one installment to the payment plan.");
         return;
@@ -4486,15 +4501,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
     }
 
     const paymentPlanTemplate =
-      form.job_kind === "recurring" && paymentPlanEnabled
+      planActive
         ? templateFromDrafts(
             true,
             paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
           )
         : null;
     const partnerPaymentPlanTemplate =
-      form.job_kind === "recurring" &&
-      paymentPlanEnabled &&
+      planActive &&
       partnerPaymentPlanEnabled &&
       form.partner_id?.trim() &&
       partnerCapPreview > 0.02
@@ -4657,6 +4671,28 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (form.job_kind !== "recurring" || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
     queueMicrotask(() => setPaymentPlanRows(defaultPaymentPlanRows(invoiceTotalPreview, 4)));
   }, [form.job_kind, invoiceTotalPreview, paymentPlanRows.length]);
+
+  /**
+   * Job de um dia só pago em parcelas (15/10/2026): Instalments liga o plano.
+   * Padrão: 3 parcelas iguais a cada 2 semanas a partir da data do job.
+   */
+  const oneOffInstalments = form.job_kind !== "recurring" && form.charge_mode === "instalments";
+  useEffect(() => {
+    if (form.job_kind === "recurring") return;
+    queueMicrotask(() => setPaymentPlanEnabled(oneOffInstalments));
+    if (!oneOffInstalments || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
+    const start = form.scheduled_date?.trim() || new Date().toISOString().slice(0, 10);
+    const amounts = splitEqually(invoiceTotalPreview, 3);
+    queueMicrotask(() =>
+      setPaymentPlanRows(
+        amounts.map((amount, i) => {
+          const d = new Date(`${start}T12:00:00`);
+          d.setDate(d.getDate() + i * 14);
+          return { key: `inst-${i}-${Date.now()}`, amount, due_date: d.toISOString().slice(0, 10) };
+        }),
+      ),
+    );
+  }, [oneOffInstalments, form.job_kind, form.scheduled_date, invoiceTotalPreview, paymentPlanRows.length]);
 
   useEffect(() => {
     if (!paymentPlanEnabled || partnerPlanCustomized || paymentPlanRows.length === 0 || partnerCapPreview <= 0) return;
@@ -5385,6 +5421,25 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
                 onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
                 paysUpfront={clientPaysUpfront}
+                instalmentsEditor={
+                  <div className="space-y-1.5">
+                    <PaymentPlanEditor
+                      enabled
+                      onEnabledChange={(v) => {
+                        if (!v) setForm((prev) => ({ ...prev, charge_mode: "completion" }));
+                      }}
+                      rows={paymentPlanRows}
+                      onRowsChange={setPaymentPlanRows}
+                      totalAmount={invoiceTotalPreview}
+                      accountPaymentTerms={accountPaymentTerms}
+                      orgCtx={paymentOrgCtx}
+                    />
+                    <p className="m-0 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+                      Partner paid in the same split
+                      <FixfyHintIcon text="The partner gets a self-bill of their own for this job, split in the same proportion and on the same dates as the client. Each client instalment is charged by email with a pay link on its date." />
+                    </p>
+                  </div>
+                }
               />
             ) : null}
             <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
