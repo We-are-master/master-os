@@ -202,6 +202,7 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
 import { invoiceIdsToCheckForOverdue, jobPaymentState } from "@/lib/job-payment-badge";
 import { overdueInvoiceIds } from "@/services/job-payment-state";
@@ -2991,6 +2992,7 @@ function JobsPageContent() {
               <div className="inline-flex flex-wrap items-center gap-1.5">
                 <Badge variant={c.variant} dot={c.dot ?? true}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
               </div>
               {st === "on_hold" ? (
                 <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
@@ -3014,6 +3016,7 @@ function JobsPageContent() {
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={variantTag} dot>{lbl}</Badge>
               <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
             </div>
           );
         }
@@ -3025,6 +3028,7 @@ function JobsPageContent() {
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
             </div>
             {st === "on_hold" ? (
               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
@@ -3611,6 +3615,7 @@ function JobsPageContent() {
                             <div className="flex flex-wrap items-center gap-1 min-w-0">
                               <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
                               <JobOverdueBadge job={j} />
+                              <JobCardRefusedBadge job={j} />
                             </div>
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
@@ -4043,6 +4048,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
   // ─── mig 159/160: resolve per-account / per-partner pricing overrides ──
   // Resolve account_id from the picked client (clients.source_account_id).
   const [effectiveAccountId, setEffectiveAccountId] = useState<string | null>(null);
+  /** Para qual cliente o `effectiveAccountId` já foi lido (null no meio da leitura). */
+  const [accountResolvedForClientId, setAccountResolvedForClientId] = useState<string | null>(null);
+  /** `accounts.collection_mode` da conta do cliente, e de qual conta ele é. */
+  const [accountCollectionMode, setAccountCollectionMode] = useState<{ accountId: string; mode: string | null } | null>(null);
   useEffect(() => {
     const cid = clientAddress.client_id?.trim();
     if (!cid) {
@@ -4060,6 +4069,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
         if (cancelled) return;
         const aid = (data as { source_account_id?: string | null } | null)?.source_account_id?.trim() ?? null;
         setEffectiveAccountId(aid);
+        setAccountResolvedForClientId(cid);
       });
     return () => { cancelled = true; };
   }, [clientAddress.client_id]);
@@ -4073,16 +4083,41 @@ function CreateJobModal({ open, onClose, onCreate }: {
     let cancelled = false;
     getSupabase()
       .from("accounts")
-      .select("payment_terms")
+      .select("payment_terms, collection_mode")
       .eq("id", aid)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        const terms = (data as { payment_terms?: string | null } | null)?.payment_terms?.trim() ?? null;
-        setAccountPaymentTerms(terms);
+        const row = data as { payment_terms?: string | null; collection_mode?: string | null } | null;
+        setAccountPaymentTerms(row?.payment_terms?.trim() ?? null);
+        setAccountCollectionMode({ accountId: aid, mode: row?.collection_mode ?? null });
       });
     return () => { cancelled = true; };
   }, [effectiveAccountId]);
+
+  /**
+   * Cliente que paga no cartão sempre paga antes (dono, 14/10/2026): sem conta, ou conta com
+   * `collection_mode = card_upfront`. Para ele o padrão é sinal de 50% e "On completion" some.
+   * Enquanto a conta do cliente não foi lida fica false, para não trocar o modo à toa.
+   */
+  const clientPaysUpfront = (() => {
+    const cid = clientAddress.client_id?.trim();
+    if (!cid || accountResolvedForClientId !== cid) return false;
+    if (!effectiveAccountId) return true;
+    if (accountCollectionMode?.accountId !== effectiveAccountId) return false;
+    return accountCollectionMode.mode === "card_upfront";
+  })();
+  const chargeModeAutoSet = useRef(false);
+  useEffect(() => {
+    if (clientPaysUpfront && form.charge_mode === "completion") {
+      chargeModeAutoSet.current = true;
+      setForm((p) => ({ ...p, charge_mode: "deposit", charge_percent: p.charge_percent?.trim() ? p.charge_percent : "50" }));
+    } else if (!clientPaysUpfront && chargeModeAutoSet.current && form.charge_mode === "deposit") {
+      // Trocou para um cliente de conta com fatura: volta ao padrão dele.
+      chargeModeAutoSet.current = false;
+      setForm((p) => ({ ...p, charge_mode: "completion" }));
+    }
+  }, [clientPaysUpfront, form.charge_mode]);
 
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const serviceHasStackableAddons = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
@@ -4390,7 +4425,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const jobInvoiceTotal = Math.round((clientPriceOut + extrasTotal) * 100) / 100;
     const extraAlreadyReceived = isHourly && form.extra_payment_received && manualExtra > 0.02;
     // Cobrança na criação: sinal (%) ou total agora. Série recorrente usa o payment plan, não isto.
-    const chargePct = form.job_kind === "recurring" ? 0 : chargeNowPercent(form.charge_mode, form.charge_percent);
+    // Cliente que paga no cartão nunca fica para depois: sem modo escolhido, vale o sinal de 50%.
+    const chargeModeOut = clientPaysUpfront && form.charge_mode === "completion" ? "deposit" : form.charge_mode;
+    const chargePct = form.job_kind === "recurring" ? 0 : chargeNowPercent(chargeModeOut, form.charge_percent);
     const chargeNowAmount = Math.round(jobInvoiceTotal * chargePct) / 100;
     const scheduledDeposit = extraAlreadyReceived ? manualExtra : chargePct > 0 ? chargeNowAmount : 0;
     const chargeNow = chargePct > 0 && chargeNowAmount > 0.02 ? { percent: chargePct } : undefined;
@@ -5040,6 +5077,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 total={invoiceTotalPreview}
                 onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
                 onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
+                paysUpfront={clientPaysUpfront}
               />
             ) : null}
             {form.job_type === "hourly" ? (

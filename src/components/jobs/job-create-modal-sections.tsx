@@ -314,7 +314,7 @@ export function JobCreateModalExtraPayment({
 export type JobChargeMode = "completion" | "deposit" | "full";
 
 const CHARGE_MODE_HINT =
-  "How the client is charged. Full or Deposit sends the payment request by email as soon as the job is created, with a pay button and the bank transfer details. On completion sends nothing now.";
+  "How the client is charged. Full or Deposit sends the payment request by email as soon as the job is created, with a pay button and the bank transfer details. On completion sends nothing now. Clients who pay by card (no account, or an account set to card) always pay before: deposit or full, and the card stays saved for the balance.";
 
 const CHARGE_MODES: { id: JobChargeMode; label: string }[] = [
   { id: "completion", label: "On completion" },
@@ -338,13 +338,17 @@ export function JobCreateModalChargeMode({
   total,
   onModeChange,
   onPercentChange,
+  paysUpfront = false,
 }: {
   mode: JobChargeMode;
   percent: string;
   total: number;
   onModeChange: (value: JobChargeMode) => void;
   onPercentChange: (value: string) => void;
+  /** Cliente que paga no cartão (sem conta ou conta card_upfront): sem "On completion" (dono, 14/10/2026). */
+  paysUpfront?: boolean;
 }) {
+  const modes = paysUpfront ? CHARGE_MODES.filter((m) => m.id !== "completion") : CHARGE_MODES;
   const pct = chargeNowPercent(mode, percent);
   const now = Math.round(Math.max(0, total) * pct) / 100;
   const later = Math.round((Math.max(0, total) - now) * 100) / 100;
@@ -356,7 +360,7 @@ export function JobCreateModalChargeMode({
         <FixfyHintIcon text={CHARGE_MODE_HINT} />
       </div>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Client payment">
-        {CHARGE_MODES.map((m) => (
+        {modes.map((m) => (
           <button
             key={m.id}
             type="button"
