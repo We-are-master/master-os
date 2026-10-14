@@ -24,6 +24,9 @@ import { renderInvoicePdfBufferFromData } from "@/lib/render-invoice-pdf-buffer"
 import { canSendJobInvoiceEmail } from "@/lib/invoice-send-eligibility";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { Account, Invoice, Job } from "@/types/database";
+import { umTicketEmail } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
 export { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
 
@@ -133,7 +136,7 @@ export async function renderInvoicePdfBuffer(
 }
 
 export type SendInvoiceEmailResult =
-  | { ok: true; to: string; cc: string[]; resendId?: string }
+  | { ok: true; to: string; cc: string[]; resendId?: string; channel?: "resend" | "zendesk"; ticketId?: number }
   | { error: string; status: number };
 
 export async function sendInvoiceEmail(
@@ -154,13 +157,11 @@ export async function sendInvoiceEmail(
   }
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!resendKey) {
-    return { error: "RESEND_API_KEY not configured", status: 503 };
-  }
-
   const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!fromEmail) {
-    return { error: "RESEND_FROM_EMAIL not configured", status: 503 };
+  // Com o ticket do pedido (ONE_TICKET_EMAIL_ON) a Resend pode nem ser usada: a checagem vai para a hora do envio.
+  if (!umTicketEmail()) {
+    if (!resendKey) return { error: "RESEND_API_KEY not configured", status: 503 };
+    if (!fromEmail) return { error: "RESEND_FROM_EMAIL not configured", status: 503 };
   }
 
   const { data: company } = await admin
@@ -243,28 +244,49 @@ export async function sendInvoiceEmail(
   }
   const safeName = pdfResult.reference.replace(/[^\w.-]+/g, "_");
 
-  const resend = new Resend(resendKey);
-  const { data: emailResult, error: emailError } = await resend.emails.send({
-    from: fromEmail,
-    to: [emailTo],
-    cc: ccList.length > 0 ? ccList : undefined,
-    subject,
-    html: bodyHtml,
-    attachments: [
-      {
-        filename: `${safeName}.pdf`,
-        content: pdfResult.buffer,
-        contentType: "application/pdf",
-      },
-    ],
-  });
+  const anexoPdf = { filename: `${safeName}.pdf`, content: pdfResult.buffer, contentType: "application/pdf" };
 
-  if (emailError) {
-    const message =
-      typeof emailError === "object" && emailError && "message" in emailError
-        ? String((emailError as { message: unknown }).message)
-        : "Email delivery failed";
-    return { error: message, status: 502 };
+  // Um ticket por pedido (ONE_TICKET_EMAIL_ON): o cliente (ou o job) já tem ticket
+  // aberto, então a fatura entra nele. A Resend copiava o support@, e o Zendesk
+  // abria um ticket novo para cada fatura (#51315 e #51318, 13/10/2026).
+  let ticketUsado: number | undefined;
+  if (umTicketEmail()) {
+    const achado = await acharTicketDoPedido(admin, { jobId: job?.id ?? null, clientId: job?.client_id ?? null, email: emailTo });
+    if (achado.tipo === "ticket") {
+      try {
+        const r = await entregarEmailNoTicket({ ticket: achado, para: { email: emailTo, nome: billing.displayName }, cc: ccDaConta, assunto: subject, html: bodyHtml, anexos: [anexoPdf] });
+        ticketUsado = r.ticketId;
+        console.log(`[invoice-send-email] ${inv.reference}: no ticket #${r.ticketId} (${r.modo}), sem ticket novo`);
+      } catch (err) {
+        console.error("[invoice-send-email] ticket do cliente falhou, segue pela Resend:", err);
+      }
+    } else if (achado.tipo === "ambiguo") {
+      console.log(`[invoice-send-email] ${inv.reference}: vários tickets abertos (${achado.ids.join(", ")}), segue pela Resend`);
+    }
+  }
+
+  let emailResult: { id?: string } | null = null;
+  if (ticketUsado == null) {
+    if (!resendKey) return { error: "RESEND_API_KEY not configured", status: 503 };
+    if (!fromEmail) return { error: "RESEND_FROM_EMAIL not configured", status: 503 };
+    const resend = new Resend(resendKey);
+    const { data, error: emailError } = await resend.emails.send({
+      from: fromEmail,
+      to: [emailTo],
+      cc: ccList.length > 0 ? ccList : undefined,
+      subject,
+      html: bodyHtml,
+      attachments: [anexoPdf],
+    });
+
+    if (emailError) {
+      const message =
+        typeof emailError === "object" && emailError && "message" in emailError
+          ? String((emailError as { message: unknown }).message)
+          : "Email delivery failed";
+      return { error: message, status: 502 };
+    }
+    emailResult = data;
   }
 
   if (inv.status === "draft") {
@@ -295,14 +317,17 @@ export async function sendInvoiceEmail(
     user_name: options.userName,
     metadata: {
       email_to: emailTo,
-      cc: ccList,
+      cc: ticketUsado != null ? ccDaConta : ccList,
       resend_id: emailResult?.id,
-      channel: "resend",
+      channel: ticketUsado != null ? "zendesk" : "resend",
+      ...(ticketUsado != null ? { ticket_id: ticketUsado } : {}),
       request_percent: request?.percent ?? 100,
       amount_due_now: request?.amountDueNow ?? invoiceAmountDueForRequest(inv, 100).amountDueNow,
     },
   });
   if (auditErr) console.warn("[invoice-send-email] histórico não gravado:", auditErr.message);
 
-  return { ok: true, to: emailTo, cc: ccList, resendId: emailResult?.id };
+  return ticketUsado != null
+    ? { ok: true, to: emailTo, cc: ccDaConta, channel: "zendesk", ticketId: ticketUsado }
+    : { ok: true, to: emailTo, cc: ccList, resendId: emailResult?.id, channel: "resend" };
 }

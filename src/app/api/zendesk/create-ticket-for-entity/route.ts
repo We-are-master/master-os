@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
+import { createServiceClient } from "@/lib/supabase/service";
+import { umTicketJob } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
 import {
   createTicket,
+  updateTicket,
   ZENDESK_REPLY_STATUS_FIELD_ID,
   ZENDESK_REPLY_STATUS_SENT_VALUE,
 } from "@/lib/zendesk";
@@ -28,7 +32,12 @@ export const runtime  = "nodejs";
  *   }
  *
  * Auth: any signed-in OS user.
- * Returns: { ok: true, ticketId: number } | { ok: false, error: string }
+ * Returns: { ok: true, ticketId: number, reused?: true } | { ok: false, error: string }
+ *
+ * Um ticket por pedido (ONE_TICKET_JOB_REUSE_ON, 14/10/2026): com clientId /
+ * clientEmail / clientPhone no corpo e UM ticket aberto desse cliente (lead,
+ * cotação, conversa do WhatsApp), devolve esse ticket com `reused: true` e o
+ * texto vira nota interna nele, em vez de abrir "Job Scheduled: … - …".
  */
 
 const TEAM_REQUESTER_EMAIL = "team@getfixfy.com";
@@ -46,6 +55,10 @@ interface RequestBody {
   ticketFormId?:  number;
   /** Prefill the form from the OS entity (field id + value). */
   customFields?:  Array<{ id: number; value: unknown }>;
+  /** Quem é o cliente, para achar o ticket do pedido que já existe. */
+  clientId?:      string | null;
+  clientEmail?:   string | null;
+  clientPhone?:   string | null;
 }
 
 export async function POST(req: NextRequest) {
@@ -75,6 +88,30 @@ export async function POST(req: NextRequest) {
   }
 
   const tags = ["os-created", `os-${entityType}`, ...(body.extraTags ?? [])];
+
+  if (umTicketJob() && (body.clientId || body.clientEmail || body.clientPhone)) {
+    const achado = await acharTicketDoPedido(createServiceClient(), {
+      clientId: typeof body.clientId === "string" ? body.clientId : null,
+      email: typeof body.clientEmail === "string" ? body.clientEmail : null,
+      telefone: typeof body.clientPhone === "string" ? body.clientPhone : null,
+      exigirUnico: true,
+      semVinculo: true,
+    });
+    if (achado.tipo === "ticket") {
+      try {
+        await updateTicket({
+          ticketId: achado.id,
+          commentBody: `${subject}\n\n${commentBody || htmlBody?.replace(/<[^>]+>/g, " ") || ""}`.trim(),
+          publicComment: false,
+          // Tag própria: "os-created" e "os-job" movem gatilhos de ticket aberto pelo OS, e este é do cliente.
+          additionalTags: [`os-${entityType}-linked`],
+        });
+        return NextResponse.json({ ok: true, ticketId: achado.id, reused: true });
+      } catch (err) {
+        console.error("[create-ticket-for-entity] reuse failed, opening a new ticket:", err);
+      }
+    }
+  }
 
   const customFields = Array.isArray(body.customFields) ? [...body.customFields] : [];
   if (ZENDESK_REPLY_STATUS_FIELD_ID > 0) {

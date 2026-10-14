@@ -1826,6 +1826,10 @@ function JobsPageContent() {
             entityType:  "job",
             subject,
             commentBody: lines.join("\n"),
+            // Um ticket por pedido: com o cliente, o OS reusa o ticket aberto dele (ONE_TICKET_JOB_REUSE_ON).
+            clientId:    formData.client_id ?? null,
+            clientEmail: (formData as { client_email?: string }).client_email ?? null,
+            clientPhone: (formData as { client_phone?: string }).client_phone ?? null,
             ticketFormId: ZENDESK_JOB_TICKET_FORM_ID || undefined,
             customFields: buildZendeskCustomFields([
               [ZENDESK_FIELD_JOB_DATE, formData.scheduled_date ? String(formData.scheduled_date).slice(0, 10) : null],
@@ -1848,6 +1852,7 @@ function JobsPageContent() {
         }
         formData.external_source = "zendesk";
         formData.external_ref    = String(j.ticketId);
+        if (j.reused) toast.success(`Linked to the customer's open Zendesk ticket #${j.ticketId}`);
       } catch (err) {
         toast.error(getErrorMessage(err, "Zendesk ticket creation failed"));
         return;

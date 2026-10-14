@@ -16,6 +16,8 @@ import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
 import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
+import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
+import { lerFichaDoLead, notaDoMerge } from "@/lib/um-ticket/resumo-do-lead";
 
 const GRUPO_PARCEIROS = "Partners";
 const ORG_CLIENTES = { external_id: "fixfy:b2c-customers", name: "Fixfy Customers" };
@@ -157,6 +159,12 @@ async function herdarDoLead(ticketWa: number, lead: { subject: string; requester
   if (doLead.name) await zendeskApi(`users/${wa.requester_id}.json`, { method: "PUT", body: { user: { name: doLead.name } } });
 }
 
+/** O texto do primeiro comentário do ticket (a ficha do lead). */
+export async function primeiroComentario(ticketId: number): Promise<string | null> {
+  const r = await zendeskApi<{ comments: Array<{ body?: string }> }>(`tickets/${ticketId}/comments.json?sort_order=asc&per_page=1`);
+  return r.comments?.[0]?.body ?? null;
+}
+
 /**
  * O cliente respondeu o template: o ticket do lead (aberto no envio, com a
  * ficha e a nota do template) entra no ticket do WhatsApp. Merge do Zendesk:
@@ -170,16 +178,23 @@ export async function juntarTicketDoLead(ticketWa: number, externalId: string): 
   // novo"): o Zendesk sempre cria um ticket para a conversa do WhatsApp, com o nome
   // do perfil do WhatsApp. Ele herda o assunto, a prioridade, as tags e a pessoa do lead.
   await herdarDoLead(ticketWa, lead).catch((e) => console.error("[harvey-wa] herdar do lead:", e));
+  // O pedido do Checkatrade vai na nota do merge (dono, 14/10/2026): quem abre o
+  // ticket que fica vê o serviço, o postcode e o que o cliente pediu, sem caçar o lead fechado.
+  const notaDoAlvo = umTicketNotaDoMerge()
+    ? await primeiroComentario(lead.id).then((t) => notaDoMerge(lead.id, lerFichaDoLead(t), t)).catch(() => null)
+    : null;
   await zendeskApi(`tickets/${ticketWa}/merge.json`, {
     method: "POST",
     body: {
       ids: [lead.id],
       source_comment: `The customer replied on WhatsApp. Everything continues in #${ticketWa}.`,
       source_comment_is_public: false,
-      target_comment: `Lead ticket #${lead.id} (first contact, template sent) merged here.`,
+      target_comment: notaDoAlvo ?? `Lead ticket #${lead.id} (first contact, template sent) merged here.`,
       target_comment_is_public: false,
     },
   });
+  // O lead entrou na conversa: ela é a linha da view 🎯 Leads agora.
+  await desmarcarConversaEspelhada(ticketWa).catch(() => {});
   return `, lead #${lead.id} juntado`;
 }
 
@@ -304,6 +319,32 @@ async function espelharNoAnterior(ticketWa: number, anterior: number): Promise<s
   return `, #${anterior} espelhado (Harvey atendendo)`;
 }
 
+/**
+ * View 🎯 Leads com UMA linha por cliente enquanto o Harvey atende (dono,
+ * 14/10/2026). O lead (com a ficha do Checkatrade) e a conversa do WhatsApp
+ * apareciam os dois. A conversa "AI agent" recusa assunto, nota e merge, mas
+ * aceita tag pela API (auditoria do #51328, 14/10/2026: harvey_ai, harvey_wa,
+ * harvey_wa_lead e lead_checkatrade gravados com ela em ai_agent). Ela ganha
+ * `lead_mirrored`, e a view esconde quem tem a tag (scripts/zendesk-view-leads-uma-linha.mts).
+ * Só marca quando algum ticket anterior está aberto: é ele que fica na view.
+ */
+async function marcarConversaEspelhada(ticketWa: number, anteriores: number[]): Promise<string> {
+  if (!anteriores.length) return "";
+  const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets/show_many.json?ids=${anteriores.join(",")}`);
+  if (!(tickets ?? []).some((t) => t.id !== ticketWa && !["solved", "closed"].includes(t.status))) return "";
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[] } }>(`tickets/${ticketWa}.json`);
+  if (t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return "";
+  // PUT acrescenta (POST substituiria as tags da conversa).
+  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags: [TAG_CONVERSA_ESPELHADA] } });
+  return `, #${ticketWa} fora da view Leads (espelhado)`;
+}
+
+async function desmarcarConversaEspelhada(ticketWa: number): Promise<void> {
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[] } }>(`tickets/${ticketWa}.json`);
+  if (!t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return;
+  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "DELETE", body: { tags: [TAG_CONVERSA_ESPELHADA] } });
+}
+
 async function ticketsAnteriores(dados: Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob">): Promise<number[]> {
   const ids: number[] = [];
   if (dados.ticketDoLead) {
@@ -338,9 +379,14 @@ export async function juntarTicketsDaConversa(
   }
   if (tipo === "ai_agent") {
     let espelho = "";
-    for (const anterior of await ticketsAnteriores(dados)) espelho += await espelharNoAnterior(ticket, anterior).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
+    const anteriores = await ticketsAnteriores(dados);
+    for (const anterior of anteriores) espelho += await espelharNoAnterior(ticket, anterior).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
+    if (umTicketLeadsView()) espelho += await marcarConversaEspelhada(ticket, anteriores).catch((e) => `, tag de espelho falhou: ${e instanceof Error ? e.message : e}`);
     return `ticket ${ticket} (AI agent)${espelho}`;
   }
+  // Passou para a equipe: a conversa volta a aparecer na view 🎯 Leads (o lead entra nela pelo merge).
+  // Tira a tag mesmo com a chave desligada: tag esquecida esconderia o ticket para sempre.
+  await desmarcarConversaEspelhada(ticket).catch((e) => console.warn("[harvey-wa] tirar tag de espelho:", e instanceof Error ? e.message : e));
   let juntou = "";
   if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
