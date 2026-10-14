@@ -8,8 +8,8 @@
  *
  * Só entra o que o site vende e fecha pelo link: deep clean, after builders,
  * reparos (meia diária e diária), pintura (retoque, cômodo, diária) e os três
- * certificados. Preços do site em 14/10/2026, com VAT. Garantia de volta grátis:
- * 3 dias na limpeza, 14 dias em reparos e pintura. Material de reparo é cotado
+ * certificados. Preços do site em 14/10/2026 (o preço da tela é o total: no
+ * modelo de agente o B2C nunca diz "VAT included"). Garantia: 14 dias (dono, 14/10). Material de reparo é cotado
  * à parte. Nada de trabalho em altura.
  */
 
@@ -52,7 +52,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
         "<strong>Painting</strong>: touch-ups from £215, a full room from £450",
         "<strong>Certificates</strong>: Gas Safety £79, EICR from £129, EPC from £95",
       ]),
-      t("If something is not right, we come back free of charge. And your first booking is <strong>10% off</strong> with the code below."),
+      t("If something is not right, we come back within 14 days and put it right free of charge. And your first booking is <strong>10% off</strong> with the code below."),
     ],
     cta: "Book with 10% off",
     cupom: "WELCOME10",
@@ -92,7 +92,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
         "Two full coats on the walls, edges cut in by hand",
         "Everything put back and the room left clean",
       ]),
-      t("Paint and materials can be added as a pack for £150, or you choose your own colour and we use it. If anything is not right, we come back and put it right free of charge."),
+      t("Paint and materials can be added as a pack for £150, or you choose your own colour and we use it. Painting is guaranteed for 3 months: if anything is not right, we come back and put it right free of charge."),
     ],
     cta: "Book a room",
   },
@@ -167,7 +167,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
         "A Gas Safe registered engineer",
         "Every gas appliance checked and tested",
         "The certificate sent to you by email",
-        "£79 for one appliance, VAT included",
+        "£79 for one appliance, the total you pay",
       ]),
       t("Landlords: book it with the EICR and EPC and the bundle is 10% off with the code below."),
     ],

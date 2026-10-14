@@ -6,7 +6,7 @@
  *                              `marketing-stop` e resolve o ticket, para
  *                              ninguém do time perder tempo com ele
  *   qualquer outra resposta    carimba `replied_at` no toque e põe a tag
- *                              `campanha-week10`, para quem atende saber de
+ *                              `campanha-marketing`, para quem atende saber de
  *                              onde a pessoa veio. O ticket fica para o time.
  *
  * Tags passam por `addTicketTags` (lê, une e grava): gravar a lista direto
@@ -82,7 +82,7 @@ export async function varrerRespostasDoZendesk(opcoes: { minutos?: number; aplic
     res.detalhes.push({ ticket: t.id, tipo: "resposta" });
     if (!opcoes.aplicar) continue;
     if (!toque.replied_at) await sb.from("marketing_touches").update({ replied_at: dela.created_at }).eq("id", toque.id);
-    if (!t.tags.includes("campanha-week10")) await addTicketTags(t.id, ["campanha-week10"]);
+    if (!t.tags.includes("campanha-marketing")) await addTicketTags(t.id, ["campanha-marketing"]);
   }
   return { ok: true, ...res };
 }

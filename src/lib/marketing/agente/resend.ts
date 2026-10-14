@@ -81,3 +81,7 @@ export const agendarBroadcast = (id: string, quando?: Date) =>
 /** Põe um contato que já existe na conta em mais um segmento. */
 export const adicionarAoSegmento = (contatoId: string, segmento: string) =>
   api<unknown>("POST", `/contacts/${contatoId}/segments/${segmento}`);
+
+/** Tira o contato de um segmento sem apagá-lo da conta (ele pode estar em outro). */
+export const removerDoSegmento = (contatoId: string, segmento: string) =>
+  api<unknown>("DELETE", `/contacts/${contatoId}/segments/${segmento}`);

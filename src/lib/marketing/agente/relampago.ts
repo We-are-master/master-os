@@ -26,7 +26,7 @@ import {
   HORA_DO_WHATSAPP_RELAMPAGO, SITE, abreEm, fechaEm, horaDeLondres, linkDoRelampago, type Relampago,
 } from "./calendario";
 import { htmlDoBroadcast, remetente } from "./clube";
-import { publico } from "./lista";
+import { publico, publicoComPosicao } from "./lista";
 import { agendarBroadcast, broadcasts, criarBroadcast } from "./resend";
 
 export const campanhaDoRelampago = (r: Relampago) => `flash:${r.slug}`;
@@ -112,22 +112,32 @@ export function htmlDoRelampago(r: Relampago): string {
   });
 }
 
-async function emailDoRelampago(r: Relampago, segmento: string, agora: Date): Promise<string> {
-  const nome = nomeDoBroadcastRelampago(r);
-  const existente = (await broadcasts()).find((b) => b.name === nome);
-  if (existente && (existente.scheduled_at || existente.sent_at || existente.status !== "draft")) return "já estava agendado";
+/** O mesmo e-mail para as duas listas do clube (lead demorando e cliente; lead antigo). */
+async function emailDoRelampago(r: Relampago, segmentos: { duas: string | null; semanal: string | null }, agora: Date): Promise<string> {
   const { from, reply_to } = remetente();
-  const id = existente?.id ?? (await criarBroadcast({ segment_id: segmento, from, reply_to, subject: r.email.assunto, html: htmlDoRelampago(r), name: nome })).id;
   const quando = abreEm(r);
-  await agendarBroadcast(id, quando.getTime() > agora.getTime() + 2 * 60 * 1000 ? quando : undefined);
-  return quando.getTime() > agora.getTime() ? `agendado para ${quando.toISOString()}` : "enviado agora";
+  const todos = await broadcasts();
+  const feito: string[] = [];
+  for (const lista of ["duas", "semanal"] as const) {
+    const segmento = segmentos[lista];
+    if (!segmento) continue;
+    const nome = `${nomeDoBroadcastRelampago(r)}${lista === "semanal" ? " · Weekly" : ""}`;
+    const existente = todos.find((b) => b.name === nome);
+    if (existente && (existente.scheduled_at || existente.sent_at || existente.status !== "draft")) { feito.push(`${lista}: já estava`); continue; }
+    const id = existente?.id ?? (await criarBroadcast({ segment_id: segmento, from, reply_to, subject: r.email.assunto, html: htmlDoRelampago(r), name: nome })).id;
+    await agendarBroadcast(id, quando.getTime() > agora.getTime() + 2 * 60 * 1000 ? quando : undefined);
+    feito.push(`${lista}: ${quando.getTime() > agora.getTime() ? `agendado para ${quando.toISOString()}` : "enviado agora"}`);
+  }
+  return feito.join(" · ");
 }
 
 /* ═══════════════════ WhatsApp ═══════════════════ */
 
 /** Põe na fila os números mais quentes (quem comprou primeiro), até o teto. Rodar de novo não duplica. */
 async function filaDoWhatsApp(r: Relampago, aplicar: boolean): Promise<{ alcancaveis: number; naFila: number }> {
-  const { alvos } = await publico({ ignorarJobRecente: false });
+  // Relâmpago não vai para lead novo (A), job em andamento (D) nem cliente recente (E).
+  const recentes = new Set((await publico({ ignorarJobRecente: false })).alvos.map((a) => a.clientId));
+  const alvos = (await publicoComPosicao()).filter((a) => recentes.has(a.clientId) && ["B", "C", "F"].includes(a.posicao));
   const comNumero = alvos.filter((a) => a.phone);
   const escolhidos = comNumero.slice(0, tetoDoWhatsApp());
   if (!aplicar || !escolhidos.length) return { alcancaveis: comNumero.length, naFila: escolhidos.length };
@@ -146,7 +156,7 @@ async function filaDoWhatsApp(r: Relampago, aplicar: boolean): Promise<{ alcanca
 export type ResultadoDaAbertura = { relampago: string; codigo: string; ok: boolean; motivo?: string; codigoCriado?: boolean; email?: string; whatsapp?: { alcancaveis: number; naFila: number } };
 
 /** O dia de abertura inteiro. Sem `aplicar` diz o que faria. */
-export async function abrirRelampago(r: Relampago, opcoes: { aplicar: boolean; segmento: string | null; agora?: Date }): Promise<ResultadoDaAbertura> {
+export async function abrirRelampago(r: Relampago, opcoes: { aplicar: boolean; segmentos: { duas: string | null; semanal: string | null }; agora?: Date }): Promise<ResultadoDaAbertura> {
   const agora = opcoes.agora ?? new Date();
   const res: ResultadoDaAbertura = { relampago: r.slug, codigo: r.codigo, ok: false };
   if (agora.getTime() > fechaEm(r).getTime() - 6 * 60 * 60 * 1000) return { ...res, motivo: "tarde demais: faltam menos de 6 horas para fechar" };
@@ -158,8 +168,8 @@ export async function abrirRelampago(r: Relampago, opcoes: { aplicar: boolean; s
 
   res.whatsapp = await filaDoWhatsApp(r, opcoes.aplicar);
   if (opcoes.aplicar) {
-    if (!opcoes.segmento) return { ...res, motivo: "a lista da Resend ainda não existe" };
-    res.email = await emailDoRelampago(r, opcoes.segmento, agora);
+    if (!opcoes.segmentos.duas) return { ...res, motivo: "a lista da Resend ainda não existe" };
+    res.email = await emailDoRelampago(r, opcoes.segmentos, agora);
   } else res.email = `seria agendado para ${abreEm(r).toISOString()}`;
   res.ok = true;
   return res;

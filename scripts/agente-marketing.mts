@@ -6,6 +6,7 @@
  *   npx tsx scripts/agente-marketing.mts --lista [--aplicar]     # sincroniza a lista "Fixfy Clients" na Resend
  *   npx tsx scripts/agente-marketing.mts --clube [--aplicar]     # cria os broadcasts como RASCUNHO na Resend
  *   npx tsx scripts/agente-marketing.mts --clube --agendar --aplicar   # e põe a hora em cada um
+ *   npx tsx scripts/agente-marketing.mts --avaliacao [--aplicar]  # grupo E: pedido de avaliação e indicação
  *   npx tsx scripts/agente-marketing.mts --manha [--aplicar]     # a rotina da manhã inteira
  *   npx tsx scripts/agente-marketing.mts --tarde [--aplicar]     # o WhatsApp do relâmpago no ar
  *   npx tsx scripts/agente-marketing.mts --teste-wa=447700900123 --relampago=paint15   # UM WhatsApp, para o seu número
@@ -59,10 +60,16 @@ if (arg("plano")) {
 } else if (arg("lista")) {
   console.log(JSON.stringify(await lista.sincronizarLista({ aplicar: APLICAR, maxOperacoes: Number(valor("max") ?? "5000") }), null, 2));
 } else if (arg("clube")) {
-  const segmento = await segmentoPeloNome(lista.NOME_DO_SEGMENTO, false);
-  if (!segmento) console.log(`A lista "${lista.NOME_DO_SEGMENTO}" ainda não existe na Resend: rode --lista --aplicar antes.\n`);
-  const linhas = await clube.montarClube({ aplicar: APLICAR, agendar: Boolean(arg("agendar")), segmento });
-  for (const l of linhas) console.log(`  ${l.dia}  ${l.estado.padEnd(12)} ${l.key.padEnd(22)} ${l.detalhe ?? ""}`);
+  const segmentos = {
+    duas: await segmentoPeloNome(lista.NOME_DO_SEGMENTO, false),
+    semanal: await segmentoPeloNome(lista.NOME_DO_SEGMENTO_SEMANAL, false),
+  };
+  if (!segmentos.duas || !segmentos.semanal) console.log("As listas do clube ainda não existem na Resend: rode --lista --aplicar antes.\n");
+  const linhas = await clube.montarClube({ aplicar: APLICAR, agendar: Boolean(arg("agendar")), segmentos });
+  for (const l of linhas) console.log(`  ${l.dia}  ${l.lista.padEnd(8)} ${l.estado.padEnd(12)} ${l.key.padEnd(22)} ${l.detalhe ?? ""}`);
+} else if (arg("avaliacao")) {
+  const { mandarAvaliacoes } = await import("../src/lib/marketing/agente/avaliacao");
+  console.log(await mandarAvaliacoes({ aplicar: APLICAR }));
 } else if (arg("b2b-onda")) {
   console.log(JSON.stringify(await b2b.montarOnda({ onda: Number(valor("b2b-onda") || 1), aplicar: APLICAR }), null, 2));
 } else if (arg("b2b")) {

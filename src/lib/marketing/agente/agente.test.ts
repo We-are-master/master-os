@@ -110,3 +110,26 @@ test("clube B2C: nenhuma peça fala de mudança de casa, e não repete o mesmo s
   const tipos = CLUBE.map((e) => pecaDaEdicao(e).etiqueta);
   for (let i = 1; i < tipos.length; i++) assert.notEqual(tipos[i], tipos[i - 1], `${CLUBE[i].dia} repete ${tipos[i]}`);
 });
+
+import { posicaoDoCliente, segmentoDaPosicao } from "./lista";
+import { vaiParaSemanal } from "./clube";
+
+test("posição do lead: novo, demorando, antigo, em andamento, cliente recente e cliente", () => {
+  const hoje = new Date("2026-10-14T12:00:00Z");
+  const criado = (dias: number) => ({ created_at: new Date(hoje.getTime() - dias * 864e5).toISOString() });
+  const job = (status: string, dias: number) => ({ status, scheduled_date: new Date(hoje.getTime() - dias * 864e5).toISOString().slice(0, 10), created_at: hoje.toISOString() });
+  assert.equal(posicaoDoCliente(criado(3), [], hoje).posicao, "A");
+  assert.equal(posicaoDoCliente(criado(40), [], hoje).posicao, "B");
+  assert.equal(posicaoDoCliente(criado(200), [], hoje).posicao, "C");
+  assert.equal(posicaoDoCliente(criado(200), [job("scheduled", -2)], hoje).posicao, "D");
+  assert.equal(posicaoDoCliente(criado(200), [job("completed", 12)], hoje).posicao, "E");
+  assert.equal(posicaoDoCliente(criado(200), [job("completed", 90)], hoje).posicao, "F");
+  // Job cancelado não conta: continua lead.
+  assert.equal(posicaoDoCliente(criado(40), [job("cancelled", 5)], hoje).posicao, "B");
+  assert.deepEqual(["A", "B", "C", "D", "E", "F"].map((p) => segmentoDaPosicao(p as never)), [null, "duas", "semanal", null, null, "duas"]);
+});
+
+test("a lista semanal recebe só as edições de terça", () => {
+  const semanais = CLUBE.filter(vaiParaSemanal);
+  assert.ok(semanais.length >= 12 && semanais.every((e) => new Date(`${e.dia}T12:00:00Z`).getUTCDay() === 2));
+});

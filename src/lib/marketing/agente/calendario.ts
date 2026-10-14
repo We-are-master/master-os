@@ -113,7 +113,7 @@ export const HORA_DO_WHATSAPP_RELAMPAGO = 15;
 const t = (html: string): Bloco => ({ tipo: "texto", html });
 const l = (titulo: string, itens: string[]): Bloco => ({ tipo: "lista", titulo, itens });
 
-const REGRAS = "Prices include VAT and are fixed before you book. Every pro is vetted and insured. The code is applied for you when you open the link below, and it stops working on Thursday at midnight or after the first 25 bookings, whichever comes first.";
+const REGRAS = "The price you see is the total, fixed before you book. Every pro is vetted and insured, and if anything is not right we come back within 14 days. The code is applied for you when you open the link below, and it stops working on Thursday at midnight or after the first 25 bookings, whichever comes first.";
 
 export const RELAMPAGOS: Relampago[] = [
   {

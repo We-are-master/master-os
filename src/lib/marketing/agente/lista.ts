@@ -26,9 +26,12 @@ import { classificar, type Classificado } from "@/lib/marketing/campanha";
 import { contasNossas } from "@/lib/marketing/lifecycle";
 import { bloquear, normalizarEmail } from "@/lib/marketing/suppressions";
 import { toWhatsAppNumber } from "@/lib/whatsapp/cloud";
-import { contatosDoSegmento, criarContato, marcarSaida, segmentoPeloNome } from "./resend";
+import { adicionarAoSegmento, contatosDoSegmento, criarContato, marcarSaida, removerDoSegmento, segmentoPeloNome, type ContatoResend } from "./resend";
 
+/** Recebe o clube 2x por semana: lead demorando (B) e cliente (F). */
 export const NOME_DO_SEGMENTO = "Fixfy Clients";
+/** Recebe só a edição de terça: lead antigo (C). */
+export const NOME_DO_SEGMENTO_SEMANAL = "Fixfy Clients · Weekly";
 
 const RAMPA: Array<{ ate: string; teto: number }> = [
   { ate: "2026-10-20", teto: 600 },
@@ -93,12 +96,77 @@ export async function publico(opcoes: { ignorarJobRecente: boolean }): Promise<{
   return classificar(lista, bloqueio, contasNossas());
 }
 
+/* ═══════════════════ Posição do lead ═══════════════════ */
+
+/**
+ * Onde a pessoa está no funil, recalculado todo dia (dono, 14/10/2026):
+ *
+ *   A  lead novo, até 14 dias        nada do clube: o follow-up do lead no Zendesk cobre
+ *   B  lead demorando, 15 a 90 dias  clube 2x por semana e relâmpagos
+ *   C  lead antigo, mais de 90 dias  só a edição de terça e relâmpagos
+ *   D  fechou, job em andamento      nenhuma promoção
+ *   E  cliente, job há até 30 dias   pedido de avaliação e indicação (avaliacao.ts)
+ *   F  cliente, job há mais de 30    clube 2x por semana, relâmpagos e ofertas de volta
+ */
+export type Posicao = "A" | "B" | "C" | "D" | "E" | "F";
+
+const FEITO = new Set(["completed", "invoiced", "paid", "closed"]);
+const FORA = new Set(["cancelled", "lost", "deleted"]);
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+export function posicaoDoCliente(
+  cliente: { created_at: string },
+  jobs: Array<{ status: string | null; scheduled_date: string | null; created_at: string }>,
+  agora = new Date(),
+): { posicao: Posicao; ultimoJob: Date | null } {
+  const validos = jobs.filter((j) => !FORA.has(String(j.status)));
+  if (validos.some((j) => !FEITO.has(String(j.status)))) return { posicao: "D", ultimoJob: null };
+  if (validos.length) {
+    const ultimo = new Date(Math.max(...validos.map((j) => Date.parse(j.scheduled_date ?? j.created_at))));
+    return { posicao: agora.getTime() - ultimo.getTime() <= 30 * DIA_MS ? "E" : "F", ultimoJob: ultimo };
+  }
+  const idade = (agora.getTime() - Date.parse(cliente.created_at)) / DIA_MS;
+  return { posicao: idade <= 14 ? "A" : idade <= 90 ? "B" : "C", ultimoJob: null };
+}
+
+export type Alvo = Classificado & { posicao: Posicao; ultimoJob: Date | null };
+
+/** A base com e-mail e a posição de cada um. A ordem é a de prioridade da rampa: cliente, lead recente, lead antigo. */
+export async function publicoComPosicao(agora = new Date()): Promise<Alvo[]> {
+  const sb = createServiceClient();
+  const { alvos } = await publico({ ignorarJobRecente: true });
+  const ids = new Set(alvos.map((a) => a.clientId));
+  const [clientes, jobs] = await Promise.all([
+    paginar<{ id: string; created_at: string }>((de, ate) => sb.from("clients").select("id, created_at").is("deleted_at", null).range(de, ate)),
+    paginar<{ client_id: string; status: string | null; scheduled_date: string | null; created_at: string }>((de, ate) =>
+      sb.from("jobs").select("client_id, status, scheduled_date, created_at").is("deleted_at", null).range(de, ate)),
+  ]);
+  const criado = new Map(clientes.filter((c) => ids.has(c.id)).map((c) => [c.id, c.created_at]));
+  const porCliente = new Map<string, typeof jobs>();
+  for (const j of jobs) if (ids.has(j.client_id)) (porCliente.get(j.client_id) ?? porCliente.set(j.client_id, []).get(j.client_id)!).push(j);
+  const ordem: Record<Posicao, number> = { F: 0, E: 1, B: 2, C: 3, A: 4, D: 5 };
+  return alvos
+    .map((a) => ({ ...a, ...posicaoDoCliente({ created_at: criado.get(a.clientId) ?? new Date(0).toISOString() }, porCliente.get(a.clientId) ?? [], agora) }))
+    .sort((x, y) => ordem[x.posicao] - ordem[y.posicao]);
+}
+
+/** Em que lista do clube a posição fica. */
+export function segmentoDaPosicao(p: Posicao): "duas" | "semanal" | null {
+  if (p === "B" || p === "F") return "duas";
+  if (p === "C") return "semanal";
+  return null;
+}
+
+/* ═══════════════════ Sincronização ═══════════════════ */
+
 export type ResultadoDaLista = {
-  segmento: string | null;
-  elegiveis: number;
+  segmentos: { duas: string | null; semanal: string | null };
+  posicoes: Record<Posicao, number>;
   teto: number | null;
   naResend: number;
-  novos: number;
+  entraram: number;
+  mudaramDeLista: number;
+  sairamDoClube: number;
   sairamNaResend: number;
   marcadosLa: number;
   faltamEntrar: number;
@@ -106,67 +174,101 @@ export type ResultadoDaLista = {
 };
 
 /**
- * Deixa a lista da Resend igual à do OS. `maxOperacoes` existe porque cada
- * contato é uma chamada e a rota do cron tem 5 minutos: a carga inicial roda
- * pelo script, as voltas diárias só carregam a diferença.
+ * Deixa as duas listas da Resend iguais ao OS. Anda nos dois sentidos:
+ * descadastro na Resend vira bloqueio aqui (e-mail e WhatsApp), e bloqueio
+ * aqui vira descadastro lá. Quem só mudou de posição muda de lista, sem
+ * descadastro: o lead que fechou sai do clube enquanto o job anda e volta
+ * como cliente. `maxOperacoes` existe porque cada contato é uma chamada e a
+ * rota do cron tem 5 minutos.
  */
 export async function sincronizarLista(opcoes: { aplicar: boolean; maxOperacoes?: number; agora?: Date }): Promise<ResultadoDaLista> {
   const max = opcoes.maxOperacoes ?? 350;
   const teto = tetoDaLista(opcoes.agora);
-  const { alvos } = await publico({ ignorarJobRecente: true });
-  const elegiveis = alvos.filter((a) => a.email) as Array<Classificado & { email: string }>;
-  const porEmail = new Map(elegiveis.map((a) => [a.email, a]));
+  const alvos = (await publicoComPosicao(opcoes.agora)).filter((a) => a.email) as Array<Alvo & { email: string }>;
+  const porEmail = new Map(alvos.map((a) => [a.email, a]));
 
   const r: ResultadoDaLista = {
-    segmento: null, elegiveis: elegiveis.length, teto: Number.isFinite(teto) ? teto : null,
-    naResend: 0, novos: 0, sairamNaResend: 0, marcadosLa: 0, faltamEntrar: 0, erros: [],
+    segmentos: { duas: null, semanal: null },
+    posicoes: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 },
+    teto: Number.isFinite(teto) ? teto : null,
+    naResend: 0, entraram: 0, mudaramDeLista: 0, sairamDoClube: 0, sairamNaResend: 0, marcadosLa: 0, faltamEntrar: 0, erros: [],
   };
+  for (const a of alvos) r.posicoes[a.posicao]++;
 
-  const segmento = await segmentoPeloNome(NOME_DO_SEGMENTO, opcoes.aplicar);
-  r.segmento = segmento;
-  const la = segmento ? await contatosDoSegmento(segmento) : [];
-  r.naResend = la.length;
-  const jaEsta = new Set<string>();
+  const seg = {
+    duas: await segmentoPeloNome(NOME_DO_SEGMENTO, opcoes.aplicar),
+    semanal: await segmentoPeloNome(NOME_DO_SEGMENTO_SEMANAL, opcoes.aplicar),
+  };
+  r.segmentos = seg;
+  const atual = new Map<string, { contato: ContatoResend; lista: "duas" | "semanal" }>();
+  for (const lista of ["duas", "semanal"] as const) {
+    if (!seg[lista]) continue;
+    for (const c of await contatosDoSegmento(seg[lista] as string)) {
+      const e = normalizarEmail(c.email);
+      if (e) atual.set(e, { contato: c, lista });
+    }
+  }
+  r.naResend = atual.size;
+
   let operacoes = 0;
+  const pode = () => opcoes.aplicar && operacoes < max;
+  const erro = (e: unknown) => r.erros.push(String((e as Error).message ?? e));
   const sb = createServiceClient();
 
-  for (const c of la) {
-    const email = normalizarEmail(c.email);
-    if (!email) continue;
-    jaEsta.add(email);
+  // A rampa vale para o total do clube, na ordem de prioridade (cliente, lead
+  // recente, lead antigo): quem está além do teto de hoje sai da lista sem
+  // descadastro e volta quando o teto subir.
+  const doClube = alvos.filter((a) => segmentoDaPosicao(a.posicao));
+  const cabeHoje = new Set((Number.isFinite(teto) ? doClube.slice(0, teto) : doClube).map((a) => a.email));
+
+  for (const [email, { contato, lista }] of atual) {
     const alvo = porEmail.get(email);
-    if (c.unsubscribed && alvo) {
+    if (contato.unsubscribed) {
+      if (!alvo) continue;
       // Saiu pelo link do broadcast: o OS ainda não sabia.
       r.sairamNaResend++;
       if (!opcoes.aplicar) continue;
       await bloquear(email, "unsubscribed", "resend-broadcast");
       const fone = toWhatsAppNumber(alvo.phone);
       if (fone) await sb.from("whatsapp_suppressions").upsert({ phone: fone, reason: "stopped", source: "resend-broadcast" }, { onConflict: "phone", ignoreDuplicates: true });
-    } else if (!c.unsubscribed && !alvo) {
+      continue;
+    }
+    if (!alvo) {
       // Não pode mais receber (bloqueio, tag, apagado, virou plataforma).
       r.marcadosLa++;
-      if (!opcoes.aplicar || !segmento || operacoes >= max) continue;
-      operacoes++;
-      await marcarSaida(segmento, c.id).catch((e) => r.erros.push(String(e.message ?? e)));
+      if (pode()) { operacoes++; await marcarSaida(seg[lista] as string, contato.id).catch(erro); }
+      continue;
+    }
+    const devia = cabeHoje.has(email) ? segmentoDaPosicao(alvo.posicao) : null;
+    if (devia === lista) continue;
+    if (!devia) {
+      r.sairamDoClube++;
+      if (pode()) { operacoes++; await removerDoSegmento(contato.id, seg[lista] as string).catch(erro); }
+      continue;
+    }
+    r.mudaramDeLista++;
+    if (pode() && seg[devia]) {
+      operacoes += 2;
+      await adicionarAoSegmento(contato.id, seg[devia] as string).catch(erro);
+      await removerDoSegmento(contato.id, seg[lista] as string).catch(erro);
     }
   }
 
-  const vagas = Math.max(0, teto - la.length);
-  const entrando = elegiveis.filter((a) => !jaEsta.has(a.email));
-  const cabem = entrando.slice(0, Number.isFinite(vagas) ? vagas : entrando.length);
-  for (const a of cabem) {
-    if (!opcoes.aplicar || !segmento) { r.novos++; continue; }
+  const entrando = doClube.filter((a) => !atual.has(a.email));
+  for (const a of entrando.filter((x) => cabeHoje.has(x.email))) {
+    const destino = seg[segmentoDaPosicao(a.posicao) as "duas" | "semanal"];
+    if (!opcoes.aplicar || !destino) { r.entraram++; continue; }
     if (operacoes >= max) break;
     operacoes++;
     try {
-      await criarContato(segmento, { email: a.email, ...(a.nome && a.nome !== "there" ? { first_name: a.nome } : {}) });
-      r.novos++;
+      await criarContato(destino, { email: a.email, ...(a.nome && a.nome !== "there" ? { first_name: a.nome } : {}) });
+      r.entraram++;
     } catch (e) {
-      r.erros.push(String((e as Error).message ?? e));
+      erro(e);
       // Cota de contatos do plano ou chave sem permissão: insistir só repete o erro.
       if (r.erros.length >= 5) break;
     }
   }
-  r.faltamEntrar = entrando.length - r.novos;
+  r.faltamEntrar = entrando.length - r.entraram;
   return r;
 }
