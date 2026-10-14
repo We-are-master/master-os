@@ -1352,6 +1352,33 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
   return sbId;
 }
 
+/** Linha na Command history do job (audit_logs do job). Nunca derruba quem chamou. */
+async function historicoDoJob(
+  supabase: SupabaseClient,
+  jobId: string,
+  title: string,
+  detail: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { data } = await supabase.from("jobs").select("reference").eq("id", jobId).maybeSingle();
+    await supabase.from("audit_logs").insert({
+      entity_type: "job",
+      entity_id: jobId,
+      entity_ref: (data as { reference?: string } | null)?.reference ?? null,
+      action: "note",
+      field_name: "instalments",
+      metadata: { title, detail, ...(extra ?? {}) },
+    });
+  } catch {
+    console.error("historicoDoJob: audit insert failed");
+  }
+}
+
+function dataCurta(ymd: string): string {
+  return new Date(`${ymd.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" });
+}
+
 /**
  * Self-bill PRÓPRIO do job parcelado (mig 326, dono 15/10/2026).
  *
@@ -1432,6 +1459,13 @@ async function ensureDedicatedSelfBillForJob(
       if (!sbId) throw insErr;
     } else {
       sbId = (ins as { id: string }).id;
+      await historicoDoJob(
+        supabase,
+        job.id,
+        `Partner self-bill ${ref} opened for this job`,
+        `${job.partner_name?.trim() || "The partner"} is paid in instalments on a self-bill of its own, outside the fortnight run.`,
+        { self_bill_id: sbId },
+      );
     }
   }
 
@@ -1516,6 +1550,13 @@ export async function mirrorClientInstalmentsOnDedicatedSelfBill(
     .update({ payment_plan_active: true, due_date: drafts[0]!.due_date })
     .eq("id", selfBillId);
   if (upErr) throw upErr;
+  await historicoDoJob(
+    supabase,
+    job.id,
+    `Partner paid in ${drafts.length} instalments`,
+    `${drafts.map((d) => `£${d.amount.toFixed(2)} on ${dataCurta(d.due_date)}`).join(" · ")}. Same split and dates as the client; each one is released on its date.`,
+    { self_bill_id: selfBillId },
+  );
   return true;
 }
 
@@ -2089,6 +2130,14 @@ export async function setJobPartnerInstalments(jobId: string, on: boolean, clien
   if ((job.partner_paid_in_instalments === true) !== on) {
     const { error: upErr } = await supabase.from("jobs").update({ partner_paid_in_instalments: on }).eq("id", jobId);
     if (upErr) throw upErr;
+    if (!on) {
+      await historicoDoJob(
+        supabase,
+        jobId,
+        "Instalments removed",
+        "Client plan removed. The partner goes back to the fortnight self-bill.",
+      );
+    }
   }
   if (!job.partner_id?.trim()) return null;
   if (!on && antigo) await supabase.from("jobs").update({ self_bill_id: null }).eq("id", jobId);

@@ -75,13 +75,17 @@ export async function GET(req: NextRequest) {
     const inv = invRow as (Invoice & { source_account_id?: string | null }) | null;
     if (!inv || inv.deleted_at) continue;
     const tag = `${inv.reference} #${p.sequence}`;
+    // Escolhido ao criar a cobrança (mig 326): sem isto, quem pede a parcela é o escritório.
+    if ((inv as { instalments_auto_charge?: boolean }).instalments_auto_charge !== true) continue;
     if (FECHADAS.has(String(inv.status))) { out.push(`${tag}: skip (invoice ${inv.status})`); continue; }
     const saldo = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
     const valor = Math.min(Math.round(Number(p.amount) * 100) / 100, saldo);
     if (valor <= 0.02) { out.push(`${tag}: skip (nothing open)`); continue; }
 
+    let jobId: string | null = null;
     if (inv.job_reference) {
-      const { data: job } = await admin.from("jobs").select("status").eq("reference", inv.job_reference).maybeSingle();
+      const { data: job } = await admin.from("jobs").select("id, status").eq("reference", inv.job_reference).maybeSingle();
+      jobId = (job as { id?: string } | null)?.id ?? null;
       const st = (job as { status?: string } | null)?.status;
       if (st === "on_hold" || st === "cancelled") { out.push(`${tag}: skip (job ${st})`); continue; }
     }
@@ -130,6 +134,16 @@ ${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:#ED4B0
       entity_type: "invoice", entity_id: inv.id, entity_ref: inv.reference, action: "bulk_update",
       field_name: "instalment_requested", new_value: String(p.sequence), metadata: { to, amount: valor },
     });
+    if (jobId) {
+      await admin.from("audit_logs").insert({
+        entity_type: "job", entity_id: jobId, entity_ref: inv.job_reference, action: "note",
+        field_name: "instalments",
+        metadata: {
+          title: `Instalment ${p.sequence} of ${total ?? p.sequence} requested · £${valor.toFixed(2)}`,
+          detail: `Email with a pay link sent automatically to ${to}${cc.length ? ` (cc ${cc.join(", ")})` : ""}. Invoice ${inv.reference}.`,
+        },
+      });
+    }
     out.push(`${tag}: requested £${valor.toFixed(2)} from ${to}`);
   }
   return NextResponse.json({ ok: true, ensaio, today, results: out });

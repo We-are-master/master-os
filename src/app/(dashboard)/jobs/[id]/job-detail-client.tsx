@@ -93,6 +93,7 @@ import {
   XCircle,
   UserX, Layers, Undo2,
   MapPin,
+  History,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -157,6 +158,7 @@ import type {
   Partner,
   QuoteLineItem,
   SelfBill,
+  AuditLog,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
 import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
@@ -1518,6 +1520,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [savingFin, setSavingFin] = useState(false);
   const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
   const [jobEditMenuOpen, setJobEditMenuOpen] = useState(false);
+  /** Command history aberta por padrão, com os 3 últimos; fecha e abre no título. */
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyReload, setHistoryReload] = useState(0);
   const jobEditMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!jobEditMenuOpen) return;
@@ -7191,6 +7196,54 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     </div>
   );
 
+  /** Nota interna: grava no job (internal_notes, como sempre) e na Command history. */
+  const publishInternalNote = async () => {
+    if (!job || !internalNoteDraft.trim()) return;
+    const note = internalNoteDraft.trim();
+    const stamp = new Date().toISOString();
+    const author = profile?.full_name?.trim() || profile?.email?.trim() || "User";
+    const line = `[${stamp}] ${author}: ${note}`;
+    const prev = (job.internal_notes ?? "").trim();
+    const combined = prev ? `${prev}\n\n${line}` : line;
+    setSavingInternalNote(true);
+    try {
+      const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
+      if (updated) {
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "note",
+          fieldName: "internal_note",
+          newValue: note,
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: { source: "command_history", at: stamp },
+        }).catch(() => {});
+        setInternalNoteDraft("");
+        setHistoryReload((n) => n + 1);
+        setHistoryOpen(true);
+      }
+    } finally {
+      setSavingInternalNote(false);
+    }
+  };
+
+  /** Notas antigas que só existem no texto do job (antes do audit): entram na linha do tempo. */
+  const legacyNoteLogs: AuditLog[] = internalNotesEntries
+    .filter((e) => e.iso)
+    .map((e, i) => ({
+      id: `legacy-note-${i}-${e.iso}`,
+      entity_type: "job",
+      entity_id: job?.id ?? "",
+      action: "note",
+      field_name: "internal_note",
+      new_value: e.text,
+      user_name: e.author,
+      created_at: e.iso,
+      metadata: { legacy: true },
+    }));
+
   return (
     <PageTransition>
       <div className="w-full pb-4">
@@ -8256,7 +8309,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 1 as const }] : []),
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
-                    { label: "Notes", index: 4 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
                     ...(canManageJobs ? [{ label: "Setup", index: 5 as const }] : []),
                   ] as const
@@ -8794,81 +8846,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </>
             ) : null}
 
-            {detailTab === 4 ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Notes</p>
-                <textarea
-                  value={internalNoteDraft}
-                  onChange={(e) => setInternalNoteDraft(e.target.value)}
-                  rows={3}
-                  placeholder="Add an internal note…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                />
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    loading={savingInternalNote}
-                    disabled={!internalNoteDraft.trim()}
-                    onClick={async () => {
-                      if (!job || !internalNoteDraft.trim()) return;
-                      const note = internalNoteDraft.trim();
-                      const stamp = new Date().toISOString();
-                      const author = profile?.full_name?.trim() || profile?.email?.trim() || "User";
-                      const line = `[${stamp}] ${author}: ${note}`;
-                      const prev = (job.internal_notes ?? "").trim();
-                      const combined = prev ? `${prev}\n\n${line}` : line;
-                      setSavingInternalNote(true);
-                      try {
-                        const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
-                        if (updated) {
-                          void logAudit({
-                            entityType: "job",
-                            entityId: job.id,
-                            entityRef: job.reference,
-                            action: "note",
-                            fieldName: "internal_note",
-                            newValue: note,
-                            userId: profile?.id,
-                            userName: profile?.full_name,
-                            metadata: { source: "job_notes_tab", at: stamp },
-                          }).catch(() => {});
-                          setInternalNoteDraft("");
-                          toast.success("Note saved");
-                        }
-                      } finally {
-                        setSavingInternalNote(false);
-                      }
-                    }}
-                  >
-                    Save note
-                  </Button>
-                </div>
-              </div>
-              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Archived notes</p>
-                {internalNotesEntries.length === 0 ? (
-                  <p className="text-xs text-text-tertiary">No internal notes yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {internalNotesEntries.map((entry, idx) => (
-                      <div key={`${entry.iso}-${idx}`} className="rounded-lg border border-border-light bg-surface-hover/30 px-2.5 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold text-text-primary">{entry.author}</p>
-                          <p className="text-[10px] text-text-tertiary">
-                            {entry.iso ? new Date(entry.iso).toLocaleString() : "—"}
-                          </p>
-                        </div>
-                        <p className="mt-1 whitespace-pre-wrap text-xs text-text-secondary">{entry.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            ) : null}
 
             {/*
               A aba da reclamação: o que o cliente disse, e o que o parceiro
@@ -9100,9 +9077,67 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Command history</p>
-              <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
+            {/* Mesmo cabeçalho do Billing documents: linha em cima, ícone e título. */}
+            <div className="space-y-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((v) => !v)}
+                aria-expanded={historyOpen}
+                className="m-0 flex w-full items-center gap-1.5 text-left text-[12px] font-semibold text-text-primary"
+              >
+                <History className="h-3.5 w-3.5 text-primary" aria-hidden />
+                Command history
+                <FixfyHintIcon text="Everything done on this job: status, dates, money, messages and instalments. Latest first." />
+                <ChevronDown
+                  className={cn("ml-auto h-3.5 w-3.5 text-text-tertiary transition-transform", !historyOpen && "-rotate-90")}
+                  aria-hidden
+                />
+              </button>
+              {historyOpen ? (
+                <>
+                  <div className="rounded-xl border border-border bg-card p-2.5">
+                    <div className="flex gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--nav-bg,#020040)] text-[12px] font-semibold text-white">
+                        {(profile?.full_name?.trim() || "U").charAt(0).toUpperCase()}
+                      </span>
+                      <textarea
+                        value={internalNoteDraft}
+                        onChange={(e) => setInternalNoteDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            void publishInternalNote();
+                          }
+                        }}
+                        rows={2}
+                        placeholder="Write a note for the team"
+                        className="min-h-[52px] w-full resize-y border-0 bg-transparent p-0 pt-1.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-text-tertiary">Only the team sees notes.</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 px-3 text-xs"
+                        loading={savingInternalNote}
+                        disabled={!internalNoteDraft.trim()}
+                        onClick={() => void publishInternalNote()}
+                      >
+                        Post
+                      </Button>
+                    </div>
+                  </div>
+                  <AuditTimeline
+                    entityType="job"
+                    entityId={job.id}
+                    deferUntilVisible
+                    previewCount={3}
+                    reloadKey={historyReload}
+                    extraLogs={legacyNoteLogs}
+                  />
+                </>
+              ) : null}
             </div>
 
           </div>
@@ -9350,6 +9385,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="mt-2">
                       <JobPaymentPlanPanel
                         kind="client"
+                        jobId={job.id}
+                        jobRef={job.reference}
                         entityId={primaryInv.id}
                         totalAmount={Number(primaryInv.amount ?? billableRevenue)}
                         amountPaid={customerPaidTotal}

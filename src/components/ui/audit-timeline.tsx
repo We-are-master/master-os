@@ -92,6 +92,12 @@ interface AuditTimelineProps {
   variant?: "default" | "quote-drawer";
   /** When true, audit logs are fetched only after the block enters the viewport (lighter initial page load). */
   deferUntilVisible?: boolean;
+  /** Mostra só os N mais recentes; o resto abre e fecha num botão. */
+  previewCount?: number;
+  /** Muda o número para recarregar (ex.: nota acabou de ser publicada). */
+  reloadKey?: number;
+  /** Linhas que não estão no audit (notas antigas do texto do job). Repetidas com o audit somem. */
+  extraLogs?: AuditLog[];
 }
 
 export function AuditTimeline({
@@ -100,7 +106,11 @@ export function AuditTimeline({
   className = "",
   variant = "default",
   deferUntilVisible = false,
+  previewCount,
+  reloadKey,
+  extraLogs,
 }: AuditTimelineProps) {
+  const [showAll, setShowAll] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [shouldLoad, setShouldLoad] = useState(!deferUntilVisible);
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -138,7 +148,7 @@ export function AuditTimeline({
   useEffect(() => {
     if (!shouldLoad) return;
     load();
-  }, [shouldLoad, load]);
+  }, [shouldLoad, load, reloadKey]);
 
   if (!shouldLoad) {
     return (
@@ -168,7 +178,15 @@ export function AuditTimeline({
     );
   }
 
-  if (logs.length === 0) {
+  const notasNoAudit = new Set(
+    logs.filter((l) => l.field_name === "internal_note" && l.new_value).map((l) => (l.new_value ?? "").trim()),
+  );
+  const extras = (extraLogs ?? []).filter((l) => !notasNoAudit.has((l.new_value ?? "").trim()));
+  const allLogs = extras.length
+    ? [...logs, ...extras].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    : logs;
+
+  if (allLogs.length === 0) {
     return (
       <div ref={containerRef} className={`py-12 text-center ${className}`}>
         <Clock className="h-8 w-8 text-stone-300 mx-auto mb-2" />
@@ -178,7 +196,18 @@ export function AuditTimeline({
     );
   }
 
-  const grouped = groupByDate(logs);
+  const hidden = previewCount && !showAll ? Math.max(0, allLogs.length - previewCount) : 0;
+  const grouped = groupByDate(hidden > 0 ? allLogs.slice(0, previewCount) : allLogs);
+  const toggle =
+    previewCount && allLogs.length > previewCount ? (
+      <button
+        type="button"
+        onClick={() => setShowAll((v) => !v)}
+        className="text-[12px] font-medium text-primary hover:underline"
+      >
+        {showAll ? "Show less" : `Show ${allLogs.length - previewCount} more`}
+      </button>
+    ) : null;
 
   return (
     <div ref={containerRef} className={`space-y-5 ${className}`}>
@@ -228,7 +257,7 @@ export function AuditTimeline({
                         <p className="text-sm font-medium text-text-primary">
                           {getLogTitle(log)}
                         </p>
-                        <p className="text-xs text-text-tertiary mt-0.5">
+                        <p className="text-xs text-text-tertiary mt-0.5 whitespace-pre-wrap break-words">
                           {getLogDescription(log)}
                         </p>
                       </div>
@@ -236,7 +265,7 @@ export function AuditTimeline({
                     </div>
 
                     {/* Field change detail */}
-                    {log.field_name && log.action !== "created" && (
+                    {log.field_name && log.action !== "created" && log.action !== "note" && !metaText(log, "title") && (
                       <div className="mt-2 p-2 rounded-lg bg-surface-hover border border-border-light">
                         <div className="flex items-center gap-2 text-xs">
                           <span className="text-text-tertiary font-medium">{formatFieldName(log.field_name)}</span>
@@ -267,11 +296,21 @@ export function AuditTimeline({
           </div>
         </div>
       ))}
+      {toggle}
     </div>
   );
 }
 
+/** Linha escrita já pronta para ler (ex.: parcelas, mig 326): `metadata.title` / `metadata.detail`. */
+function metaText(log: AuditLog, key: "title" | "detail"): string | null {
+  const v = (log.metadata as Record<string, unknown> | null | undefined)?.[key];
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
 function getLogTitle(log: AuditLog): string {
+  const pronto = metaText(log, "title");
+  if (pronto) return pronto;
+  if (log.action === "note" && log.field_name === "internal_note") return `Note${log.user_name ? ` · ${log.user_name}` : ""}`;
   switch (log.action) {
     case "created": return `${log.entity_type.replace(/^\w/, (c) => c.toUpperCase())} created`;
     case "status_changed": return `Status changed to ${formatValue(log.new_value)}`;
@@ -292,6 +331,9 @@ function getLogTitle(log: AuditLog): string {
 }
 
 function getLogDescription(log: AuditLog): string {
+  const pronto = metaText(log, "detail");
+  if (pronto) return pronto;
+  if (log.action === "note" && log.field_name === "internal_note") return log.new_value ?? "";
   if (log.action === "created") return `${log.entity_ref ?? "Record"} was created`;
   if (log.action === "status_changed" && log.old_value) {
     return `Changed from ${formatValue(log.old_value)} to ${formatValue(log.new_value)}`;

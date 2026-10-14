@@ -40,7 +40,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { PartnerRouteView } from "@/components/jobs/partner-route-view";
 import { JobsMapView } from "@/components/jobs/jobs-map-view";
-import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, formatDate, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useBuFilter } from "@/hooks/use-bu-filter";
@@ -1794,6 +1794,8 @@ function JobsPageContent() {
       recordExtraPaymentReceived?: { amount: number; note?: string };
       /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
       chargeNow?: { percent: number };
+      /** Avulso parcelado: o cron pede cada parcela por e-mail na data dela (mig 326). */
+      instalmentsAutoCharge?: boolean;
     },
   ) => {
     // ─── Zendesk: open a new ticket when the modal asked us to ──────────
@@ -2153,8 +2155,26 @@ function JobsPageContent() {
         // Uma fatura só, com as parcelas dentro dela.
         try {
           const { invoice } = await ensureDraftInvoiceForJob(result);
+          const parcelas = opts.paymentPlanTemplate.installments;
           if (invoice) {
-            await createPaymentPlan(invoice.id, Number(invoice.amount ?? 0), opts.paymentPlanTemplate.installments);
+            await createPaymentPlan(invoice.id, Number(invoice.amount ?? 0), parcelas);
+            const auto = opts.instalmentsAutoCharge !== false;
+            await getSupabase().from("invoices").update({ instalments_auto_charge: auto }).eq("id", invoice.id);
+            void logAudit({
+              entityType: "job",
+              entityId: result.id,
+              entityRef: result.reference,
+              action: "note",
+              fieldName: "instalments",
+              userId: profile?.id,
+              userName: profile?.full_name ?? undefined,
+              metadata: {
+                title: `Client pays in ${parcelas.length} instalments`,
+                detail: `${parcelas.map((p) => `£${Number(p.amount).toFixed(2)} on ${formatDate(p.due_date)}`).join(" · ")}. ${
+                  auto ? "Charged automatically by email on each date." : "Charged manually."
+                } Invoice ${invoice.reference ?? ""}.`,
+              },
+            });
           }
           /**
            * Parceiro parcelado também (dono, 15/10/2026): o job sai do self-bill da
@@ -4035,6 +4055,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       recordExtraPaymentReceived?: { amount: number; note?: string };
       /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
       chargeNow?: { percent: number };
+      /** Avulso parcelado: o cron pede cada parcela por e-mail na data dela (mig 326). */
+      instalmentsAutoCharge?: boolean;
     },
   ) => void;
 }) {
@@ -4081,6 +4103,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const [paymentPlanEnabled, setPaymentPlanEnabled] = useState(false);
+  /** Avulso parcelado: cobrar cada parcela sozinho, por e-mail, na data. */
+  const [instalmentsAutoCharge, setInstalmentsAutoCharge] = useState(true);
   const [paymentPlanRows, setPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
   const [partnerPaymentPlanEnabled, setPartnerPaymentPlanEnabled] = useState(true);
   const [partnerPaymentPlanRows, setPartnerPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
@@ -4603,6 +4627,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
           pendingSitePhotos,
           recordExtraPaymentReceived,
           chargeNow,
+          ...(paymentPlanTemplate?.enabled ? { paymentPlanTemplate, instalmentsAutoCharge } : {}),
         });
     setSitePhotoFiles([]);
     setPaymentPlanEnabled(false);
@@ -5451,9 +5476,19 @@ function CreateJobModal({ open, onClose, onCreate }: {
                       accountPaymentTerms={accountPaymentTerms}
                       orgCtx={paymentOrgCtx}
                     />
+                    <label className="flex cursor-pointer items-center gap-2 text-[12px] font-medium text-text-primary">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-[var(--brand,#020040)]"
+                        checked={instalmentsAutoCharge}
+                        onChange={(e) => setInstalmentsAutoCharge(e.target.checked)}
+                      />
+                      Charge each instalment automatically
+                      <FixfyHintIcon text="On each date the client gets an email with a pay link for that instalment. Overdue ones get the usual reminders. Off: you send each one yourself." />
+                    </label>
                     <p className="m-0 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
                       Partner paid in the same split
-                      <FixfyHintIcon text="The partner gets a self-bill of their own for this job, split in the same proportion and on the same dates as the client. Each client instalment is charged by email with a pay link on its date." />
+                      <FixfyHintIcon text="The partner gets a self-bill of their own for this job, split in the same proportion and on the same dates as the client. Each partner instalment is paid on its date, even if the client is late." />
                     </p>
                   </div>
                 }
