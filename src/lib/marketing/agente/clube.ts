@@ -118,7 +118,11 @@ export async function montarClube(opcoes: { aplicar: boolean; agendar: boolean; 
           linha.estado = "agendado";
         }
       } catch (err) {
-        linha.detalhe = String((err as Error).message ?? err);
+        const msg = String((err as Error).message ?? err);
+        // Lista ainda vazia (a semanal antes de a rampa chegar nela): não é
+        // falha, o rascunho espera e ganha hora na volta em que houver contato.
+        if (/has no contacts/i.test(msg)) continue;
+        linha.detalhe = msg;
         if (linha.estado === "falta criar") linha.estado = "erro";
       }
     }
