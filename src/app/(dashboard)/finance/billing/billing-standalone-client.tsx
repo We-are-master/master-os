@@ -221,7 +221,6 @@ function BillingStandaloneInner() {
   });
   /** Draft deixou de ser aba (14/10/2026): a quinzena aberta aparece embaixo do Ready. */
   const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>("ready");
-  const [hideInternalPayouts, setHideInternalPayouts] = useState(false);
   const [collapsedRuns, setCollapsedRuns] = useState<Record<string, boolean>>({});
   const invoiceIdFromUrl = searchParams.get("invoiceId");
   const selfBillIdFromUrl = searchParams.get("selfBillId");
@@ -1115,6 +1114,8 @@ function BillingStandaloneInner() {
   const goingOutSelfBills = useMemo(
     () =>
       periodSelfBills.filter((sb) => {
+        // Folha interna não passa pelo Money Out (14/10/2026): é custo fixo no Pulse, como as bills.
+        if (sb.bill_origin === "internal") return false;
         if (sb.status === "paid" || sb.wise_paid_at) return false;
         if (!selfBillCountsAsReady(sb) || isSelfBillPayoutVoided(sb)) return false;
         const amt = computeSelfBillAmountDue(
@@ -1414,7 +1415,7 @@ function BillingStandaloneInner() {
         !sb.wise_paid_at &&
         !selfBillCountsAsReady(sb) &&
         Number(sb.net_payout ?? 0) > 0.005 &&
-        (!hideInternalPayouts || sb.bill_origin !== "internal") &&
+        sb.bill_origin !== "internal" &&
         /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
     );
     const byDue = new Map<string, SelfBill[]>();
@@ -1444,7 +1445,7 @@ function BillingStandaloneInner() {
           total: list.reduce((t, r) => t + Number(r.net_payout ?? 0), 0),
         };
       });
-  }, [data.selfBills, hideInternalPayouts, todayYmd]);
+  }, [data.selfBills, todayYmd]);
 
   const renderBuildingRun = (run: (typeof buildingRuns)[number]) => {
     const short = (ymd: string) =>
@@ -1898,15 +1899,6 @@ function BillingStandaloneInner() {
                         placement="bottom-start"
                       />
                     </h2>
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-text-secondary">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-[#020040]"
-                        checked={hideInternalPayouts}
-                        onChange={(e) => setHideInternalPayouts(e.target.checked)}
-                      />
-                      Hide internal
-                    </label>
                   </div>
                 </div>
 
@@ -2082,7 +2074,7 @@ function BillingStandaloneInner() {
                           <SelfBillGroupedLedger
                             mode="payQueue"
                             variant="compact"
-                            workforceGroups={hideInternalPayouts ? [] : goingOutApprovedSections.workforce}
+                            workforceGroups={[]}
                             partnerGroups={goingOutApprovedSections.partners}
                             todayYmd={todayYmd}
                             selectedIds={moneyOutSelectedIds}

@@ -25,8 +25,6 @@ import {
   Wallet,
   Settings,
   ChevronLeft,
-  ChevronDown,
-  ChevronRight,
   X,
   Layers,
   UserCircle,
@@ -245,38 +243,17 @@ function SidebarNavGroups({
 }) {
   return (
     <>
-      {navGroups.map((group) => {
+      {navGroups.map((group, groupIndex) => {
         const visibleItems = group.items.filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href));
         // A group whose every item is hidden would otherwise leave its heading
         // floating alone (what "Learn" did once Fixfy School was pulled).
         if (visibleItems.length === 0) return null;
         return (
         <div key={group.label}>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.button
-                type="button"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() =>
-                  setCollapsedSections((prev) => ({
-                    ...prev,
-                    [group.label]: !prev[group.label],
-                  }))
-                }
-                className="group mb-1 flex w-full items-center justify-between px-2 pt-2 text-[11px] font-medium text-nav-muted transition-colors hover:text-nav-text"
-              >
-                <span>{group.label}</span>
-                {collapsedSections[group.label] ? (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                )}
-              </motion.button>
-            )}
-          </AnimatePresence>
-          {(collapsed || !collapsedSections[group.label]) && (
+          {/* Sem título de grupo (VOS): uma linha fina separa os blocos. */}
+          {groupIndex > 0 ? <div className="mx-2 my-2 h-px bg-[var(--nav-border)]" role="separator" /> : null}
+          {(
+
             <div className="space-y-0.5">
               {visibleItems
                 .map((item) => (
