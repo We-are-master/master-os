@@ -52,7 +52,6 @@ import {
   type AttentionAccountGroup,
   type WorklistRow,
   buildInvoiceLedgerAccountGroups,
-  computeAgingTotals,
   computeBillingKpis,
   selfBillCountsAsReady,
   selfBillDueYmd,
@@ -122,7 +121,6 @@ const SelfBillDetailDrawer = dynamic(
   { ssr: false },
 );
 
-type MoneyInTab = "draft" | "ready";
 type MoneyOutTab = "draft" | "ready";
 
 const CASHFLOW_WINDOW_WEEKS = 10;
@@ -223,10 +221,6 @@ function BillingStandaloneInner() {
     (id: string, opts?: { received?: boolean }) => void handleMarkInvoicesPaid([id], opts),
     [handleMarkInvoicesPaid],
   );
-  const [moneyInTab, setMoneyInTab] = useState<MoneyInTab>(() => {
-    const inTab = searchParams.get("in");
-    return inTab === "draft" ? "draft" : "ready";
-  });
   /** Draft deixou de ser aba (14/10/2026): a quinzena aberta aparece embaixo do Ready. */
   const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>("ready");
   const [collapsedRuns, setCollapsedRuns] = useState<Record<string, boolean>>({});
@@ -793,11 +787,6 @@ function BillingStandaloneInner() {
     [draftPeriodInvoices],
   );
 
-  const aging = useMemo(
-    () => computeAgingTotals(data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds ?? undefined),
-    [data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds],
-  );
-
   const attentionAccountGroups = useMemo(
     () =>
       buildAttentionAccountGroups(
@@ -891,11 +880,6 @@ function BillingStandaloneInner() {
     }
     return ids;
   }, [attentionAccountGroups, data.jobsByRef]);
-
-  const selectableDraftInvoiceIds = useMemo(
-    () => draftPeriodInvoices.filter((inv) => invoiceCanSelectForPayment(inv, data.jobsByRef)).map((inv) => inv.id),
-    [draftPeriodInvoices, data.jobsByRef],
-  );
 
   /**
    * Uma seleção por vez, entre as três listas da tela.
@@ -1798,49 +1782,19 @@ function BillingStandaloneInner() {
                         placement="bottom-start"
                       />
                     </h2>
-                    <div className="flex gap-1">
-                      <TabPill
-                        active={moneyInTab === "draft"}
-                        onClick={() => {
-                          setMoneyInTab("draft");
-                          setSelectedInvoiceIds(new Set());
-                        }}
-                        label="Draft"
-                        count={draftPeriodInvoices.length}
-                        total={draftInvoiceTotal}
-                      />
-                      <TabPill
-                        active={moneyInTab === "ready"}
-                        onClick={() => {
-                          setMoneyInTab("ready");
-                          setSelectedInvoiceIds(new Set());
-                        }}
-                        label="Ready to receive"
-                        count={kpiRow.toCollectCount}
-                        total={kpiRow.toCollect}
-                      />
-                    </div>
                   </div>
                 </div>
-                {moneyInTab === "ready" ? (
-                  <>
-                <div className="shrink-0 border-b border-border-light px-4 py-4 sm:px-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">To collect · receivables</p>
-                      <p className="text-sm font-semibold text-text-primary">
-                        {kpiRow.toCollectCount} open
-                        {kpiRow.overdueCount > 0 ? ` · ${kpiRow.overdueCount} overdue` : ""}
-                      </p>
+                <>
+                <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="m-0 text-[12px] text-text-tertiary">
+                      {kpiRow.toCollectCount} open
+                      {kpiRow.overdueCount > 0 ? ` · ${kpiRow.overdueCount} overdue` : ""}
                       {kpiRow.overdue > 0.02 ? (
-                        <p className="mt-0.5 text-xs font-medium text-red-600">{formatCurrency(kpiRow.overdue)} overdue</p>
+                        <span className="font-medium text-[var(--bad)]"> · {formatCurrency(kpiRow.overdue)} overdue</span>
                       ) : null}
-                    </div>
-                    <p className="text-xl font-bold tabular-nums text-text-primary">{formatCurrency(kpiRow.toCollect)}</p>
-                  </div>
-                  <AgingBar aging={aging} compact />
-                  {selectableReadyInvoiceIds.length > 0 ? (
-                    <div className="mt-3 flex items-center justify-end">
+                    </p>
+                    {selectableReadyInvoiceIds.length > 0 ? (
                       <button
                         type="button"
                         className="text-xs font-semibold text-primary hover:underline"
@@ -1850,8 +1804,9 @@ function BillingStandaloneInner() {
                           ? "Clear selection"
                           : `Select all (${selectableReadyInvoiceIds.length})`}
                       </button>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <p className="m-0 mt-2 text-xl font-bold tabular-nums text-text-primary">{formatCurrency(kpiRow.toCollect)}</p>
                 </div>
                 <div className="min-h-0 flex-1 divide-y divide-border-light overflow-y-auto">
                   {moneyInRuns.length === 0 ? (
@@ -1902,6 +1857,40 @@ function BillingStandaloneInner() {
                       );
                     })
                   )}
+                  {draftPeriodInvoices.length > 0 ? (
+                    <div className="border-b border-border-light">
+                      <button
+                        type="button"
+                        onClick={() => setCollapsedInRuns((c) => ({ ...c, __draft: !(c.__draft ?? false) }))}
+                        aria-expanded={!(collapsedInRuns.__draft ?? false)}
+                        className="flex w-full items-center gap-2 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
+                      >
+                        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", (collapsedInRuns.__draft ?? false) && "-rotate-90")} />
+                        <span className="text-[13px] font-semibold text-text-primary">Draft</span>
+                        <span className="text-[12px] text-text-tertiary">not sent yet · {draftPeriodInvoices.length} invoice{draftPeriodInvoices.length === 1 ? "" : "s"}</span>
+                        <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(draftInvoiceTotal)}</span>
+                      </button>
+                      {!(collapsedInRuns.__draft ?? false) ? (
+                        <InvoiceGroupedLedger
+                          groups={draftInvoiceLedgerGroups}
+                          todayYmd={todayYmd}
+                          selectedIds={selectedInvoiceIds}
+                          onSelectionChange={selecionarFaturas}
+                          jobsByRef={data.jobsByRef}
+                          customerPaidByJobId={data.customerPaidByJobId}
+                          installmentsByInvoiceId={data.installmentsByInvoiceId}
+                          accountLogoById={data.accountLogoById}
+                          onOpen={openInvoice}
+                          onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
+                          compact
+                          collapsibleAccounts={{
+                            expandedKeys: expandedLedgerInvoiceAccounts,
+                            onToggle: toggleLedgerInvoiceAccount,
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 {inactivePeriodInvoices.length > 0 ? (
                   <div className="shrink-0 border-t border-border-light bg-surface-hover/20">
@@ -1946,46 +1935,7 @@ function BillingStandaloneInner() {
                     ) : null}
                   </div>
                 ) : null}
-                  </>
-                ) : (
-                  <>
-                    <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-lg font-bold tabular-nums text-text-primary">{formatCurrency(draftInvoiceTotal)}</p>
-                        {selectableDraftInvoiceIds.length > 0 ? (
-                          <button
-                            type="button"
-                            className="text-xs font-semibold text-primary hover:underline"
-                            onClick={() => toggleSelectAllInvoices(selectableDraftInvoiceIds)}
-                          >
-                            {selectableDraftInvoiceIds.every((id) => selectedInvoiceIds.has(id))
-                              ? "Clear selection"
-                              : `Select all (${selectableDraftInvoiceIds.length})`}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      <InvoiceGroupedLedger
-                        groups={draftInvoiceLedgerGroups}
-                        todayYmd={todayYmd}
-                        selectedIds={selectedInvoiceIds}
-                        onSelectionChange={selecionarFaturas}
-                        jobsByRef={data.jobsByRef}
-                        customerPaidByJobId={data.customerPaidByJobId}
-                        installmentsByInvoiceId={data.installmentsByInvoiceId}
-                        accountLogoById={data.accountLogoById}
-                        onOpen={openInvoice}
-                        onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
-                        emptyLabel="No draft invoices in this period."
-                        collapsibleAccounts={{
-                          expandedKeys: expandedLedgerInvoiceAccounts,
-                          onToggle: toggleLedgerInvoiceAccount,
-                        }}
-                      />
-                    </div>
-                  </>
-                )}
+                </>
               </div>
 
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
@@ -2311,7 +2261,11 @@ function BillingStandaloneInner() {
           savingOpeningBalance={savingRunwayOpening}
         />
 
-        {selectedInvoiceIds.size > 0 ? (
+        {selectedInvoiceIds.size > 0 ? (() => {
+          // Draft deixou de ser aba: o comportamento vem do que está selecionado.
+          const draftIds = new Set(draftPeriodInvoices.map((inv) => inv.id));
+          const onlyDrafts = [...selectedInvoiceIds].every((id) => draftIds.has(id));
+          return (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
             /* Saldo em aberto, não o valor cheio da fatura: é o que entra se a
@@ -2324,21 +2278,22 @@ function BillingStandaloneInner() {
             }, 0)}
             saving={bulkSaving}
             variant="invoice"
-            markPaidLabel={moneyInTab === "ready" ? "Mark as received" : "Mark as paid"}
+            markPaidLabel={onlyDrafts ? "Mark as paid" : "Mark as received"}
             onClear={() => setSelectedInvoiceIds(new Set())}
             onMarkPaid={async () => {
               setBulkSaving(true);
               try {
                 await handleMarkInvoicesPaid([...selectedInvoiceIds], {
                   clearSelection: true,
-                  received: moneyInTab === "ready",
+                  received: !onlyDrafts,
                 });
               } finally {
                 setBulkSaving(false);
               }
             }}
           />
-        ) : moneyOutSelectedIds.size > 0 ? (
+          );
+        })() : moneyOutSelectedIds.size > 0 ? (
           <BillingBulkBar
             count={moneyOutSelectedIds.size}
             totalAmount={somarSelfBillsSelecionados(moneyOutSelectedIds)}
@@ -3642,39 +3597,6 @@ function KpiCard({ label, value, sub, alert, coral, green }: { label: string; va
 }
 
 /** Clean pill: numbers live in the hover tooltip, not inline — the header stays scannable. */
-function TabPill({
-  active,
-  onClick,
-  label,
-  count,
-  total,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count?: number | null;
-  total?: number;
-}) {
-  const hoverDetail =
-    count != null
-      ? `${count} item${count === 1 ? "" : "s"}${total != null && count > 0 ? ` · ${formatCurrency(total)}` : ""}`
-      : undefined;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={hoverDetail}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
-        active
-          ? "bg-primary text-white"
-          : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
 
 function RunwayTabBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
@@ -3701,25 +3623,4 @@ function InvoiceStatusPill({ status }: { status: ReturnType<typeof invoiceDispla
           ? "muted"
           : "info";
   return <StatusPill label={status} tone={tone} />;
-}
-
-function AgingBar({ aging, compact = false }: { aging: ReturnType<typeof computeAgingTotals>; compact?: boolean }) {
-  const total = aging.current + aging.d1_7 + aging.d8_30 + aging.d30plus || 1;
-  const pct = (n: number) => `${Math.max(0, (n / total) * 100)}%`;
-  return (
-    <div className={cn(compact ? "mt-3" : "px-5 py-4")}>
-      <div className={cn("flex overflow-hidden rounded-full bg-surface-hover", compact ? "h-1.5" : "h-2.5")}>
-        <span className="bg-emerald-500" style={{ width: pct(aging.current) }} />
-        <span className="bg-amber-400" style={{ width: pct(aging.d1_7) }} />
-        <span className="bg-primary" style={{ width: pct(aging.d8_30) }} />
-        <span className="bg-red-600" style={{ width: pct(aging.d30plus) }} />
-      </div>
-      <div className={cn("flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary", compact ? "mt-2" : "mt-3")}>
-        <span>Current <b className="text-text-primary">{formatCurrency(aging.current)}</b></span>
-        <span>1–7 days <b className="text-text-primary">{formatCurrency(aging.d1_7)}</b></span>
-        <span>8–30 days <b className="text-text-primary">{formatCurrency(aging.d8_30)}</b></span>
-        <span>30+ <b className="text-text-primary">{formatCurrency(aging.d30plus)}</b></span>
-      </div>
-    </div>
-  );
 }
