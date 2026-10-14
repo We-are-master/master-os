@@ -13,7 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { sendTemplate } from "@/lib/whatsapp/cloud";
 import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
-import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
+import { confirmacaoPorWhatsApp, decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { enviarEmailConfirmadoComProfissional } from "./professional-email";
 
 /**
@@ -42,6 +42,10 @@ const JOB_SELECT =
 export const STATUS_CONFIRMAVEIS = ["scheduled", "late"];
 
 export const MOTIVO_MENSAGENS_DESLIGADAS = "client messaging is off (CLIENT_MESSAGING_ENABLED): nothing sent";
+
+/** Dono, 14/10/2026: a confirmação vai por e-mail no ticket do job; WhatsApp só no lembrete de véspera. */
+export const MOTIVO_SO_POR_EMAIL =
+  "booking confirmation goes by email on the job ticket; WhatsApp only for the day-before reminder";
 
 /** `2026-10-14`, no relógio de Londres. */
 export function hojeEmLondres(agora: Date): string {
@@ -208,6 +212,13 @@ export async function enviarConfirmacaoDoCliente(
   }
 
   if (j.client_confirmation_sent_at) return { estado: "pulado", motivo: "already sent" };
+
+  /**
+   * Só por e-mail por enquanto (dono, 14/10/2026). O e-mail de confirmação é o
+   * `dispatchJobCreatedZendesk`, no ticket do job, e esse não passa por aqui.
+   */
+  if (!confirmacaoPorWhatsApp()) return anotarPulo(MOTIVO_SO_POR_EMAIL);
+
   if (j.client_reminder_sent_at) return anotarPulo(MOTIVO_LEMBRETE_JA_SAIU);
 
   const clientId = typeof j.client_id === "string" ? j.client_id : null;

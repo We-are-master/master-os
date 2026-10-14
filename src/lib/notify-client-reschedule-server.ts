@@ -24,7 +24,9 @@ import { Resend } from "resend";
 import { createServiceClient } from "@/lib/supabase/service";
 import { enviarRescheduleDoCliente } from "@/lib/client-confirmation/reschedule-whatsapp";
 import { buildClientJobRescheduledEmail } from "@/lib/emails/client-job-rescheduled";
-import { mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
+import { confirmacaoPorWhatsApp, mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
+import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
+import { avisarNoTicketDoJob } from "@/lib/um-ticket/aviso-do-job";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { buildJobRescheduledHtml, splitPropertyAddressAndPostcode } from "@/lib/zendesk-job-confirmation";
 
@@ -37,7 +39,7 @@ export interface AvisoDeRemarcacao {
 }
 
 export type ResultadoAvisoCliente =
-  | { ok: true; to: string; layout: "account" | "client" }
+  | { ok: true; to: string; layout: "account" | "client"; ticketId?: number }
   | { ok: false; skipped: string }
   | { ok: false; error: string };
 
@@ -51,7 +53,7 @@ export async function avisarClienteDaRemarcacao(
   const { data: job } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, property_address, client_id, client_name, client_reschedule_notified_at, scheduled_date, scheduled_start_at, scheduled_end_at",
+      "id, reference, title, property_address, client_id, client_name, client_reschedule_notified_at, scheduled_date, scheduled_start_at, scheduled_end_at, external_source, external_ref",
     )
     .eq("id", jobId)
     .maybeSingle();
@@ -85,7 +87,24 @@ export async function avisarClienteDaRemarcacao(
   }
 
   const key = process.env.RESEND_API_KEY?.trim();
-  if (!key) return { ok: false, skipped: "RESEND_API_KEY not set" };
+  /**
+   * No ticket do job, quando ele existe (dono, 14/10/2026): a remarcação entra
+   * na mesma conversa da confirmação, com a data antiga riscada. A Resend fica
+   * só para job sem ticket ou quando o Zendesk recusa.
+   */
+  const ticketRaw = isZendeskConfigured() ? getZendeskTicketId(j as never) : null;
+  const ticketId = ticketRaw && /^\d+$/.test(String(ticketRaw)) ? Number(ticketRaw) : null;
+  const pelaTicket = async (assunto: string, html: string): Promise<boolean> => {
+    if (!ticketId) return false;
+    try {
+      await avisarNoTicketDoJob({ ticketId, para: { email: para, nome: billing.displayName || null }, assunto, html });
+      return true;
+    } catch (err) {
+      console.error("[notify-client-reschedule] ticket:", err instanceof Error ? err.message : err);
+      return false;
+    }
+  };
+  if (!key && !ticketId) return { ok: false, skipped: "RESEND_API_KEY not set and job has no ticket" };
 
   const carimbar = async () => {
     // O lembrete de véspera precisa valer para a data NOVA, então o carimbo
@@ -113,11 +132,17 @@ export async function avisarClienteDaRemarcacao(
       propertyPostcode,
       typeOfWork: String(j.title ?? ""),
     });
+    const assunto = `Job rescheduled · ${String(j.reference ?? "")}`;
+    if (await pelaTicket(assunto, html)) {
+      await carimbar();
+      return { ok: true, to: para, layout: "account", ticketId: ticketId ?? undefined };
+    }
+    if (!key) return { ok: false, error: "ticket delivery failed and RESEND_API_KEY not set" };
     try {
       const { error } = await new Resend(key).emails.send({
         from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
         to: [para],
-        subject: `Job rescheduled — ${String(j.reference ?? "")}`,
+        subject: assunto,
         html,
       });
       if (error) return { ok: false, error: error.message ?? "send failed" };
@@ -141,22 +166,26 @@ export async function avisarClienteDaRemarcacao(
     reason: aviso.reason ?? null,
   });
 
-  try {
-    const { error } = await new Resend(key).emails.send({
-      from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
-      to: [para],
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-    });
-    if (error) return { ok: false, error: error.message ?? "send failed" };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "send failed" };
+  const noTicket = await pelaTicket(email.subject, email.html);
+  if (!noTicket) {
+    if (!key) return { ok: false, error: "ticket delivery failed and RESEND_API_KEY not set" };
+    try {
+      const { error } = await new Resend(key).emails.send({
+        from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
+        to: [para],
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+      if (error) return { ok: false, error: error.message ?? "send failed" };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : "send failed" };
+    }
   }
 
-  // O WhatsApp é o canal que o morador de fato lê. Fire-and-forget: o email já
-  // saiu, e falhar o WhatsApp não pode transformar remarcação avisada em erro.
-  void enviarRescheduleDoCliente(supabase, {
+  // WhatsApp da remarcação só com CONFIRMACAO_WHATSAPP=on (dono, 14/10/2026:
+  // "apenas por email for now"). Fire-and-forget: o e-mail já saiu.
+  if (confirmacaoPorWhatsApp()) void enviarRescheduleDoCliente(supabase, {
     id: String(j.id),
     client_id: clientId,
     client_name: (j.client_name as string) ?? null,
@@ -167,5 +196,5 @@ export async function avisarClienteDaRemarcacao(
   }).catch((e) => console.error("[notify-client-reschedule] whatsapp:", e));
 
   await carimbar();
-  return { ok: true, to: para, layout: "client" };
+  return { ok: true, to: para, layout: "client", ...(noTicket && ticketId ? { ticketId } : {}) };
 }

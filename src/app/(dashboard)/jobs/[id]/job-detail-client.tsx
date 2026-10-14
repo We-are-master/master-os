@@ -5854,8 +5854,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       /**
        * Cliente que paga no cartão (Fase 0, dono 09/10/2026): cobra o restante no cartão
-       * salvo ANTES de sair de final check. Recusado = o job fica em final check com
-       * "Card refused" e as novas tentativas ficam com o sistema.
+       * salvo ANTES de sair de final check. Recusado = o job segue para Awaiting Payment
+       * mesmo assim, com o chip "Card declined" (dono, 14/10/2026); o sistema tenta de
+       * novo e, se o cliente pagar de outro jeito, a equipe lança o pagamento no job.
        */
       let paidByCardNow = 0;
       const cardJob = current as Job & { stripe_payment_method_id?: string | null; card_charge_status?: string | null; card_charge_hold?: boolean | null };
@@ -5867,11 +5868,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           | { status: "skipped"; reason: string }
           | null;
         if (outcome?.status === "refused" || outcome?.status === "requires_action") {
-          toast.error(`Card refused (£${outcome.amountGbp.toFixed(2)}): ${outcome.reason}. The job stays in final check.`);
-          const fresh = await getJob(current.id).catch(() => null);
-          if (fresh) setJob(fresh);
-          setValidateCompleteOpen(false);
-          return;
+          toast.warning(
+            `Card declined (£${outcome.amountGbp.toFixed(2)}): ${outcome.reason}. The job moves to Awaiting payment marked "Card declined". Record the payment on the job when the customer pays another way.`,
+          );
         }
         if (outcome?.status === "charged") {
           paidByCardNow = outcome.amountGbp;
@@ -7202,7 +7201,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
                 </div>
                 <JobOverdueBadge job={job} size="sm" />
-                <JobCardRefusedBadge job={job} size="sm" />
+                <JobCardRefusedBadge job={job} size="sm" showHistory />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {healthMissingPartner ? (
