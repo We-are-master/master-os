@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { cn } from "@/lib/utils";
 import {
   ARRIVAL_SLOTS,
@@ -20,6 +21,8 @@ type Props = {
   rowLayout?: boolean;
   /** Hide the "Arrival time *" label when the parent renders one already. */
   hideLabel?: boolean;
+  /** Explicação curta no "!" ao lado do rótulo. */
+  labelHint?: string;
   /** Display-only — shows active slot without allowing changes. */
   readOnly?: boolean;
 };
@@ -49,6 +52,7 @@ export function ArrivalSlotPicker({
   rowLayout = false,
   hideLabel = false,
   readOnly = false,
+  labelHint,
 }: Props) {
   const activeSlotId: ArrivalSlotId =
     matchArrivalSlot(arrivalFrom, arrivalWindowMins) ??
@@ -69,7 +73,10 @@ export function ArrivalSlotPicker({
       <div className={className}>
         {!hideLabel && (
           <label className="block text-xs font-medium text-text-secondary mb-1.5">
-            Arrival Time *
+            <span className="inline-flex items-center gap-1">
+              Arrival Time *
+              {labelHint ? <FixfyHintIcon text={labelHint} /> : null}
+            </span>
           </label>
         )}
         <div
@@ -92,7 +99,10 @@ export function ArrivalSlotPicker({
           htmlFor="arrival-slot"
           className="block text-xs font-medium text-text-secondary mb-1.5"
         >
-          Arrival Time *
+          <span className="inline-flex items-center gap-1">
+            Arrival Time *
+            {labelHint ? <FixfyHintIcon text={labelHint} /> : null}
+          </span>
         </label>
       )}
       <select

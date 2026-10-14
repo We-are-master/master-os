@@ -196,6 +196,7 @@ export function JobModalScheduleFields({
               <div className="min-w-0 w-full flex-1">
                 <ArrivalSlotPicker
                   rowLayout
+                  labelHint="Clients and partners see this slot as the arrival window. Late status is still based on the window end."
                   arrivalFrom={arrivalFrom}
                   arrivalWindowMins={arrivalWindowMins}
                   onPick={(from, mins) => {
@@ -207,9 +208,6 @@ export function JobModalScheduleFields({
             ) : null}
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
-          <p className="text-[10px] text-text-tertiary -mt-1">
-            Clients and partners see this slot as the arrival window. Late status is still based on the window end.
-          </p>
         </>
       ) : isMultiDay ? (
         <>
@@ -266,9 +264,9 @@ export function JobModalScheduleFields({
               />
             </div>
           </div>
-          <p className="text-[10px] text-text-tertiary -mt-1">
-            Multi-day jobs render as a continuous bar in the calendar. Start time = arrival on day one;
-            end time = wrap-up on the last day. No arrival window — the partner app shows the multi-day range directly.
+          <p className="-mt-1 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+            How multi-day jobs show
+            <FixfyHintIcon text="Multi-day jobs show as one continuous bar in the calendar. Start time is the arrival on day one; end time is the wrap-up on the last day. No arrival window: the partner app shows the whole range." />
           </p>
         </>
       ) : (
@@ -620,9 +618,9 @@ function RecurringFormFields({
         </p>
       </div>
 
-      <p className="text-[10px] text-text-tertiary -mt-1">
-        Each occurrence becomes its own job in the schedule. The first 90 days
-        are generated immediately; the rest are filled in by the daily cron.
+      <p className="-mt-1 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+        How repeats are created
+        <FixfyHintIcon text="Each occurrence becomes its own job in the schedule. The first 90 days are created straight away; the rest are added by the daily run." />
       </p>
     </>
   );

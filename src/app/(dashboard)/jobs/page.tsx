@@ -5055,11 +5055,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <section className="rounded-xl border border-dashed border-border-light bg-surface-hover/10 p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold text-text-tertiary">Additionals</p>
-                  <p className="text-[10.5px] text-text-tertiary leading-snug">
-                    {form.job_type === "fixed"
-                      ? "Optional: stack a property size and addons on top of your client/partner amounts above."
-                      : "Optional: pick a property size and addons to layer on top of the smart price."}
+                  <p className="m-0 inline-flex items-center gap-1 text-[11px] font-semibold text-text-tertiary">
+                    Additionals
+                    <FixfyHintIcon
+                      text={
+                        form.job_type === "fixed"
+                          ? "Optional: stack a property size and addons on top of your client and partner amounts above."
+                          : "Optional: pick a property size and addons to layer on top of the smart price."
+                      }
+                    />
                   </p>
                 </div>
                 <button
