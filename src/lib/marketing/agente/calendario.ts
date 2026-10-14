@@ -134,7 +134,7 @@ export const RELAMPAGOS: Relampago[] = [
         l("Painting, before the 15%", [
           "Touch-ups (up to 3.5 hours): £215",
           "A room, walls, two coats: £450",
-          "A full day of painting: £465",
+          "A full day of painting: £400",
         ]),
         t(REGRAS),
       ],

@@ -92,7 +92,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
         "Two full coats on the walls, edges cut in by hand",
         "Everything put back and the room left clean",
       ]),
-      t("Paint and materials can be added as a pack for £130, or you choose your own colour and we use it. If anything is not right, we come back within 14 days."),
+      t("Paint and materials can be added as a pack for £150, or you choose your own colour and we use it. If anything is not right, we come back and put it right free of charge."),
     ],
     cta: "Book a room",
   },
@@ -295,11 +295,11 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
     preset: "s=paint&paint=rooms:1",
     etiqueta: "Painting",
     assunto: "Doors, frames and skirting: the fastest way to lift a home",
-    preheader: "A full day of painting, £465. Woodwork that looks new.",
+    preheader: "A full day of painting, £400. Woodwork that looks new.",
     titulo: "Paint the woodwork, not just the walls",
     blocos: [
       t("Yellowed skirting and chipped doors make freshly painted walls look tired. Woodwork is what painters notice first, and what most homes skip."),
-      l("What our painter can do in a full day (£465)", [
+      l("What our painter can do in a full day (£400)", [
         "Internal doors and frames, sanded and painted",
         "Skirting boards throughout a floor",
         "Banisters and spindles",
@@ -498,7 +498,7 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
         "Banisters and stair spindles",
         "A hard-wearing finish that wipes clean",
       ]),
-      t("A touch-up visit starts at £215, a full day of painting is £465."),
+      t("A touch-up visit starts at £215, a full day of painting is £400."),
     ],
     cta: "Book a painter",
   },
