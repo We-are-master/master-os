@@ -1,10 +1,12 @@
 /**
  * O agente de marketing: a rotina de todo dia.
  *
- *   manhã   sincroniza a lista da Resend com o OS (nos dois sentidos), garante
- *           que as edições do clube estão criadas e agendadas, lê os "Stop" do
- *           WhatsApp no Zendesk e, se hoje abre um relâmpago, confere o código
- *           no site, agenda o e-mail e monta a fila do WhatsApp.
+ *   manhã   lê os "Stop" do WhatsApp no Zendesk; põe cada pessoa da base na
+ *           lista certa da Resend pela posição do lead (lista.ts); garante as
+ *           edições do clube e da sequência das agências criadas e agendadas
+ *           (o Resend só agenda 30 dias à frente); manda o pedido de avaliação
+ *           a quem fez job há 10 dias; e, se hoje abre um relâmpago, confere o
+ *           código no site, agenda o e-mail e monta a fila do WhatsApp.
  *   tarde   manda o WhatsApp do relâmpago que está no ar.
  *
  * `MARKETING_AGENTE=on` liga. Desligado, as duas rotinas rodam em ensaio e só
@@ -17,6 +19,7 @@ import { ONDAS, montarB2B, nomeDaOnda } from "./b2b";
 import { montarClube, type LinhaDoClube } from "./clube";
 import { segmentoPeloNome } from "./resend";
 import { sincronizarLista, type ResultadoDaLista } from "./lista";
+import { mandarAvaliacoes } from "./avaliacao";
 import { abrirRelampago, voltaDoWhatsApp, type ResultadoDaAbertura, type ResultadoDoWhatsApp } from "./relampago";
 
 export function agenteLigado(): boolean {
@@ -30,6 +33,7 @@ export type ResultadoDaManha = {
   clube: { criados: number; agendados: number; enviados: number; erros: string[]; proxima: LinhaDoClube | null };
   relampago: ResultadoDaAbertura | null;
   b2b: Array<{ onda: number; agendados: number; rascunhos: number; erros: string[] }>;
+  avaliacoes: unknown;
   stops: unknown;
 };
 
@@ -37,26 +41,26 @@ export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Pr
   const agora = opcoes.agora ?? new Date();
   const res: ResultadoDaManha = {
     ligado: agenteLigado(), ensaio: !opcoes.aplicar, lista: { erro: "não rodou" },
-    clube: { criados: 0, agendados: 0, enviados: 0, erros: [], proxima: null }, relampago: null, b2b: [], stops: null,
+    clube: { criados: 0, agendados: 0, enviados: 0, erros: [], proxima: null }, relampago: null, b2b: [], avaliacoes: null, stops: null,
   };
 
   // Stop primeiro: quem pediu para sair ontem não pode entrar na lista de hoje.
   res.stops = await varrerRespostasDoZendesk({ minutos: 26 * 60, aplicar: opcoes.aplicar }).catch((e) => ({ erro: String(e.message ?? e) }));
 
-  let segmento: string | null = null;
+  let segmentos: { duas: string | null; semanal: string | null } = { duas: null, semanal: null };
   try {
     const lista = await sincronizarLista({ aplicar: opcoes.aplicar, agora });
     res.lista = lista;
-    segmento = lista.segmento;
+    segmentos = lista.segmentos;
   } catch (e) {
     res.lista = { erro: String((e as Error).message ?? e) };
   }
 
-  const linhas = await montarClube({ aplicar: opcoes.aplicar, agendar: true, segmento, agora });
+  const linhas = await montarClube({ aplicar: opcoes.aplicar, agendar: true, segmentos, agora });
   for (const l of linhas) {
     if (l.estado === "criado") res.clube.criados++;
     if (l.estado === "enviado") res.clube.enviados++;
-    if (l.detalhe) res.clube.erros.push(`${l.dia} ${l.key}: ${l.detalhe}`);
+    if (l.detalhe) res.clube.erros.push(`${l.dia} ${l.key} (${l.lista}): ${l.detalhe}`);
   }
   res.clube.agendados = linhas.filter((l) => l.estado === "agendado").length;
   res.clube.proxima = linhas.find((l) => l.estado !== "enviado" && l.estado !== "passou") ?? null;
@@ -73,7 +77,9 @@ export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Pr
   }
 
   const hoje = relampagoDoDia(agora);
-  if (hoje) res.relampago = await abrirRelampago(hoje, { aplicar: opcoes.aplicar, segmento, agora }).catch((e) => ({ relampago: hoje.slug, codigo: hoje.codigo, ok: false, motivo: String(e.message ?? e) }));
+  if (hoje) res.relampago = await abrirRelampago(hoje, { aplicar: opcoes.aplicar, segmentos, agora }).catch((e) => ({ relampago: hoje.slug, codigo: hoje.codigo, ok: false, motivo: String(e.message ?? e) }));
+  // Grupo E: cliente com job de 10 a 30 dias recebe o pedido de avaliação e indicação, uma vez.
+  res.avaliacoes = await mandarAvaliacoes({ aplicar: opcoes.aplicar, agora }).catch((e) => ({ erro: String(e.message ?? e) }));
   return res;
 }
 

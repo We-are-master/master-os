@@ -11,9 +11,9 @@
  * contato na hora do envio.
  */
 
-import { AGENDA, type PecaDaAgenda } from "@/lib/email-sequences/agenda";
 import { ofertaDaPeca } from "@/lib/email-sequences/render";
 import { renderCampanha, type Bloco, type OfertaNoEmail } from "@/lib/emails/campanha-layout";
+import { pecaDoClube, type PecaDoClube } from "./clube-servicos";
 import { CLUBE, SITE, quandoSaiAEdicao, type EdicaoDoClube } from "./calendario";
 import { agendarBroadcast, broadcasts, criarBroadcast, type BroadcastResend } from "./resend";
 
@@ -45,19 +45,18 @@ export function htmlDoBroadcast(p: {
   });
 }
 
-export function pecaDaEdicao(e: EdicaoDoClube): PecaDaAgenda {
-  const peca = AGENDA.find((p) => p.key === e.key);
-  if (!peca) throw new Error(`calendário aponta para a peça "${e.key}", que não existe na agenda`);
-  return peca;
+export function pecaDaEdicao(e: EdicaoDoClube): PecaDoClube {
+  return pecaDoClube(e.key);
 }
 
-export function linkDaEdicao(peca: PecaDaAgenda): string {
-  const q = new URLSearchParams({ utm_source: "email", utm_medium: "club", utm_campaign: `club_${peca.key}` });
+export function linkDaEdicao(peca: PecaDoClube): string {
+  const q = new URLSearchParams(peca.preset);
+  for (const [k, v] of Object.entries({ utm_source: "email", utm_medium: "club", utm_campaign: `club_${peca.key}` })) q.set(k, v);
   if (peca.cupom) q.set("promo", peca.cupom);
   return `${SITE}/?${q.toString()}`;
 }
 
-export function htmlDaEdicao(peca: PecaDaAgenda): string {
+export function htmlDaEdicao(peca: PecaDoClube): string {
   return htmlDoBroadcast({
     preheader: peca.preheader,
     etiqueta: peca.etiqueta,
@@ -68,16 +67,23 @@ export function htmlDaEdicao(peca: PecaDaAgenda): string {
   });
 }
 
-export const nomeDoBroadcast = (e: EdicaoDoClube) => `Fixfy Club · ${e.dia} · ${e.key}`;
+export const nomeDoBroadcast = (e: EdicaoDoClube, lista: "duas" | "semanal" = "duas") =>
+  `${lista === "duas" ? "Fixfy Club" : "Fixfy Club Weekly"} · ${e.dia} · ${e.key}`;
 
-export type LinhaDoClube = { dia: string; key: string; assunto: string; cupom: string | null; estado: "passou" | "falta criar" | "rascunho" | "agendado" | "enviado" | "criado" | "erro"; detalhe?: string };
+/** A lista semanal (lead antigo) recebe só a edição de terça. */
+export const vaiParaSemanal = (e: EdicaoDoClube) => new Date(`${e.dia}T12:00:00Z`).getUTCDay() === 2;
+
+export type LinhaDoClube = { dia: string; key: string; lista: "duas" | "semanal"; assunto: string; cupom: string | null; estado: "passou" | "falta criar" | "rascunho" | "agendado" | "enviado" | "criado" | "erro"; detalhe?: string };
+
+const DIA_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Cria os broadcasts que faltam e, com `agendar`, põe hora nos rascunhos.
- * Sem `aplicar` só conta. Edição cuja hora já passou não é criada nem enviada:
- * e-mail de terça não sai na quinta.
+ * Cria os broadcasts que faltam nas duas listas e, com `agendar`, põe a hora.
+ * O Resend só agenda até 30 dias à frente: o que passa disso fica em rascunho
+ * e ganha hora numa volta seguinte (a rotina da manhã roda isto todo dia).
+ * Edição cuja hora já passou não é criada nem enviada.
  */
-export async function montarClube(opcoes: { aplicar: boolean; agendar: boolean; segmento: string | null; agora?: Date }): Promise<LinhaDoClube[]> {
+export async function montarClube(opcoes: { aplicar: boolean; agendar: boolean; segmentos: { duas: string | null; semanal: string | null }; agora?: Date }): Promise<LinhaDoClube[]> {
   const agora = opcoes.agora ?? new Date();
   const existentes = new Map<string, BroadcastResend>();
   for (const b of await broadcasts()) if (b.name) existentes.set(b.name, b);
@@ -86,29 +92,35 @@ export async function montarClube(opcoes: { aplicar: boolean; agendar: boolean; 
 
   for (const e of CLUBE) {
     const peca = pecaDaEdicao(e);
-    const linha: LinhaDoClube = { dia: e.dia, key: e.key, assunto: peca.assunto, cupom: peca.cupom ?? null, estado: "falta criar" };
-    linhas.push(linha);
     const quando = quandoSaiAEdicao(e);
-    let b = existentes.get(nomeDoBroadcast(e)) ?? null;
-    if (b) linha.estado = b.sent_at || b.status === "sent" ? "enviado" : b.scheduled_at || b.status === "queued" ? "agendado" : "rascunho";
-    if (quando.getTime() <= agora.getTime() + 10 * 60 * 1000) {
-      if (linha.estado === "falta criar" || linha.estado === "rascunho") linha.estado = "passou";
-      continue;
-    }
-    if (!opcoes.aplicar || !opcoes.segmento) continue;
-    try {
-      if (!b) {
-        const novo = await criarBroadcast({ segment_id: opcoes.segmento, from, reply_to, subject: peca.assunto, html: htmlDaEdicao(peca), name: nomeDoBroadcast(e) });
-        b = { id: novo.id, name: nomeDoBroadcast(e), status: "draft", scheduled_at: null, sent_at: null };
-        linha.estado = "criado";
+    for (const lista of ["duas", "semanal"] as const) {
+      if (lista === "semanal" && !vaiParaSemanal(e)) continue;
+      const segmento = opcoes.segmentos[lista];
+      const nome = nomeDoBroadcast(e, lista);
+      const linha: LinhaDoClube = { dia: e.dia, key: e.key, lista, assunto: peca.assunto, cupom: peca.cupom ?? null, estado: "falta criar" };
+      linhas.push(linha);
+      let b = existentes.get(nome) ?? null;
+      if (b) linha.estado = b.sent_at || b.status === "sent" ? "enviado" : b.scheduled_at || b.status === "queued" || b.status === "scheduled" ? "agendado" : "rascunho";
+      if (quando.getTime() <= agora.getTime() + 10 * 60 * 1000) {
+        if (linha.estado === "falta criar" || linha.estado === "rascunho") linha.estado = "passou";
+        continue;
       }
-      if (opcoes.agendar && (linha.estado === "criado" || linha.estado === "rascunho")) {
-        await agendarBroadcast(b.id, quando);
-        linha.estado = "agendado";
+      if (!opcoes.aplicar || !segmento) continue;
+      try {
+        if (!b) {
+          const novo = await criarBroadcast({ segment_id: segmento, from, reply_to, subject: peca.assunto, html: htmlDaEdicao(peca), name: nome });
+          b = { id: novo.id, name: nome, status: "draft", scheduled_at: null, sent_at: null };
+          linha.estado = "criado";
+        }
+        const cabe = quando.getTime() - agora.getTime() < 29 * DIA_MS;
+        if (opcoes.agendar && cabe && (linha.estado === "criado" || linha.estado === "rascunho")) {
+          await agendarBroadcast(b.id, quando);
+          linha.estado = "agendado";
+        }
+      } catch (err) {
+        linha.detalhe = String((err as Error).message ?? err);
+        if (linha.estado === "falta criar") linha.estado = "erro";
       }
-    } catch (err) {
-      linha.detalhe = String((err as Error).message ?? err);
-      if (linha.estado === "falta criar") linha.estado = "erro";
     }
   }
   return linhas;
