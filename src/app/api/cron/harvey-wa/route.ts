@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
     const sb = createServiceClient();
     const chase = await varrerChases(sb, { aplicar: !ensaio });
     const transferencias = await varrerTransferencias(sb, new Date(), { aplicar: !ensaio });
-    // Lead que nunca respondeu o primeiro contato: lembrete 24h, ligar 48h, fecha 7d.
+    // Lead que nunca respondeu o primeiro contato: 2 WhatsApps e 5 e-mails em 3 dias, depois fecha (followup-leads.ts).
     const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
     // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
     const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
