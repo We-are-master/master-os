@@ -1,7 +1,22 @@
 "use client";
 
+import { Children, isValidElement } from "react";
+import { Check, Clock, Send, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+
+/**
+ * Marcador de estado do VOS UNO (§9): estado nunca só por cor. ✓ concluído/pago,
+ * relógio aguardando/vence, ✕ falhou/vencido/cancelado, seta de envio enviado/info.
+ * Rótulo neutro (tipo, categoria) não leva marcador.
+ */
+const STATE_MARKER: Partial<Record<BadgeVariant, LucideIcon>> = {
+  success: Check,
+  warning: Clock,
+  orange: Clock,
+  danger: X,
+  info: Send,
+};
 
 export type BadgeVariant =
   | "default"
@@ -37,6 +52,8 @@ interface BadgeProps {
   pulse?: boolean;
   size?: "sm" | "md";
   className?: string;
+  /** false tira o marcador de estado (ex.: contagem dentro de chip). */
+  marker?: boolean;
 }
 
 export function Badge({
@@ -46,6 +63,7 @@ export function Badge({
   pulse = false,
   size = "sm",
   className,
+  marker = true,
 }: BadgeProps) {
   const dotColors: Record<BadgeVariant, string> = {
     default: "bg-text-tertiary",
@@ -69,7 +87,14 @@ export function Badge({
         className
       )}
     >
-      {dot && (
+      {(() => {
+        // Chip que já traz o próprio ícone não ganha outro.
+        const hasOwnIcon = Children.toArray(children).some((c) => isValidElement(c) && typeof c.type !== "string");
+        const Marker = STATE_MARKER[variant];
+        if (!marker || pulse || hasOwnIcon || !Marker) return null;
+        return <Marker className="shrink-0" strokeWidth={2.2} aria-hidden />;
+      })()}
+      {dot && (pulse || !STATE_MARKER[variant] || !marker) && variant !== "default" && variant !== "outline" && variant !== "violet" && (
         <span className="relative flex h-1.5 w-1.5">
           {pulse && (
             <span
