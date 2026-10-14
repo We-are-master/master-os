@@ -413,7 +413,7 @@ function ScheduleInProgressLiveSecondary({ job }: { job: Job }) {
     }
   }
   return (
-    <div className="mt-0.5 w-full space-y-0.5 text-center">
+    <div className="mt-0.5 w-full space-y-0.5 text-left">
       <p className="text-[11px] font-semibold tabular-nums tracking-tight text-text-secondary">{formatOfficeTimer(secs)}</p>
       {startedSub ? <p className="text-[10px] leading-snug text-text-tertiary">{startedSub}</p> : null}
     </div>
@@ -2913,8 +2913,10 @@ function JobsPageContent() {
         const timingKind = getJobScheduleTimingKind(item);
         const hasChip = Boolean(timingKind);
         return (
-          <div className="min-w-0 text-center">
-            <div className="flex flex-wrap items-center justify-center gap-1.5 min-w-0">
+          // Bloco alinhado à esquerda (data, chegada e cronômetro começam na mesma
+          // margem) e centralizado na coluna, como o título "Schedule".
+          <div className="mx-auto flex w-fit min-w-0 max-w-full flex-col items-start text-left">
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
               {hasChip ? (
                 <JobScheduleTimingChip job={item} title={detail} />
               ) : line ? (
