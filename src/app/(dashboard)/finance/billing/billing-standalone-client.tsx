@@ -219,12 +219,10 @@ function BillingStandaloneInner() {
     const inTab = searchParams.get("in");
     return inTab === "draft" ? "draft" : "ready";
   });
-  const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>(() => {
-    const outTab = searchParams.get("out");
-    /** "paid" stopped being a tab (bottom fold now) — old links land on Ready. */
-    if (outTab === "draft" || outTab === "ready") return outTab;
-    return "ready";
-  });
+  /** Draft deixou de ser aba (14/10/2026): a quinzena aberta aparece embaixo do Ready. */
+  const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>("ready");
+  const [hideInternalPayouts, setHideInternalPayouts] = useState(false);
+  const [collapsedRuns, setCollapsedRuns] = useState<Record<string, boolean>>({});
   const invoiceIdFromUrl = searchParams.get("invoiceId");
   const selfBillIdFromUrl = searchParams.get("selfBillId");
   const [createOpen, setCreateOpen] = useState(false);
@@ -1789,30 +1787,15 @@ function BillingStandaloneInner() {
                         placement="bottom-start"
                       />
                     </h2>
-                    <div className="flex gap-1">
-                      <TabPill
-                        active={moneyOutTab === "draft"}
-                        onClick={() => {
-                          setMoneyOutTab("draft");
-                          setSelectedSbIds(new Set());
-                          setMoneyOutSelectedIds(new Set());
-                        }}
-                        label="Draft"
-                        count={ledgerSbDraftSelfBills.length}
-                        total={ledgerSbDraftTotal}
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-text-secondary">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-[#020040]"
+                        checked={hideInternalPayouts}
+                        onChange={(e) => setHideInternalPayouts(e.target.checked)}
                       />
-                      <TabPill
-                        active={moneyOutTab === "ready"}
-                        onClick={() => {
-                          setMoneyOutTab("ready");
-                          setSelectedSbIds(new Set());
-                          setMoneyOutSelectedIds(new Set());
-                        }}
-                        label="Ready"
-                        count={goingOutApprovedSelfBills.length}
-                        total={goingOutReadyTotal}
-                      />
-                    </div>
+                      Hide internal
+                    </label>
                   </div>
                 </div>
 
@@ -1968,43 +1951,6 @@ function BillingStandaloneInner() {
                               </button>
                             ) : null}
                           </div>
-                          {(() => {
-                            // Próxima rodada em montagem: self-bills da quinzena aberta (accumulating) ficam
-                            // em Draft até o domingo de fechamento. Mostra aqui para não parecer que sumiram.
-                            const building = data.selfBills.filter(
-                              (sb) =>
-                                !isSelfBillPayoutVoided(sb) &&
-                                sb.status !== "paid" &&
-                                !sb.wise_paid_at &&
-                                !selfBillCountsAsReady(sb) &&
-                                sb.bill_origin !== "internal" &&
-                                Number(sb.net_payout ?? 0) > 0.005 &&
-                                /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")) &&
-                                String(sb.due_date) > todayYmd,
-                            );
-                            if (building.length === 0) return null;
-                            const due = building.map((sb) => String(sb.due_date)).sort()[0];
-                            const sameRun = building.filter((sb) => String(sb.due_date) === due);
-                            const total = sameRun.reduce((t, sb) => t + Number(sb.net_payout ?? 0), 0);
-                            const partners = new Set(sameRun.map((sb) => sb.partner_id ?? sb.partner_name)).size;
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setMoneyOutTab("draft");
-                                  setSelectedSbIds(new Set());
-                                  setMoneyOutSelectedIds(new Set());
-                                }}
-                                className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg bg-surface-secondary px-3 py-1.5 text-left text-[12px] text-text-secondary hover:bg-surface-hover"
-                                title="Self-bills of the open fortnight stay in Draft until it closes on Sunday"
-                              >
-                                <span>
-                                  Next run · <span className="font-medium text-text-primary">{formatDate(due)}</span> · building from {partners} partner{partners === 1 ? "" : "s"}
-                                </span>
-                                <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(total)} ›</span>
-                              </button>
-                            );
-                          })()}
                           <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-xl font-bold tabular-nums text-text-primary">
                               {formatCurrency(goingOutApprovedTotal)}
@@ -2024,7 +1970,7 @@ function BillingStandaloneInner() {
                           <SelfBillGroupedLedger
                             mode="payQueue"
                             variant="compact"
-                            workforceGroups={goingOutApprovedSections.workforce}
+                            workforceGroups={hideInternalPayouts ? [] : goingOutApprovedSections.workforce}
                             partnerGroups={goingOutApprovedSections.partners}
                             todayYmd={todayYmd}
                             selectedIds={moneyOutSelectedIds}
@@ -2045,6 +1991,99 @@ function BillingStandaloneInner() {
                             }}
                             emptyLabel="Nothing ready to pay in this period."
                           />
+                          {(() => {
+                            // Quinzenas abertas: self-bills ainda acumulando (aprovados ao fim de cada job).
+                            // Ficam aqui, abaixo do Ready, até a quinzena fechar no domingo. Sem checkbox:
+                            // ainda não dá pra pagar.
+                            const building = data.selfBills.filter(
+                              (sb) =>
+                                !isSelfBillPayoutVoided(sb) &&
+                                sb.status !== "paid" &&
+                                !sb.wise_paid_at &&
+                                !selfBillCountsAsReady(sb) &&
+                                Number(sb.net_payout ?? 0) > 0.005 &&
+                                (!hideInternalPayouts || sb.bill_origin !== "internal") &&
+                                /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
+                            );
+                            if (building.length === 0) return null;
+                            const byDue = new Map<string, SelfBill[]>();
+                            for (const sb of building) {
+                              const k = String(sb.due_date);
+                              byDue.set(k, [...(byDue.get(k) ?? []), sb]);
+                            }
+                            const short = (ymd: string) =>
+                              new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                            return [...byDue.entries()]
+                              .sort(([x], [y]) => x.localeCompare(y))
+                              .map(([due, rows]) => {
+                                const start = rows.map((r) => r.week_start ?? "").filter(Boolean).sort()[0] ?? null;
+                                const end = rows.map((r) => r.week_end ?? "").filter(Boolean).sort().slice(-1)[0] ?? null;
+                                let pct = 0;
+                                if (start && end) {
+                                  const t0 = new Date(`${start.slice(0, 10)}T00:00:00`).getTime();
+                                  const t1 = new Date(`${end.slice(0, 10)}T23:59:59`).getTime();
+                                  pct = Math.max(0, Math.min(100, Math.round(((Date.now() - t0) / (t1 - t0)) * 100)));
+                                }
+                                const total = rows.reduce((t, r) => t + Number(r.net_payout ?? 0), 0);
+                                const open = !(collapsedRuns[due] ?? false);
+                                return (
+                                  <div key={due} className="border-t border-border-light">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCollapsedRuns((c) => ({ ...c, [due]: open }))}
+                                      className="flex w-full flex-col gap-1.5 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
+                                      aria-expanded={open}
+                                    >
+                                      <span className="flex w-full items-center gap-2">
+                                        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
+                                        <span className="text-[13px] font-semibold text-text-primary">Pay · {formatDate(due)}</span>
+                                        {start && end ? (
+                                          <span className="truncate text-[12px] text-text-tertiary">
+                                            Work · {short(start)} – {short(end)} · closes {short(end)}
+                                          </span>
+                                        ) : null}
+                                        <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(total)}</span>
+                                      </span>
+                                      <span className="flex items-center gap-2 pl-5">
+                                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--line-2)]/50">
+                                          <span className="block h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                                        </span>
+                                        <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">{pct}% of the fortnight</span>
+                                      </span>
+                                    </button>
+                                    {open
+                                      ? rows
+                                          .sort((x, y) => String(x.partner_name ?? "").localeCompare(String(y.partner_name ?? "")))
+                                          .map((sb) => (
+                                            <button
+                                              key={sb.id}
+                                              type="button"
+                                              onClick={() => void openSelfBill(sb)}
+                                              className="flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
+                                            >
+                                              <span className="w-3.5 shrink-0" aria-hidden />
+                                              <PartnerGroupAvatar
+                                                partnerKey={sb.partner_id ?? sb.partner_name ?? sb.id}
+                                                partnerName={sb.partner_name ?? "Partner"}
+                                                partnerAvatarById={data.partnerAvatarById}
+                                              />
+                                              <span className="truncate text-[13px] font-semibold text-text-primary">{sb.partner_name}</span>
+                                              <span className="shrink-0 text-[12px] text-text-tertiary">{sb.reference}</span>
+                                              {sb.bill_origin === "internal" ? (
+                                                <Badge variant="info" size="sm">Internal</Badge>
+                                              ) : sb.approved_at ? (
+                                                <Badge variant="success" size="sm">Approved</Badge>
+                                              ) : null}
+                                              <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">
+                                                {formatCurrency(Number(sb.net_payout ?? 0))}
+                                              </span>
+                                            </button>
+                                          ))
+                                      : null}
+                                  </div>
+                                );
+                              });
+                          })()}
                         </div>
                       </>
                     );
