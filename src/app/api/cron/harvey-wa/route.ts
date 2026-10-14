@@ -5,6 +5,8 @@
  *  - lead que nunca respondeu o primeiro contato (followup-leads.ts).
  *  - quote enviada sem resposta: 3 lembretes em 7 dias e fecha no 7º; desistência fecha na hora (followup-quotes.ts).
  *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
+ *  - cotação automática por parceiro: 📝 Needs Quote → convite aos 3-5 melhores, lembrete 6h,
+ *    aviso ao cliente 24h, lance vira quote (cotacao-automatica.ts). Chave HARVEY_AUTO_QUOTE=1.
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
  *
@@ -19,6 +21,7 @@ import { varrerChases } from "@/lib/harvey-wa/chase";
 import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
 import { varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
 import { varrerCobrancaDeQuotes } from "@/lib/harvey-wa/followup-quotes";
+import { varrerCotacaoAutomatica } from "@/lib/harvey-wa/varredura-cotacao-automatica";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,7 +51,10 @@ export async function GET(req: NextRequest) {
     const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
     // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
     const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
-    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes });
+    // Needs Quote → parceiros → preço → cliente. Chave HARVEY_AUTO_QUOTE=1; no ensaio só lista.
+    const autoQuote = process.env.HARVEY_AUTO_QUOTE?.trim() === "1";
+    const cotacao = autoQuote || ensaio ? await varrerCotacaoAutomatica(sb, { aplicar: !ensaio && autoQuote }) : null;
+    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });
