@@ -1461,8 +1461,9 @@ function BillingStandaloneInner() {
         >
           <span className="flex w-full items-center gap-2">
             <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
-            <span className={cn("text-[13px] font-semibold", run.isCurrent ? "text-[var(--ok)]" : "text-text-primary")}>
-              {run.isCurrent ? "This fortnight · " : ""}Pay · {formatDate(run.due)}
+            <span className="text-[13px] font-semibold text-text-primary">
+              Pay · {formatDate(run.due)}
+              <span className="ml-1.5 text-[12px] font-normal text-text-tertiary">building</span>
             </span>
             {run.start && run.end ? (
               <span className="truncate text-[12px] text-text-tertiary">
@@ -1473,8 +1474,8 @@ function BillingStandaloneInner() {
           </span>
           {run.isCurrent ? (
             <span className="flex items-center gap-2 pl-5">
-              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--success-light)]">
-                <span className="block h-full rounded-full bg-[var(--ok)]" style={{ width: `${run.pct}%` }} />
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--line-2)]/60">
+                <span className="block h-full rounded-full bg-primary" style={{ width: `${run.pct}%` }} />
               </span>
               <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">
                 {run.pct}% · closes {run.end ? short(run.end) : ""}
@@ -2070,7 +2071,6 @@ function BillingStandaloneInner() {
                           </div>
                         </div>
                         <div className="min-h-0 flex-1 overflow-y-auto">
-                          {buildingRuns.filter((r) => r.isCurrent).map((r) => renderBuildingRun(r))}
                           <SelfBillGroupedLedger
                             mode="payQueue"
                             variant="compact"
@@ -2095,7 +2095,7 @@ function BillingStandaloneInner() {
                             }}
                             emptyLabel="Nothing ready to pay in this period."
                           />
-                          {buildingRuns.filter((r) => !r.isCurrent).map((r) => renderBuildingRun(r))}
+                          {buildingRuns.map((r) => renderBuildingRun(r))}
                         </div>
                       </>
                     );
@@ -3010,10 +3010,23 @@ function SelfBillGroupedLedger({
     <div className="divide-y divide-border-light">
       {ledgerSections.map((section) => (
         <div key={section.label}>
-          <div className="border-b border-border-light bg-surface-hover/30 px-4 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">{section.label}</p>
-          </div>
-          {section.groups.map((week) => (
+          {compact ? null : (
+            <div className="border-b border-border-light bg-surface-hover/30 px-4 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">{section.label}</p>
+            </div>
+          )}
+          {(() => {
+            // Em cima o próximo pagamento (primeiro dia de pagar de hoje em diante), depois os
+            // atrasados, depois o resto.
+            const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+            const dated = section.groups.filter((g) => /^\d{4}-\d{2}-\d{2}$/.test(g.weekKey));
+            const nextKey = dated.map((g) => g.weekKey).filter((k) => k >= today).sort()[0] ?? null;
+            const rank = (g: (typeof section.groups)[number]) =>
+              g.weekKey === nextKey ? 0 : /^\d{4}-\d{2}-\d{2}$/.test(g.weekKey) && g.weekKey < today ? 1 : 2;
+            return [...section.groups]
+              .sort((a, b) => rank(a) - rank(b) || a.weekKey.localeCompare(b.weekKey))
+              .map((week) => ({ week, isNext: week.weekKey === nextKey }));
+          })().map(({ week, isNext }) => (
         <div key={week.weekKey}>
           <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-2">
             <button
@@ -3039,6 +3052,8 @@ function SelfBillGroupedLedger({
                 const late = due !== null && due < today && hasOpen;
                 return late ? (
                   <span className="text-[13px] font-semibold text-[var(--bad)]">Late · was due {formatDate(due)}</span>
+                ) : isNext && due ? (
+                  <span className="text-[13px] font-semibold text-[var(--ok)]">Next payment · {formatDate(due)}</span>
                 ) : (
                   <span className="text-[13px] font-semibold text-text-primary">{week.weekTitle}</span>
                 );
