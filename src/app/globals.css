@@ -661,6 +661,19 @@ svg.lucide { stroke-width: 2; }
    space-y puts the gap on margin-block-end, so that is what we pin. */
 main :is(.space-y-4, .space-y-5, .space-y-6, .space-y-8):has(> .uno-view-head) > :not(:last-child):not(.uno-view-head) { margin-block-end: 16px !important; }
 
+/* Chips (15/10/2026): todo chip do OS no formato do Badge "Scheduled" — canto 6,
+   11/500, 2px 8px — mantendo a cor de cada um. Pega só o que tem cara de chip
+   (canto + padding curto + texto 9–12px); avatar, bolinha, switch e barra não
+   têm esse padding de texto e ficam de fora. */
+:is([class~="rounded-full"], [class~="rounded-md"], [class~="rounded-lg"], [class~="rounded-xl"], [class~="rounded"]):is([class~="px-1"], [class~="px-1.5"], [class~="px-2"], [class~="px-2.5"], [class~="px-3"]):is([class~="py-0.5"], [class~="py-px"], [class~="py-0"], [class~="py-[2px]"], [class~="py-[1px]"]):is([class~="text-[9px]"], [class~="text-[9.5px]"], [class~="text-[10px]"], [class~="text-[10.5px]"], [class~="text-[11px]"], [class~="text-xs"], [class~="text-[12px]"]) {
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 1.45 !important;
+  padding: 2px 8px !important;
+  letter-spacing: 0 !important;
+}
+
 /* ============ Tables (VOS UNO §12) ============
  * `.uno-tbl` is the DataTable: rows at least 36, header 11/500 on a 6% ink
  * wash, zebra 2%, hover 4.5%, hairlines at 62%. The FIRST TWO data columns
