@@ -129,40 +129,37 @@ export function JobModalScheduleFields({
 
   return (
     <>
-      {/* Primary toggle: One-Off / Recurring */}
-      <div className="flex flex-wrap items-stretch gap-1.5 min-w-0">
-        <KindTab
-          label="One-Off"
-          description="One day only"
-          active={isOneOff}
-          onClick={() => setKind("one_off")}
-        />
-        <KindTab
-          label="Recurring"
-          description="Spans days or repeats"
-          active={isMultiple}
-          onClick={() => {
-            // First click on Recurring → default to Spans days.
-            if (!isMultiple) setKind("multi_day");
-          }}
-        />
-      </div>
-
-      {/* Secondary toggle (only when Multiple is active) */}
+      {/* Recurring: o tipo e o "como" em dropdowns; os campos abrem embaixo. */}
       {isMultiple ? (
-        <div className="flex flex-wrap items-stretch gap-1.5 -mt-1 pl-3 border-l-2 border-primary/30 min-w-0">
-          <SubKindTab
-            label="Spans days"
-            description="Mon → Fri (continuous)"
-            active={isMultiDay}
-            onClick={() => setKind("multi_day")}
-          />
-          <SubKindTab
-            label="Repeats"
-            description="Every Tuesday, monthly, …"
-            active={isRecurring}
-            onClick={() => setKind("recurring")}
-          />
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+          <div className="min-w-0 w-full shrink-0 sm:w-[9rem]">
+                <label htmlFor="job-kind-select" className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Type
+                </label>
+                <select
+                  id="job-kind-select"
+                  value={isOneOff ? "one_off" : "recurring"}
+                  onChange={(e) => setKind(e.target.value === "one_off" ? "one_off" : isMultiple ? jobKind : "multi_day")}
+                  className="h-10 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary"
+                >
+                  <option value="one_off">One-off</option>
+                  <option value="recurring">Recurring</option>
+                </select>
+              </div>
+          <div className="min-w-0 w-full sm:w-[12rem]">
+            <label htmlFor="job-kind-how" className="mb-1.5 block text-xs font-medium text-text-secondary">
+              How
+            </label>
+            <select
+              id="job-kind-how"
+              value={isRecurring ? "recurring" : "multi_day"}
+              onChange={(e) => setKind(e.target.value === "recurring" ? "recurring" : "multi_day")}
+              className="h-10 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary"
+            >
+              <option value="multi_day">Spans days (Mon → Fri)</option>
+              <option value="recurring">Repeats (every Tue, monthly…)</option>
+            </select>
+          </div>
         </div>
       ) : null}
 
@@ -175,6 +172,20 @@ export function JobModalScheduleFields({
               !hideArrivalSlot && "sm:flex-row sm:items-end sm:gap-3",
             )}
           >
+            <div className="min-w-0 w-full shrink-0 sm:w-[9rem]">
+            <label htmlFor="job-kind-select" className="mb-1.5 block text-xs font-medium text-text-secondary">
+              Type
+            </label>
+            <select
+              id="job-kind-select"
+              value={isOneOff ? "one_off" : "recurring"}
+              onChange={(e) => setKind(e.target.value === "one_off" ? "one_off" : isMultiple ? jobKind : "multi_day")}
+              className="h-10 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary"
+            >
+              <option value="one_off">One-off</option>
+              <option value="recurring">Recurring</option>
+            </select>
+            </div>
             <div
               className={cn(
                 "min-w-0",
@@ -626,61 +637,7 @@ function RecurringFormFields({
   );
 }
 
-function KindTab({
-  label, description, active, disabled, onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={cn(
-        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2.5 py-1.5 text-left transition-colors",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : disabled
-            ? "border-border-light bg-surface-hover/40 text-text-tertiary opacity-60 cursor-not-allowed"
-            : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
-      )}
-    >
-      <span className="block text-xs font-semibold leading-tight">{label}</span>
-      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
-    </button>
-  );
-}
 
-function SubKindTab({
-  label, description, active, onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2 py-1 text-left transition-colors",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
-      )}
-    >
-      <span className="block text-[11px] font-semibold leading-tight">{label}</span>
-      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
-    </button>
-  );
-}
 
 /** Re-export for parents that maintain their own form state. */
 export type { JobRecurrenceByday } from "@/types/database";
