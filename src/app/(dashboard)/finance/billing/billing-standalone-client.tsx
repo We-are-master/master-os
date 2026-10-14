@@ -1463,7 +1463,9 @@ function BillingStandaloneInner() {
             <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
             <span className="text-[13px] font-semibold text-text-primary">
               Pay · {formatDate(run.due)}
-              <span className="ml-1.5 text-[12px] font-normal text-text-tertiary">building</span>
+              <span className="ml-1.5 text-[12px] font-normal text-text-tertiary">
+                building{run.isCurrent && run.end ? ` · closes ${short(run.end)}` : ""}
+              </span>
             </span>
             {run.start && run.end ? (
               <span className="truncate text-[12px] text-text-tertiary">
@@ -1472,16 +1474,6 @@ function BillingStandaloneInner() {
             ) : null}
             <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(run.total)}</span>
           </span>
-          {run.isCurrent ? (
-            <span className="flex items-center gap-2 pl-5">
-              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--line-2)]/60">
-                <span className="block h-full rounded-full bg-primary" style={{ width: `${run.pct}%` }} />
-              </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">
-                {run.pct}% · closes {run.end ? short(run.end) : ""}
-              </span>
-            </span>
-          ) : null}
         </button>
         {open
           ? run.rows.map((sb) => (
@@ -3060,17 +3052,6 @@ function SelfBillGroupedLedger({
               })()}
               {week.weekSubtitle ? <span className="text-[12px] text-text-tertiary">{week.weekSubtitle}</span> : null}
             </span>
-            {(() => {
-              // Só os atrasados levam barra (vermelha, cheia): o prazo já passou.
-              const due = /^\d{4}-\d{2}-\d{2}$/.test(week.weekKey) ? week.weekKey : null;
-              const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
-              const hasOpen = week.partners.some((pg) =>
-                pg.rows.some((sb) => sb.status !== "paid" && sb.status !== "rejected" && !isSelfBillPayoutVoided(sb)),
-              );
-              return due !== null && due < today && hasOpen ? (
-                <span className="block h-1.5 w-full rounded-full bg-[var(--bad)]" aria-hidden />
-              ) : null;
-            })()}
             </button>
             <div className="flex items-center gap-3">
               <p className="text-sm font-bold tabular-nums text-text-primary">{formatCurrency(week.weekTotal)}</p>
