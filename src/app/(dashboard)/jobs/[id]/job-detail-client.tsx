@@ -92,6 +92,7 @@ import {
   Pencil,
   XCircle,
   UserX, Layers, Undo2,
+  MapPin,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -7190,11 +7191,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   return (
     <PageTransition>
       <div className="w-full bg-surface-secondary py-4 px-4 dark:bg-[#0f1115] sm:px-5">
-        <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
+        <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
           {/* ── TOP BAR ── */}
-          <div className="border-b border-border-light px-4 py-4">
+          <div className="border-b border-border-light px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Button
@@ -7213,13 +7214,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   variant="outline"
                   size="sm"
                   loading={refreshingJob}
-                  className="h-7 w-7 shrink-0 rounded-full p-0"
+                  className="h-8 w-8 shrink-0 p-0"
                   icon={<RefreshCw className="h-3.5 w-3.5" />}
                   onClick={() => void refreshJobFinance()}
                   title="Reload job, payments, and documents from the server"
                   aria-label="Refresh job"
                 />
-                <h1 className="text-lg font-bold text-text-primary tabular-nums">{job.reference}</h1>
+                <h1 className="m-0 font-display text-[20px] font-bold leading-none tracking-tight text-text-primary tabular-nums">{job.reference}</h1>
                 <ZendeskTicketBadge
                   source={job.external_source}
                   ref={job.external_ref}
@@ -7543,6 +7544,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Sem tempo nenhum ("Not started · 0s") o chip não diz nada: some. */}
+                  {progressTimerSubline === "Not started" ? null : (
                   <div
                     className={cn(
                       "inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-border-light bg-card/80 px-1.5 py-0.5",
@@ -7568,6 +7571,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       </button>
                     ) : null}
                   </div>
+                  )}
                   {progressTimerPausedBadge ? (
                     <Badge variant="warning" size="sm" className="h-5 px-1 text-[9px]">
                       Paused
@@ -7859,7 +7863,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-text-tertiary line-clamp-4">{job.property_address}</p>
+                    {job.property_address?.trim() ? (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.property_address.trim())}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open in Google Maps"
+                        className="mt-1 inline-flex items-start gap-1 text-xs leading-snug text-text-tertiary underline-offset-2 hover:text-primary hover:underline"
+                      >
+                        <MapPin className="mt-px h-3 w-3 shrink-0" aria-hidden />
+                        <span className="line-clamp-4">{job.property_address}</span>
+                      </a>
+                    ) : null}
                     {jobHeaderContact && (jobHeaderContact.phone || jobHeaderContact.email) ? (
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-snug">
                         {jobHeaderContact.phone ? (() => {
@@ -9262,7 +9277,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-border bg-card p-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[12px] font-semibold text-text-primary">Income · client</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Income</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -9347,7 +9362,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <div className="rounded-lg border border-border bg-card p-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[12px] font-semibold text-text-primary">Expenses · partner</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Expenses</span>
                     <Badge
                       variant={
                         partnerUsesClawbackUi

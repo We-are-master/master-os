@@ -250,13 +250,16 @@ function SidebarNavGroups({
     <>
       {navGroups.map((group, groupIndex) => {
         const visibleItems = group.items.filter((item) => !SIDEBAR_HIDDEN_HREFS.has(item.href));
+        // Linha só entre blocos visíveis: o 1º grupo pode estar todo oculto e a
+        // linha dele colava na borda do logo (linha duplicada).
+        const firstVisible = navGroups.findIndex((g) => g.items.some((i) => !SIDEBAR_HIDDEN_HREFS.has(i.href)));
         // A group whose every item is hidden would otherwise leave its heading
         // floating alone (what "Learn" did once Fixfy School was pulled).
         if (visibleItems.length === 0) return null;
         return (
         <div key={group.label}>
           {/* Sem título de grupo (VOS): uma linha fina separa os blocos. */}
-          {groupIndex > 0 ? <div className="mx-2 my-2 h-px bg-[var(--nav-border)]" role="separator" /> : null}
+          {groupIndex > firstVisible ? <div className="mx-2 my-2 h-px bg-[var(--nav-border)]" role="separator" /> : null}
           {(
 
             <div className="space-y-0.5">

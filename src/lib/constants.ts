@@ -30,6 +30,7 @@ export const NAVIGATION: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
       { label: "Live view", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
     ],
@@ -44,7 +45,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Leads", href: "/crm", icon: "kanban", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {
