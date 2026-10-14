@@ -13,6 +13,7 @@ const QUOTES_DEFAULT_DATE_FILTER: DateFilterValue = {
 };
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
+import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -4994,138 +4995,128 @@ function QuoteDetailDrawer({
             <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
           </label>
         ) : null}
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-fx-line bg-fx-paper dark:bg-surface-secondary/40">
-            <FileText className="h-4 w-4 text-fx-slate" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1">
-              <p className="text-[13.5px] font-medium text-fx-ink">Customer PDF</p>
-              <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
-            </div>
-            <p className="text-xs text-fx-mute">Uses saved figures</p>
-          </div>
-          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-fx-ink"
-              onClick={() => {
-                window.open(
-                  `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
-                  "_blank",
-                  "noopener,noreferrer",
-                );
-              }}
-            >
-              Preview
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-fx-ink"
-              icon={<Download className="h-3.5 w-3.5" />}
-              onClick={() => {
-                const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
-                const a = document.createElement("a");
-                a.href = url;
-                a.rel = "noopener";
-                a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-              }}
-            >
-              Download
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-fx-mute">Move this quote</p>
-          <div
-            className={cn(
-              "flex flex-wrap items-center gap-2",
-              "[&_button]:shrink-0",
-            )}
-          >
-            {(drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment") && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={sendState === "sending" || !sendStep3Ready}
-                icon={
-                  sendState === "sending" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )
-                }
-                onClick={() => void handleSendToCustomer()}
-                title={
-                  drawerQuoteStatus === "awaiting_payment"
-                    ? "Saves the latest figures and emails the updated PDF to the customer"
-                    : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
-                }
-              >
-                {sendState === "sending" ? "Saving…" : "Resend Quote"}
-              </Button>
-            )}
-            {overviewActions.map((action) => {
-              const sendToCustomerClick = async () => {
-                if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
-                  toast.error(
-                    "Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).",
-                  );
-                  return;
-                }
-                await handleSendToCustomer();
-              };
-              const showMarkAsSent =
-                action.status === "awaiting_customer" &&
-                ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
-              return (
-                <Fragment key={action.status}>
-                  <Button
-                    variant={action.primary ? "primary" : "outline"}
-                    size="sm"
-                    disabled={proposalSaving}
-                    icon={<action.icon className="h-3.5 w-3.5" />}
-                    onClick={async () => {
-                      if (action.status === "approve_quote") {
-                        onApproveQuote(quote);
-                        return;
-                      }
-                      if (action.status !== "awaiting_customer") {
-                        const result = await Promise.resolve(onStatusChange(quote, action.status));
-                        if (result === false) return;
-                        return;
-                      }
-                      await sendToCustomerClick();
-                    }}
-                  >
-                    {action.label}
-                  </Button>
-                  {showMarkAsSent ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={proposalSaving}
-                      icon={<MailCheck className="h-3.5 w-3.5" />}
-                      title="Save proposal, move to Awaiting Customer, and record that the PDF was already delivered (no email from this app)"
-                      onClick={() => void handleMarkAsSentExternally()}
-                    >
-                      Mark as sent
-                    </Button>
-                  ) : null}
-                </Fragment>
+        {(() => {
+          const downloadPdf = () => {
+            const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+            const a = document.createElement("a");
+            a.href = url;
+            a.rel = "noopener";
+            a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          };
+          const runAction = async (action: (typeof overviewActions)[number]) => {
+            if (action.status === "approve_quote") {
+              onApproveQuote(quote);
+              return;
+            }
+            if (action.status !== "awaiting_customer") {
+              await Promise.resolve(onStatusChange(quote, action.status));
+              return;
+            }
+            if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+              toast.error(
+                "Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).",
               );
-            })}
-          </div>
-        </div>
+              return;
+            }
+            await handleSendToCustomer();
+          };
+          const primary = overviewActions.find((x) => x.primary) ?? null;
+          const others = overviewActions.filter((x) => x !== primary);
+          const canResend = drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment";
+          const canMarkSent =
+            overviewActions.some((x) => x.status === "awaiting_customer") &&
+            ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
+          return (
+            <div className="flex items-center justify-end gap-2">
+              <JobActionsMenu
+                placement="up"
+                groups={[
+                  {
+                    key: "pdf",
+                    label: "Customer PDF",
+                    icon: FileText,
+                    items: [
+                      {
+                        key: "preview",
+                        label: "Preview PDF",
+                        hint: "Uses the saved figures. Save Quote first to refresh.",
+                        icon: FileText,
+                        onSelect: () =>
+                          window.open(`/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`, "_blank", "noopener,noreferrer"),
+                      },
+                      { key: "download", label: "Download PDF", icon: Download, onSelect: downloadPdf },
+                    ],
+                  },
+                  {
+                    key: "send",
+                    label: "Send",
+                    icon: Send,
+                    items: [
+                      ...(canResend
+                        ? [{
+                            key: "resend",
+                            label: "Resend quote",
+                            hint:
+                              drawerQuoteStatus === "awaiting_payment"
+                                ? "Saves the latest figures and emails the updated PDF"
+                                : "Saves the proposal and emails the PDF again",
+                            icon: Send,
+                            disabled: sendState === "sending" || !sendStep3Ready,
+                            title: "Add the customer email first",
+                            onSelect: () => void handleSendToCustomer(),
+                          }]
+                        : []),
+                      ...(canMarkSent
+                        ? [{
+                            key: "mark_sent",
+                            label: "Mark as sent",
+                            hint: "The PDF went out another way. No email from the OS.",
+                            icon: MailCheck,
+                            disabled: proposalSaving,
+                            onSelect: () => void handleMarkAsSentExternally(),
+                          }]
+                        : []),
+                    ],
+                  },
+                  {
+                    key: "move",
+                    label: "Move quote",
+                    icon: ArrowRight,
+                    items: others.map((x) => ({
+                      key: x.status,
+                      label: x.label,
+                      icon: x.icon,
+                      danger: x.status === "rejected",
+                      disabled: proposalSaving,
+                      onSelect: () => void runAction(x),
+                    })),
+                  },
+                ]}
+              />
+              {primary ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  disabled={proposalSaving || sendState === "sending"}
+                  icon={
+                    sendState === "sending" && primary.status === "awaiting_customer" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <primary.icon className="h-3.5 w-3.5" />
+                    )
+                  }
+                  onClick={() => void runAction(primary)}
+                >
+                  {sendState === "sending" && primary.status === "awaiting_customer" ? "Sending…" : primary.label}
+                </Button>
+              ) : null}
+            </div>
+          );
+        })()}
       </div>
     ) : undefined;
 

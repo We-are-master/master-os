@@ -30,7 +30,16 @@ export type JobActionGroup = {
  * Menu "⋯" do job card: um nível por assunto (cliente, parceiro, agenda, job)
  * e o submenu com as ações. Grupo sem item visível não aparece.
  */
-export function JobActionsMenu({ groups, trigger }: { groups: JobActionGroup[]; trigger?: ReactNode }) {
+export function JobActionsMenu({
+  groups,
+  trigger,
+  placement = "down",
+}: {
+  groups: JobActionGroup[];
+  trigger?: ReactNode;
+  /** "up" para quando o botão mora num rodapé (gaveta, modal). */
+  placement?: "down" | "up";
+}) {
   const [open, setOpen] = useState(false);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -80,7 +89,7 @@ export function JobActionsMenu({ groups, trigger }: { groups: JobActionGroup[]; 
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border border-border-light bg-card p-1 shadow-lg dark:border-border"
+          className={cn("absolute right-0 z-50 w-56 rounded-xl border border-border-light bg-card p-1 shadow-lg dark:border-border", placement === "up" ? "bottom-full mb-1" : "top-full mt-1")}
         >
           {visibleGroups.map((group) => {
             const isActive = activeGroup === group.key;
@@ -115,7 +124,7 @@ export function JobActionsMenu({ groups, trigger }: { groups: JobActionGroup[]; 
                   <div
                     role="menu"
                     aria-label={group.label}
-                    className="absolute right-full top-0 z-50 mr-1 w-64 rounded-xl border border-border-light bg-card p-1 shadow-lg max-sm:static max-sm:mr-0 max-sm:mt-1 max-sm:w-full dark:border-border"
+                    className={cn("absolute right-full z-50 mr-1 w-64 rounded-xl border border-border-light bg-card p-1 shadow-lg max-sm:static max-sm:mr-0 max-sm:mt-1 max-sm:w-full dark:border-border", placement === "up" ? "bottom-0" : "top-0")}
                   >
                     <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium text-text-tertiary">{group.label}</p>
                     {group.items.map((item) => {
