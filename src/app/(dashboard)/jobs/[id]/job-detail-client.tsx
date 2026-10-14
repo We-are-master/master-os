@@ -1041,6 +1041,86 @@ function FixedValuesConfirmPreview({
   );
 }
 
+/** Uma linha do extrato do Finance summary: rótulo, detalhe e valor com sinal. */
+function FinLedgerRow({
+  label,
+  meta,
+  amount,
+  tone = "plain",
+  strong,
+  onRemove,
+}: {
+  label: React.ReactNode;
+  meta?: React.ReactNode;
+  amount: string;
+  tone?: "plain" | "in" | "out" | "muted";
+  strong?: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-2 py-1.5", strong && "border-t border-border pt-2")}>
+      <div className="min-w-0">
+        <p className={cn("m-0 text-[12px] leading-snug", strong ? "font-semibold text-text-primary" : "text-text-primary")}>{label}</p>
+        {meta ? <p className="m-0 truncate text-[11px] leading-snug text-text-tertiary">{meta}</p> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <span
+          className={cn(
+            "text-[12px] tabular-nums",
+            strong ? "font-semibold" : "font-medium",
+            tone === "in" && "text-[var(--ok)]",
+            tone === "out" && "text-[var(--bad)]",
+            tone === "muted" && "text-text-tertiary",
+            tone === "plain" && "text-text-primary",
+          )}
+        >
+          {amount}
+        </span>
+        {onRemove ? (
+          <button type="button" onClick={onRemove} aria-label="Remove payment" className="text-text-tertiary transition-colors hover:text-red-500">
+            <X className="h-3 w-3" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Faixa no pé de cada lado: quanto já entrou/saiu e quanto falta, sem ambiguidade. */
+function FinBalanceBanner({ total, paid, due, paidVerb, dueText }: { total: number; paid: number; due: number; paidVerb: string; dueText: string }) {
+  const settled = due <= 0.02 && total > 0.02;
+  const nothing = paid <= 0.02 && due > 0.02;
+  return (
+    <div
+      className={cn(
+        "mt-1.5 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-[12px]",
+        settled ? "bg-[var(--success-light)] text-[var(--ok-ink)]" : "bg-[var(--warning-light)] text-[var(--warn-ink)]",
+      )}
+    >
+      <span className="min-w-0 font-medium">
+        {settled
+          ? `${paidVerb} in full`
+          : nothing
+            ? `Nothing ${paidVerb.toLowerCase()} yet`
+            : `${formatCurrencyPrecise(paid)} ${paidVerb.toLowerCase()} · ${dueText}`}
+      </span>
+      <span className="shrink-0 font-semibold tabular-nums">{settled ? formatCurrencyPrecise(total) : formatCurrencyPrecise(due)}</span>
+    </div>
+  );
+}
+
+function finPaymentMethodLabel(method: string | null | undefined, side: "client" | "partner"): string {
+  if (side === "partner") {
+    if (method === "bank_transfer") return "Paid by bank transfer";
+    if (method === "cash") return "Paid in cash";
+    return "Partner payout";
+  }
+  if (method === "stripe") return "Paid by card · Stripe";
+  if (method === "bank_transfer") return "Bank transfer received";
+  if (method === "cash") return "Cash received";
+  return "Payment received";
+}
+
 function hourlyRatesFromCatalogService(
   service: CatalogService,
   presetId?: string | null,
@@ -6428,9 +6508,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         extrasNetOfAccessAndMaterials,
         Math.round(clientExtraTypeTotals.extra * 100) / 100,
       );
-  const clientExtraTotalDisplay = Math.round(
-    (clientExtraPlainDisplay + clientExtraCczDisplay + clientExtraParkingDisplay + clientExtraMaterialsDisplay) * 100,
-  ) / 100;
   const partnerExtraUnifiedAmount = partnerItemizedExtras
     ? Math.round(partnerExtraEntriesSignedTotal * 100) / 100
     : Math.max(partnerExtraLine, Math.round(partnerExtraEntriesSignedTotal * 100) / 100);
@@ -9181,10 +9258,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* CLIENT cash in */}
-              <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+              <div className="rounded-lg border border-border bg-card p-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash in — client</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Income · client</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -9196,143 +9273,50 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     {formatCurrency(billableRevenue)}
                   </span>
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div
-                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
-                    title="Base client price at the start of this job (field client_price). Extras are tracked below."
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Base price</span>
-                    </div>
-                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                      {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
-                    </span>
-                  </div>
-                  {extraVisitsCount > 0 ? (
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-                      <span className="text-text-primary">
-                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
-                      </span>
-                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                        {extraVisitsClient > 0.005 ? `+${formatCurrency(extraVisitsClient)}` : formatCurrency(0)}
-                      </span>
-                    </div>
+                <div className="divide-y divide-border/60">
+                  <FinLedgerRow label="Base price" amount={formatCurrency(Math.max(0, Number(job.client_price ?? 0)))} />
+                  {extraVisitsCount > 0 && extraVisitsClient > 0.005 ? (
+                    <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsClient)}`} />
                   ) : null}
-                  {(job.customer_deposit ?? 0) > 0 && (
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-text-primary">Upfront deposit</span>
-                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm" className="h-5 text-xs">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
-                      </div>
-                      <span className="font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
-                    </div>
-                  )}
-                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <div className="flex items-center gap-1.5">
-                      <JobCardHint
-                        title="View all client extras"
-                        onClick={() => openFinanceHub("client")}
-                        className="focus:ring-emerald-400"
+                  {clientExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(clientExtraPlainDisplay)}`} /> : null}
+                  {clientExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(clientExtraCczDisplay)}`} /> : null}
+                  {clientExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(clientExtraParkingDisplay)}`} /> : null}
+                  {clientExtraMaterialsDisplay > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(clientExtraMaterialsDisplay)}`} /> : null}
+                  <FinLedgerRow label="Client pays" amount={formatCurrency(billableRevenue)} strong />
+                  {(job.customer_deposit ?? 0) > 0 && !customerPayments.some((cp) => cp.type === "customer_deposit") ? (
+                    <FinLedgerRow
+                      label="Deposit asked"
+                      meta={job.customer_deposit_paid ? "Marked paid" : "Not paid yet"}
+                      amount={formatCurrency(job.customer_deposit ?? 0)}
+                      tone="muted"
+                    />
+                  ) : null}
+                  {customerPayments.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note).replace(/ · req [A-Za-z0-9-]+$/, "");
+                    const isRefund = Number(p.amount) < 0;
+                    const scheduleTag = isRefund ? "Refund" : p.type === "customer_deposit" ? "Deposit" : "Balance";
+                    return (
+                      <FinLedgerRow
+                        key={p.id}
+                        label={isRefund ? `Refunded${p.payment_method === "stripe" ? " to card · Stripe" : ""}` : finPaymentMethodLabel(p.payment_method, "client")}
+                        meta={[formatBritishDate(p.payment_date), ledgerTag ?? scheduleTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        amount={isRefund ? `+${formatCurrencyPrecise(Math.abs(Number(p.amount)))}` : formatCurrencyPrecise(-Number(p.amount))}
+                        tone={isRefund ? "out" : "in"}
+                        onRemove={isAdmin ? () => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type }) : undefined}
                       />
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    </div>
-                    <div className="py-1">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-text-secondary">Total Extras</span>
-                        <span className={cn("font-semibold tabular-nums", clientExtraTotalDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraTotalDisplay > 0.02 ? `+${formatCurrency(clientExtraTotalDisplay)}` : formatCurrency(0)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Labour</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">CCZ</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Parking</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Payment history: always show header so empty state is visible */}
-                  <div className="mt-1 space-y-0.5">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment history</p>
-                    {customerPayments.length === 0 ? (
-                      <p className="text-[10px] text-text-tertiary pl-0.5">No payments recorded yet.</p>
-                    ) : null}
-                    {customerPayments.map((p) => {
-                      const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                      const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note).replace(/ · req [A-Za-z0-9-]+$/, "");
-                      const isRefund = Number(p.amount) < 0;
-                      const scheduleTag = isRefund ? "Refund" : p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
-                      return (
-                      <div key={p.id} className="flex items-start justify-between gap-1.5 rounded-md bg-surface-hover/40 px-2 py-1.5">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] font-semibold text-text-tertiary uppercase">
-                              {ledgerTag ?? scheduleTag}
-                            </span>
-                            {isRefund ? <Badge variant="danger" size="sm">Refunded</Badge> : <Badge variant="success" size="sm">Received</Badge>}
-                            {p.payment_method && (
-                              <span className="text-[10px] text-text-tertiary">
-                                ·{" "}
-                                {p.payment_method === "bank_transfer"
-                                  ? "Bank"
-                                  : p.payment_method === "cash"
-                                    ? "Cash"
-                                    : p.payment_method === "stripe"
-                                      ? "Stripe"
-                                      : p.payment_method}
-                              </span>
-                            )}
-                            <span className="text-[10px] text-text-tertiary">
-                              · {formatBritishDate(p.payment_date)}
-                            </span>
-                          </div>
-                          {ledgerTag ? (
-                            <p className="text-[10px] text-text-tertiary truncate pl-0.5">{scheduleTag}</p>
-                          ) : null}
-                          {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" title="Reduces amount due">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin && (
-                            <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
-                              <X className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border-light pt-1.5 text-xs dark:border-[#2f3642]">
-                    <span className={`font-semibold ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
-                      {amountDue > 0.02 ? "Amount due" : "Fully collected"}
-                    </span>
-                    <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
-                      {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
-                    </span>
-                  </div>
+                    );
+                  })}
                 </div>
+                <FinBalanceBanner
+                  total={billableRevenue}
+                  paid={customerPaidTotal}
+                  due={Math.max(0, amountDue)}
+                  paidVerb="Received"
+                  dueText="still to pay"
+                />
                 {(() => {
                   if (!showsJobPaymentPlan) return null;
                   const primaryInv =
@@ -9355,10 +9339,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* Cash out (partner payout) */}
-              <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+              <div className="rounded-lg border border-border bg-card p-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Expenses · partner</span>
                     <Badge
                       variant={
                         partnerUsesClawbackUi
@@ -9394,158 +9378,44 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     self-bill follow-up.
                   </p>
                 ) : null}
-                <div className="space-y-2 text-xs">
-                  <div
-                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
-                    title="Subcontract labour agreed at the start of this job. Stays locked — extras and materials are tracked below."
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Base pay</span>
-                    </div>
-                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                      {formatCurrency(partnerInitialBalance)}
-                    </span>
-                  </div>
-                  {extraVisitsCount > 0 ? (
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-                      <span className="text-text-primary">
-                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
-                      </span>
-                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                        {extraVisitsPartner > 0.005 ? `+${formatCurrency(extraVisitsPartner)}` : formatCurrency(0)}
-                      </span>
-                    </div>
+                <div className="divide-y divide-border/60">
+                  <FinLedgerRow label="Base pay" amount={formatCurrency(partnerInitialBalance)} />
+                  {extraVisitsCount > 0 && extraVisitsPartner > 0.005 ? (
+                    <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsPartner)}`} />
                   ) : null}
-                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <div className="flex items-center gap-1.5">
-                      <JobCardHint
-                        title="View all partner extras"
-                        onClick={() => openFinanceHub("partner")}
-                        className="focus:ring-rose-400"
+                  {partnerExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(partnerExtraPlainDisplay)}`} /> : null}
+                  {partnerExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(partnerExtraCczDisplay)}`} /> : null}
+                  {partnerExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(partnerExtraParkingDisplay)}`} /> : null}
+                  {partnerMaterialsLine > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(partnerMaterialsLine)}`} /> : null}
+                  {hasPartnerDeductions
+                    ? partnerNonMaterialsDeductionEntries.map((entry) => (
+                        <FinLedgerRow
+                          key={entry.id}
+                          label={`Deduction · ${entry.extraType}`}
+                          amount={formatSignedCurrency(extraHistorySignedAmount(entry))}
+                          tone="in"
+                        />
+                      ))
+                    : null}
+                  <FinLedgerRow label="Partner gets" amount={formatCurrencyPrecise(partnerCashOutSummaryAmount)} strong />
+                  {partnerPayoutLedgerRows.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                    return (
+                      <FinLedgerRow
+                        key={p.id}
+                        label={finPaymentMethodLabel(p.payment_method, "partner")}
+                        meta={[formatBritishDate(p.payment_date), ledgerTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        amount={formatCurrencyPrecise(-Number(p.amount))}
+                        tone="out"
+                        onRemove={isAdmin ? () => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type }) : undefined}
                       />
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    </div>
-                    <div className="py-1">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-text-secondary">Total Extras</span>
-                        <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerExtraTotalDisplay > 0.02 ? `+${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Labour</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">CCZ</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Parking</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    {hasPartnerDeductions ? (
-                      <div className="space-y-1 border-t border-border-light/70 pt-2 mt-1 dark:border-[#323a46]">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Deductions</p>
-                        <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                          <span className="text-text-secondary">Total deductions</span>
-                          <span className="font-semibold tabular-nums text-emerald-700">
-                            {formatSignedCurrency(partnerDeductionsTotal)}
-                          </span>
-                        </div>
-                        {partnerNonMaterialsDeductionEntries.map((entry) => (
-                          <div key={entry.id} className="flex items-center justify-between gap-2 py-0.5 text-xs pl-1">
-                            <span className="text-text-tertiary truncate">{entry.extraType}</span>
-                            <span className="font-semibold tabular-nums text-emerald-700 shrink-0">
-                              {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
-                  {partnerCashOutTotal > 0.02 || partnerUsesClawbackUi ? (
-                    <div className="mt-1 space-y-2">
-                      <div className="space-y-1">
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                        {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
-                          <p className="text-[10px] text-text-tertiary pl-0.5">No payouts recorded yet.</p>
-                        ) : null}
-                        {partnerPayoutLedgerRows.map((p) => {
-                            const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                            const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                            const primaryLabel = ledgerTag ?? "Partner payout";
-                            return (
-                              <div
-                                key={p.id}
-                                className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2"
-                              >
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[10px] font-semibold text-text-tertiary uppercase">{primaryLabel}</span>
-                                    <Badge variant="outline" size="sm">
-                                      Paid
-                                    </Badge>
-                                    {p.payment_method && (
-                                      <span className="text-[10px] text-text-tertiary">
-                                        {p.payment_method === "bank_transfer"
-                                          ? "Bank"
-                                          : p.payment_method === "cash"
-                                            ? "Cash"
-                                            : p.payment_method === "other"
-                                              ? "Other"
-                                              : p.payment_method}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] text-text-tertiary">
-                                      ·{" "}
-                                      {formatBritishDate(p.payment_date)}
-                                    </span>
-                                  </div>
-                                  {ledgerTag ? (
-                                    <p className="text-[10px] text-text-tertiary truncate pl-0.5">Cash out</p>
-                                  ) : null}
-                                  {p.bank_reference && (
-                                    <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>
-                                  )}
-                                  {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                                </div>
-                                <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
-                                  <span
-                                    className="text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-300"
-                                    title="Reduces amount due only"
-                                  >
-                                    {formatCurrencyPrecise(-Number(p.amount))}
-                                  </span>
-                                  {isAdmin && (
-                                    <button
-                                      onClick={() =>
-                                        setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })
-                                      }
-                                      className="text-text-tertiary hover:text-red-500 transition-colors"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                      </div>
+                    );
+                  })}
+                </div>
+                  <div className="mt-1">
                       {partnerLegacyCostAsPayoutRows.length > 0 ? (
                         <div className="space-y-1">
                           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">
@@ -9593,39 +9463,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           })}
                         </div>
                       ) : null}
-                    </div>
-                  ) : null}
-                  {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
-                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light dark:border-[#2f3642]">
-                      <span
-                        className={`text-xs font-semibold ${
-                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
-                        }`}
-                      >
-                        {partnerUsesClawbackUi
-                          ? partnerClawbackOwed > 0.02
-                            ? "Outstanding clawback"
-                            : "No clawback recorded"
-                          : partnerPayRemaining > 0
-                            ? "Amount due"
-                            : "Fully paid out"}
-                      </span>
-                      <span
-                        className={`text-sm font-bold tabular-nums ${
-                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
-                        }`}
-                      >
-                        {partnerUsesClawbackUi
-                          ? partnerClawbackOwed > 0.02
-                            ? formatCurrencyPrecise(-partnerClawbackOwed)
-                            : formatCurrencyPrecise(0)
-                          : partnerPayRemaining > 0
-                            ? formatCurrency(partnerPayRemaining)
-                            : formatCurrency(0)}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
+                  </div>
+                {partnerCashOutTotal > 0.02 && !partnerUsesClawbackUi ? (
+                  <FinBalanceBanner
+                    total={partnerCashOutSummaryAmount}
+                    paid={partnerPaidTotal}
+                    due={Math.max(0, partnerPayRemaining)}
+                    paidVerb="Paid"
+                    dueText="still to pay the partner"
+                  />
+                ) : null}
+                {partnerUsesClawbackUi ? (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 rounded-lg bg-[var(--warning-light)] px-2.5 py-2 text-[12px] text-[var(--warn-ink)]">
+                    <span className="font-medium">{partnerClawbackOwed > 0.02 ? "Partner owes us (clawback)" : "No clawback recorded"}</span>
+                    <span className="font-semibold tabular-nums">{formatCurrencyPrecise(partnerClawbackOwed > 0.02 ? -partnerClawbackOwed : 0)}</span>
+                  </div>
+                ) : null}
                 {showsJobPaymentPlan &&
                 job.self_bill_id?.trim() &&
                 job.partner_id?.trim() &&
