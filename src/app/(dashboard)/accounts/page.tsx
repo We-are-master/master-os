@@ -38,6 +38,7 @@ import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { toast } from "sonner";
 import type { Account, AccountLegacyYearlyStat, CatalogService, Client, Job, Invoice } from "@/types/database";
 import { listAccountLegacyYearlyStats, fetchLegacyRevenueTotalsByAccount } from "@/services/account-legacy-stats";
+import { AccountAutomations } from "@/components/accounts/account-automations";
 import { AccountOverviewGlance } from "@/components/accounts/account-overview-glance";
 import { AccountHistorySection } from "@/components/accounts/account-history-section";
 import {
@@ -1150,8 +1151,14 @@ function AccountDetailDrawer({
     default_client_cancel_fee_gbp: "",
   });
 
+  /** Interruptor de Automations salvou: a conta muda, mas o formulário não pode ser zerado. */
+  const skipFormResetRef = useRef(false);
   useEffect(() => {
     if (!account) return;
+    if (skipFormResetRef.current) {
+      skipFormResetRef.current = false;
+      return;
+    }
     setBillingType(((account as unknown as Record<string, unknown>).billing_type as "end_client" | "account") ?? "end_client");
     const a = account as unknown as Record<string, unknown>;
     setEmailIncludeInvoiceOnFinal(a.email_include_invoice_on_final !== false);
@@ -1503,6 +1510,17 @@ function AccountDetailDrawer({
         {/* ── Overview tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
           <>
+            <AccountAutomations
+              account={account}
+              canEdit={isAdmin}
+              onSaved={(next, changed) => {
+                if (changed.email_include_invoice_on_final !== undefined) setEmailIncludeInvoiceOnFinal(changed.email_include_invoice_on_final);
+                if (changed.email_include_report_on_final !== undefined) setEmailIncludeReportOnFinal(changed.email_include_report_on_final);
+                if (changed.card_upfront !== undefined) setCollectionMode(changed.card_upfront ? "card_upfront" : "invoice");
+                skipFormResetRef.current = true;
+                onAccountUpdated(next);
+              }}
+            />
             <AccountOverviewGlance
               account={account}
               jobs={jobs}
@@ -1972,60 +1990,7 @@ function AccountDetailDrawer({
               </div>
 
               <div>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                    When a job is finalised (client email)
-                  </span>
-                  <FixfyHintIcon
-                    text="Controls what the team can put in the completion email on the job. If you handle your own self-bill, you can turn off invoice lines but still receive final report PDFs."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeInvoiceOnFinal}
-                      onChange={(e) => setEmailIncludeInvoiceOnFinal(e.target.checked)}
-                    />
-                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
-                      Include invoice / payment in the email
-                      <FixfyHintIcon text="Uncheck if you generate your own self-bill and do not want our invoice copy in the message." />
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeReportOnFinal}
-                      onChange={(e) => setEmailIncludeReportOnFinal(e.target.checked)}
-                    />
-                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
-                      Attach final report PDFs
-                      <FixfyHintIcon text="Uncheck to send a notice without report attachments (rare)." />
-                    </span>
-                  </label>
-                </div>
-                <div className="mt-3 space-y-1.5">
-                  <label htmlFor="account-collection-mode" className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                    How this account pays
-                    <FixfyHintIcon text="Invoice: at final check the invoice and report go to the account's finance email, due by the account's payment terms counted from the day the job was done. Card: 50% deposit up front and the rest charged to the saved card at final check." />
-                  </label>
-                  <select
-                    id="account-collection-mode"
-                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-text-primary"
-                    value={collectionMode}
-                    onChange={(e) => setCollectionMode(e.target.value === "card_upfront" ? "card_upfront" : "invoice")}
-                  >
-                    <option value="invoice">Invoice after the job (sent with the report)</option>
-                    <option value="card_upfront">50% deposit + saved card</option>
-                  </select>
-                </div>
-                {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
-                  <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">
-                    With both off, final review can only move the job internally (no client email until you re-enable at least one).
-                  </p>
-                ) : null}
+                <p className="m-0 text-[12px] text-text-tertiary">Completion email, card or invoice, and reminders are switched in Overview › Automations.</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
