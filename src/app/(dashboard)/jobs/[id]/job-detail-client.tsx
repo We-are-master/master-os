@@ -12,6 +12,7 @@ import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
 import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
+import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
@@ -52,6 +53,12 @@ import {
   ClipboardCheck,
   Search,
   Copy,
+  Wallet,
+  MinusCircle,
+  Percent,
+  Send,
+  UserRoundCog,
+  CalendarPlus,
   CreditCard,
   FileText,
   HardHat,
@@ -81,7 +88,6 @@ import {
   Timer,
   X,
   Pencil,
-  MoreVertical,
   XCircle,
   UserX, Layers, Undo2,
 } from "lucide-react";
@@ -1034,46 +1040,6 @@ function FixedValuesConfirmPreview({
   );
 }
 
-/** Schedule tab — CCZ / Parking toggles share the same off-state (light gray container + track). */
-function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
-  return cn(
-    "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
-    active
-      ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
-      : "border-[#E4E4E8] bg-[#F5F5F7] hover:border-[#D4D4DA] dark:border-[#2f3440] dark:bg-[#1e2430] dark:hover:border-[#3a4252]",
-    disabled && "cursor-not-allowed opacity-50",
-  );
-}
-
-function accessFeeToggleTrackClass(active: boolean) {
-  return cn(
-    "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-    active ? "bg-emerald-600" : "bg-[#D4D4DA] dark:bg-stone-600",
-  );
-}
-
-function accessFeeToggleThumbClass(active: boolean) {
-  return cn(
-    "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
-    active ? "translate-x-[14px]" : "translate-x-[2px]",
-  );
-}
-
-function accessFeeToggleLabelClass(active: boolean) {
-  return cn("text-[10px] font-medium", active ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary");
-}
-
-function accessFeeCardClass(active: boolean) {
-  return cn(
-    "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
-    active ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-white",
-  );
-}
-
-function accessFeeCardBorderStyle(active: boolean): React.CSSProperties {
-  return { border: active ? "0.5px solid #10B981" : "0.5px solid #E4E4E8" };
-}
-
 function hourlyRatesFromCatalogService(
   service: CatalogService,
   presetId?: string | null,
@@ -1445,10 +1411,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     customer_deposit: "",
     customer_final_payment: "",
   });
-  const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
-  const jobMoreMenuRef = useRef<HTMLDivElement>(null);
-  const [requestPaymentMenuOpen, setRequestPaymentMenuOpen] = useState(false);
-  const requestPaymentMenuRef = useRef<HTMLDivElement>(null);
   const [requestPaymentInitialPercent, setRequestPaymentInitialPercent] = useState(100);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
@@ -1469,6 +1431,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [qrPartnerCost, setQrPartnerCost] = useState("");
   const [savingFin, setSavingFin] = useState(false);
   const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
+  const [jobEditMenuOpen, setJobEditMenuOpen] = useState(false);
+  const jobEditMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!jobEditMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (jobEditMenuRef.current && !jobEditMenuRef.current.contains(e.target as Node)) setJobEditMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [jobEditMenuOpen]);
   const [jobTypeEditTarget, setJobTypeEditTarget] = useState<"fixed" | "hourly">("fixed");
   const [jobAssignmentEditMode, setJobAssignmentEditMode] = useState<"manual" | "auto">("manual");
   const [jobTypeEditCatalogId, setJobTypeEditCatalogId] = useState("");
@@ -1553,24 +1525,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     jobRef.current = job;
   }, [job]);
 
-  useEffect(() => {
-    if (!jobMoreMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = jobMoreMenuRef.current;
-      if (el && !el.contains(e.target as Node)) setJobMoreMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [jobMoreMenuOpen]);
-  useEffect(() => {
-    if (!requestPaymentMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = requestPaymentMenuRef.current;
-      if (el && !el.contains(e.target as Node)) setRequestPaymentMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [requestPaymentMenuOpen]);
   useEffect(() => {
     if (!job?.id) return;
     setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
@@ -4845,7 +4799,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const openQuickReschedule = useCallback(() => {
     if (!job) return;
-    setJobMoreMenuOpen(false);
     const usesSlots = isOneOffScheduleUi;
     if (job.scheduled_start_at) {
       const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
@@ -7261,82 +7214,211 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               );
             })}
-                <div className="relative" ref={jobMoreMenuRef}>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 w-8 shrink-0 p-0"
-                    aria-label="More job actions"
-                    aria-expanded={jobMoreMenuOpen}
-                    aria-haspopup="menu"
-                    onClick={() => setJobMoreMenuOpen((o) => !o)}
-                    icon={<MoreVertical className="h-3.5 w-3.5" />}
-                  />
-                  {jobMoreMenuOpen ? (
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full z-50 mt-1 min-w-[12.5rem] rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
-                    >
-                      {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            setDetailTab(0);
-                            setVisitOpenCreateSignal((k) => k + 1);
-                          }}
-                        >
-                          <Plus className="h-3.5 w-3.5 shrink-0" />
-                          Add visit
-                        </button>
-                      ) : null}
-                      {job.status !== "cancelled" &&
-                      job.status !== "deleted" &&
-                      job.status !== "completed" ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            openFinalReview();
-                          }}
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          Finish
-                        </button>
-                      ) : null}
-                      {job.status !== "cancelled" && job.status !== "deleted" ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => void openQuickReschedule()}
-                        >
-                          <Calendar className="h-3.5 w-3.5 shrink-0" />
-                          Reschedule
-                        </button>
-                      ) : null}
-                      {showCancelInJobMoreMenu ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            setCancelJobOpen(true);
-                          }}
-                        >
-                          <XCircle className="h-3.5 w-3.5 shrink-0" />
-                          Cancel job
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+                <JobActionsMenu
+                  groups={[
+                    {
+                      key: "client",
+                      label: "Client payment",
+                      icon: Wallet,
+                      items: [
+                        ...(isAdmin
+                          ? [{
+                              key: "client_pay",
+                              label: "Record payment received",
+                              hint: "Bank, cash or card already taken",
+                              icon: Plus,
+                              disabled: job.status === "cancelled" || job.status === "deleted",
+                              onSelect: () => {
+                                setMoneyDrawerInitialExtraType(undefined);
+                                setMoneyDrawerFlow("client_pay");
+                                setMoneyDrawerOpen(true);
+                              },
+                            }]
+                          : []),
+                        ...(!clientPaidInFull
+                          ? [
+                              {
+                                key: "request_email",
+                                label: "Request payment by email",
+                                hint: "Invoice PDF with a Stripe link",
+                                icon: Mail,
+                                disabled: !invoiceSendGate.ok || financeBillingLoading || loadingInvoices || jobInvoices.length === 0,
+                                title: invoiceSendGate.ok ? "No invoice on this job yet" : invoiceSendGate.reason,
+                                onSelect: () => void handleOpenRequestPaymentModal({ initialPercent: 100 }),
+                              },
+                              {
+                                key: "copy_link",
+                                label: "Copy pay link",
+                                hint: "Full open balance",
+                                icon: Copy,
+                                disabled: !(primaryInvoiceForBadge ?? jobInvoices[0])?.reference,
+                                title: "No invoice linked to this job yet",
+                                onSelect: () => {
+                                  const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+                                  if (inv?.reference) void copyInvoicePayLink(inv.reference);
+                                },
+                              },
+                              {
+                                key: "partial",
+                                label: "Request part of the balance",
+                                hint: "Pick a %, then copy or email",
+                                icon: Percent,
+                                disabled: loadingInvoices || jobInvoices.length === 0,
+                                title: "No invoice linked to this job yet",
+                                onSelect: () => void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true }),
+                              },
+                            ]
+                          : []),
+                        {
+                          key: "client_extra",
+                          label: "Add extra charge",
+                          hint: "Raises what the client pays",
+                          icon: Plus,
+                          disabled: job.status === "cancelled" || job.status === "deleted",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Labour");
+                            setMoneyDrawerFlow("client_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "client_discount",
+                          label: "Add discount",
+                          icon: MinusCircle,
+                          disabled: job.status === "cancelled" || job.status === "deleted",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Discount — labour");
+                            setMoneyDrawerFlow("client_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        ...(isAdmin && customerPaidTotal > 0.02
+                          ? [{
+                              key: "refund",
+                              label: "Refund client",
+                              hint: "Back to the card, or record a bank transfer",
+                              icon: Undo2,
+                              danger: true,
+                              onSelect: () => setRefundOpen(true),
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "partner",
+                      label: "Partner",
+                      icon: HardHat,
+                      items: [
+                        ...(isAdmin
+                          ? [{
+                              key: "partner_pay",
+                              label: "Record partner payment",
+                              hint: "Money already paid to the partner",
+                              icon: Send,
+                              disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                              title: "Assign a partner first",
+                              onSelect: () => {
+                                setMoneyDrawerFlow("partner_pay");
+                                setMoneyDrawerOpen(true);
+                              },
+                            }]
+                          : []),
+                        {
+                          key: "partner_extra",
+                          label: "Add partner extra",
+                          hint: "Raises what the partner gets",
+                          icon: Plus,
+                          disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                          title: "Assign a partner first",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Labour");
+                            setMoneyDrawerFlow("partner_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "partner_deduction",
+                          label: "Add deduction",
+                          icon: MinusCircle,
+                          disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                          title: "Assign a partner first",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Discount — labour");
+                            setMoneyDrawerFlow("partner_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "partner_swap",
+                          label: job.partner_id ? "Swap partner" : "Assign partner",
+                          icon: UserRoundCog,
+                          disabled: signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign,
+                          onSelect: () => setPartnerModalOpen(true),
+                        },
+                        ...(job.partner_id?.trim()
+                          ? [{
+                              key: "partner_resend",
+                              label: "Resend job email",
+                              icon: Mail,
+                              disabled: signingOffPartner || savingPartner || resendingPartnerEmail,
+                              onSelect: () => void handleResendPartnerEmail(),
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "schedule",
+                      label: "Schedule",
+                      icon: Calendar,
+                      items: [
+                        ...(canOpenQuickReschedule
+                          ? [{
+                              key: "reschedule",
+                              label: "Reschedule",
+                              icon: Calendar,
+                              onSelect: () => void openQuickReschedule(),
+                            }]
+                          : []),
+                        ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED
+                          ? [{
+                              key: "add_visit",
+                              label: "Add visit",
+                              icon: CalendarPlus,
+                              onSelect: () => {
+                                setDetailTab(0);
+                                setVisitOpenCreateSignal((k) => k + 1);
+                              },
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "job",
+                      label: "Job",
+                      icon: Briefcase,
+                      items: [
+                        ...(job.status !== "cancelled" && job.status !== "deleted" && job.status !== "completed"
+                          ? [{
+                              key: "finish",
+                              label: "Finish",
+                              hint: "Review report and send invoice",
+                              icon: CheckCircle2,
+                              onSelect: () => openFinalReview(),
+                            }]
+                          : []),
+                        ...(showCancelInJobMoreMenu
+                          ? [{
+                              key: "cancel",
+                              label: "Cancel job",
+                              icon: XCircle,
+                              danger: true,
+                              onSelect: () => setCancelJobOpen(true),
+                            }]
+                          : []),
+                      ],
+                    },
+                  ]}
+                />
                 <Button
                   type="button"
                   variant="outline"
@@ -7550,39 +7632,110 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       const JobTypeIcon = getJobTypeIcon(job.title ?? "");
                       const typePillClass = getJobTypePillClass(job.title ?? "");
                       return job.title?.trim() ? (
-                        <div className="inline-flex min-w-0 items-center gap-1.5">
-                          <p className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}>
-                            <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
-                            {job.title.trim()}
-                          </p>
-                          <button
-                            type="button"
-                            className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                            disabled={job.status === "cancelled"}
-                            onClick={openJobBillingTypeEdit}
-                            title="Edit type of work, pricing & assignment"
+                        <div className="flex min-w-0 flex-nowrap items-center gap-1.5 [&>*]:shrink-0 [&>*]:whitespace-nowrap">
+                          <p
+                            className={cn("inline-flex min-w-0 !shrink items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}
+                            title={job.title.trim()}
                           >
-                            <Pencil className="h-3 w-3" />
-                          </button>
+                            <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
+                            <span className="truncate">{job.title.trim()}</span>
+                          </p>
+                          {!isHousekeepJobDetail ? (
+                            <>
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  job.job_type === "hourly" && "border-[#7c3aed]/40 bg-[#f5f3ff] text-[#5b21b6]",
+                                )}
+                              >
+                                {job.job_type === "hourly" ? <Clock className="h-3 w-3 shrink-0" /> : <Lock className="h-3 w-3 shrink-0" />}
+                                {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
+                              </span>
+                              {job.catalog_band_label?.trim() ? (
+                                <span className={"inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
+                              ) : null}
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  jobScheduleKindLabel === "Recurring" && "border-primary/35 bg-primary/10 text-primary",
+                                )}
+                              >
+                                {jobScheduleKindLabel === "Recurring" ? "Recurring" : "One-off"}
+                              </span>
+                              {jobPartnerListKind(job) === "auto_assign" ? (
+                                <Badge variant="info" dot size="sm" className="h-6 text-[11px] font-semibold normal-case">
+                                  Auto assign
+                                </Badge>
+                              ) : null}
+                            </>
+                          ) : null}
+                          <div className="relative" ref={jobEditMenuRef}>
+                            <button
+                              type="button"
+                              className={cn(
+                                "flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary",
+                                (jobEditMenuOpen || clientEditAccordionOpen) && "border-primary/35 bg-primary-light/60 text-primary",
+                              )}
+                              disabled={job.status === "cancelled"}
+                              onClick={() => setJobEditMenuOpen((o) => !o)}
+                              title="Edit job"
+                              aria-label="Edit job"
+                              aria-haspopup="menu"
+                              aria-expanded={jobEditMenuOpen}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            {jobEditMenuOpen ? (
+                              <div
+                                role="menu"
+                                className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border-light bg-card p-1 shadow-lg dark:border-border"
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                  onClick={() => {
+                                    setJobEditMenuOpen(false);
+                                    openJobBillingTypeEdit();
+                                  }}
+                                >
+                                  <Briefcase className="h-4 w-4 shrink-0 text-text-secondary" />
+                                  Service, price and assignment
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                  onClick={() => {
+                                    setJobEditMenuOpen(false);
+                                    setClientEditAccordionOpen((o) => !o);
+                                  }}
+                                >
+                                  <UserRoundCog className="h-4 w-4 shrink-0 text-text-secondary" />
+                                  {clientEditAccordionOpen ? "Close client and address" : "Client and address"}
+                                </button>
+                                {canOpenQuickReschedule ? (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                    onClick={() => {
+                                      setJobEditMenuOpen(false);
+                                      void openQuickReschedule();
+                                    }}
+                                  >
+                                    <Calendar className="h-4 w-4 shrink-0 text-text-secondary" />
+                                    Date and arrival
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ) : (
                         <p className="text-sm font-medium text-text-tertiary">No service title</p>
                       );
                     })()}
-                    <button
-                      type="button"
-                      onClick={() => setClientEditAccordionOpen((o) => !o)}
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-hover px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary",
-                        clientEditAccordionOpen && "border-primary/35 bg-primary-light/60 text-primary dark:bg-primary/15",
-                      )}
-                      disabled={job.status === "cancelled"}
-                      title="Edit client & address"
-                      aria-expanded={clientEditAccordionOpen}
-                    >
-                      <Pencil className="h-3 w-3 shrink-0" aria-hidden />
-                      Edit
-                    </button>
                   </div>
                   <div>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -7721,12 +7874,47 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
-                        <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Calendar className="h-[13px] w-[13px] text-[#aaa] dark:text-[#7f899a]" />
-                          <span>
-                            {displayDate ? formatDate(displayDate) : "Not set"}{" "}
-                            <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
-                          </span>
+                        <div className="mt-1 grid grid-cols-3 overflow-hidden rounded-lg border border-[#e8e5e0] bg-[#fafafb] dark:border-[#2b313d] dark:bg-[#161b24]">
+                          {[
+                            {
+                              key: "start",
+                              icon: Calendar,
+                              label: "Visit",
+                              value: displayDate ? formatDate(displayDate) : "Not set",
+                            },
+                            {
+                              key: "finish",
+                              icon: CalendarPlus,
+                              label: "Expected finish",
+                              value: scheduleFinishDisplayYmd ? formatDate(scheduleFinishDisplayYmd) : "Not set",
+                            },
+                            {
+                              key: "arrival",
+                              icon: Clock,
+                              label: "Arrival",
+                              value: arrivalDisplay
+                                ? arrivalDisplay
+                                : startIso
+                                  ? `${formatHourMinuteAmPm(new Date(startIso))} · ${windowLabel} window`
+                                  : "Not set",
+                            },
+                          ].map((cell, i) => (
+                            <div
+                              key={cell.key}
+                              className={cn(
+                                "min-w-0 px-3 py-2",
+                                i > 0 && "border-l border-[#e8e5e0] dark:border-[#2b313d]",
+                              )}
+                            >
+                              <p className="flex items-center gap-1 text-[11px] text-[#8a8a96] dark:text-[#909aac]">
+                                <cell.icon className="h-3 w-3 shrink-0" aria-hidden />
+                                {cell.label}
+                              </p>
+                              <p className="mt-0.5 truncate text-[13px] font-semibold text-[#1a1a2e] dark:text-[#e5e7eb]" title={cell.value}>
+                                {cell.value}
+                              </p>
+                            </div>
+                          ))}
                         </div>
                         {nextIsExtra && nextVisit ? (
                           <button
@@ -7745,69 +7933,75 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             </span>
                           </button>
                         ) : null}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
-                          <span>
-                            {arrivalDisplay ? (
-                              <span className="font-medium">Arrival: {arrivalDisplay}</span>
-                            ) : startIso ? (
-                              <>
-                                {formatHourMinuteAmPm(new Date(startIso))}
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {windowLabel} window</span>
-                              </>
-                            ) : (
-                              "Not set"
-                            )}
-                          </span>
-                        </div>
                       </div>
                     );
                   })()}
                   {!isHousekeepJobDetail ? (
                     <>
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            "inline-flex items-start gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-[10px] sm:text-[11px] font-bold leading-snug max-w-[13rem]",
-                            job.job_type === "hourly"
-                              ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6]"
-                              : "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
-                          )}
-                        >
-                          {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px] shrink-0 mt-0.5" /> : <Lock className="h-[11px] w-[11px] shrink-0 mt-0.5" />}
-                          {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
-                        </span>
-                        {job.catalog_band_label?.trim() ? (
-                          <span className="inline-flex items-center rounded-full border border-border bg-surface-hover px-2.5 py-0.5 text-[10px] font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]">
-                            {job.catalog_band_label.trim()}
-                          </span>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                          disabled={job.status === "cancelled"}
-                          onClick={openJobBillingTypeEdit}
-                          title="Edit pricing & assignment"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
-                        <span
-                          className={cn(
-                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                            jobScheduleKindLabel === "Recurring"
-                              ? "border-primary/35 bg-primary/10 text-primary"
-                              : "border-border bg-surface-hover text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
-                          )}
-                        >
-                          {jobScheduleKindLabel}
-                        </span>
-                        {jobPartnerListKind(job) === "auto_assign" ? (
-                          <Badge variant="info" dot size="sm" className="h-5 text-[10px] font-semibold normal-case">
-                            Auto assign
-                          </Badge>
-                        ) : null}
-                      </div>
+                        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[#e8e5e0] bg-[#fafafb] dark:border-[#2b313d] dark:bg-[#161b24]">
+                          {[
+                            {
+                              key: "ccz",
+                              label: "CCZ",
+                              on: effectiveCustomerInCcz,
+                              fee: accessFees.cczFeeGbp,
+                              disabled: job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz),
+                              onToggle: () => {
+                                if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
+                                else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
+                              },
+                              hint: cczParkingFieldTooltipText,
+                            },
+                            {
+                              key: "parking",
+                              label: "Parking",
+                              on: job.has_free_parking === false,
+                              fee: accessFees.parkingFeeGbp,
+                              disabled: job.status === "cancelled" || savingAccessFees,
+                              onToggle: () => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) }),
+                              hint: null,
+                            },
+                          ].map((t, i) => (
+                            <button
+                              key={t.key}
+                              type="button"
+                              role="switch"
+                              aria-checked={t.on}
+                              aria-label={`${t.label} fee`}
+                              disabled={t.disabled}
+                              title={t.hint ?? undefined}
+                              onClick={t.onToggle}
+                              className={cn(
+                                "flex h-9 min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-black/[0.02] disabled:cursor-not-allowed disabled:opacity-55",
+                                i > 0 && "border-l border-[#e8e5e0] dark:border-[#2b313d]",
+                              )}
+                            >
+                              <span className="text-[12px] font-medium text-[#8a8a96] dark:text-[#909aac]">{t.label}</span>
+                              <span
+                                className={cn(
+                                  "ml-auto text-[12px] font-semibold tabular-nums",
+                                  t.on ? "text-[#0F6E56]" : "text-[#8a8a96] dark:text-[#909aac]",
+                                )}
+                              >
+                                {t.on ? `+${formatCurrency(t.fee)}` : "No fee"}
+                              </span>
+                              <span
+                                className={cn(
+                                  "relative h-4 w-7 shrink-0 rounded-full transition-colors",
+                                  t.on ? "bg-[#0F6E56]" : "bg-[#d8d8de] dark:bg-[#3a4150]",
+                                )}
+                                aria-hidden
+                              >
+                                <span
+                                  className={cn(
+                                    "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform",
+                                    t.on && "translate-x-3",
+                                  )}
+                                />
+                              </span>
+                            </button>
+                          ))}
+                        </div>
                       {job.job_type === "hourly" && hourlyTimeEditOpen ? (
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
                           <Input
@@ -7954,221 +8148,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 </div>
               ) : null}
-              <div
-                className="p-[18px] space-y-[14px]"
-                style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p
-                    className="text-[10px] font-medium uppercase"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Schedule
-                  </p>
-                  {canOpenQuickReschedule ? (
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      icon={<Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-                      className="w-full shrink-0 flex-nowrap [&>span]:whitespace-nowrap sm:w-auto"
-                      onClick={() => void openQuickReschedule()}
-                    >
-                      Reschedule
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[10px] font-medium uppercase"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      Start date
-                    </p>
-                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                      {scheduleStartDisplayYmd ? formatDate(scheduleStartDisplayYmd) : "—"}
-                    </p>
-                  </div>
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[10px] font-medium uppercase"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      Expected finish
-                    </p>
-                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                      {scheduleFinishDisplayYmd ? formatDate(scheduleFinishDisplayYmd) : "—"}
-                    </p>
-                  </div>
-                  {isOneOffScheduleUi ? (
-                    <div
-                      className="min-w-0 bg-white rounded-[10px] p-[12px_14px] sm:col-span-2"
-                      style={{ border: "0.5px solid #E4E4E8" }}
-                    >
-                      <p
-                        className="mb-2 text-[10px] font-medium uppercase"
-                        style={{ color: "#020040", letterSpacing: "0.6px" }}
-                      >
-                        Arrival Time
-                      </p>
-                      <ArrivalSlotPicker
-                        readOnly
-                        hideLabel
-                        arrivalFrom={scheduleTime}
-                        arrivalWindowMins={scheduleWindowMins}
-                        onPick={() => {}}
-                      />
-                      {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
-                        useArrivalSlots: isOneOffScheduleUi,
-                      }) ? (
-                        <p className="mt-1.5 text-[10px] font-medium text-text-secondary">
-                          {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
-                            useArrivalSlots: isOneOffScheduleUi,
-                          })}
-                        </p>
-                      ) : (
-                        <p className="mt-1.5 text-[10px] text-text-tertiary">—</p>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <div
-                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                        style={{ border: "0.5px solid #E4E4E8" }}
-                      >
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{ color: "#020040", letterSpacing: "0.6px" }}
-                        >
-                          Arrival Time
-                        </p>
-                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                          {scheduleTime.trim()
-                            ? (() => {
-                                const iso = scheduleStartDisplayYmd
-                                  ? ukWallClockToUtcIso(scheduleStartDisplayYmd, scheduleTime.trim())
-                                  : "";
-                                return iso ? formatHourMinuteAmPm(new Date(iso)) : scheduleTime.trim();
-                              })()
-                            : "—"}
-                        </p>
-                      </div>
-                      <div
-                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                        style={{ border: "0.5px solid #E4E4E8" }}
-                      >
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{ color: "#020040", letterSpacing: "0.6px" }}
-                        >
-                          Window
-                        </p>
-                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                          {(() => {
-                            const wm = scheduleWindowMins.trim();
-                            const n = wm ? Number(wm) : NaN;
-                            if (!Number.isFinite(n) || n <= 0) return "—";
-                            return (
-                              ARRIVAL_WINDOW_OPTIONS.find((opt) => opt.value === wm)?.label ??
-                              `${Math.round(n / 60)}h`
-                            );
-                          })()}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-                {!isHousekeepJobDetail ? (
-                  <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                    <div
-                      className={accessFeeCardClass(effectiveCustomerInCcz)}
-                      style={accessFeeCardBorderStyle(effectiveCustomerInCcz)}
-                    >
-                      <div className="flex items-center gap-1">
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{
-                            color: effectiveCustomerInCcz ? "#0F6E56" : "#020040",
-                            letterSpacing: "0.6px",
-                          }}
-                        >
-                          CCZ
-                        </p>
-                          <span className="group relative shrink-0">
-                            <span
-                              tabIndex={0}
-                              className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
-                              aria-label="Congestion charge zone details"
-                            >
-                              <Info className="h-3 w-3" aria-hidden />
-                            </span>
-                            <span
-                              role="tooltip"
-                              className="pointer-events-none invisible absolute bottom-full left-0 z-[60] mb-1 w-44 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-                            >
-                              {cczParkingFieldTooltipText}
-                            </span>
-                          </span>
-                      </div>
-                      <button
-                          type="button"
-                          disabled={
-                            job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz)
-                          }
-                          onClick={() => {
-                            if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
-                            else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
-                          }}
-                      className={accessFeeToggleButtonClass(
-                            effectiveCustomerInCcz,
-                            !cczEligibleAddress && !job.in_ccz,
-                          )}
-                      >
-                          <span className={accessFeeToggleTrackClass(effectiveCustomerInCcz)}>
-                            <span className={accessFeeToggleThumbClass(effectiveCustomerInCcz)} />
-                          </span>
-                          <span className={accessFeeToggleLabelClass(effectiveCustomerInCcz)}>
-                            {effectiveCustomerInCcz ? `+${formatCurrency(accessFees.cczFeeGbp)}` : "No fee"}
-                          </span>
-                      </button>
-                    </div>
-                    <div
-                      className={accessFeeCardClass(job.has_free_parking === false)}
-                      style={accessFeeCardBorderStyle(job.has_free_parking === false)}
-                    >
-                      <p
-                        className="text-[10px] font-medium uppercase"
-                        style={{
-                          color: job.has_free_parking === false ? "#0F6E56" : "#020040",
-                          letterSpacing: "0.6px",
-                        }}
-                      >
-                        Parking
-                      </p>
-                      <button
-                          type="button"
-                          disabled={job.status === "cancelled" || savingAccessFees}
-                          onClick={() => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) })}
-                          className={accessFeeToggleButtonClass(job.has_free_parking === false)}
-                      >
-                          <span className={accessFeeToggleTrackClass(job.has_free_parking === false)}>
-                            <span className={accessFeeToggleThumbClass(job.has_free_parking === false)} />
-                          </span>
-                          <span className={accessFeeToggleLabelClass(job.has_free_parking === false)}>
-                            {job.has_free_parking === false ? `+${formatCurrency(accessFees.parkingFeeGbp)}` : "No fee"}
-                          </span>
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
             </div>
 
             {/* Scope / photos / reports / financial — tabbed */}
@@ -9121,32 +9100,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       Auto assign
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
-                    className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
-                    onClick={() => setPartnerModalOpen(true)}
-                  >
-                    {job.partner_id ? "Swap" : "Assign"}
-                  </Button>
-                  {job.partner_id?.trim() ? (
+                  {!job.partner_id ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      icon={<Mail className="h-3.5 w-3.5" aria-hidden />}
-                      loading={resendingPartnerEmail}
-                      disabled={
-                        signingOffPartner ||
-                        savingPartner ||
-                        dispatchingAutoAssign ||
-                        cancellingAutoAssign ||
-                        resendingPartnerEmail
-                      }
-                      className="h-auto min-w-0 w-full gap-1.5 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
-                      onClick={() => void handleResendPartnerEmail()}
+                      disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
+                      className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                      onClick={() => setPartnerModalOpen(true)}
                     >
-                      Resend email
+                      Assign
                     </Button>
                   ) : null}
                 </div>
@@ -9364,59 +9326,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
                       {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
                     </span>
-                  </div>
-                </div>
-                <div className="mt-2 flex w-full flex-col gap-2">
-                  {isAdmin ? (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-4 w-4 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType(undefined);
-                        setMoneyDrawerFlow("client_pay");
-                        setMoneyDrawerOpen(true);
-                      }}
-                      title="Records money received from the client. Reduces amount due only — use Add extra charge or Add a discount for line-item adjustments."
-                    >
-                      Record Received Payment
-                    </Button>
-                  ) : null}
-                  <div className="flex w-full flex-nowrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Labour");
-                        setMoneyDrawerFlow("client_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add extra charge
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Discount — labour");
-                        setMoneyDrawerFlow("client_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add a discount
-                    </Button>
                   </div>
                 </div>
                 {(() => {
@@ -9711,58 +9620,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       </span>
                     </div>
                   ) : null}
-                </div>
-                <div className="mt-2 flex w-full flex-col gap-2">
-                  {isAdmin ? (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm dark:bg-[#020040]"
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-4 w-4 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerFlow("partner_pay");
-                        setMoneyDrawerOpen(true);
-                      }}
-                      title='Records real money paid to partner (not an extra labour line). Choose "Deposit pass-through" or "Advance" if paying ahead of the labour cap.'
-                    >
-                      Record partner payment
-                    </Button>
-                  ) : null}
-                  <div className="flex w-full flex-nowrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Labour");
-                        setMoneyDrawerFlow("partner_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add extra charge
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Discount — labour");
-                        setMoneyDrawerFlow("partner_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add deduction
-                    </Button>
-                  </div>
                 </div>
                 {showsJobPaymentPlan &&
                 job.self_bill_id?.trim() &&
@@ -10100,97 +9957,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     email is on the client linked to this job, or retry after saving in /clients.
                   </p>
                 ) : null}
-                {!clientPaidInFull ? (
-                  <>
-                    <div className="relative" ref={requestPaymentMenuRef}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="primary"
-                        className="w-full min-h-[2.5rem] font-semibold shadow-sm"
-                        icon={<Mail className="h-3.5 w-3.5" />}
-                        loading={sendingInvoiceEmail}
-                        disabled={sendingInvoiceEmail || loadingInvoices || jobInvoices.length === 0}
-                        aria-expanded={requestPaymentMenuOpen}
-                        aria-haspopup="menu"
-                        title="Request payment: email the invoice or share a Stripe pay link"
-                        onClick={() => setRequestPaymentMenuOpen((o) => !o)}
-                      >
-                        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                          Request payment
-                          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
-                        </span>
-                      </Button>
-                      {requestPaymentMenuOpen ? (
-                        <div
-                          role="menu"
-                          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
-                        >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={!invoiceSendGate.ok || financeBillingLoading}
-                            title={invoiceSendGate.ok ? "Choose % and email the invoice PDF with a Stripe pay link" : invoiceSendGate.reason}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              void handleOpenRequestPaymentModal({ initialPercent: 100 });
-                            }}
-                          >
-                            <Mail className="h-3.5 w-3.5 shrink-0" />
-                            Send via email
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            title="Copy a Stripe link charging the full open balance"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              const inv = primaryInvoiceForBadge ?? jobInvoices[0];
-                              if (!inv?.reference) {
-                                toast.error("No invoice linked to this job yet.");
-                                return;
-                              }
-                              void copyInvoicePayLink(inv.reference);
-                            }}
-                          >
-                            <Copy className="h-3.5 w-3.5 shrink-0" />
-                            Copy pay link
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            title="Pick a % of the balance, then copy the link or email it"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true });
-                            }}
-                          >
-                            <CreditCard className="h-3.5 w-3.5 shrink-0" />
-                            Partial amount…
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    {!invoiceSendGate.ok && !financeBillingLoading ? (
-                      <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
-                    ) : null}
-                  </>
-                ) : null}
-                {isAdmin && customerPaidTotal > 0.02 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="w-full min-h-[2.25rem]"
-                    icon={<Undo2 className="h-3.5 w-3.5" />}
-                    title="Give money back to the customer: to the card through Stripe, or record a bank transfer"
-                    onClick={() => setRefundOpen(true)}
-                  >
-                    Refund customer
-                  </Button>
+                {!clientPaidInFull && !invoiceSendGate.ok && !financeBillingLoading ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
                 ) : null}
               </div>
             </div>

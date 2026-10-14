@@ -21,8 +21,7 @@ import {
   JobCreateModalChargeMode,
   chargeNowPercent,
   type JobChargeMode,
-  JOB_CREATE_MODAL_STEPS,
-  JOB_CREATE_MODAL_SECTION_IDS,
+  type JobCreateModalSectionId,
 } from "@/components/jobs/job-create-modal-sections";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { createJobPayment } from "@/services/job-payments";
@@ -3980,6 +3979,15 @@ function isHousekeepWorkLabel(value: string | null | undefined): boolean {
 }
 
 /* ========== CREATE JOB MODAL ========== */
+/** Ordem do modal de criar job: o cliente vem primeiro porque a conta dele decide preço e cobrança. */
+const CREATE_JOB_STEPS: { id: JobCreateModalSectionId; label: string }[] = [
+  { id: "client", label: "Client" },
+  { id: "work", label: "Service" },
+  { id: "scope", label: "Scope" },
+  { id: "partner", label: "Partner" },
+  { id: "access", label: "Charges" },
+];
+
 function CreateJobModal({ open, onClose, onCreate }: {
   open: boolean;
   onClose: () => void;
@@ -4057,6 +4065,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [accountResolvedForClientId, setAccountResolvedForClientId] = useState<string | null>(null);
   /** `accounts.collection_mode` da conta do cliente, e de qual conta ele é. */
   const [accountCollectionMode, setAccountCollectionMode] = useState<{ accountId: string; mode: string | null } | null>(null);
+  /** Só para mostrar de quem é o cliente; nenhuma regra lê isso. */
+  const [accountName, setAccountName] = useState<{ accountId: string; name: string } | null>(null);
   useEffect(() => {
     const cid = clientAddress.client_id?.trim();
     if (!cid) {
@@ -4088,12 +4098,13 @@ function CreateJobModal({ open, onClose, onCreate }: {
     let cancelled = false;
     getSupabase()
       .from("accounts")
-      .select("payment_terms, collection_mode")
+      .select("payment_terms, collection_mode, company_name")
       .eq("id", aid)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        const row = data as { payment_terms?: string | null; collection_mode?: string | null } | null;
+        const row = data as { payment_terms?: string | null; collection_mode?: string | null; company_name?: string | null } | null;
+        setAccountName({ accountId: aid, name: row?.company_name?.trim() || "Account" });
         setAccountPaymentTerms(row?.payment_terms?.trim() ?? null);
         setAccountCollectionMode({ accountId: aid, mode: row?.collection_mode ?? null });
       });
@@ -4720,7 +4731,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const activeSection = useModalScrollSpy([...JOB_CREATE_MODAL_SECTION_IDS], scrollRef, open);
+  const activeSection = useModalScrollSpy(CREATE_JOB_STEPS.map((st) => st.id), scrollRef, open);
   const scrollToSection = (id: string) => {
     const root = scrollRef.current;
     if (!root) return;
@@ -4732,11 +4743,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
     <Modal
       open={open}
       onClose={onClose}
-      title="New Job"
-      subtitle="Create a new job"
+      title="New job"
+      subtitle="Pick the client first. Their account sets the price and how they pay."
       size="compact"
       layout="wizard"
-      topSteps={JOB_CREATE_MODAL_STEPS}
+      topSteps={CREATE_JOB_STEPS}
       activeStep={activeSection}
       onStepClick={scrollToSection}
       footer={
@@ -4763,9 +4774,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
           <Button
             type="submit"
             form="create-job-form"
-            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+            className="bg-[#020040] hover:bg-[#13105c] text-white border-[#020040] hover:border-[#13105c]"
           >
-            Create Job
+            Create job
           </Button>
         </FixfyModalFooter>
       }
@@ -4779,7 +4790,89 @@ function CreateJobModal({ open, onClose, onCreate }: {
           ref={scrollRef}
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-5 @sm:px-5 space-y-6 min-w-0"
         >
-          <JobCreateModalSection id="work" title="Work & rate" badge="required">
+          <JobCreateModalSection id="client" title="Client and date" badge="required">
+            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+            {clientAddress.client_id?.trim() && accountResolvedForClientId === clientAddress.client_id.trim() ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
+                <span className="rounded-md bg-[#020040] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  {effectiveAccountId ? "B2B" : "B2C"}
+                </span>
+                <span className="font-semibold text-text-primary">
+                  {effectiveAccountId
+                    ? accountName?.accountId === effectiveAccountId
+                      ? accountName.name
+                      : "Account"
+                    : "Fixfy · direct client"}
+                </span>
+                <span className="text-text-tertiary">
+                  {clientPaysUpfront
+                    ? "Pays by card upfront"
+                    : accountPaymentTerms
+                      ? `Invoice · ${accountPaymentTerms}`
+                      : "Invoice on completion"}
+                </span>
+              </div>
+            ) : null}
+            <ZendeskTicketField value={zendesk} onChange={setZendesk} />
+            <JobModalScheduleFields
+              jobKind={form.job_kind}
+              scheduledDate={form.scheduled_date}
+              arrivalFrom={form.arrival_from}
+              arrivalWindowMins={form.arrival_window_mins}
+              endDate={form.end_date}
+              endTime={form.end_time}
+              recurrence={recurrence}
+              onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
+              onChange={(field, value) => update(field, value)}
+              startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
+              requiredFieldClassName={requiredFieldClass}
+              paymentPlan={
+                form.job_kind === "recurring"
+                  ? {
+                      enabled: paymentPlanEnabled,
+                      onEnabledChange: setPaymentPlanEnabled,
+                      rows: paymentPlanRows,
+                      onRowsChange: setPaymentPlanRows,
+                      totalAmount: invoiceTotalPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                      label: "Client payment plan",
+                    }
+                  : undefined
+              }
+              partnerPaymentPlan={
+                form.job_kind === "recurring" && paymentPlanEnabled
+                  ? {
+                      enabled: partnerPaymentPlanEnabled,
+                      onEnabledChange: setPartnerPaymentPlanEnabled,
+                      rows: partnerPaymentPlanRows,
+                      onRowsChange: (rows) => {
+                        setPartnerPlanCustomized(true);
+                        setPartnerPaymentPlanRows(rows);
+                      },
+                      totalAmount: partnerCapPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                      customized: partnerPlanCustomized,
+                      onCustomizedChange: setPartnerPlanCustomized,
+                      partnerCap: partnerCapPreview,
+                      onSyncFromClient: () => {
+                        setPartnerPlanCustomized(false);
+                        setPartnerPaymentPlanRows(
+                          partnerPlanRowsFromClientSchedule(
+                            paymentPlanRows,
+                            invoiceTotalPreview,
+                            partnerCapPreview,
+                          ),
+                        );
+                      },
+                    }
+                  : undefined
+              }
+            />
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="work" title="Service and price" badge="required">
             <p className="text-[11px] font-semibold text-text-tertiary -mt-1">Rate Type</p>
             <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
               <button
@@ -5097,127 +5190,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
             ) : null}
           </JobCreateModalSection>
 
-          <JobCreateModalSection id="client" title="Client & schedule" badge="required">
-            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-            <ZendeskTicketField value={zendesk} onChange={setZendesk} />
-            <JobModalScheduleFields
-              jobKind={form.job_kind}
-              scheduledDate={form.scheduled_date}
-              arrivalFrom={form.arrival_from}
-              arrivalWindowMins={form.arrival_window_mins}
-              endDate={form.end_date}
-              endTime={form.end_time}
-              recurrence={recurrence}
-              onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
-              onChange={(field, value) => update(field, value)}
-              startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
-              requiredFieldClassName={requiredFieldClass}
-              paymentPlan={
-                form.job_kind === "recurring"
-                  ? {
-                      enabled: paymentPlanEnabled,
-                      onEnabledChange: setPaymentPlanEnabled,
-                      rows: paymentPlanRows,
-                      onRowsChange: setPaymentPlanRows,
-                      totalAmount: invoiceTotalPreview,
-                      accountPaymentTerms,
-                      orgCtx: paymentOrgCtx,
-                      label: "Client payment plan",
-                    }
-                  : undefined
-              }
-              partnerPaymentPlan={
-                form.job_kind === "recurring" && paymentPlanEnabled
-                  ? {
-                      enabled: partnerPaymentPlanEnabled,
-                      onEnabledChange: setPartnerPaymentPlanEnabled,
-                      rows: partnerPaymentPlanRows,
-                      onRowsChange: (rows) => {
-                        setPartnerPlanCustomized(true);
-                        setPartnerPaymentPlanRows(rows);
-                      },
-                      totalAmount: partnerCapPreview,
-                      accountPaymentTerms,
-                      orgCtx: paymentOrgCtx,
-                      customized: partnerPlanCustomized,
-                      onCustomizedChange: setPartnerPlanCustomized,
-                      partnerCap: partnerCapPreview,
-                      onSyncFromClient: () => {
-                        setPartnerPlanCustomized(false);
-                        setPartnerPaymentPlanRows(
-                          partnerPlanRowsFromClientSchedule(
-                            paymentPlanRows,
-                            invoiceTotalPreview,
-                            partnerCapPreview,
-                          ),
-                        );
-                      },
-                    }
-                  : undefined
-              }
-            />
-          </JobCreateModalSection>
-
-          <JobCreateModalSection id="access" title="Access & charges" badge="optional">
-            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={isHousekeepJob || !cczEligible}
-                onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-                className={cn(
-                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-2 min-w-0",
-                  (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
-                  form.in_ccz && cczEligible
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
-                )}
-              >
-                <div>
-                  <p className="text-xs font-medium text-text-primary leading-snug">
-                    {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
-                  </p>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    {!cczEligible && !isHousekeepJob
-                      ? "Only EC/WC/W/SW1/SE1 postcodes"
-                      : inCczPreview
-                        ? `+${formatCurrency(accessFees.cczFeeGbp)} applied`
-                        : "No charge applied"}
-                  </p>
-                </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
-                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
-                </span>
-              </button>
-              <button
-                type="button"
-                disabled={isHousekeepJob}
-                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-                className={cn(
-                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-2 min-w-0",
-                  isHousekeepJob && "opacity-50 cursor-not-allowed",
-                  !form.has_free_parking
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
-                )}
-              >
-                <div>
-                  <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
-                  </p>
-                </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
-                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
-                </span>
-              </button>
-            </div>
-            <p className="text-[10px] text-text-tertiary leading-snug">
-              Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
-            </p>
-          </JobCreateModalSection>
-
           <JobCreateModalSection id="scope" title="Scope" badge="required">
             <div className="space-y-2.5 min-w-0">
               <div>
@@ -5299,7 +5271,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </JobCreateModalSection>
 
-          <JobCreateModalSection id="partner" title="Partner allocation" badge="optional">
+          <JobCreateModalSection id="partner" title="Partner" badge="optional">
             {!form.catalog_service_id ? (
               <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
                 Select type of work above first — partner-specific prices load in Pricing above.
@@ -5410,6 +5382,66 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </div>
               </div>
             )}
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="access" title="Parking and congestion" badge="optional">
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isHousekeepJob || !cczEligible}
+                onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                className={cn(
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
+                  (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
+                  form.in_ccz && cczEligible
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-xs font-medium text-text-primary leading-snug">
+                    {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
+                  </p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    {!cczEligible && !isHousekeepJob
+                      ? "Only EC/WC/W/SW1/SE1 postcodes"
+                      : inCczPreview
+                        ? `+${formatCurrency(accessFees.cczFeeGbp)} applied`
+                        : "No charge applied"}
+                  </p>
+                </div>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isHousekeepJob}
+                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                className={cn(
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
+                  isHousekeepJob && "opacity-50 cursor-not-allowed",
+                  !form.has_free_parking
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
+                  </p>
+                </div>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
+                </span>
+              </button>
+            </div>
+            <p className="text-[10px] text-text-tertiary leading-snug">
+              Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
+            </p>
           </JobCreateModalSection>
         </div>
       </form>
