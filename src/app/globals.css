@@ -103,6 +103,7 @@
   /* Inter everywhere, no monospace (VOS UNO). */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --font-mono: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
   /* Type scale: only 11 · 12 · 13 · 14 · 16 · 20. */
   --text-xs: 12px;
@@ -159,7 +160,7 @@
   /* UNO roles */
   --bg: #ffffff;
   --brand: #020040;
-  --brand-hover: #15153d;
+  --brand-hover: #0c0b52;
   --on-brand: #ffffff;
   --accent: #ed4b00;
   --accent-soft: rgba(237, 75, 0, 0.12);
@@ -202,9 +203,9 @@
   --scrollbar-thumb: #cdcdd8;
   --scrollbar-hover: #a3a3b5;
 
-  --shadow-card-v: 0 1px 0 0 rgba(10, 10, 31, 0.06), 0 2px 6px -2px rgba(10, 10, 31, 0.10);
-  --shadow-float-v: 0 4px 6px -2px rgba(10, 10, 31, 0.20);
-  --shadow-dialog-v: 0 24px 60px -16px rgba(10, 10, 31, 0.35);
+  --shadow-card-v: 0 1px 2px rgba(2, 0, 64, 0.06), 0 1px 1px rgba(2, 0, 64, 0.04);
+  --shadow-float-v: 0 14px 34px rgba(2, 0, 64, 0.10), 0 2px 6px rgba(2, 0, 64, 0.06);
+  --shadow-dialog-v: 0 34px 70px -18px rgba(1, 0, 40, 0.45), 0 8px 22px rgba(1, 0, 40, 0.14);
 
   /* Invoice drawer + finance tokens, aligned to UNO */
   --fixfy-navy: #020040;
@@ -232,8 +233,8 @@
   --link-text: #0b5fff;
 
   /* Sidebar: Fixfy navy in both themes */
-  --nav-bg: #0a0a28;
-  --nav-border: rgba(255, 255, 255, 0.08);
+  --nav-bg: #020040;
+  --nav-border: rgba(255, 255, 255, 0.14);
   --nav-border-strong: rgba(255, 255, 255, 0.12);
   --nav-text: rgba(255, 255, 255, 0.62);
   --nav-text-strong: #ffffff;

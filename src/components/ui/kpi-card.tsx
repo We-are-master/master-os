@@ -101,8 +101,8 @@ export function KpiCard({
             </div>
             <p
               className={cn(
-                "font-semibold text-text-primary tracking-[-0.02em]",
-                "text-[20px] tabular-nums",
+                "font-display font-semibold text-text-primary tracking-[-0.02em]",
+                "text-[22px] tabular-nums",
               )}
             >
               {formattedValue}

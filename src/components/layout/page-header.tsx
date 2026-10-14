@@ -31,7 +31,7 @@ export function PageHeader({ title, subtitle, infoTooltip, children, className }
       className={cn("uno-view-head flex min-h-[38px] items-center justify-between gap-4 flex-wrap", className)}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <h1 className="m-0 text-[20px] font-[550] leading-[1.35] tracking-[-0.03em] text-text-primary">
+        <h1 className="m-0 font-display text-[22px] font-semibold leading-[1.3] tracking-[-0.02em] text-text-primary">
           {title}
         </h1>
         {hint ? <FixfyHintIcon text={hint} /> : null}

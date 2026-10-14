@@ -7874,7 +7874,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
-                        <div className="mt-1 grid grid-cols-3 overflow-hidden rounded-lg border border-[#e8e5e0] bg-[#fafafb] dark:border-[#2b313d] dark:bg-[#161b24]">
+                        <div className="mt-1 grid grid-cols-3 overflow-hidden rounded-lg border border-border bg-surface-secondary">
                           {[
                             {
                               key: "start",
@@ -7903,14 +7903,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               key={cell.key}
                               className={cn(
                                 "min-w-0 px-3 py-2",
-                                i > 0 && "border-l border-[#e8e5e0] dark:border-[#2b313d]",
+                                i > 0 && "border-l border-border",
                               )}
                             >
-                              <p className="flex items-center gap-1 text-[11px] text-[#8a8a96] dark:text-[#909aac]">
+                              <p className="flex items-center gap-1 text-[11px] text-text-tertiary">
                                 <cell.icon className="h-3 w-3 shrink-0" aria-hidden />
                                 {cell.label}
                               </p>
-                              <p className="mt-0.5 truncate text-[13px] font-semibold text-[#1a1a2e] dark:text-[#e5e7eb]" title={cell.value}>
+                              <p className="mt-0.5 truncate text-[13px] font-semibold text-text-primary" title={cell.value}>
                                 {cell.value}
                               </p>
                             </div>
@@ -7938,7 +7938,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   })()}
                   {!isHousekeepJobDetail ? (
                     <>
-                        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[#e8e5e0] bg-[#fafafb] dark:border-[#2b313d] dark:bg-[#161b24]">
+                        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-surface-secondary">
                           {[
                             {
                               key: "ccz",
@@ -7972,15 +7972,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               title={t.hint ?? undefined}
                               onClick={t.onToggle}
                               className={cn(
-                                "flex h-9 min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-black/[0.02] disabled:cursor-not-allowed disabled:opacity-55",
-                                i > 0 && "border-l border-[#e8e5e0] dark:border-[#2b313d]",
+                                "flex h-9 min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-55",
+                                i > 0 && "border-l border-border",
                               )}
                             >
-                              <span className="text-[12px] font-medium text-[#8a8a96] dark:text-[#909aac]">{t.label}</span>
+                              <span className="text-[12px] font-medium text-text-tertiary">{t.label}</span>
                               <span
                                 className={cn(
                                   "ml-auto text-[12px] font-semibold tabular-nums",
-                                  t.on ? "text-[#0F6E56]" : "text-[#8a8a96] dark:text-[#909aac]",
+                                  t.on ? "text-[var(--ok)]" : "text-text-tertiary",
                                 )}
                               >
                                 {t.on ? `+${formatCurrency(t.fee)}` : "No fee"}
@@ -7988,7 +7988,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               <span
                                 className={cn(
                                   "relative h-4 w-7 shrink-0 rounded-full transition-colors",
-                                  t.on ? "bg-[#0F6E56]" : "bg-[#d8d8de] dark:bg-[#3a4150]",
+                                  t.on ? "bg-[var(--ok)]" : "bg-[var(--line-2)]",
                                 )}
                                 aria-hidden
                               >
