@@ -1968,6 +1968,43 @@ function BillingStandaloneInner() {
                               </button>
                             ) : null}
                           </div>
+                          {(() => {
+                            // Próxima rodada em montagem: self-bills da quinzena aberta (accumulating) ficam
+                            // em Draft até o domingo de fechamento. Mostra aqui para não parecer que sumiram.
+                            const building = data.selfBills.filter(
+                              (sb) =>
+                                !isSelfBillPayoutVoided(sb) &&
+                                sb.status !== "paid" &&
+                                !sb.wise_paid_at &&
+                                !selfBillCountsAsReady(sb) &&
+                                sb.bill_origin !== "internal" &&
+                                Number(sb.net_payout ?? 0) > 0.005 &&
+                                /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")) &&
+                                String(sb.due_date) > todayYmd,
+                            );
+                            if (building.length === 0) return null;
+                            const due = building.map((sb) => String(sb.due_date)).sort()[0];
+                            const sameRun = building.filter((sb) => String(sb.due_date) === due);
+                            const total = sameRun.reduce((t, sb) => t + Number(sb.net_payout ?? 0), 0);
+                            const partners = new Set(sameRun.map((sb) => sb.partner_id ?? sb.partner_name)).size;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMoneyOutTab("draft");
+                                  setSelectedSbIds(new Set());
+                                  setMoneyOutSelectedIds(new Set());
+                                }}
+                                className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg bg-surface-secondary px-3 py-1.5 text-left text-[12px] text-text-secondary hover:bg-surface-hover"
+                                title="Self-bills of the open fortnight stay in Draft until it closes on Sunday"
+                              >
+                                <span>
+                                  Next run · <span className="font-medium text-text-primary">{formatDate(due)}</span> · building from {partners} partner{partners === 1 ? "" : "s"}
+                                </span>
+                                <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(total)} ›</span>
+                              </button>
+                            );
+                          })()}
                           <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-xl font-bold tabular-nums text-text-primary">
                               {formatCurrency(goingOutApprovedTotal)}
@@ -3170,6 +3207,13 @@ function SelfBillGroupedLedger({
                             <div className="min-w-0 flex-1">
                               <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-text-primary">
                                 <span className="truncate">{sb.reference}</span>
+                                {sb.week_start && sb.week_end ? (
+                                  <span className="shrink-0 text-[12px] font-normal text-text-tertiary">
+                                    · {new Date(`${sb.week_start.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} –{" "}
+                                    {new Date(`${sb.week_end.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                    {(jobsBySelfBillId[sb.id]?.length ?? 0) > 1 ? ` · ${jobsBySelfBillId[sb.id]!.length} jobs` : ""}
+                                  </span>
+                                ) : null}
                                 {(() => {
                                   /**
                                    * Single-job self-bill: one hop to the job. The job number is spelled
@@ -3245,7 +3289,8 @@ function SelfBillGroupedLedger({
                                 outstanding > 0.02 ? "text-amber-800" : "text-text-tertiary",
                               )}
                             >
-                              {outstanding > 0.02 ? formatCurrency(outstanding) : "—"}
+                              {/* Só quando já entrou parte: senão repetiria o total. */}
+                              {paid > 0.02 && outstanding > 0.02 ? `${formatCurrency(outstanding)} left` : ""}
                             </span>
                             <span
                               className={cn(
@@ -3257,12 +3302,18 @@ function SelfBillGroupedLedger({
                                     : "text-text-secondary",
                               )}
                             >
-                              {nextDue.text}
+                              {nextDue.text !== "—" && !nextDue.overdue && label !== "Paid" ? `Pay ${nextDue.text}` : nextDue.text}
                             </span>
                             <div className="bl-sb-row__actions">
                               {showRowMarkPaid && canSelect ? (
-                                <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => void onMarkPaid(sb.id)}>
-                                  <Check className="h-3.5 w-3.5 text-emerald-700" />
+                                <button
+                                  type="button"
+                                  title="Mark this self-bill as paid"
+                                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium text-[var(--ok)] hover:bg-[var(--success-light)]"
+                                  onClick={() => void onMarkPaid(sb.id)}
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  Paid
                                 </button>
                               ) : null}
                               {showRowSend && sb.bill_origin !== "internal" && !!sb.partner_id?.trim() && !isSelfBillPayoutVoided(sb) ? (
