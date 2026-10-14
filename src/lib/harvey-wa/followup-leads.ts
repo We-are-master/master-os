@@ -246,7 +246,8 @@ async function seguirLead(l: Lead, out: ResultadoFollowup, aplicar: boolean, ago
     }
     if (passo === 5) {
       corpoDoTicket.status = "solved";
-      corpoDoTicket.custom_fields = [{ id: RESOLUCAO, value: "res_no_response" }];
+      // "What Happened" também: é o campo que o relatório de perda lê (dono, 14/10/2026).
+      corpoDoTicket.custom_fields = [{ id: RESOLUCAO, value: "res_no_response" }, { id: 5687150349343, value: "no_reply" }];
     } else {
       // A bola está com o cliente: fica no estágio Lead, na view Leads, longe da Action Required.
       corpoDoTicket.custom_status_id = ESTAGIO_LEAD;

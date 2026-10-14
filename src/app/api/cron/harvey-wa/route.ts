@@ -3,7 +3,7 @@
  *  - chase de quem parou de responder (src/lib/harvey-wa/chase.ts)
  *  - transferência aguardando o sinal: confirma, lembra e libera (transferencia.ts).
  *  - lead que nunca respondeu o primeiro contato (followup-leads.ts).
- *  - quote enviada sem resposta: lembrete com 24h e 72h (followup-quotes.ts).
+ *  - quote enviada sem resposta: 3 lembretes em 7 dias e fecha no 7º; desistência fecha na hora (followup-quotes.ts).
  *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
