@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   createPartnerBidToken,
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
 
   const { data, error } = await supabase
     .from("short_links")
-    .select("target_path, expires_at, entity_ref")
+    .select("target_path, expires_at, entity_ref, hit_count")
     .eq("slug", slugTrimmed)
     .maybeSingle();
 
@@ -122,14 +122,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     return NextResponse.redirect(new URL("/quote/respond?token=expired", req.url), 302);
   }
 
-  // Best-effort last-hit timestamp (don't gate the redirect on this).
-  void supabase
-    .from("short_links")
-    .update({ last_hit_at: new Date().toISOString() })
-    .eq("slug", slugTrimmed)
-    .then(({ error: e }) => {
-      if (e) console.error("[short-link] last_hit_at bump failed:", e.message);
-    });
+  /**
+   * Conta o clique (15/10/2026). Antes só gravava `last_hit_at`, e num `void`
+   * depois da resposta, que a Vercel pode cortar: o `hit_count` ficava em 0
+   * para sempre e não dava para saber quantas agências abriram os PDFs.
+   * `after()` roda depois do redirect sem atrasar quem clicou. Dois cliques no
+   * mesmo instante podem contar como um; para medir abertura de PDF basta.
+   */
+  const cliques = Number((data as { hit_count?: number | null }).hit_count ?? 0);
+  after(async () => {
+    const { error: e } = await supabase
+      .from("short_links")
+      .update({ hit_count: cliques + 1, last_hit_at: new Date().toISOString() })
+      .eq("slug", slugTrimmed);
+    if (e) console.error("[short-link] hit bump failed:", e.message);
+  });
 
   const row = data as { target_path: string; entity_ref?: string | null };
   let target = String(row.target_path);
