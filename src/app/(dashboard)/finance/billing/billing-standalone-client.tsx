@@ -86,7 +86,7 @@ import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import { getCompanySettings, updateCompanySettings } from "@/services/company";
 import { mergeFrontendSetup } from "@/lib/frontend-setup";
-import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
+import { dueDateIsoFromAccountPaymentTerms, orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import {
   isSelfBillClosed,
   isSelfBillPayoutVoided,
@@ -796,28 +796,6 @@ function BillingStandaloneInner() {
     [draftPeriodInvoices],
   );
 
-  /** Rascunhos por quinzena (vencimento, senão criação), no mesmo calendário do Ready. */
-  const draftInRuns = useMemo(() => {
-    const runs = new Map<string, { key: string; start: string; end: string; invoices: Invoice[] }>();
-    for (const inv of draftPeriodInvoices) {
-      const ymd = String(inv.due_date ?? inv.created_at ?? "").slice(0, 10);
-      const period = ymd ? workPeriodForJobStartYmd(ymd, partnerPayoutStandardTerms, partnerPayoutReferenceYmd) : null;
-      const key = period ? period.periodStartYmd : "no-date";
-      const run = runs.get(key) ?? { key, start: period?.periodStartYmd ?? "", end: period?.periodEndYmd ?? "", invoices: [] };
-      run.invoices.push(inv);
-      runs.set(key, run);
-    }
-    const kind = (r: { start: string; end: string }) =>
-      !r.start ? 3 : r.start <= todayYmd && todayYmd <= r.end ? 0 : r.end < todayYmd ? 1 : 2;
-    return [...runs.values()]
-      .sort((a, b) => kind(a) - kind(b) || a.start.localeCompare(b.start))
-      .map((r) => ({
-        ...r,
-        kind: kind(r),
-        total: r.invoices.reduce((t, inv) => t + Number(inv.amount ?? 0), 0),
-        groups: buildInvoiceLedgerAccountGroups(r.invoices, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId),
-      }));
-  }, [draftPeriodInvoices, partnerPayoutStandardTerms, partnerPayoutReferenceYmd, todayYmd, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId]);
 
   const attentionAccountGroups = useMemo(
     () =>
@@ -1050,6 +1028,56 @@ function BillingStandaloneInner() {
   }, [todayYmd, cashflowWeekOffset, runwayGranularity, partnerPayoutStandardTerms, partnerPayoutReferenceYmd]);
 
   const paymentOrgCtx = useMemo(() => orgCtxFromSetup(frontendSetup), [frontendSetup]);
+
+  /**
+   * Rascunhos por quinzena de RECEBIMENTO, como o Ready: término do job (ou hoje,
+   * se já passou) + prazo da conta. Sem job ou data, o vencimento da fatura.
+   */
+  const draftInRuns = useMemo(() => {
+    const expectedYmd = (inv: Invoice): string => {
+      const ref = inv.job_reference?.trim();
+      const job = ref ? data.jobsByRef[ref] : undefined;
+      const sched = String(job?.scheduled_finish_date ?? job?.scheduled_date ?? job?.scheduled_start_at ?? "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(sched)) {
+        const base = sched < todayYmd ? todayYmd : sched;
+        const accountId = ref ? data.jobRefToAccountId[ref] : undefined;
+        const terms = accountId ? data.accountTermsById[accountId] : undefined;
+        const due = dueDateIsoFromAccountPaymentTerms(new Date(`${base}T12:00:00`), terms ?? null, paymentOrgCtx);
+        if (due) return due.slice(0, 10);
+      }
+      return String(inv.due_date ?? inv.created_at ?? "").slice(0, 10);
+    };
+    const runs = new Map<string, { key: string; start: string; end: string; invoices: Invoice[] }>();
+    for (const inv of draftPeriodInvoices) {
+      const ymd = expectedYmd(inv);
+      const period = ymd ? workPeriodForJobStartYmd(ymd, partnerPayoutStandardTerms, partnerPayoutReferenceYmd) : null;
+      const key = period ? period.periodStartYmd : "no-date";
+      const run = runs.get(key) ?? { key, start: period?.periodStartYmd ?? "", end: period?.periodEndYmd ?? "", invoices: [] };
+      run.invoices.push(inv);
+      runs.set(key, run);
+    }
+    const kind = (r: { start: string; end: string }) =>
+      !r.start ? 3 : r.start <= todayYmd && todayYmd <= r.end ? 0 : r.end < todayYmd ? 1 : 2;
+    return [...runs.values()]
+      .sort((a, b) => kind(a) - kind(b) || a.start.localeCompare(b.start))
+      .map((r) => ({
+        ...r,
+        kind: kind(r),
+        total: r.invoices.reduce((t, inv) => t + Number(inv.amount ?? 0), 0),
+        groups: buildInvoiceLedgerAccountGroups(r.invoices, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId),
+      }));
+  }, [
+    draftPeriodInvoices,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+    todayYmd,
+    paymentOrgCtx,
+    data.jobsByRef,
+    data.accountTermsById,
+    data.accountNameById,
+    data.jobRefToAccountId,
+    data.clientNameToAccountId,
+  ]);
 
   const runwayCashBalanceOptions = useMemo(
     () => ({

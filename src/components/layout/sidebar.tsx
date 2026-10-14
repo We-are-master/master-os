@@ -105,7 +105,8 @@ const navLogoComponents: Record<string, (props: { className?: string }) => React
 };
 
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
-const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/leads"]);
+// /agents e /services são abas do Settings (14/10/2026); o menu salvo no banco ainda os traz.
+const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/leads", "/agents", "/services"]);
 
 /** Páginas que são abas do Settings (Agents, Services): acendem o Settings na lateral. */
 const SETTINGS_TAB_PATHS = ["/agents", "/services"];
