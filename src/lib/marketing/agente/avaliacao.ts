@@ -15,6 +15,7 @@ import { unsubscribeUrl } from "@/lib/email/unsubscribe";
 import { SITE } from "./calendario";
 import { remetente } from "./clube";
 import { publicoComPosicao } from "./lista";
+import { clientesComReclamacaoRecente } from "@/lib/feedback/reclamacao";
 
 const CAMPANHA = "review_referral";
 const LINK_DO_GOOGLE = "https://share.google/xs9HzIccBF88TgZoj";
@@ -51,7 +52,19 @@ export async function mandarAvaliacoes(opcoes: { aplicar: boolean; max?: number;
   const sb = createServiceClient();
   const { data: ja } = await sb.from("marketing_touches").select("client_id").eq("campaign", CAMPANHA).limit(5000);
   const feitos = new Set((ja ?? []).map((t) => t.client_id));
-  const fila = alvos.filter((a) => !feitos.has(a.clientId));
+  /**
+   * Quem reclamou não recebe "leave a review" (14/10/2026). O WhatsApp de
+   * feedback do dia 1 (`feedback/pos-job.ts`) pergunta "was everything done?";
+   * se a resposta virou reclamação no OS, este e-mail do dia 10 não sai. Os
+   * dois ficam em dias diferentes de propósito: um pega o problema a tempo de
+   * consertar, o outro pede a avaliação pública a quem ficou satisfeito.
+   */
+  const comReclamacao = await clientesComReclamacaoRecente(
+    sb,
+    alvos.map((a) => a.clientId),
+    new Date(agora.getTime() - 60 * DIA_MS).toISOString(),
+  );
+  const fila = alvos.filter((a) => !feitos.has(a.clientId) && !comReclamacao.has(a.clientId));
   res.elegiveis = fila.length;
   if (!opcoes.aplicar) return res;
 

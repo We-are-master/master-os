@@ -1,151 +1,47 @@
 /**
- * FEEDBACK PÓS-JOB — o WhatsApp que pergunta "como foi?" depois do job pago.
+ * FEEDBACK PÓS-JOB: o WhatsApp que pergunta "como foi?" um dia depois do job
+ * concluído. As regras moram em `src/lib/feedback/pos-job.ts`; quem roda todo
+ * dia é o cron `/api/cron/feedback-pos-job` (atrás de FEEDBACK_POS_JOB=on).
+ * Este script é para ver a fila e para envio manual.
  *
- *   npx tsx scripts/feedback-pos-job.mts            # ENSAIO: lista, não manda
- *   npx tsx scripts/feedback-pos-job.mts --enviar   # manda de verdade
+ *   npx tsx scripts/feedback-pos-job.mts                     # ENSAIO: lista, não grava nada
+ *   npx tsx scripts/feedback-pos-job.mts --aplicar           # manda (9h-20h de Londres)
+ *   npx tsx scripts/feedback-pos-job.mts --aplicar --agora   # manda fora da janela
  *
- * É um SWEEP, não um gancho, de propósito: `completed`/pago acontece por
- * vários caminhos (a tela, a Zia dos payouts, o Stripe do /pay), e pendurar o
- * envio em cada um é garantir que um deles esqueça. A varredura diária pega
- * todos, e a trava é por job.
+ * `--enviar` continua aceito como sinônimo de `--aplicar`. `CLIENT_MESSAGING_ENABLED=1`
+ * também tem que estar de pé.
  *
- * As regras, na ordem em que cortam:
- *
- *   1. Pago nas últimas 72h. O corte importa MUITO na primeira rodada: sem
- *      ele, o histórico inteiro de jobs pagos receberia o pedido de uma vez.
- *   2. Uma vez por job, para sempre — a trava é `jobs.feedback_requested_at`
- *      (mig 284). Morava em `audit_logs`, onde o CHECK da tabela recusava a
- *      action e o erro era engolido: a trava nunca gravou uma linha sequer, e
- *      a mesma cliente recebeu o pedido em dias seguidos. A escrita agora é
- *      conferida e o script para se ela falhar.
- *   3. A política da conta manda (mig 259): conta com WhatsApp de cliente
- *      desligado (Fantastic) não recebe pedido de feedback também — o cliente
- *      final é da conta, não nosso.
- *   4. CLIENT_MESSAGING_ENABLED=1 é o interruptor geral, o mesmo da
- *      confirmação.
- *   5. Só entre 09h e 20h de LONDRES: pedir feedback de madrugada é pedir
- *      nota baixa.
- *
- * Sai pelo número do Zendesk (020 4538 4668) desde 08/10/2026, como a
- * confirmação e o lembrete: a Cloud API direta passou a devolver #200.
- * Template `job_feedback` (aprovado lá, uma variável: o nome): "your job with
- * Fixfy is complete. Was everything done to your satisfaction?". A resposta do
- * cliente cai na conversa do Zendesk, onde a equipe e o Harvey já estão.
- *
- * O `afterwork_feedback` antigo ("Before we close the job…") era texto de
- * pré-fechamento e é do `aprovacao-final-check.mts`; não volta para cá.
+ * Até 14/10/2026 este script filtrava por `payment_status = paid` nas últimas
+ * 72h. Agora é job `completed` concluído de ontem até 7 dias atrás, só cliente
+ * B2C da Fixfy (conta B2B só com `client_feedback_whatsapp`), sem reclamação.
  */
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvLocal } from "./load-env-local.mjs";
-import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
-import { decidirEnvio, mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
 
 loadEnvLocal();
 
-const ENVIAR = process.argv.includes("--enviar");
-const JANELA_HORAS = Number(process.env.FEEDBACK_WINDOW_HOURS ?? 72); // env só para ensaio/backfill
-const TEMPLATE = process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
-const IDIOMA = process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
+// Import DEPOIS do loadEnvLocal: `import` estático é içado, e o cliente do
+// Zendesk lê as credenciais no carregamento do módulo (veio "Zendesk not configured").
+const { varrerFeedbackPosJob } = await import("../src/lib/feedback/pos-job");
 
-const supabase = createClient(
+const aplicar = process.argv.includes("--aplicar") || process.argv.includes("--enviar");
+const ignorarJanela = process.argv.includes("--agora");
+
+const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   (process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)!,
   { auth: { persistSession: false } },
 );
 
-const horaLondres = Number(
-  new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "numeric", hour12: false }).format(new Date()),
+const { hoje, linhas, modo, aviso } = await varrerFeedbackPosJob(sb, { aplicar, ignorarJanela });
+
+console.log(`\n[feedback] ${hoje} · ${modo === "envio" ? "ENVIO REAL" : "ENSAIO (nada gravado, nada enviado)"}`);
+if (aviso) console.log(`aviso: ${aviso}`);
+for (const l of linhas) {
+  const marca = l.resultado === "enviado" ? "✓" : l.resultado === "enviaria" ? "→" : l.resultado === "falhou" ? "✗" : "·";
+  console.log(`  ${marca} ${l.reference.padEnd(10)} ${l.detalhe}`);
+}
+const conta = (r: string) => linhas.filter((l) => l.resultado === r).length;
+console.log(
+  `\n${linhas.length} job(s) na janela · enviariam: ${conta("enviaria")} · enviados: ${conta("enviado")} · pulados: ${conta("pulado")} · falhas: ${conta("falhou")}\n`,
 );
-if (ENVIAR && (horaLondres < 9 || horaLondres >= 20)) {
-  console.log(`[feedback] fora da janela (9h-20h de Londres, agora ${horaLondres}h): só listando.`);
-}
-const ENVIAR_AGORA = ENVIAR && horaLondres >= 9 && horaLondres < 20;
-
-if (ENVIAR_AGORA && !mensagensAoClienteLigadas()) {
-  console.log("[feedback] CLIENT_MESSAGING_ENABLED não é 1: nada sai.");
-  process.exit(0);
-}
-if (ENVIAR_AGORA && !canalDoClienteConfigurado()) {
-  throw new Error(`${canalDoClienteFaltando()}: sem canal, sem envio`);
-}
-
-const desde = new Date(Date.now() - JANELA_HORAS * 3600e3).toISOString();
-
-const { data: jobs, error } = await supabase
-  .from("jobs")
-  .select("id, reference, title, client_id, client_name, paid_at, payment_status, status, feedback_requested_at")
-  .eq("payment_status", "paid")
-  .gte("paid_at", desde)
-  .is("feedback_requested_at", null)
-  .is("deleted_at", null)
-  .limit(100);
-if (error) throw new Error(error.message);
-
-const candidatos = jobs ?? [];
-console.log(`[feedback] ${new Date().toISOString().slice(0, 16)} · ${candidatos.length} job(s) pagos nas últimas ${JANELA_HORAS}h · modo ${ENVIAR_AGORA ? "ENVIO" : "ENSAIO"}`);
-if (!candidatos.length) process.exit(0);
-
-let ok = 0, pulados = 0, falhas = 0;
-
-for (const j of candidatos) {
-  const { data: cliente } = j.client_id
-    ? await supabase.from("clients").select("full_name, phone, source_account_id").eq("id", j.client_id).maybeSingle()
-    : { data: null };
-  const { data: conta } = cliente?.source_account_id
-    ? await supabase.from("accounts").select("company_name, client_confirmation_whatsapp").eq("id", cliente.source_account_id).maybeSingle()
-    : { data: null };
-
-  // A mesma régua da confirmação decide: política da conta + telefone móvel UK
-  // válido. `jaEnviadoEm` fica nulo porque a NOSSA trava é a de feedback.
-  const decisao = decidirEnvio({
-    politicaDaConta: (conta as { client_confirmation_whatsapp?: boolean | null } | null)?.client_confirmation_whatsapp,
-    nomeDaConta: (conta as { company_name?: string | null } | null)?.company_name,
-    telefoneDoCliente: (cliente as { phone?: string | null } | null)?.phone ?? null,
-    jaEnviadoEm: null,
-  });
-  if (!decisao.manda) {
-    pulados++;
-    console.log(`· ${j.reference}: pulado — ${decisao.motivo}`);
-    continue;
-  }
-
-  const primeiroNome =
-    String((cliente as { full_name?: string | null } | null)?.full_name ?? j.client_name ?? "").trim().split(/\s+/)[0] || "there";
-
-  if (!ENVIAR_AGORA) {
-    console.log(`· ${j.reference}: enviaria ${TEMPLATE} → ${primeiroNome} | ${decisao.telefone}`);
-    continue;
-  }
-
-  try {
-    // O template do feedback tem UMA variável ({{1}} = nome). Mandar mais do
-    // que o corpo declara faz a Meta recusar o envio inteiro.
-    await enviarAoCliente({ to: decisao.telefone, name: TEMPLATE, language: IDIOMA, bodyParams: [primeiroNome] });
-    /**
-     * A trava grava ANTES de qualquer conferência de entrega: pedido de
-     * feedback repetido irrita mais do que um perdido — na dúvida, não repete.
-     *
-     * E o retorno É CONFERIDO. A versão anterior gravava em `audit_logs` com
-     * `action = "feedback_requested"`, valor que o CHECK da tabela recusa, e
-     * ignorava o erro: a trava nunca existiu, e a mesma cliente recebeu o
-     * pedido em dias seguidos. Escrita que serve de trava tem que falhar alto.
-     */
-    const { error: travaErr } = await supabase
-      .from("jobs")
-      .update({ feedback_requested_at: new Date().toISOString() })
-      .eq("id", j.id);
-    if (travaErr) {
-      throw new Error(
-        `trava não gravou para ${j.reference} (${travaErr.message}). ` +
-          `A mensagem JÁ SAIU: grave à mão antes de rodar de novo, senão repete.`,
-      );
-    }
-    ok++;
-    console.log(`✓ ${j.reference}: feedback pedido a ${primeiroNome} (${decisao.telefone})`);
-  } catch (err) {
-    falhas++;
-    console.error(`✗ ${j.reference}: ${err instanceof Error ? err.message : err}`);
-  }
-}
-
-console.log(`[feedback] fim: ${ok} enviado(s), ${pulados} pulado(s), ${falhas} falha(s)`);

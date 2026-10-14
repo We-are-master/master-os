@@ -76,6 +76,11 @@ export const ZD_STATUS_COMPLETED = 5679178036383;
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
 export const ZD_STATUS_CANCELLED = 5697338496671;
 
+/** 🚨 Complaint — reclamação aberta (macro "Move to Complaint", que também põe a
+ *  tag `in_complaint` e o formulário de reclamação). O OS não grava este status;
+ *  só lê, para não pedir feedback de job que teve reclamação (14/10/2026). */
+export const ZD_STATUS_COMPLAINT = Number(process.env.ZENDESK_STATUS_COMPLAINT_ID?.trim() || "5739880624543");
+
 // ─── WhatsApp (Harvey) ───────────────────────────────────────────────────────
 
 /** 🟩 WhatsApp — conversa de cliente no WhatsApp. Entra no ⚡ Action Required até

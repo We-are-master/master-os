@@ -36,7 +36,41 @@ export type ResultadoConfirmacao =
 
 const JOB_SELECT =
   "id, reference, title, status, partner_id, scheduled_date, scheduled_start_at, scheduled_end_at, " +
-  "client_id, client_name, client_confirmation_sent_at";
+  "client_id, client_name, client_confirmation_sent_at, client_reminder_sent_at";
+
+/** Status em que "your booking is confirmed" ainda é verdade. */
+export const STATUS_CONFIRMAVEIS = ["scheduled", "late"];
+
+export const MOTIVO_MENSAGENS_DESLIGADAS = "client messaging is off (CLIENT_MESSAGING_ENABLED): nothing sent";
+
+/** `2026-10-14`, no relógio de Londres. */
+export function hojeEmLondres(agora: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(agora);
+}
+
+/**
+ * O job ainda pede confirmação? Null = sim; texto = o motivo de não, para o card.
+ *
+ * Vale só DEPOIS do portão do parceiro. Existe porque a confirmação passou a
+ * ser reavaliada mais tarde (atribuição tardia e varredura de recuperação,
+ * 14/10/2026): um job que já aconteceu, foi cancelado ou já recebeu o lembrete
+ * de véspera não pode ganhar um "your booking is confirmed" atrasado.
+ */
+export function motivoParaNaoConfirmar(
+  job: { status?: unknown; scheduled_date?: unknown; client_reminder_sent_at?: unknown },
+  agora: Date,
+): string | null {
+  const status = String(job.status ?? "");
+  if (!STATUS_CONFIRMAVEIS.includes(status)) return `job is ${status || "without status"}: nothing to confirm`;
+  const dia = String(job.scheduled_date ?? "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dia) && dia < hojeEmLondres(agora)) return "visit date has passed: nothing to confirm";
+  return null;
+}
+
+/** Regra de uma mensagem por noite, do outro lado: o lembrete de véspera já disse dia e janela. */
+export const MOTIVO_LEMBRETE_JA_SAIU = "day-before reminder already went out: one message is enough";
 
 /** `2026-08-21` → `Thursday 21 August`, em Londres, como o cliente lê. */
 export function dataPorExtenso(ymd: string | null | undefined): string | null {
@@ -84,21 +118,40 @@ export type EnvioWhatsApp = typeof sendTemplate;
 export async function enviarConfirmacaoDoCliente(
   supabase: SupabaseClient,
   jobId: string,
-  opcoes?: { enviar?: EnvioWhatsApp; simular?: boolean },
+  opcoes?: { enviar?: EnvioWhatsApp; simular?: boolean; agora?: Date },
 ): Promise<ResultadoConfirmacao> {
-  // Rastro no log para os primeiros dias: sem isto, "não mandou" e "mandou e
-  // não entregou" ficam iguais na tela de quem opera, e o motivo só existiria
-  // dentro do card de um job que ninguém pensou em abrir.
+  const agora = opcoes?.agora ?? new Date();
+  /**
+   * Rastro no log e no card: sem isto, "não mandou" e "mandou e não entregou"
+   * ficam iguais na tela de quem opera.
+   *
+   * Grava só enquanto a confirmação não saiu (`.is(sent_at, null)`): um motivo
+   * de pulo por cima de um envio feito diria ao card uma mentira. Em simulação
+   * (varredura de ensaio) não grava nada: ensaio é só leitura.
+   */
   const anotarPulo = async (motivo: string): Promise<ResultadoConfirmacao> => {
     console.log(`[confirmacao] ${jobId} pulado: ${motivo}`);
-    await supabase.from("jobs").update({ client_confirmation_skipped: motivo }).eq("id", jobId);
+    if (!opcoes?.simular) {
+      await supabase
+        .from("jobs")
+        .update({ client_confirmation_skipped: motivo })
+        .eq("id", jobId)
+        .is("client_confirmation_sent_at", null);
+    }
     return { estado: "pulado", motivo };
   };
 
-  // A trava vem antes de tudo, inclusive antes de ler o job: desligada, este
-  // caminho não toca no banco nem no respond.io.
+  /**
+   * A trava geral vem antes de tudo e agora DEIXA RASTRO (14/10/2026).
+   *
+   * Antes ela voltava sem gravar nada. Com `CLIENT_MESSAGING_ENABLED` desligado
+   * na Vercel, onde nascem as atribuições, 23 dos 47 jobs das últimas duas
+   * semanas ficaram com o motivo vazio e outros 17 com o "no partner assigned
+   * yet" do nascimento, que parecia o motivo de agora e não era. Quem abria o
+   * card não tinha como saber que o sistema inteiro estava desligado.
+   */
   if (!mensagensAoClienteLigadas() && !opcoes?.simular) {
-    return { estado: "pulado", motivo: "client messaging is off (CLIENT_MESSAGING_ENABLED)" };
+    return anotarPulo(MOTIVO_MENSAGENS_DESLIGADAS);
   }
 
   const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
@@ -131,6 +184,16 @@ export async function enviarConfirmacaoDoCliente(
   }
 
   /**
+   * O "no partner assigned yet" acima é gravado no nascimento do job e NÃO
+   * trava nada: cada chamada relê o job e decide de novo. Quem reavalia é a
+   * atribuição (`job-partner-acceptance`, `/notify-partner-zendesk`) e a
+   * varredura `confirmacao-atrasada`. Mas reavaliar tarde pede um portão a
+   * mais: job cancelado, já feito ou com a data no passado não se confirma.
+   */
+  const naoConfirma = motivoParaNaoConfirmar(j, agora);
+  if (naoConfirma) return anotarPulo(naoConfirma);
+
+  /**
    * Modelo de agente (Schedule A): o e-mail "Booking confirmed with
    * {professional}" (04-booking-copy, C2) sai aqui, quando o parceiro entra.
    * Não depende da política de WhatsApp da conta, por isso vem antes dela; e
@@ -143,6 +206,9 @@ export async function enviarConfirmacaoDoCliente(
   } catch (e) {
     console.error(`[confirmacao] ${jobId} e-mail do profissional falhou:`, e);
   }
+
+  if (j.client_confirmation_sent_at) return { estado: "pulado", motivo: "already sent" };
+  if (j.client_reminder_sent_at) return anotarPulo(MOTIVO_LEMBRETE_JA_SAIU);
 
   const clientId = typeof j.client_id === "string" ? j.client_id : null;
   if (!clientId) return anotarPulo("job has no client record");
@@ -212,6 +278,24 @@ export async function enviarConfirmacaoDoCliente(
   // Pelo número do Zendesk desde 08/10/2026 (a Cloud API direta dava #200).
   const enviar = opcoes?.enviar ?? enviarAoCliente;
 
+  /**
+   * Trava de envio único ANTES de mandar (14/10/2026).
+   *
+   * Antes o envio checava `client_confirmation_sent_at` na leitura e só
+   * carimbava depois de mandar. Com a confirmação disparada pelo aceite E pela
+   * rota de atribuição E pela varredura, duas chamadas quase juntas liam "não
+   * enviado" e mandavam duas vezes. Agora só quem vira a coluna de nula para
+   * preenchida manda; falha devolve a trava para a próxima tentativa.
+   */
+  const { data: reivindicado, error: erroDaTrava } = await supabase
+    .from("jobs")
+    .update({ client_confirmation_sent_at: agora.toISOString() })
+    .eq("id", jobId)
+    .is("client_confirmation_sent_at", null)
+    .select("id");
+  if (erroDaTrava) return { estado: "falhou", motivo: `could not claim send: ${erroDaTrava.message}` };
+  if (!reivindicado || (reivindicado as unknown[]).length === 0) return { estado: "pulado", motivo: "already sent" };
+
   try {
     const { messageId } = await enviar({
       to: decisao.telefone,
@@ -220,17 +304,18 @@ export async function enviarConfirmacaoDoCliente(
       bodyParams: parametros,
     });
 
-    await supabase
-      .from("jobs")
-      .update({ client_confirmation_sent_at: new Date().toISOString(), client_confirmation_skipped: null })
-      .eq("id", jobId);
+    await supabase.from("jobs").update({ client_confirmation_skipped: null }).eq("id", jobId);
 
     console.log(`[confirmacao] ${jobId} enviado para ${decisao.telefone} (${messageId})`);
     return { estado: "enviado", telefone: decisao.telefone, messageId };
   } catch (err) {
     const motivo = err instanceof Error ? err.message.slice(0, 200) : "unknown error";
     console.error(`[confirmacao] ${jobId} falhou: ${motivo}`);
-    await supabase.from("jobs").update({ client_confirmation_skipped: motivo }).eq("id", jobId);
+    // Devolve a trava: a próxima chamada (atribuição ou varredura) tenta de novo.
+    await supabase
+      .from("jobs")
+      .update({ client_confirmation_sent_at: null, client_confirmation_skipped: motivo })
+      .eq("id", jobId);
     return { estado: "falhou", motivo };
   }
 }
