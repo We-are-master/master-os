@@ -17,6 +17,9 @@ import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
 import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
+import { umTicketEmail } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
 function nowMs() {
   return performance.now();
@@ -331,6 +334,21 @@ export async function POST(req: NextRequest) {
       console.warn("[send-pdf] Quote linked to Zendesk ticket", zdTicketId, "but ZENDESK_SUBDOMAIN/EMAIL/API_TOKEN are not configured. Falling back to Resend.");
     }
 
+    // Um ticket por pedido (ONE_TICKET_EMAIL_ON): cotação sem ticket ligado, mas o
+    // cliente já tem um aberto (a conversa do WhatsApp, o lead). A proposta entra
+    // nele e a cotação passa a apontar para ele, em vez de sair solta pela Resend.
+    let achadoDaQuote: (AchadoDoPedido & { tipo: "ticket" }) | null = null;
+    if (!useZendesk && zdConfigured && umTicketEmail() && !(quote as { external_source?: string | null }).external_source) {
+      const a = await acharTicketDoPedido(supabase, {
+        quoteId,
+        clientId: (quote as { client_id?: string | null }).client_id ?? null,
+        email: recipientTrimmed || pdfClientEmail,
+        telefone: (quote as { client_phone?: string | null }).client_phone ?? null,
+      });
+      if (a.tipo === "ticket") achadoDaQuote = a;
+      else if (a.tipo === "ambiguo") console.log(`[send-pdf] ${quote.reference}: vários tickets abertos (${a.ids.join(", ")}), segue pela Resend`);
+    }
+
     // Kick off the Resend-only site-photo fetch concurrently with the logo
     // prefetch + PDF render below. Only the Resend path attaches these, so we
     // skip the work entirely for Zendesk-delivered quotes. Awaited later in the
@@ -338,7 +356,7 @@ export async function POST(req: NextRequest) {
     const useRequestPhotos =
       typeof attachRequestPhotos === "boolean" ? attachRequestPhotos : Boolean(quote.email_attach_request_photos);
     const sitePhotosPromise: Promise<SitePhotoAttachment[]> =
-      !useZendesk && useRequestPhotos && quote.request_id
+      !useZendesk && !achadoDaQuote && useRequestPhotos && quote.request_id
         ? (async () => {
             const { data: sr } = await supabase
               .from("service_requests")
@@ -550,6 +568,67 @@ export async function POST(req: NextRequest) {
       }, 200, marks);
     }
 
+    // ─── Ticket do pedido achado pelo cliente (ONE_TICKET_EMAIL_ON) ──────
+    if (achadoDaQuote) {
+      const paraEmail = recipientTrimmed || pdfClientEmail;
+      try {
+        const html = buildQuoteSentHtml({
+          customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
+          reference:       String(quote.reference ?? ""),
+          title:           String(quote.title ?? "Quote"),
+          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+          scope:           safePdfData.scope ?? null,
+          totalGbp:        Number(quote.total_value) || 0,
+          expiresAt:       quote.expires_at ?? null,
+          items:           lineItemsForPdf,
+          acceptUrl,
+          rejectUrl,
+          agentModel:      agentModelQuote,
+        });
+        const r = await entregarEmailNoTicket({
+          ticket: achadoDaQuote,
+          para: { email: paraEmail, nome: pdfClientName || null },
+          assunto: `Your quote ${quote.reference} from Fixfy`,
+          html,
+          anexos: [{ filename: `${pdfAttachmentBase}_quote.pdf`, content: pdfBuffer, contentType: "application/pdf" }],
+          customStatusId: ZD_STATUS_AWAITING_APPROVAL,
+        });
+        // A cotação passa a viver no ticket do pedido: aceite, job e avisos seguem nele.
+        const { error: linkErr } = await supabase.from("quotes").update({ external_source: "zendesk", external_ref: String(r.ticketId) }).eq("id", quoteId).is("external_source", null);
+        if (linkErr) console.warn("[send-pdf] link da cotação ao ticket:", linkErr.message);
+        const sentAt = new Date().toISOString();
+        const statusWrite = await persistQuoteSentToCustomer(supabase, quoteId, sentAt, paraEmail.includes("@") ? paraEmail : undefined);
+        if (statusWrite.error) console.error("[send-pdf] status update failed after ticket delivery:", statusWrite.error.message);
+        const { error: auditErr } = await supabase.from("audit_logs").insert({
+          entity_type: "quote",
+          entity_id:   quoteId,
+          entity_ref:  quote.reference,
+          action:      "status_changed",
+          field_name:  "status",
+          old_value:   quote.status,
+          new_value:   "awaiting_customer",
+          metadata:    { channel: "zendesk", ticket_id: r.ticketId, found_by: "customer_open_ticket", delivery: r.modo },
+        });
+        if (auditErr) console.error("audit_logs insert (send-pdf ticket do pedido)", auditErr);
+        marks.push(["total", nowMs() - startedAt]);
+        return withServerTiming({
+          pdfGenerated: true,
+          emailSent: true,
+          delivered: true,
+          status: "awaiting_customer",
+          customerPdfSentAtRecorded: statusWrite.customerPdfSentAtRecorded,
+          channel: "zendesk",
+          ticketId: r.ticketId,
+          delivery: r.modo,
+          sentTo: paraEmail,
+          sentAt,
+        }, 200, marks);
+      } catch (err) {
+        // O cliente não pode ficar sem a proposta: segue pela Resend como antes.
+        console.error("[send-pdf] ticket do cliente falhou, segue pela Resend:", err);
+      }
+    }
+
     // ─── Resend path (no Zendesk linkage) ────────────────────────────────
     const emailCoerced =
       recipientTrimmed ||
@@ -606,7 +685,7 @@ export async function POST(req: NextRequest) {
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
-      subject: `Quote ${quote.reference} — ${quote.title}`,
+      subject: `Quote ${quote.reference} · ${quote.title}`,
       html: buildQuoteEmailHTML(safePdfData, branding, {
         acceptUrl,
         rejectUrl,

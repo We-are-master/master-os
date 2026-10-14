@@ -18,6 +18,7 @@ import {
   createTicket,
   setTicketRequester,
   updateTicket as zdUpdateTicket,
+  zendeskApi,
   ZENDESK_REPLY_STATUS_FIELD_ID,
   ZENDESK_REPLY_STATUS_SENT_VALUE,
 } from "@/lib/zendesk";
@@ -36,6 +37,9 @@ import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
 import { CONTA_DO_EXPRESS, expressLigado, mandarTemplateDoExpress } from "@/lib/harvey-wa/express";
+import { umTicketJob } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
@@ -1131,6 +1135,86 @@ export async function POST(req: NextRequest) {
   // had sent ticket_id. Best-effort: a Zendesk outage must not block an
   // already-recorded job.
   let createdZendeskTicketId: number | null = null;
+  // ─── Um ticket por pedido (ONE_TICKET_JOB_REUSE_ON) ─────────────────
+  // O cliente já tem um ticket aberto do pedido (lead, cotação, conversa do
+  // WhatsApp): o job entra nele em vez de abrir "JOB-… · …" com a Fixfy Team de
+  // solicitante. Só com UM ticket aberto (dois = não chuta) e nunca no Express,
+  // que precisa do ticket novo para o template de boas-vindas.
+  let reusedZendeskTicketId: number | null = null;
+  const ehExpress = expressLigado() && str(body.account_id) === CONTA_DO_EXPRESS();
+  if (createZendeskTicketIn && !ticketId && umTicketJob() && !ehExpress) {
+    const achado = await acharTicketDoPedido(supabase, {
+      jobId: String(inserted.id),
+      semVinculo: true,
+      clientId,
+      email: clientEmail,
+      telefone: clientPhone,
+      exigirUnico: true,
+    });
+    if (achado.tipo === "ticket") {
+      const { error: linkErr } = await supabase
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: String(achado.id) })
+        .eq("id", inserted.id);
+      if (linkErr) {
+        console.error("[api/jobs] reuse ticket: link write failed:", linkErr.message);
+        zendeskCorrections.push("zendesk_ticket_link_write_failed");
+      } else {
+        ticketId = String(achado.id);
+        reusedZendeskTicketId = achado.id;
+        try {
+          await zdUpdateTicket({
+            ticketId: achado.id,
+            commentBody: [
+              `Job ${inserted.reference} created in the OS for this request (linked here, no new ticket).`,
+              `Job in the OS: ${appBaseUrl()}/jobs/${inserted.id}`,
+              `Scheduled: ${`${isoDate} ${arrivalTime || ""}`.trim() || "-"}`,
+              clientPrice ? `Value: £${clientPrice}` : null,
+            ].filter(Boolean).join("\n"),
+            publicComment: false,
+            additionalTags: ["os-job-linked"],
+          });
+        } catch (err) {
+          console.error("[api/jobs] reuse ticket: note failed:", err);
+        }
+        // A mensagem ao cliente (reserva paga no site) sai no ticket do pedido.
+        if (customerMessageHtmlIn && clientEmail && clientEmail !== "team@getfixfy.com" && !customerMessageByEmail) {
+          try {
+            await entregarEmailNoTicket({
+              ticket: achado,
+              para: { email: clientEmail, nome: clientName || null },
+              assunto: ticketSubjectIn ? `${ticketSubjectIn} (${inserted.reference})` : `Your booking ${inserted.reference}`,
+              html: customerMessageHtmlIn,
+            });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] reuse ticket: customer message failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        } else if (customerMessageHtmlIn) {
+          try {
+            await zdUpdateTicket({
+              ticketId: achado.id,
+              htmlBody: `<p><b>Booking confirmation${clientEmail ? ` emailed to the customer (${clientEmail})` : ""}:</b></p>${customerMessageHtmlIn}`,
+              publicComment: false,
+            });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] reuse ticket: customer message note failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        }
+        // Quem manda o próprio e-mail precisa do encoded id para a resposta voltar a este ticket.
+        if (customerMessageByEmail) {
+          createdZendeskEncodedId = await zendeskApi<{ ticket: { encoded_id?: string } }>(`tickets/${achado.id}.json`)
+            .then((r) => r.ticket?.encoded_id ?? null)
+            .catch(() => null);
+        }
+      }
+    } else if (achado.tipo === "ambiguo") {
+      console.log(`[api/jobs] ${inserted.reference}: cliente com vários tickets abertos (${achado.ids.join(", ")}), abre ticket novo como antes`);
+    }
+  }
   if (createZendeskTicketIn && !ticketId) {
     const osJobUrl = `${appBaseUrl()}/jobs/${inserted.id}`;
     const detailLines = [
@@ -1213,7 +1297,7 @@ export async function POST(req: NextRequest) {
       console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
       zendeskCorrections.push("zendesk_ticket_create_failed");
     }
-  } else if (ticketId && customerMessageHtmlIn) {
+  } else if (ticketId && customerMessageHtmlIn && !reusedZendeskTicketId) {
     // Ticket que já existia (o da conversa do Harvey no WhatsApp, 07/10/2026):
     // o solicitante já é o cliente e nada público sai daqui. A cópia da
     // confirmação fica como nota interna, para a equipe ver no mesmo ticket.
@@ -1350,6 +1434,7 @@ export async function POST(req: NextRequest) {
       ...(autoAssignBlocked ? { warning: "auto_assign_blocked", auto_assign_blocked: autoAssignBlocked } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
+      ...(reusedZendeskTicketId ? { zendesk_ticket_id: reusedZendeskTicketId, zendesk_ticket_reused: true } : {}),
       ...(createdZendeskEncodedId ? { zendesk_encoded_id: createdZendeskEncodedId } : {}),
       ...(customerMessageHtmlIn
         ? { customer_requester_set: customerRequesterSet, customer_message_posted: customerMessagePosted }

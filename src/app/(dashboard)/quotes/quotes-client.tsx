@@ -1446,6 +1446,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               entityType:  "quote",
               subject,
               commentBody: lines.join("\n"),
+              // Um ticket por pedido: com o cliente, o OS reusa o ticket aberto dele (ONE_TICKET_JOB_REUSE_ON).
+              clientId:    formData.client_id ?? null,
+              clientEmail: formData.client_email ?? null,
+              clientPhone: (formData as { client_phone?: string | null }).client_phone ?? null,
               ticketFormId: ZENDESK_QUOTE_TICKET_FORM_ID || undefined,
               customFields: buildZendeskCustomFields([
                 [ZENDESK_FIELD_SCOPE, formData.scope],
@@ -1460,6 +1464,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           }
           formData.external_source = "zendesk";
           formData.external_ref    = String(j.ticketId);
+          if (j.reused) toast.success(`Linked to the customer's open Zendesk ticket #${j.ticketId}`);
         } catch (err) {
           toast.error(err instanceof Error ? err.message : "Zendesk ticket creation failed");
           return false;

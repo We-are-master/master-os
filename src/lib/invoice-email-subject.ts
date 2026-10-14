@@ -20,7 +20,7 @@ export function buildInvoiceEmailSubject(
   _jobReference?: string,
 ): string {
   if (isInvoicePaymentVerified(invoice)) {
-    return `Payment receipt — ${displayBillingReference(invoice.reference)}`;
+    return `Payment receipt · ${displayBillingReference(invoice.reference)}`;
   }
   // Um título só para toda fatura, igual ao do PDF (dono, 13/10/2026).
   return invoiceReadyTitle(invoice.reference);

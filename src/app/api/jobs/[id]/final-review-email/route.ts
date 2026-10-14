@@ -18,6 +18,9 @@ import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
+import { umTicketEmail } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
 function escapeHtml(s: string): string {
   return s
@@ -240,8 +243,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     console.warn("[final-review-email] Job linked to Zendesk ticket", zdTicketId, "but Zendesk env is not configured. Falling back to Resend.");
   }
 
+  // Um ticket por pedido (ONE_TICKET_EMAIL_ON): job sem ticket ligado, mas o cliente
+  // já tem um aberto. O e-mail entra nele em vez de sair solto pela Resend.
+  let achado: (AchadoDoPedido & { tipo: "ticket" }) | null = null;
+  if (!useZendesk && umTicketEmail()) {
+    const a = await acharTicketDoPedido(admin, { jobId, clientId, email: emailTo });
+    if (a.tipo === "ticket") achado = a;
+    else if (a.tipo === "ambiguo") console.log("[final-review-email] cliente com vários tickets abertos, segue pela Resend:", a.ids.join(", "));
+  }
+
   const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (!useZendesk && !resendKey) {
+  if (!useZendesk && !achado && !resendKey) {
     return NextResponse.json({ error: "RESEND_API_KEY is not configured" }, { status: 503 });
   }
 
@@ -320,22 +332,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     html = `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;font-size:15px;color:#111;line-height:1.5;max-width:560px">
 <p>Hi ${escapeHtml(billing.displayName)},</p>
-<p>Your job <strong>${escapeHtml(ref)}</strong> — ${escapeHtml(title)} — has been finalised.</p>
+<p>Your job <strong>${escapeHtml(ref)}</strong> (${escapeHtml(title)}) has been finalised.</p>
 <p>${reportSentence}</p>
 ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(missingReportNote)}</p>` : ""}
 <p style="margin:16px 0">If you have any questions, reply to this email or call us.</p>
-<p style="color:#666;font-size:13px">— ${escapeHtml(companyName)}</p>
+<p style="color:#666;font-size:13px">${escapeHtml(companyName)}</p>
 </body></html>`;
   }
 
   // O mesmo assunto de toda fatura ("Your invoice INV-… is ready"); recibo quando já está paga.
-  const emailSubject = includeInvoice && invoiceRow ? buildInvoiceEmailSubject(invoiceRow, ref) : `Job ${ref} — final update`;
+  const emailSubject = includeInvoice && invoiceRow ? buildInvoiceEmailSubject(invoiceRow, ref) : `Job ${ref}: final update`;
 
   // Cópia pedida pela conta (o financeiro do cliente), só quando a fatura vai junto (mig 324).
   const ccDaConta = includeInvoice && invoiceRow ? await copiasDaFaturaDaConta(admin, invoiceRow.source_account_id ?? billing.sourceAccountId ?? null, [emailTo]) : [];
 
-  let channel: "zendesk" | "resend";
+  let channel: "zendesk" | "resend" | undefined;
   let resendId: string | undefined;
+  let ticketUsado: string | number | undefined = zdTicketId ?? undefined;
 
   if (useZendesk) {
     try {
@@ -356,8 +369,27 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
         { status: 502 },
       );
     }
-  } else {
-    const resend = new Resend(resendKey!);
+  } else if (achado) {
+    try {
+      const r = await entregarEmailNoTicket({
+        ticket: achado,
+        para: { email: emailTo, nome: billing.displayName },
+        cc: ccDaConta,
+        assunto: emailSubject,
+        html,
+        anexos: attachments,
+      });
+      channel = "zendesk";
+      ticketUsado = r.ticketId;
+      console.log(`[final-review-email] ${ref}: no ticket #${r.ticketId} do cliente (${r.modo}), sem ticket novo`);
+    } catch (err) {
+      // O cliente não pode ficar sem o e-mail: cai para a Resend como antes.
+      console.error("[final-review-email] ticket do cliente falhou, segue pela Resend:", err);
+    }
+  }
+  if (!channel) {
+    if (!resendKey) return NextResponse.json({ error: "RESEND_API_KEY is not configured" }, { status: 503 });
+    const resend = new Resend(resendKey);
     const { data: sent, error: sendErr } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
@@ -403,7 +435,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
     ok: true,
     channel,
     resendId,
-    ticketId: channel === "zendesk" ? zdTicketId : undefined,
+    ticketId: channel === "zendesk" ? ticketUsado : undefined,
     attachmentCount: attachments.length,
     to: emailTo,
     includeInvoice,
