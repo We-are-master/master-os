@@ -80,9 +80,10 @@ export function Badge({
   return (
     <motion.span
       className={cn(
-        "inline-flex items-center gap-[5px] font-medium leading-[1.45] whitespace-nowrap shrink-0 rounded-[6px] text-[11px] [&_svg]:h-3 [&_svg]:w-3",
-        size === "sm" && "px-2 py-[2px]",
-        size === "md" && "px-2.5 py-[3px]",
+        // Altura única de chip no OS inteiro: 22, com ou sem borda.
+        "box-border inline-flex h-[22px] items-center gap-[5px] font-medium leading-none whitespace-nowrap shrink-0 rounded-[6px] text-[11px] [&_svg]:h-3 [&_svg]:w-3",
+        size === "sm" && "px-2",
+        size === "md" && "px-2.5",
         variantStyles[variant],
         className
       )}
