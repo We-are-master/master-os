@@ -83,7 +83,13 @@ export async function pedirCotacao(
       await sb.from("quotes").update({ status: "bidding", quote_type: "partner" }).eq("id", data.id);
       const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
       const soEste = process.env.HARVEY_CONVITE_PARCEIRO_UNICO?.trim();
-      const r = await dispatchQuoteBidInvites(sb, {
+      // Só os 3 a 5 melhores da área (dono, 14/10/2026), não todo mundo que cobre o postcode.
+      const { melhoresParceirosParaCotacao } = await import("./melhores-parceiros");
+      const melhores = soEste
+        ? [soEste]
+        : (await melhoresParceirosParaCotacao(sb, { serviceType: a.pedido.serviceType, catalogServiceId: (data.catalog_service_id as string | null) ?? null, postcode })).escolhidos.map((p) => p.id);
+      // Lista vazia faria o dispatch casar a área inteira de novo: sem ninguém, não chama.
+      const r = melhores.length === 0 ? { partnerIds: [] as string[] } : await dispatchQuoteBidInvites(sb, {
         quoteId: data.id as string,
         quoteReference: data.reference as string,
         title: (data.title as string | null)?.trim() || a.pedido.serviceType,
@@ -93,7 +99,7 @@ export async function pedirCotacao(
         scope: data.scope as string,
         startIso: null,
         invitedBy: null,
-        ...(soEste ? { partnerIds: [soEste] } : {}),
+        partnerIds: melhores,
       });
       convidados = r.partnerIds.length;
       if (convidados === 0) await sb.from("quotes").update({ status: "draft", quote_type: "internal" }).eq("id", data.id);
