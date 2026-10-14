@@ -11,6 +11,7 @@
  * preço combinado; "Potential earnings £X+" quando tem hourly no meio.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { arquivoDeEstado } from "./lib/estado.mjs";
 for (const arquivo of [".env.local", ".env"]) {
   try {
     for (const linha of readFileSync(arquivo, "utf8").split("\n")) {
@@ -22,7 +23,8 @@ for (const arquivo of [".env.local", ".env"]) {
 
 const ENVIAR = process.argv.includes("--enviar");
 const MAX_ENVIOS_POR_RODADA = 30;
-const SENT_PATH = "scripts/.tomorrow-sent.json";
+// FIXFY_STATE_DIR no Railway (volume); sem ela, scripts/.tomorrow-sent.json como sempre.
+const SENT_PATH = arquivoDeEstado(".tomorrow-sent.json");
 
 const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }] =
   await Promise.all([

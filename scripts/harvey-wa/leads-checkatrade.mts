@@ -17,7 +17,13 @@
  */
 import { readFileSync } from "node:fs";
 
-for (const l of readFileSync(new URL("../../.env.local", import.meta.url), "utf8").split("\n")) {
+// Sem .env.local (Railway), o ambiente do processo é a única fonte. Antes
+// isto quebrava com ENOENT antes de qualquer coisa.
+let envLocal = "";
+try {
+  envLocal = readFileSync(new URL("../../.env.local", import.meta.url), "utf8");
+} catch { /* sem arquivo: vale o process.env */ }
+for (const l of envLocal.split("\n")) {
   const m = l.match(/^([A-Z_0-9]+)=(.*)$/);
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
 }

@@ -11,6 +11,7 @@
  * o Harvey). Ninguém com report pendente = silêncio, nenhum email vazio.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { arquivoDeEstado } from "./lib/estado.mjs";
 for (const arquivo of [".env.local", ".env"]) {
   try {
     for (const linha of readFileSync(arquivo, "utf8").split("\n")) {
@@ -23,7 +24,8 @@ for (const arquivo of [".env.local", ".env"]) {
 const ENVIAR = process.argv.includes("--enviar");
 const SO_ESTE = process.argv.find((a) => a.startsWith("--parceiro="))?.split("=")[1]?.toLowerCase();
 const MAX_ENVIOS_POR_RODADA = 30;
-const SENT_PATH = "scripts/.missing-reports-sent.json";
+// FIXFY_STATE_DIR no Railway (volume); sem ela, scripts/.missing-reports-sent.json como sempre.
+const SENT_PATH = arquivoDeEstado(".missing-reports-sent.json");
 
 const [{ createServiceClient }, { buildPartnerMissingReportsEmail }, { resolvePartnerTradePortalBaseUrl }, { buildPartnerJobReportUrl }] =
   await Promise.all([

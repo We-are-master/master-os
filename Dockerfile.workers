@@ -1,0 +1,32 @@
+# fixfy-workers: o agendador das rotinas que saíram do launchd do Mac.
+#
+# Imagem oficial do Playwright na MESMA versão do package.json (1.62.1): o
+# Chromium e as libs de sistema dele já vêm prontos em /ms-playwright, que é o
+# que a Stefane precisa para enviar o relatório da Housekeep. Versão diferente
+# entre imagem e pacote = "Executable doesn't exist" na primeira passada.
+#
+# Usado SÓ pelo serviço "fixfy-workers" do Railway (Dockerfile Path =
+# Dockerfile.workers). O serviço "harvey" continua no Railpack e a Vercel não
+# lê este arquivo. Detalhes em docs/railway-workers.md.
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
+
+WORKDIR /app
+
+# Os browsers já estão na imagem; o npm não baixa outro.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    TZ=Europe/London \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
+# Dependências primeiro (camada em cache enquanto o lock não muda). Sem
+# NODE_ENV=production aqui: tsx e playwright são devDependencies e as rotinas
+# precisam dos dois.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+
+# O volume do Railway monta em /data; a trava de "já mandei hoje" mora nele.
+ENV FIXFY_STATE_DIR=/data/state
+
+CMD ["node", "--import", "tsx", "scripts/workers/agendador.mts"]

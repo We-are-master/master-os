@@ -17,6 +17,9 @@
     "apply:zendesk-migrations": "node supabase/scripts/apply-zendesk-pricing-migrations.mjs",
     "test:stefane": "npx tsx --test src/lib/stefane/housekeep-api.test.ts src/lib/stefane/housekeep-report-form.test.ts src/lib/report-health.test.ts src/lib/report-template-housekeep.test.ts",
     "harvey": "tsx scripts/harvey/poll.ts",
+    "workers": "node --import tsx scripts/workers/agendador.mts",
+    "workers:ensaio": "node --import tsx scripts/workers/agendador.mts --ensaio",
+    "test:workers": "npx tsx --test scripts/workers/agenda.test.mts",
     "test:agent-model": "npx tsx --test src/lib/agent-model/schedule.test.ts src/lib/agent-model/commission.test.ts src/lib/agent-model/receipt-view.test.ts src/lib/agent-model/promotion.test.ts src/lib/client-confirmation/professional-email.test.ts src/lib/invoice-trade-fee-split.test.ts src/lib/client-confirmation/send.test.ts",
     "test:cliente": "npx tsx --test src/lib/client-confirmation/send.test.ts src/lib/client-confirmation/catch-up.test.ts src/lib/client-confirmation/sweep-24h.test.ts src/lib/feedback/pos-job.test.ts src/lib/depois-da-resposta.test.ts"
   },
