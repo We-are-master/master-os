@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/layout/page-header";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -309,14 +310,7 @@ export function OutreachClient() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold text-text-primary">Outreach</h1>
-          <p className="text-sm text-text-secondary">
-            Envie e-mails personalizados para partners e contatos externos.
-          </p>
-        </div>
-      </div>
+      <PageHeader title="Outreach" subtitle="Send personalised emails to partners and outside contacts." />
 
       <Tabs
         tabs={[

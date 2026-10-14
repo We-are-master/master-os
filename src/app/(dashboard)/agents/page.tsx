@@ -54,7 +54,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
   const view = (await searchParams).view === "rules" ? "rules" : "agents";
   if (view === "rules") {
     return (
-      <div className="space-y-6 p-6">
+      <div className="space-y-6">
         <PageHeader title="Agents" subtitle="The AI agents working for Fixfy and the rules they follow.">
           <Toggle view="rules" />
         </PageHeader>
@@ -79,7 +79,7 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
 
   return (
     <PageTransition>
-      <div className="space-y-6 p-6">
+      <div className="space-y-6">
         <PageHeader title="Agents" subtitle="The AI agents working for Fixfy. Open one to see what it knows and change how it decides.">
           <Toggle view="agents" />
         </PageHeader>

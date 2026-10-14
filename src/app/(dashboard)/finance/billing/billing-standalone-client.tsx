@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/components/layout/page-header";
 import Link from "next/link";
 import { formatBritishDate } from "@/lib/utils/date";
 
@@ -1406,18 +1407,12 @@ function BillingStandaloneInner() {
 
   return (
     <PageTransition>
-      <div className="bl-standalone flex min-h-0 min-w-0 flex-col gap-4 sm:gap-6">
-        <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h1 className="inline-flex items-center gap-2 text-xl font-bold text-text-primary sm:text-2xl">
-              Billing
-              <FixfyHintIcon
-                text={`Everything you owe and everything you're owed — what's due, what's late, day by day. ${dateLabel}.`}
-                placement="bottom-start"
-              />
-            </h1>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+      <div className="bl-standalone flex min-h-0 min-w-0 flex-col gap-4">
+        <PageHeader
+          title="Billing"
+          infoTooltip={`Everything you owe and everything you're owed: what's due, what's late, day by day. ${dateLabel}.`}
+        >
+          <div className="contents">
             <BillingStandalonePeriodFilter value={periodFilter} onChange={setPeriodFilter} />
             <ToolbarIconButton
               icon={BarChart3}
@@ -1440,7 +1435,7 @@ function BillingStandaloneInner() {
               New invoice
             </Button>
           </div>
-        </div>
+        </PageHeader>
 
         {data.loading && !data.hasLoadedOnce ? (
           <BillingContentSkeleton />

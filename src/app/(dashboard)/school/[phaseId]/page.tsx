@@ -55,7 +55,7 @@ export default function SchoolPhasePage() {
 
         <div className="space-y-1">
           <p className="text-[11px] font-bold uppercase tracking-wider text-text-primary">{phase.subtitle}</p>
-          <h1 className="text-2xl font-bold text-text-primary m-0">{phase.title}</h1>
+          <h1 className="m-0 font-display text-[20px] font-semibold leading-[1.3] tracking-[-0.02em] text-text-primary">{phase.title}</h1>
           <p className="text-sm text-text-secondary m-0 mt-2 leading-relaxed">{phase.description}</p>
         </div>
 

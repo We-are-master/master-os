@@ -3274,7 +3274,7 @@ function JobsPageContent() {
 
   return (
     <PageTransition className="flex min-h-0 flex-col h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)] overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2 sm:pt-3 lg:pt-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
         <PageHeader title="Jobs management" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DateRangeFilter

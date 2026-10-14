@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, Mail, Phone, MessageCircle, ExternalLink, Plus, Upload, SquareKanban, List, CalendarClock } from "lucide-react";
+import { PageHeader, PageToolbar } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { SearchInput } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -350,16 +351,28 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
     <PageTransition>
       {/* Mesma estrutura do lado B2B (crm-client.tsx): barra de uma linha, quadro de altura
           cheia com colunas que rolam sozinhas, mesmo cartão e a lista (dono, 12/10/2026). */}
-      <div className="-mt-2 flex h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] min-h-0 flex-col gap-3 overflow-hidden sm:-mt-3 lg:-mt-4 lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)]">
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <div className="mr-1 flex items-center gap-2">
-            <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">Leads</h1>
-            <LadoToggle lado="b2c" />
-            <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
-              {resumo.abertos} open · {resumo.clientes} became customers
-              {resumo.valorAberto > 0 ? ` · ${libras(resumo.valorAberto)} open` : ""}
-            </span>
-          </div>
+      <div className="flex h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] min-h-0 flex-col gap-3 overflow-hidden">
+        <PageHeader
+          title="Leads"
+          titleAddon={
+            <>
+              <LadoToggle lado="b2c" />
+              <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
+                {resumo.abertos} open · {resumo.clientes} became customers
+                {resumo.valorAberto > 0 ? ` · ${libras(resumo.valorAberto)} open` : ""}
+              </span>
+            </>
+          }
+        >
+          <Button variant="outline" size="icon" aria-label="Refresh" title="Refresh leads" onClick={() => router.refresh()}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="icon" aria-label="Import" title="Import a CSV of leads" onClick={() => setImportarAberto(true)}>
+            <Upload className="h-4 w-4" />
+          </Button>
+          <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setAdicionarAberto(true)}>New lead</Button>
+        </PageHeader>
+        <PageToolbar>
           <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="View">
             {([["board", "Board", SquareKanban, null], ["list", "List", List, lista.length]] as const).map(([v, rotulo, Icone, n]) => (
               <button
@@ -368,7 +381,7 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
                 aria-pressed={visao === v}
                 onClick={() => trocarVisao(v)}
                 className={cn(
-                  "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+                  "inline-flex h-[26px] items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
                   visao === v ? "bg-surface-tertiary text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
                 )}
               >
@@ -378,8 +391,8 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
               </button>
             ))}
           </div>
-          <div className="w-52"><SearchInput value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Search leads" aria-label="Search leads" /></div>
-          <div className="w-40">
+          <div className="w-60"><SearchInput value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Search leads" aria-label="Search leads" /></div>
+          <div className="w-44">
             <Select
               aria-label="Filter by origin"
               value={canal}
@@ -387,16 +400,7 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
               options={[{ value: "all", label: "All origins" }, ...canais.map((c) => ({ value: c.key, label: `${c.label}${c.active ? "" : " (inactive)"}` }))]}
             />
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="icon" aria-label="Refresh" title="Refresh leads" onClick={() => router.refresh()}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" aria-label="Import" title="Import a CSV of leads" onClick={() => setImportarAberto(true)}>
-              <Upload className="h-4 w-4" />
-            </Button>
-            <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setAdicionarAberto(true)}>New lead</Button>
-          </div>
-        </div>
+        </PageToolbar>
 
         {exemplo ? (
           <div className="shrink-0 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">

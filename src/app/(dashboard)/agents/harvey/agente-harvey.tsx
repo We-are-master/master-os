@@ -94,7 +94,7 @@ export function AgenteHarvey({
 
   return (
     <PageTransition>
-      <div className="space-y-6 p-6">
+      <div className="space-y-6">
         <PageHeader title="Harvey" subtitle="WhatsApp agent. Edit what he knows and how he decides: changes reach live conversations within 30 seconds.">
           <div className="flex items-center gap-2">
             {pausado ? <Badge variant="warning">Paused</Badge> : <Badge variant="success" dot>Live</Badge>}

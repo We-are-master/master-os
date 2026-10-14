@@ -6,6 +6,7 @@
  * no servidor (`painelDaCampanha`).
  */
 
+import { PageHeader } from "@/components/layout/page-header";
 import { useEffect, useState } from "react";
 import type { PainelDaCampanha } from "@/lib/marketing/campanha-painel";
 
@@ -70,17 +71,20 @@ export default function PainelAoVivo() {
   const expira = new Date(d.expiraEm);
 
   return (
-    <div style={{ padding: "32px 32px 80px", maxWidth: 1180, color: COR.tinta }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", margin: 0 }}>Campanha {d.codigo}</h1>
-        <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", color: d.ligada ? "#1C6B46" : COR.aviso, border: `1px solid ${d.ligada ? "#1C6B46" : COR.aviso}`, padding: "3px 8px" }}>
-          {d.ligada ? "NO AR" : "DESLIGADA"}
-        </span>
-        <span style={{ color: COR.mudo, fontSize: 13 }}>
-          10% até {expira.toLocaleString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })} (Londres) · atualizado {hora(d.atualizadoEm)} {erro && <span style={{ color: COR.ruim }}>· {erro}</span>}
-        </span>
-      </div>
-
+    <div style={{ maxWidth: 1180, color: COR.tinta }}>
+      <PageHeader
+        title={`Campanha ${d.codigo}`}
+        titleAddon={
+          <>
+            <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", color: d.ligada ? "#1C6B46" : COR.aviso, border: `1px solid ${d.ligada ? "#1C6B46" : COR.aviso}`, padding: "3px 8px" }}>
+              {d.ligada ? "NO AR" : "DESLIGADA"}
+            </span>
+            <span style={{ color: COR.mudo, fontSize: 13 }}>
+              10% até {expira.toLocaleString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })} (Londres) · atualizado {hora(d.atualizadoEm)} {erro && <span style={{ color: COR.ruim }}>· {erro}</span>}
+            </span>
+          </>
+        }
+      />
       {/* ─── Números grandes ─── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginTop: 22 }}>
         <div style={cartao}><div style={{ fontSize: 12, color: COR.mudo }}>Mensagens enviadas</div><div style={numero}>{n(enviados)}</div><div style={{ fontSize: 12, color: COR.mudo }}>de {n(total)} planejadas</div></div>

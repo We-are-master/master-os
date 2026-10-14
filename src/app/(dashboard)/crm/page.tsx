@@ -10,6 +10,7 @@
  * Os dois lados têm quadro e lista, e a ficha mostra o histórico com a gente
  * (src/components/leads/historico-do-lead.tsx).
  */
+import { PageHeader } from "@/components/layout/page-header";
 import { carregarLeadsB2C } from "@/lib/site-leads/carregar-tela";
 import { LeadsDoSite } from "../website-leads/leads-do-site";
 import { LadoToggle } from "@/components/leads/lado-toggle";
@@ -24,9 +25,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const r = await carregarLeadsB2C();
   if ("erro" in r) {
     return (
-      <div className="space-y-3 p-6">
-        <LadoToggle lado="b2c" />
-        <h1 className="text-2xl font-bold text-text-primary">Leads</h1>
+      <div className="space-y-4">
+        <PageHeader title="Leads" titleAddon={<LadoToggle lado="b2c" />} />
         <p className="text-sm text-red-600">Could not read the leads ({r.erro}).</p>
       </div>
     );

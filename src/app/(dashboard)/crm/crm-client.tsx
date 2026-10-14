@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader, PageToolbar } from "@/components/layout/page-header";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -238,18 +239,39 @@ export function CrmClient() {
     // Altura da tela inteira, colado no header (mesmo padrão da tela de Jobs):
     // cada coluna do quadro rola sozinha.
     <div className="flex h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] min-h-0 flex-col gap-3 overflow-hidden lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)]">
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <div className="mr-1 flex items-center gap-2">
-          <h1 className="text-[18px] font-semibold leading-none tracking-[-0.01em] text-text-primary">Leads</h1>
-          <LadoToggle lado="b2b" />
-          <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
-            {deals.length} companies · {totals.won} won
-            {totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo open` : ""}
-          </span>
-        </div>
+      <PageHeader
+        title="Leads"
+        titleAddon={
+          <>
+            <LadoToggle lado="b2b" />
+            <span className="hidden whitespace-nowrap text-[12px] tabular-nums text-text-tertiary xl:inline">
+              {deals.length} companies · {totals.won} won
+              {totals.openValue > 0 ? ` · ${formatCurrency(totals.openValue)}/mo open` : ""}
+            </span>
+          </>
+        }
+      >
+        <Button
+          size="sm"
+          variant={dueOnly ? "primary" : "outline"}
+          icon={<PhoneCall className="h-4 w-4" />}
+          onClick={() => setDueOnly((v) => !v)}
+          aria-pressed={dueOnly}
+        >
+          Calls due · {dueCount}
+        </Button>
+        <Button variant="outline" size="icon" aria-label="Import" title="Import accounts or a CSV" onClick={() => setImportOpen(true)}>
+          <Upload className="h-4 w-4" />
+        </Button>
+        <Button variant="outline" size="icon" aria-label="Stages" title="Edit the stages" onClick={() => setStagesOpen(true)}>
+          <Settings2 className="h-4 w-4" />
+        </Button>
+        <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => newDeal()}>New lead</Button>
+      </PageHeader>
+      <PageToolbar>
         <ViewSwitch view={view} listCount={filtered.length} onChange={setView} />
-        <div className="w-52"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
-        <div className="w-40">
+        <div className="w-60"><SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies" aria-label="Search companies" /></div>
+        <div className="w-44">
           <Select
             aria-label="Filter by segment"
             value={segment}
@@ -265,25 +287,7 @@ export function CrmClient() {
             options={CALL_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
           />
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant={dueOnly ? "primary" : "outline"}
-            icon={<PhoneCall className="h-4 w-4" />}
-            onClick={() => setDueOnly((v) => !v)}
-            aria-pressed={dueOnly}
-          >
-            Calls due · {dueCount}
-          </Button>
-          <Button variant="outline" size="icon" aria-label="Import" title="Import accounts or a CSV" onClick={() => setImportOpen(true)}>
-            <Upload className="h-4 w-4" />
-          </Button>
-          <Button variant="outline" size="icon" aria-label="Stages" title="Edit the stages" onClick={() => setStagesOpen(true)}>
-            <Settings2 className="h-4 w-4" />
-          </Button>
-          <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => newDeal()}>New lead</Button>
-        </div>
-      </div>
+      </PageToolbar>
 
       {todayStats.companies > 0 || dueCount > 0 ? (
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-[12px] text-text-secondary">

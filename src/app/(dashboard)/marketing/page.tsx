@@ -11,6 +11,7 @@
  * somar isso no navegador seria uma tela que trava.
  */
 
+import { PageHeader } from "@/components/layout/page-header";
 import { createServiceClient } from "@/lib/supabase/service";
 import { contarSegmentos } from "@/lib/marketing/segments";
 import { SEQUENCES, FUNIL } from "@/lib/email-sequences/definitions";
@@ -146,12 +147,13 @@ export default async function MarketingPage() {
   const num: React.CSSProperties = { ...td, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ padding: "28px 24px 80px", maxWidth: 1180, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", margin: "0 0 6px" }}>Marketing</h1>
-      <p style={{ color: "#55524C", margin: "0 0 32px", fontSize: 15 }}>
-        Quem dá para alcançar hoje, e o que cada campanha fez depois de sair.{" "}
-        <a href="/marketing/ao-vivo" style={{ color: "#C2530A", fontWeight: 600 }}>Campanha ao vivo →</a>
-      </p>
+    <div style={{ maxWidth: 1180 }}>
+      <PageHeader title="Marketing" subtitle="Who we can reach today, and what each campaign did after it went out.">
+        <a href="/marketing/ao-vivo" className="inline-flex h-[30px] items-center rounded-lg border border-border bg-card px-3 text-[12px] font-semibold text-text-primary hover:bg-surface-hover">
+          Live campaign
+        </a>
+      </PageHeader>
+      <div style={{ height: 16 }} />
 
       {/* ─── Segmentos ─── */}
       <h2 style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#88847D", margin: "0 0 14px", paddingBottom: 8, borderBottom: "1px solid #E3DFD8" }}>

@@ -648,11 +648,18 @@ svg.lucide { stroke-width: 2; }
 
 /* View head → first card is 10px on every page (VOS UNO 56px rule: the page
    wrappers use space-y-* or gap-*; this pins the head's gap without touching them). */
-:is(.space-y-3, .space-y-4, .space-y-5, .space-y-6, .space-y-8) > .uno-view-head + * { margin-top: 10px !important; }
+:is(.space-y-3, .space-y-4, .space-y-5, .space-y-6, .space-y-8) > .uno-view-head:not(:last-child) { margin-block-end: 10px !important; }
+:is(.space-y-3, .space-y-4, .space-y-5, .space-y-6, .space-y-8) > .uno-view-head + * { margin-block-start: 0 !important; }
 .gap-4 > .uno-view-head { margin-bottom: -6px; }
 .gap-5 > .uno-view-head { margin-bottom: -10px; }
 .gap-6 > .uno-view-head { margin-bottom: -14px; }
 .gap-8 > .uno-view-head { margin-bottom: -22px; }
+.gap-3 > .uno-view-head { margin-bottom: -2px; }
+/* Page rhythm: 16px between the blocks of every page, whatever space-y the
+   page wrapper was written with (VOS UNO). Only the wrapper that holds the
+   view head (the page itself), never the stacks inside cards. Tailwind 4's
+   space-y puts the gap on margin-block-end, so that is what we pin. */
+main :is(.space-y-4, .space-y-5, .space-y-6, .space-y-8):has(> .uno-view-head) > :not(:last-child):not(.uno-view-head) { margin-block-end: 16px !important; }
 
 /* ============ Tables (VOS UNO §12) ============
  * `.uno-tbl` is the DataTable: rows at least 36, header 11/500 on a 6% ink
