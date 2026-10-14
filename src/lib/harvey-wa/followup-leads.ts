@@ -4,32 +4,32 @@
  * todo. Nada aqui põe 🔴 nem manda para a Action Required: o ticket só sobe
  * quando o cliente responde.
  *
- *   Passo 1  dia 1, na hora      e-mail 1 (o mesmo pedido de fotos do WhatsApp)
- *   Passo 2  dia 1, 18h          template quote_request_checkin + e-mail 2
- *   Passo 3  dia 2, 10h          e-mail 3 (como a gente trabalha)
- *   Passo 4  dia 2, 16h          e-mail 4 (tem vaga esta semana)
- *   Passo 5  dia 3, 10h          e-mail 5 (estamos aqui, os serviços) e solved
- *                                como no response; dali vai para a nutrição.
+ *   Dia 1  na chegada  WhatsApp de primeiro contato (primeiro-contato.ts, não aqui)
+ *   Passo 1  dia 1, 18h   WhatsApp: template quote_request_checkin
+ *   Passo 2  dia 2, 10h   e-mail 1 (pedido de fotos, para quem prefere e-mail)
+ *   Passo 3  dia 2, 16h   e-mail 2 (como a gente trabalha, vaga esta semana)
+ *   Passo 4  dia 3, 10h   e-mail 3 (última nota, os serviços, estamos aqui)
+ *   Passo 5  dia 3, 18h   WhatsApp final e solved como no response; dali vai
+ *                         para a nutrição.
  *
- * Dois WhatsApps no total (o primeiro contato e o check-in): mais template para
- * quem nunca respondeu derruba a nota do 020 4538 4668, que é o número de todos.
  * Os e-mails saem como comentário público do ticket do lead, então a resposta
  * cai no mesmo ticket. Lead sem e-mail (o requester é a equipe) só leva os
- * WhatsApps e fecha no mesmo dia 3.
+ * WhatsApps; lead que veio só com e-mail (tag lead_email_sent, o primeiro
+ * contato já foi um e-mail) só leva os e-mails. Os dois fecham no dia 3.
  *
- * Lead que já existia quando a régua entrou (14/10/2026) e não tem nenhuma tag
- * lead_fu_*: conta como dia 2 naquele dia (dono). Leva os e-mails 3 e 4 no dia
- * e o último no dia seguinte.
+ * O WhatsApp final usa HARVEY_WA_LEAD_FINAL_TEMPLATE quando existir um template
+ * aprovado para ele; sem isso, repete o quote_request_checkin.
  *
  * Os passos andam em sequência, cada um no seu horário e com 4h de folga do
  * anterior: lead que chega às 19h não leva o check-in às 19h10, leva no dia
  * seguinte às 18h, e o resto anda junto.
  *
- * O lead que veio só com e-mail (tag lead_email_sent) já teve o e-mail 1 na
- * criação do ticket e segue do passo 2, sem o WhatsApp.
+ * Lead que já existia quando a régua entrou (14/10/2026) e não tem nenhuma tag
+ * lead_fu_*: conta como dia 2 naquele dia (dono). Leva os e-mails 1 e 2 no dia,
+ * e o e-mail 3 e o WhatsApp final no dia seguinte.
  *
  * O estado mora no ticket do lead (tags lead_fu_1..lead_fu_5; lead_checkin_sent
- * vale como passo 2 feito). Respondeu em qualquer momento: no WhatsApp o ticket
+ * vale como passo 1 feito). Respondeu em qualquer momento: no WhatsApp o ticket
  * do lead é juntado no da conversa (fecha); por e-mail o comentário dele aparece
  * no ticket e a varredura para. Só de 8h às 21h de Londres, dentro da janela de
  * envio da tela do Harvey.
@@ -45,6 +45,9 @@ import { scNotificacao } from "./sunshine";
 
 const H = 3_600_000;
 const TEMPLATE_CHECKIN = process.env.HARVEY_WA_LEAD_CHECKIN_TEMPLATE?.trim() || "quote_request_checkin";
+const TEMPLATE_FINAL = process.env.HARVEY_WA_LEAD_FINAL_TEMPLATE?.trim() || TEMPLATE_CHECKIN;
+/** Passos que são WhatsApp; os outros são e-mail. */
+const PASSOS_DE_WHATSAPP = new Set([1, 5]);
 const RESOLUCAO = 5872761703199; // campo Resolution
 /** Estágio 🎯 Lead (categoria pending). Só `status: pending` cairia no On Hold padrão, que é a Needs Attention. */
 const ESTAGIO_LEAD = 6417913706527;
@@ -73,7 +76,7 @@ function diasEntre(de: string, ate: string): number {
 export function passosFeitos(tags: Iterable<string>, soPorEmail: boolean): number {
   const s = new Set(tags);
   let n = soPorEmail ? 1 : 0;
-  if (s.has("lead_checkin_sent")) n = Math.max(n, 2);
+  if (s.has("lead_checkin_sent")) n = Math.max(n, 1);
   for (let i = 1; i <= 5; i++) if (s.has(`lead_fu_${i}`)) n = Math.max(n, i);
   return n;
 }
@@ -87,17 +90,18 @@ export function proximoPasso(feitos: number, primeiro: Date, ultimo: Date, agora
   if (passo > 5) return null;
   const a = emLondres(agora);
   const folga = agora.getTime() - ultimo.getTime() >= 4 * H;
+  const outroDia = diasEntre(emLondres(ultimo).dia, a.dia) >= 1;
   switch (passo) {
     case 1:
-      return 1;
+      return a.hora >= 18 && folga ? 1 : null;
     case 2:
-      return a.hora >= 18 && folga ? 2 : null;
+      return a.hora >= 10 && outroDia ? 2 : null;
     case 3:
-      return a.hora >= 10 && diasEntre(emLondres(ultimo).dia, a.dia) >= 1 ? 3 : null;
+      return a.hora >= 16 && folga ? 3 : null;
     case 4:
-      return a.hora >= 16 && folga ? 4 : null;
+      return a.hora >= 10 && outroDia ? 4 : null;
     default:
-      return a.hora >= 10 && folga && diasEntre(emLondres(primeiro).dia, a.dia) >= 2 ? 5 : null;
+      return a.hora >= 18 && folga ? 5 : null;
   }
 }
 
@@ -116,17 +120,10 @@ export function ehDaReguaAntiga(primeiro: Date, tags: Iterable<string>): boolean
 export function emailDoPasso(passo: number, nome: string, servico: string): string {
   const fim = ["", "Thank you,", "Fixfy Team"];
   const corpos: Record<number, string[]> = {
-    1: [
-      `This is Fixfy. We've just received your Checkatrade request for ${servico}.`,
-      "",
-      "Could you reply to this email with a few photos of the job? That way we can give you an accurate price with no surprises.",
-      "",
-      `If it's easier, you can also message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
-    ],
     2: [
-      `Just checking in on your request for ${servico}.`,
+      `We sent you a WhatsApp about your Checkatrade request for ${servico}, and thought email might be easier.`,
       "",
-      "If you reply with a couple of photos, we'll come back with a price first thing tomorrow.",
+      "Could you reply with a few photos of the job? We'll come back with a clear price, usually the same day.",
       "",
       `Prefer to chat? Message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
     ],
@@ -138,19 +135,12 @@ export function emailDoPasso(passo: number, nome: string, servico: string): stri
       "· Vetted, insured professionals",
       "· Every job backed by our workmanship guarantee",
       "",
-      "Reply with a photo of the job and we'll price it today.",
+      "We still have availability this week. Reply with a photo and your postcode and we'll get you booked in.",
     ],
     4: [
-      `We still have availability this week for your ${servico} job.`,
+      `A last note from us about your request for ${servico}. If you'd still like it done, just reply and we'll price it today. If you've already sorted it, no problem.`,
       "",
-      "If you'd like to go ahead, reply with a photo and your postcode and we'll get you booked in.",
-      "",
-      "If you've already sorted it, no problem: just let us know and we'll close your request.",
-    ],
-    5: [
-      `We haven't heard back, so we'll close your request for ${servico} for now.`,
-      "",
-      "If you need anything in the future, we're here. Across London we cover:",
+      "Whenever you need anything else, we're here. Across London we cover:",
       "",
       "· Handyman jobs, carpentry and furniture assembly",
       "· Plumbing and electrical work",
@@ -183,7 +173,7 @@ async function emailDoCliente(t: Ticket): Promise<{ email: string; nome: string 
   return email && !/@getfixfy\.com$/.test(email) ? { email, nome: user?.name ?? null } : null;
 }
 
-async function mandarCheckinNoWhatsApp(telefone: string, nome: string, servico: string, leadExterno: string) {
+async function mandarTemplateNoWhatsApp(template: string, telefone: string, nome: string, servico: string, leadExterno: string) {
   await scNotificacao({
     destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: telefone },
     author: { role: "appMaker" },
@@ -192,7 +182,7 @@ async function mandarCheckinNoWhatsApp(telefone: string, nome: string, servico: 
       type: "template",
       template: {
         namespace: process.env.HARVEY_WA_TEMPLATE_NAMESPACE?.trim() || "6ce5890e_770a_4be1_91db_7d34bc67e542",
-        name: TEMPLATE_CHECKIN,
+        name: template,
         language: { policy: "deterministic", code: process.env.HARVEY_WA_LEAD_TEMPLATE_LANG?.trim() || "en_GB" },
         components: [{ type: "body", parameters: [{ type: "text", text: nome }, { type: "text", text: `your ${servico} request` }] }],
       },
@@ -202,10 +192,10 @@ async function mandarCheckinNoWhatsApp(telefone: string, nome: string, servico: 
 }
 
 const PROXIMO: Record<number, string> = {
-  1: "Next: WhatsApp check-in and email 2 at 6pm.",
-  2: "Next: email 3 tomorrow at 10am.",
-  3: "Next: email 4 at 4pm.",
-  4: "Next: last email tomorrow at 10am, then solved as no response.",
+  1: "Next: email tomorrow at 10am.",
+  2: "Next: email at 4pm.",
+  3: "Next: last email tomorrow at 10am.",
+  4: "Next: last WhatsApp at 6pm, then solved as no response.",
 };
 
 type Lead = { ticket: Ticket; telefone: string | null; nome: string; servico: string; leadExterno: string | null; primeiro: Date; soPorEmail: boolean };
@@ -224,7 +214,7 @@ async function seguirLead(l: Lead, out: ResultadoFollowup, aplicar: boolean, ago
   let ultimo = cs[0] ? new Date(cs[0].created_at) : l.primeiro;
   if (ehDaReguaAntiga(l.primeiro, tags)) {
     // Dono, 14/10/2026: o lead antigo entra hoje como dia 2.
-    feitos = Math.max(feitos, 2);
+    feitos = Math.max(feitos, 1);
     primeiro = ultimo = new Date(`${VESPERA_DA_REGUA}T12:00:00Z`);
   }
   const passo = proximoPasso(feitos, primeiro, ultimo, agora);
@@ -237,17 +227,20 @@ async function seguirLead(l: Lead, out: ResultadoFollowup, aplicar: boolean, ago
   try {
     const cliente = await emailDoCliente(t).catch(() => null);
     const feito: string[] = [];
-    if (passo === 2 && l.telefone && l.leadExterno) {
-      await mandarCheckinNoWhatsApp(l.telefone, l.nome, l.servico, l.leadExterno);
-      feito.push(`WhatsApp check-in (${TEMPLATE_CHECKIN})`);
-    }
     const corpoDoTicket: Record<string, unknown> = {};
-    if (cliente) {
+    if (PASSOS_DE_WHATSAPP.has(passo)) {
+      if (l.telefone && l.leadExterno) {
+        const tpl = passo === 1 ? TEMPLATE_CHECKIN : TEMPLATE_FINAL;
+        await mandarTemplateNoWhatsApp(tpl, l.telefone, l.nome, l.servico, l.leadExterno);
+        feito.push(`WhatsApp ${passo === 1 ? "check-in" : "last message"} (${tpl})`);
+      }
+    } else if (cliente) {
       corpoDoTicket.comment = { body: emailDoPasso(passo, l.nome, l.servico), public: true };
-      feito.push(`email ${passo} to ${cliente.email}`);
-    } else {
+      feito.push(`email to ${cliente.email}`);
+    }
+    if (!corpoDoTicket.comment) {
       corpoDoTicket.comment = {
-        body: `Lead follow-up step ${passo}: ${feito.length ? feito.join(", ") : "nothing to send (no email on this lead)"}. ${passo === 5 ? "" : PROXIMO[passo] ?? ""}`.trim(),
+        body: `Lead follow-up step ${passo}: ${feito.length ? feito.join(", ") : `nothing to send (no ${PASSOS_DE_WHATSAPP.has(passo) ? "phone" : "email"} on this lead)`}. ${passo === 5 ? "Solved as no response." : PROXIMO[passo] ?? ""}`.trim(),
         public: false,
       };
     }
@@ -260,10 +253,6 @@ async function seguirLead(l: Lead, out: ResultadoFollowup, aplicar: boolean, ago
       corpoDoTicket.custom_fields = [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }];
     }
     await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: corpoDoTicket } });
-    if (cliente && feito.length > 1) {
-      // Com e-mail, o comentário público é o e-mail; o WhatsApp fica registrado numa nota.
-      await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { body: `Lead follow-up step ${passo}: ${feito.join(", ")}. ${PROXIMO[passo] ?? ""}`.trim(), public: false } } } });
-    }
     await addTicketTags(t.id, passo === 5 ? [`lead_fu_${passo}`, "lead_no_response"] : [`lead_fu_${passo}`, "lead_gen"]);
     // Ticket da régua antiga: tira a marca de "ligar" para nenhum gatilho mandar de volta ao To Call.
     if (tags.has("lead_call") || tags.has("lead_replied")) {
@@ -312,7 +301,7 @@ export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { a
     );
   }
 
-  // Leads que vieram sem telefone: o primeiro contato já foi o e-mail 1, na criação do ticket.
+  // Leads que vieram sem telefone: o primeiro contato já foi um e-mail, na criação do ticket.
   const desde = new Date(agora.getTime() - 8 * 24 * H).toISOString().slice(0, 10);
   const q = `type:ticket tags:lead_email_sent status<solved created>${desde}`;
   const { results } = await zendeskApi<{ results?: Ticket[] }>(`search.json?query=${encodeURIComponent(q)}`).catch(() => ({ results: [] as Ticket[] }));
