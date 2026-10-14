@@ -32,7 +32,7 @@ import {
   FileText, CheckCircle2, Clock, Loader2, PlusCircle, Star as StarIcon,
   ChevronDown, ChevronRight, ExternalLink,
 } from "lucide-react";
-import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
+import { cn, formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
@@ -165,7 +165,6 @@ function ClientsPageInner() {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [totalSpent, setTotalSpent] = useState(0);
   /** Linked clients ÷ distinct `source_account_id` (0 if none). */
-  const [clientsPerAccountAvg, setClientsPerAccountAvg] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -256,13 +255,6 @@ function ClientsPageInner() {
       const list = (rows ?? []) as { total_spent?: number | null; source_account_id?: string | null }[];
       const total = list.reduce((s, r) => s + Number(r.total_spent ?? 0), 0);
       setTotalSpent(total);
-      const accountIds = new Set<string>();
-      for (const r of list) {
-        const id = r.source_account_id?.trim();
-        if (id) accountIds.add(id);
-      }
-      const linkedCount = list.filter((r) => Boolean(r.source_account_id?.trim())).length;
-      setClientsPerAccountAvg(accountIds.size > 0 ? linkedCount / accountIds.size : 0);
     } catch { /* cosmetic */ }
   }, []);
 
@@ -1052,34 +1044,27 @@ function ClientDetailDrawer({
                 </div>
               </div>
 
-              {/* KPI Cards */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30/60 border border-emerald-100">
-                  <p className="text-[10px] font-semibold text-emerald-700 uppercase">Total Spent</p>
-                  <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(client.total_spent)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30/60 border border-blue-100">
-                  <p className="text-[10px] font-semibold text-blue-700 uppercase">Jobs</p>
-                  <p className="text-lg font-bold text-blue-700 mt-1">{client.jobs_count}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30/60 border border-purple-100">
-                  <p className="text-[10px] font-semibold text-purple-700 uppercase">Quotes</p>
-                  <p className="text-lg font-bold text-purple-700 mt-1">{quotes.length}</p>
-                </div>
+              {/* Números do cliente: uma faixa só, sem repetir valor. */}
+              <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-border bg-surface-secondary">
+                {[
+                  { k: "paid", label: "Paid", value: formatCurrency(client.total_spent) },
+                  { k: "value", label: "Job value", value: formatCurrency(totalJobValue) },
+                  { k: "jobs", label: "Jobs", value: String(client.jobs_count ?? 0) },
+                  { k: "quotes", label: "Quotes", value: String(quotes.length) },
+                ].map((c, i) => (
+                  <div key={c.k} className={cn("min-w-0 px-3 py-2", i > 0 && "border-l border-border")}>
+                    <p className="m-0 text-[11px] text-text-tertiary">{c.label}</p>
+                    <p className="m-0 mt-0.5 truncate text-[13px] font-semibold tabular-nums text-text-primary">{c.value}</p>
+                  </div>
+                ))}
               </div>
-
-              {/* Value Summary */}
-              <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/10">
-                <p className="text-[10px] font-semibold text-primary uppercase tracking-wide">Lifetime Value</p>
-                <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(totalJobValue)}</p>
-                <p className="text-xs text-text-tertiary mt-1">
-                  {formatCurrency(totalQuoteValue)} in quotes
-                  {client.source_account_id && sourceAccounts.length > 0 && (
-                    <> · Source: {sourceAccounts.find((a) => a.id === client.source_account_id)?.name ?? "—"}</>
-                  )}
-                  {!client.source_account_id && <> · {sourceLabels[client.source]} source</>}
-                </p>
-              </div>
+              <p className="m-0 text-[12px] text-text-tertiary">
+                {formatCurrency(totalQuoteValue)} in quotes
+                {client.source_account_id && sourceAccounts.length > 0 ? (
+                  <> · Account: {sourceAccounts.find((a) => a.id === client.source_account_id)?.name ?? "—"}</>
+                ) : null}
+                {!client.source_account_id ? <> · {sourceLabels[client.source]} source</> : null}
+              </p>
 
               {/* Tags */}
               {client.tags && client.tags.length > 0 && (

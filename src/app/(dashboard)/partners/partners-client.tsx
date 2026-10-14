@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import type { ListResult } from "@/services/base";
 import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
@@ -6242,7 +6243,7 @@ function PartnerDetailDrawer({
                       Sync app profile
                     </Button>
                     <span
-                      title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking."
+                      title="If the partner still sees a missing profile in the app after linking, press Sync."
                       className="text-text-tertiary cursor-help"
                     >
                       <Info className="h-3.5 w-3.5" />
@@ -6272,10 +6273,11 @@ function PartnerDetailDrawer({
           {canSendPartnerLinks && (
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <div>
-                <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
-                <p className="text-xs text-text-secondary mt-1">
-                  Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
-                  partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
+                <p className="m-0 flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                  Trade portal onboarding
+                  <FixfyHintIcon
+                    text={`Send ${partner.contact_name?.trim() || partner.company_name} the Fixfy Trade link to finish onboarding. New partners apply through the join page; existing ones sign in with their email.`}
+                  />
                 </p>
                 {!partner.email?.trim() ? (
                   <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
@@ -7014,29 +7016,12 @@ function PartnerDetailDrawer({
           </div>
         )}
 
-        {/* ========== LOCATION (directory partner with app user link) ========== */}
-        {tab === "location" && partner.auth_user_id && (
-          <div className="p-6 space-y-4">
-            <p className="text-sm font-semibold text-text-primary">Live location (from app)</p>
-            {partnerLocation ? (
-              <LocationMiniMapByCoords
-                latitude={Number(partnerLocation.latitude)}
-                longitude={Number(partnerLocation.longitude)}
-                label={`Last update: ${new Date(partnerLocation.created_at).toLocaleString()}`}
-              />
-            ) : <p className="text-sm text-text-tertiary">No recent location</p>}
-          </div>
-        )}
-
-        {/* ========== RATE CARD ========== */}
         {/* ========== DOCUMENTS · CONTRACTS ========== */}
         {tab === "documents" && documentsSubTab === "contracts" && (
           <div className="p-4 sm:p-6">
             <ContractsTab partnerId={partner.id} />
           </div>
         )}
-
-        {/* ========== PRIVACY & PERMISSIONS ========== */}
 
         {/* ========== DOCUMENTS · FILES ========== */}
         {tab === "documents" && documentsSubTab === "files" && (
