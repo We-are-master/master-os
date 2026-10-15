@@ -780,3 +780,6 @@ main :is(.leading-tight) { line-height: 1.3; }
 .pulse-strip > .grid > .ins-card + .ins-card {
   border-left: 1px solid var(--color-fx-line, var(--border-color)) !important;
 }
+.pulse-strip--bare .ins-card {
+  padding-top: 12px !important;
+}
