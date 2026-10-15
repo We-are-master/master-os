@@ -3051,7 +3051,7 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-col items-start gap-0.5">
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true} className={"className" in c ? c.className : undefined}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} className={onHoldBadge?.className}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
@@ -3087,7 +3087,7 @@ function JobsPageContent() {
         return (
           <div className="inline-flex flex-col items-start gap-0.5">
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot} className={"className" in c ? c.className : undefined}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} className={onHoldBadge?.className}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>

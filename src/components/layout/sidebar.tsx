@@ -216,16 +216,16 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
           alt={title}
           className={cn(
             "object-contain object-left shrink-0",
-            collapsed ? "h-9 w-9 rounded-[8px]" : "h-12 max-h-12 max-w-[200px] w-auto"
+            collapsed ? "h-8 w-8 rounded-[8px]" : "h-10 w-[140px] object-left"
           )}
           onError={() => setImgErr(true)}
         />
       ) : (
         <>
           {collapsed ? (
-            <img src="/favicon.svg" alt={title} className="h-9 w-9 shrink-0 rounded-[8px]" />
+            <img src="/favicon.svg" alt={title} className="h-8 w-8 shrink-0 rounded-[8px]" />
           ) : (
-            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} className="h-12 max-w-[200px] w-auto shrink-0 object-contain object-left" />
+            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} className="h-10 w-[140px] shrink-0 object-contain object-left" />
           )}
         </>
       )}
@@ -323,8 +323,8 @@ export function Sidebar() {
 
   const sidebarShell = (opts: { collapsed: boolean; showCollapse: boolean; onNavigate?: () => void }) => (
     <>
-      {/* Logo 3x maior (dono, 15/10/2026): faixa de 72px para caber. */}
-      <div className={cn("flex h-[72px] items-center border-b border-nav-border px-4", opts.collapsed && "justify-center px-2")}>
+      {/* Logo numa caixa de 140 x 40 px (dono, 15/10/2026). */}
+      <div className={cn("flex h-14 items-center border-b border-nav-border px-4", opts.collapsed && "justify-center px-2")}>
         <SidebarBrand collapsed={opts.collapsed} />
       </div>
 
