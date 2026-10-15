@@ -33,6 +33,11 @@ const PAGE_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] =
 const ACTION_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] = [
   { key: "manage_partners", label: "Manage partners", hint: "Activate, edit, partner login email & password" },
   { key: "manage_jobs", label: "Manage jobs", hint: "Job owner & Setup tab (not money)" },
+  {
+    key: "finance_overview",
+    label: "See cashflow and Pulse details",
+    hint: "Cashflow breakdown in Billing and Pulse drill-downs. Without it: numbers only",
+  },
 ];
 
 const VISIBLE_KEYS = new Set<PermissionKey>([

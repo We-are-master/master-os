@@ -10,6 +10,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import type { CashflowBreakdownLine, CashflowWeekBreakdown } from "@/lib/billing-standalone-metrics";
 import type { RunwayPeriodDetail } from "@/lib/billing-runway-views";
 import type { RunwayViewMode } from "@/lib/billing-runway-views";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
 
 /**
  * Detalhe do período do runway (dono, 15/10/2026), no mesmo desenho do Money
@@ -162,6 +163,8 @@ export function CashflowWeekDetailModal({
   onSaveOpeningBalance,
   savingOpeningBalance,
 }: Props) {
+  // Fluxo de caixa da empresa: sem `finance_overview` o modal não abre, venha de onde vier.
+  const canSeeFinanceOverview = useAdminConfigOptional()?.can("finance_overview") ?? false;
   const [openingDraft, setOpeningDraft] = useState("");
   const [editingOpening, setEditingOpening] = useState(false);
 
@@ -186,7 +189,7 @@ export function CashflowWeekDetailModal({
 
   return (
     <Modal
-      open={open}
+      open={open && canSeeFinanceOverview}
       onClose={onClose}
       title={breakdown?.title ?? "Period"}
       size="lg"

@@ -34,6 +34,7 @@ import {
   type PulseRecurringExpenseLine,
 } from "@/lib/pulse-fixed-costs";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 
 const ACTIVE_OPS_STATUSES = [
   "unassigned",
@@ -86,6 +87,9 @@ export function Financials() {
   const { bounds, rangeLabel } = useDashboardDateRange();
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
+  /** Sem `finance_overview` os cartões mostram só o número: nenhum abre o detalhe. */
+  const { can } = useAdminConfig();
+  const canSeeDetails = can("finance_overview");
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [bills, setBills] = useState<BillDetail[]>([]);
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseDetail[]>([]);
@@ -428,7 +432,7 @@ export function Financials() {
           sub={revenueGoalUi.sub}
           variant={revenueGoalUi.variant}
           topRight={revenueGoalUi.topRight}
-          onShowDetails={() => setOpenModal("revenue")}
+          onShowDetails={canSeeDetails ? () => setOpenModal("revenue") : undefined}
           detailsLabel="View revenue breakdown"
         />
         <KpiCard
@@ -436,7 +440,7 @@ export function Financials() {
           hint={`Partner cost + materials + per-job expenses for the same pipeline. Gross margin is what is left of revenue after this cost, before fixed costs. Target comes from Business settings.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
           value={loading ? "—" : formatGbp(totals.operatingCost)}
           topRight={<StatusDot color="bg-fx-amber" />}
-          onShowDetails={() => setOpenModal("operating")}
+          onShowDetails={canSeeDetails ? () => setOpenModal("operating") : undefined}
           detailsLabel="View job cost breakdown"
         />
         <KpiCard
@@ -444,7 +448,7 @@ export function Financials() {
           hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Expenses (monthly burn, pro-rated) and one-off bills due in the period."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
           topRight={<StatusDot color="bg-fx-blue" />}
-          onShowDetails={isAdmin ? () => setOpenModal("fixed") : undefined}
+          onShowDetails={isAdmin && canSeeDetails ? () => setOpenModal("fixed") : undefined}
           detailsLabel="View overhead breakdown (admin)"
         />
         <KpiCard
@@ -459,13 +463,13 @@ export function Financials() {
           }
           value={loading ? "—" : formatGbp(totals.netMargin)}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
-          onShowDetails={() => setOpenModal("net")}
+          onShowDetails={canSeeDetails ? () => setOpenModal("net") : undefined}
           detailsLabel="View net margin breakdown"
         />
       </div>
 
       <Modal
-        open={openModal === "revenue"}
+        open={canSeeDetails && openModal === "revenue"}
         onClose={() => setOpenModal(null)}
         title="Revenue breakdown"
         subtitle={`${totals.jobsCount} job${totals.jobsCount === 1 ? "" : "s"} · ${periodLabel} · ${formatGbp(totals.revenue)}`}
@@ -487,7 +491,7 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={openModal === "operating"}
+        open={canSeeDetails && openModal === "operating"}
         onClose={() => setOpenModal(null)}
         title="Job cost breakdown"
         subtitle={`Partners + materials + expenses · ${periodLabel} · ${formatGbp(totals.operatingCost)}`}
@@ -513,7 +517,7 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={isAdmin && openModal === "fixed"}
+        open={isAdmin && canSeeDetails && openModal === "fixed"}
         onClose={() => setOpenModal(null)}
         title="Overhead breakdown"
         subtitle={`Workforce ${formatGbp(totals.workforce)} + Expenses ${formatGbp(totals.bills)} · ${periodLabel}`}
@@ -567,7 +571,7 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={openModal === "net"}
+        open={canSeeDetails && openModal === "net"}
         onClose={() => setOpenModal(null)}
         title="Projected result breakdown"
         subtitle={`Revenue − Job costs − Overheads · ${periodLabel}`}

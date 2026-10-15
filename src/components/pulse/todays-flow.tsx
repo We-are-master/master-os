@@ -24,6 +24,7 @@ import { pulseMoney as formatCurrency } from "@/lib/pulse-money-display";
 import { getSupabase } from "@/services/base";
 import { SectionCard, Pill } from "@/components/fx/primitives";
 import { Modal } from "@/components/ui/modal";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { PULSE_FORECAST_PAIR_CARD_CLASS } from "@/lib/pulse-layout";
 import { localYmd } from "@/lib/date-range-filter";
 import {
@@ -222,6 +223,9 @@ export function TodaysFlow() {
   const [forecastLoading, setForecastLoading] = useState(true);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<MonthBucket | null>(null);
+  /** Sem `finance_overview` o gráfico de resultados mostra os números, mas o mês não abre. */
+  const { can } = useAdminConfig();
+  const canSeeDetails = can("finance_overview");
 
   useEffect(() => {
     let cancelled = false;
@@ -422,6 +426,7 @@ export function TodaysFlow() {
   const isForecast = mode === "forecast";
 
   const openMonthFromClick = (data: unknown) => {
+    if (!canSeeDetails) return;
     const raw = data as (MonthBucket & { payload?: MonthBucket }) | undefined;
     const entry = raw?.payload ?? raw;
     if (!entry?.key) return;
@@ -544,7 +549,7 @@ export function TodaysFlow() {
                 data={resultsData}
                 barCategoryGap={6}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                style={{ cursor: "pointer" }}
+                style={canSeeDetails ? { cursor: "pointer" } : undefined}
               >
                 <XAxis
                   dataKey="label"
@@ -559,7 +564,7 @@ export function TodaysFlow() {
                 />
                 <Tooltip
                   cursor={{ fill: "var(--chart-cursor-overlay)" }}
-                  content={<ResultsHoverHint />}
+                  content={<ResultsHoverHint clickable={canSeeDetails} />}
                 />
                 <Legend wrapperStyle={{ display: "none" }} />
                 {/* Bottom → top: faturamento (navy), all costs (orange), net/lucro (green) */}
@@ -569,8 +574,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.revenue}
                   radius={[0, 0, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
                 <Bar
                   dataKey="allCosts"
@@ -578,8 +583,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.allCosts}
                   radius={[0, 0, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
                 <Bar
                   dataKey="netBar"
@@ -587,8 +592,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.net}
                   radius={[2, 2, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -597,7 +602,7 @@ export function TodaysFlow() {
       </SectionCard>
 
       <Modal
-        open={!!selectedMonth}
+        open={canSeeDetails && !!selectedMonth}
         onClose={() => setSelectedMonth(null)}
         title={selectedMonth ? format(selectedMonth.monthStart, "MMMM yyyy") : "Month"}
         subtitle={
@@ -616,9 +621,11 @@ export function TodaysFlow() {
 function ResultsHoverHint({
   active,
   payload,
+  clickable = true,
 }: {
   active?: boolean;
   payload?: Array<{ payload?: MonthBucket }>;
+  clickable?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const entry = payload[0]?.payload;
@@ -650,7 +657,9 @@ function ResultsHoverHint({
           </span>
         </div>
       </div>
-      <div className="text-fx-mute mt-2 pt-1.5 border-t border-fx-line">Click for full breakdown</div>
+      {clickable ? (
+        <div className="text-fx-mute mt-2 pt-1.5 border-t border-fx-line">Click for full breakdown</div>
+      ) : null}
     </div>
   );
 }
