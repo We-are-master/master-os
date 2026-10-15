@@ -6,6 +6,8 @@
  * de cada mensagem. Antes eram dois cartões soltos (o que o cliente disse e a
  * resposta do parceiro) e ninguém lia a história de uma vez.
  *
+ * Formato journal: tabela com data e hora, mais nova em cima, recolhida.
+ *
  * Fontes, todas já existentes: o job (texto da queixa e hora do hold), a
  * resposta do parceiro (/api/jobs/[id]/on-hold-submission) e o histórico do
  * job (mudanças de status e notas do escritório depois do hold).
@@ -92,6 +94,8 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [allOpen, setAllOpen] = useState(false);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -245,74 +249,90 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
   }, [job, logs, submission, zendeskSubdomain]);
 
   const aguardando = job.status === "on_hold" && !submission;
+  // Journal (dono, 15/10/2026): tabela "Date and time | Message", mais nova em cima,
+  // cada mensagem recolhida em 3 linhas; "Expand all entries" abre todas.
+  const linhas = [...entries].reverse();
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
-        <span className="inline-flex items-center gap-1">
-          <User className="h-3 w-3" /> Client
-        </span>
-        <span className="ml-auto inline-flex items-center gap-1">
-          Partner <Wrench className="h-3 w-3" />
-        </span>
+    <section className="rounded-xl border border-border bg-card">
+      <div className="flex items-center justify-between gap-2 px-4 pt-3">
+        <h3 className="m-0 text-[14px] font-semibold text-text-primary">Journal entries</h3>
+        {linhas.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setAllOpen((v) => !v);
+              setOpenKeys(new Set());
+            }}
+            className="text-[12px] font-medium text-primary underline underline-offset-2 hover:no-underline"
+          >
+            {allOpen ? "Collapse all entries" : "Expand all entries"}
+          </button>
+        ) : null}
       </div>
 
       {loading ? (
-        <p className="m-0 flex items-center gap-2 text-[12px] text-text-tertiary">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the conversation
+        <p className="m-0 flex items-center gap-2 px-4 py-3 text-[12px] text-text-tertiary">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the journal
         </p>
       ) : null}
 
-      <ol className="m-0 list-none space-y-3 p-0">
-        {entries.map((e) =>
-          e.who === "office" ? (
-            <li key={e.key} className="flex items-center gap-2 text-[11px] text-text-tertiary">
-              <span className="h-px flex-1 bg-border-light" />
-              <span className="inline-flex max-w-[80%] items-center gap-1.5 text-center">
-                <Building2 className="h-3 w-3 shrink-0" />
-                <span>
-                  <span className="font-medium text-text-secondary">{e.author}</span> · {e.body}
-                  {e.at ? <span className="ml-1 tabular-nums">· {hora(e.at)}</span> : null}
+      <table className="mt-2 w-full border-collapse text-left text-[13px]">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="w-[150px] px-4 py-2 text-[12px] font-semibold text-text-primary">Date and time</th>
+            <th className="px-4 py-2 text-[12px] font-semibold text-text-primary">Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {aguardando ? (
+            <tr className="border-b border-border-light">
+              <td className="px-4 py-2.5 align-top text-[12px] text-text-tertiary">Now</td>
+              <td className="px-4 py-2.5 align-top text-text-tertiary">
+                <span className="inline-flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" />
+                  Waiting on the partner{job.on_hold_at ? ` for ${espera(job.on_hold_at)}` : ""}. They reply from the partner portal, under Action required.
                 </span>
-              </span>
-              <span className="h-px flex-1 bg-border-light" />
-            </li>
-          ) : (
-            <li key={e.key} className={cn("flex", e.who === "partner" ? "justify-end" : "justify-start")}>
-              <div className="max-w-[85%] space-y-1">
-                <div
-                  className={cn(
-                    "flex items-center gap-1.5 text-[11px] text-text-tertiary",
-                    e.who === "partner" && "justify-end",
-                  )}
-                >
-                  <span className="font-semibold text-text-secondary">{e.author}</span>
-                  <span className="tabular-nums">{hora(e.at)}</span>
-                </div>
-                <div
-                  className={cn(
-                    "rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed text-text-primary",
-                    e.who === "client"
-                      ? "rounded-tl-md border border-[var(--bad,#dc2626)]/25 bg-[var(--danger-light,#fef2f2)]"
-                      : "rounded-tr-md border border-[var(--line-2)] bg-[var(--info-light,#eff6ff)]",
-                  )}
-                >
-                  {e.body}
-                </div>
-              </div>
-            </li>
-          ),
-        )}
-      </ol>
-
-      {aguardando ? (
-        <div className="flex justify-end">
-          <div className="inline-flex items-center gap-1.5 rounded-2xl rounded-tr-md border border-dashed border-border px-3 py-2 text-[12px] text-text-tertiary">
-            <Clock className="h-3.5 w-3.5" />
-            Waiting on the partner{job.on_hold_at ? ` for ${espera(job.on_hold_at)}` : ""}. They reply from the partner portal, under Action required.
-          </div>
-        </div>
-      ) : null}
-    </div>
+              </td>
+            </tr>
+          ) : null}
+          {linhas.map((e) => {
+            const aberto = allOpen || openKeys.has(e.key);
+            const Icone = e.who === "client" ? User : e.who === "partner" ? Wrench : Building2;
+            return (
+              <tr
+                key={e.key}
+                onClick={() =>
+                  setOpenKeys((prev) => {
+                    const n = new Set(prev);
+                    if (n.has(e.key)) n.delete(e.key);
+                    else n.add(e.key);
+                    return n;
+                  })
+                }
+                className="cursor-pointer border-b border-border-light align-top last:border-b-0 hover:bg-surface-hover/40"
+              >
+                <td className="whitespace-nowrap px-4 py-2.5 text-[12px] tabular-nums text-text-secondary">{hora(e.at) || "Not recorded"}</td>
+                <td className="px-4 py-2.5">
+                  <p
+                    className={cn(
+                      "m-0 mb-0.5 inline-flex items-center gap-1 text-[11px] font-semibold",
+                      e.who === "client" ? "text-[var(--bad,#dc2626)]" : e.who === "partner" ? "text-[var(--info,#2563eb)]" : "text-text-tertiary",
+                    )}
+                  >
+                    <Icone className="h-3 w-3" />
+                    {e.author}
+                    <span className="font-normal text-text-tertiary">
+                      · {e.who === "client" ? "Client" : e.who === "partner" ? "Partner" : "Fixfy"}
+                    </span>
+                  </p>
+                  <div className={cn("text-text-primary leading-relaxed", !aberto && "line-clamp-3")}>{e.body}</div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }
