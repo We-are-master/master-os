@@ -20,6 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { assumirConversa, conversaDoTicket } from "@/lib/harvey-wa/controle";
 import { addTicketTags, getZendeskTicketSnapshot, replyToSideConversation, zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
+import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { escolherMelhorLance, MARGEM_PADRAO, type Escolha, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 import { registrarDecisao } from "@/lib/harvey-wa/diario";
@@ -28,6 +29,7 @@ import {
   marcaDeEspera, notasComNovoValor, passoDepoisDaResposta, pedidoDoCliente, respostaDoParceiro, verificarEscopoDoLance,
   type EsperaDeEscopo, type EventoDeSideConversation,
 } from "@/lib/quote-lance-escopo";
+import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -77,6 +79,8 @@ export type ResultadoDaVarredura = {
   perguntasDeEscopo: number;
   /** Escopo que voltou para gente (parceiro não confirmou, não respondeu, ou não deu para perguntar). */
   escopoParaGente: number;
+  /** Quotes que saíram sozinhas para o cliente (HARVEY_QUOTE_AUTO_SEND=1). */
+  enviadasSozinhas: number;
   janelaAberta: number;
   detalhes: string[];
 };
@@ -96,7 +100,7 @@ export async function varrerLancesParaRascunho(
   const armado = process.env.HARVEY_RASCUNHO_LANCE === "1";
   const r: ResultadoDaVarredura = {
     armado, analisados: 0, rascunhados: 0, semLance: 0, silenciosas: 0,
-    perguntasDeEscopo: 0, escopoParaGente: 0, janelaAberta: 0, detalhes: [],
+    perguntasDeEscopo: 0, escopoParaGente: 0, enviadasSozinhas: 0, janelaAberta: 0, detalhes: [],
   };
   // Desligável sem deploy, caso o modelo comece a perguntar demais.
   const checarEscopo = process.env.HARVEY_ESCOPO_LANCE !== "0";
@@ -225,6 +229,8 @@ export async function varrerLancesParaRascunho(
     let escolhaFinal: Escolha = escolha;
     const avisosDeEscopo: string[] = [];
     let escopoConfirmado: string | null = null;
+    // Escopo conferido de verdade (o envio automático só sai assim): o parceiro confirmou, ou o modelo comparou e bateu.
+    let escopoConferido = false;
     const espera = lerMarcaDeEspera(marcaDoEscopo);
     if (espera) {
       const res = await acompanharPerguntaDeEscopo(supabase, q, espera, lances, armado, postarNotaInterna);
@@ -234,6 +240,7 @@ export async function varrerLancesParaRascunho(
       escolhaFinal = res.escolha;
       escopoConfirmado = res.resumo || null;
       avisosDeEscopo.push(res.aviso);
+      escopoConferido = true;
     } else if (checarEscopo) {
       const chec = await checarEscopoDoLance(supabase, q, escolha, armado, postarNotaInterna);
       if (chec.tipo !== "seguir") {
@@ -243,6 +250,7 @@ export async function varrerLancesParaRascunho(
         continue;
       }
       if (chec.aviso) avisosDeEscopo.push(chec.aviso);
+      else escopoConferido = true;
     }
 
     const nota = await rascunhoDaQuote(q, escolhaFinal, { escopoDoParceiro: escopoConfirmado, avisos: avisosDeEscopo });
@@ -287,17 +295,129 @@ export async function varrerLancesParaRascunho(
         updated_at: new Date().toISOString(),
       })
       .eq("id", q.id);
+    let enviada = false;
     if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a quote não mudou — ${upErr.message}`);
     else {
-      const aviso = await chamarEquipeParaOLance(supabase, q.id, Number(q.external_ref));
-      if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
+      // Fase 1: quando é seguro, o preço sai sozinho para o cliente e o Harvey segue com a conversa.
+      const envio = envioAutomaticoLigado()
+        ? await mandarSozinho(supabase, q, escolhaFinal, escopoConferido, postarNotaInterna).catch((err: unknown) => ({ enviado: false, linha: `envio automático falhou: ${String(err).slice(0, 120)}` }))
+        : { enviado: false, linha: null };
+      if (envio.linha) r.detalhes.push(`${q.reference}: ${envio.linha}`);
+      enviada = envio.enviado;
+      if (enviada) r.enviadasSozinhas++;
+      else {
+        const aviso = await chamarEquipeParaOLance(supabase, q.id, Number(q.external_ref));
+        if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
+      }
     }
     r.rascunhados++;
     r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolhaFinal.precoAoCliente)}`);
-    if (!upErr) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Drafted ${q.reference} at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s))`, regra: `best bid after the ${JANELA_HORAS}h window, margin ${escolhaFinal.margem}%`, pendente: "Team: review the draft and send the quote" }, supabase);
+    if (!upErr && enviada) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Sent ${q.reference} to the customer at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s)), no person needed`, regra: `auto send: scope checked, direct customer, up to £${maximoDoEnvioAutomatico()}, margin ${escolhaFinal.margem}%`, pendente: "Customer: accept the quote" }, supabase);
+    else if (!upErr) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Drafted ${q.reference} at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s))`, regra: `best bid after the ${JANELA_HORAS}h window, margin ${escolhaFinal.margem}%`, pendente: "Team: review the draft and send the quote" }, supabase);
   }
 
   return r;
+}
+
+/**
+ * O preço sai sozinho para o cliente (Fase 1, dono 15/10/2026). Quem decide é
+ * `podeMandarSozinho` (quote-envio-automatico.ts); aqui só se junta o que ela
+ * precisa e se usa o canal de sempre:
+ *  - WhatsApp com o Harvey na conversa e a janela de 24h aberta: o texto da
+ *    quote da cotação automática (textoDaQuote) com o link para aceitar;
+ *  - senão, e-mail com o PDF pela mesma rota do botão (send-pdf, segredo interno).
+ * Depois: ticket em 🟠 Approval, Reply Status 🟢, nota interna, e a conversa
+ * continua com o Harvey. Não deu para mandar: devolve false e a equipe é chamada.
+ */
+async function mandarSozinho(
+  supabase: SupabaseClient,
+  q: { id: string; reference: string; title: string | null; service_type: string | null; external_ref: string },
+  escolha: Escolha,
+  escopoConferido: boolean,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<{ enviado: boolean; linha: string | null }> {
+  const ticketId = Number(q.external_ref);
+  const { data: qq } = await supabase.from("quotes").select("client_id, client_name, client_email").eq("id", q.id).maybeSingle();
+  const quote = (qq ?? {}) as { client_id?: string | null; client_name?: string | null; client_email?: string | null };
+  let contaDeOrigem: string | null = null;
+  if (quote.client_id) {
+    const { data: c } = await supabase.from("clients").select("source_account_id").eq("id", quote.client_id).maybeSingle();
+    contaDeOrigem = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
+  }
+  const { tryGetFixfyAccountId } = await import("@/lib/fixfy-account");
+  const contaFixfy = await tryGetFixfyAccountId(supabase).catch(() => null);
+  const tags = await zendeskApi<{ ticket: { tags?: string[] } }>(`tickets/${ticketId}.json`).then((t) => t.ticket?.tags ?? []).catch(() => [] as string[]);
+  const conversa = await conversaDoTicket(supabase, ticketId).catch(() => null);
+  const { historico, enviarTexto, vozDaConversa } = await import("@/lib/harvey-wa/sunshine");
+  const msgs = conversa ? await historico(conversa.conversation_id, 50).catch(() => []) : [];
+  const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
+  const janelaAberta = !!ultimaDoCliente && Date.now() - Date.parse(ultimaDoCliente.received) < 23 * 36e5;
+  const email = quote.client_email?.includes("@") && !/@getfixfy\.com$/i.test(quote.client_email) ? quote.client_email.trim() : null;
+  const pelaConversa = !!conversa && conversa.estado === "harvey" && janelaAberta;
+  const total = escolha.precoAoCliente;
+  const decisao = podeMandarSozinho({
+    ligado: envioAutomaticoLigado(),
+    total,
+    maximo: maximoDoEnvioAutomatico(),
+    escopoConferido,
+    perguntaPendente: false,
+    contaDireta: contaEhDireta({ contaDeOrigem, contaFixfy, daConversaDoHarvey: !!conversa }),
+    b2b: tags.includes("b2b"),
+    temCanal: pelaConversa || !!email,
+    equipeNaConversa: conversa?.estado === "equipe",
+  });
+  if (!decisao.enviar) return { enviado: false, linha: `não sai sozinha: ${decisao.motivos.join(", ")}` };
+
+  // O PDF e a tela de Quotes leem as linhas: uma linha com o preço, se ainda não houver.
+  const { count } = await supabase.from("quote_line_items").select("id", { count: "exact", head: true }).eq("quote_id", q.id);
+  if (!count) {
+    const { insertQuoteLineItemsResilient } = await import("@/lib/quote-line-items-insert");
+    await insertQuoteLineItemsResilient(supabase, [
+      { quote_id: q.id, description: (q.title || q.service_type || "Works as described").slice(0, 300), quantity: 1, unit_price: total, sort_order: 0, partner_unit_cost: escolha.melhor.valor, notes: `From ${escolha.melhor.partner_name?.trim() || "partner"}'s bid` },
+    ]);
+  }
+
+  let via: string;
+  if (pelaConversa && conversa) {
+    const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
+    const { appBaseUrl } = await import("@/lib/app-base-url");
+    const { textoDaQuote } = await import("@/lib/harvey-wa/cotacao-automatica");
+    const { firstName } = await import("@/lib/agent/sales/lead-brief");
+    const link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
+    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link });
+    await enviarTexto(conversa.conversation_id, texto, vozDaConversa(msgs));
+    const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
+    const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString(), email ?? undefined);
+    if (gravado.error) console.error(`[lances] ${q.reference}: enviada no WhatsApp mas o status não gravou`, gravado.error.message);
+    via = "WhatsApp";
+  } else {
+    const { appBaseUrl } = await import("@/lib/app-base-url");
+    const res = await fetch(`${appBaseUrl()}/api/quotes/send-pdf`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-internal-secret": process.env.INTERNAL_SYNC_SECRET?.trim() ?? "" },
+      body: JSON.stringify({ quoteId: q.id }),
+      signal: AbortSignal.timeout(90_000),
+    }).catch(() => null);
+    if (!res?.ok) return { enviado: false, linha: `envio automático por e-mail falhou (${res?.status ?? "sem resposta"}), vai para gente` };
+    via = "email (PDF)";
+  }
+
+  // Ticket em 🟠 Approval e 🟢 (fomos nós por último). Cada passo falha sozinho: a quote já saiu.
+  try {
+    await zendeskApi(`tickets/${ticketId}.json`, {
+      method: "PUT",
+      body: { ticket: { custom_status_id: ZD_STATUS_AWAITING_APPROVAL, custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }] } },
+    });
+  } catch (err) {
+    console.error(`[lances] ${q.reference}: status do ticket após envio`, err);
+  }
+  await postarNotaInterna(ticketId, [
+    `🤖 HARVEY — ${q.reference} SENT to the customer by ${via}: ${libras(total)}`,
+    "",
+    `Best bid ${libras(escolha.melhor.valor)} from ${escolha.melhor.partner_name?.trim() || "partner"}, ${escolha.margem}% margin. Scope checked, direct customer, under £${maximoDoEnvioAutomatico()}.`,
+    "Harvey keeps the WhatsApp chat. The approval follow-up takes it from here.",
+  ].join("\n")).catch((err: unknown) => console.error(`[lances] ${q.reference}: nota do envio`, err));
+  return { enviado: true, linha: `enviada sozinha ao cliente (${via}), ${libras(total)}` };
 }
 
 /**

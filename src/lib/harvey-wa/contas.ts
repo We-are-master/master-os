@@ -154,3 +154,119 @@ export async function situacaoDoParceiro(sb: SupabaseClient, p: Parceiro) {
     portal: "https://partners.getfixfy.com",
   };
 }
+
+/* ======================= cotação em andamento (Fase 1) ======================= */
+
+type QuoteDoCliente = { id: string; reference: string; status: string; title: string | null; service_type: string | null; total_value: number | null; external_ref: string | null; created_at: string };
+
+/** As cotações abertas de quem escreve: pela conversa do WhatsApp (ticket) e pelo cliente do OS. */
+async function cotacoesDoCliente(sb: SupabaseClient, a: { telefone: string | null; clienteId?: string | null }): Promise<{ ticket: number | null; quotes: QuoteDoCliente[] }> {
+  const { ticketPeloTelefone } = await import("./zendesk-wa");
+  const ticket = await ticketPeloTelefone(a.telefone).catch(() => null);
+  const desde = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const campos = "id, reference, status, title, service_type, total_value, external_ref, created_at";
+  const [doTicket, doCliente] = await Promise.all([
+    ticket ? sb.from("quotes").select(campos).eq("external_source", "zendesk").eq("external_ref", String(ticket)).is("deleted_at", null) : Promise.resolve({ data: [] }),
+    a.clienteId ? sb.from("quotes").select(campos).eq("client_id", a.clienteId).is("deleted_at", null).gte("created_at", desde) : Promise.resolve({ data: [] }),
+  ]);
+  const todas = new Map<string, QuoteDoCliente>();
+  for (const q of [...((doTicket.data ?? []) as QuoteDoCliente[]), ...((doCliente.data ?? []) as QuoteDoCliente[])]) todas.set(q.id, q);
+  return { ticket, quotes: [...todas.values()].sort((x, y) => y.created_at.localeCompare(x.created_at)).slice(0, 5) };
+}
+
+/**
+ * get_quote_status: em que pé está a cotação do cliente. Enviada leva o total e
+ * o link para aceitar. Resposta do profissional a uma pergunta do cliente
+ * (ask_partner) vem junto, para o Harvey contar.
+ */
+export async function statusDasCotacoes(sb: SupabaseClient, a: { telefone: string | null; clienteId?: string | null }) {
+  const { situacaoDaCotacao, textoDaSituacao } = await import("./pedido-de-cotacao");
+  const { quotes } = await cotacoesDoCliente(sb, a);
+  if (!quotes.length) return { found: false, quotes: [], note: "No quote found for this customer. If they asked for one, check with request_quote; never hand off just for this." };
+  const lista = await Promise.all(
+    quotes.map(async (q) => {
+      const [{ count: convidados }, { count: lances }, respostas] = await Promise.all([
+        sb.from("quote_partner_invitations").select("id", { count: "exact", head: true }).eq("quote_id", q.id),
+        sb.from("quote_bids").select("id", { count: "exact", head: true }).eq("quote_id", q.id).eq("status", "submitted"),
+        // Sem a tabela (migration 329) só não traz as respostas.
+        sb.from("quote_partner_messages").select("kind, body, created_at").eq("quote_id", q.id).in("kind", ["question", "answer"]).order("created_at", { ascending: false }).limit(4),
+      ]);
+      const s = situacaoDaCotacao({ status: q.status, convidados: convidados ?? 0, lances: lances ?? 0 });
+      const ultimas = ((respostas.data ?? []) as Array<{ kind: string; body: string | null }>);
+      const ultimaPergunta = ultimas.findIndex((m) => m.kind === "question");
+      // Só as respostas que vieram depois da última pergunta (a lista está do mais novo ao mais velho).
+      const novas = ultimas.slice(0, ultimaPergunta === -1 ? ultimas.length : ultimaPergunta).filter((m) => m.kind === "answer").map((m) => m.body).filter(Boolean);
+      let link: string | null = null;
+      if (s === "sent") {
+        try {
+          const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
+          const { appBaseUrl } = await import("@/lib/app-base-url");
+          link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
+        } catch {
+          link = null;
+        }
+      }
+      return {
+        ref: q.reference,
+        service: q.service_type ?? q.title,
+        status: s,
+        inWords: textoDaSituacao(s, { convidados: convidados ?? 0, lances: lances ?? 0 }),
+        ...(s === "sent" ? { total: Number(q.total_value) || null, acceptLink: link } : {}),
+        ...(ultimaPergunta !== -1 ? { professionalAnswer: novas.length ? novas.join(" ") : "not answered yet" } : {}),
+      };
+    }),
+  );
+  return {
+    found: true,
+    quotes: lista,
+    note: "Tell them simply where it is, in one or two lines. Never promise a time or a price that is not here. If it was sent, give the total and the accept link. If the professional answered their question, pass it on in your own words.",
+  };
+}
+
+/**
+ * ask_partner: a pergunta do cliente vai ao profissional que cotou (ou aos
+ * convidados, se ninguém cotou ainda), na side conversation dele no ticket.
+ * Assinada "Fixfy Team". Nota interna para a equipe ver. A resposta volta pelo
+ * leitor de e-mail (lances-por-email.ts).
+ */
+export async function perguntarAoParceiro(sb: SupabaseClient, a: { telefone: string | null; clienteId?: string | null; pergunta: string }) {
+  const pergunta = a.pergunta.replace(/\s*[—–]\s*/g, ", ").trim().slice(0, 1000);
+  if (pergunta.length < 5) return { error: "Write the customer's question first." };
+  const { ticket, quotes } = await cotacoesDoCliente(sb, a);
+  const q = quotes.find((x) => ["bidding", "quote_ready", "awaiting_customer", "draft"].includes(x.status));
+  if (!q || !q.external_ref) return { error: "There is no open quote for this customer to ask about. Answer from what you know or hand off to the team." };
+  const ticketId = Number(q.external_ref);
+  const { data: lances } = await sb.from("quote_bids").select("partner_id, bid_amount").eq("quote_id", q.id).eq("status", "submitted").order("bid_amount", { ascending: true });
+  let ids = [...new Set(((lances ?? []) as Array<{ partner_id: string }>).map((l) => l.partner_id).filter(Boolean))];
+  if (!ids.length) {
+    const { data: convites } = await sb.from("quote_partner_invitations").select("partner_id").eq("quote_id", q.id);
+    ids = [...new Set(((convites ?? []) as Array<{ partner_id: string }>).map((c) => c.partner_id).filter(Boolean))];
+  }
+  if (!ids.length) return { error: "No professional is on this quote yet. Tell them we'll include the question when we ask for prices.", quote: q.reference };
+  const { data: ps } = await sb.from("partners").select("id, email, job_cc_emails, company_name, contact_name, zendesk_user_id").in("id", ids.slice(0, 3));
+  const { zendeskApi, replyToSideConversation, createSideConversation } = await import("@/lib/zendesk");
+  const scs = (await zendeskApi<{ side_conversations: Array<{ id: string; participants?: Array<{ email?: string | null }> }> }>(`tickets/${ticketId}/side_conversations.json`).catch(() => ({ side_conversations: [] }))).side_conversations ?? [];
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<p>Hi,</p><p>The customer on ${esc(q.reference)} has a question about the job:</p><p>"${esc(pergunta)}"</p><p>Could you let us know? Just reply to this email.</p><p>Thanks,<br>Fixfy Team</p>`;
+  const perguntados: string[] = [];
+  for (const p of (ps ?? []) as Array<{ id: string; email: string | null; job_cc_emails?: string[] | null; company_name: string | null; contact_name: string | null; zendesk_user_id: string | number | null }>) {
+    const email = p.email?.trim().toLowerCase();
+    if (!email) continue;
+    const nome = p.contact_name || p.company_name || undefined;
+    const sc = scs.find((s) => s.participants?.some((x) => String(x.email ?? "").toLowerCase() === email));
+    const r = sc
+      ? await replyToSideConversation({ ticketId, sideConversationId: sc.id, htmlBody: html, toEmail: email, toName: nome, toUserId: p.zendesk_user_id, extraEmails: p.job_cc_emails ?? [] })
+      : await createSideConversation({ ticketId, subject: `Question about ${q.reference}`, htmlBody: html, toEmail: email, toName: nome, toUserId: p.zendesk_user_id != null ? String(p.zendesk_user_id) : null, extraEmails: p.job_cc_emails ?? [] });
+    if (r.ok) perguntados.push(p.company_name?.trim() || p.contact_name?.trim() || "partner");
+  }
+  if (!perguntados.length) return { error: "Could not reach the professional right now. Hand off to the team with the question.", quote: q.reference };
+  await sb.from("quote_partner_messages").insert({ message_id: `pergunta:${q.id}:${Date.now()}`, quote_id: q.id, ticket_id: ticketId, kind: "question", body: pergunta }).then(({ error }) => {
+    if (error) console.error("[harvey-wa] pergunta ao parceiro (registro):", error.message);
+  });
+  const { notaComReserva } = await import("./zendesk-wa");
+  const postar = notaComReserva(async (id, corpo) => {
+    await zendeskApi(`tickets/${id}.json`, { method: "PUT", body: { ticket: { comment: { public: false, body: corpo } } } });
+  });
+  await postar(ticketId, `🤖 HARVEY — the customer asked about ${q.reference} on WhatsApp. I asked ${perguntados.join(", ")} in their side conversation:\n\n"${pergunta}"\n\nTheir reply is read automatically and noted here.`).catch((e) => console.error("[harvey-wa] nota da pergunta:", e));
+  return { asked: perguntados.length, quote: q.reference, ticket, note: "Tell them in one line you're checking with the professional and will come back to them here. Do not guess the answer." };
+}

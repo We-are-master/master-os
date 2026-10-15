@@ -44,6 +44,8 @@ export const FERRAMENTA_DO_ACESSO: Record<string, keyof AjustesDoHarvey["acessos
   get_available_dates: "agenda",
   get_my_bookings: "reservas",
   request_quote: "cotacao",
+  get_quote_status: "cotacao",
+  ask_partner: "cotacao",
   get_my_account: "parceiro",
   save_document: "parceiro",
   create_payment_link: "link",
