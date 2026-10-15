@@ -2829,7 +2829,10 @@ function JobsPageContent() {
       render: (item) => (
         <div className="min-w-0 leading-tight">
           <p className="text-[13px] font-semibold text-text-primary truncate">{item.reference}</p>
-          <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
+          {/* Uma linha só (15/10/2026): nome comprido não pode mudar a altura da linha. */}
+          <p className="max-w-[9rem] truncate text-[10px] text-text-tertiary" title={normalizeTypeOfWork(item.title) || item.title}>
+            {normalizeTypeOfWork(item.title) || item.title}
+          </p>
         </div>
       ),
     },
@@ -3044,15 +3047,12 @@ function JobsPageContent() {
           const st = effectiveJobStatusForDisplay(item);
           const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
-            <div className="inline-flex flex-col items-start gap-0.5">
+            <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
                 <Badge variant={c.variant} dot={c.dot ?? true} className={onHoldBadge?.className}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
-              {st === "on_hold" ? (
-                <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-              ) : null}
             </div>
           );
         }
@@ -3080,15 +3080,12 @@ function JobsPageContent() {
         const onHoldBadge = jobOnHoldDisplayBadge(item);
         const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex flex-col items-start gap-0.5">
+          <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={c.variant} dot={c.dot} className={onHoldBadge?.className}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
-            {st === "on_hold" ? (
-              <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-            ) : null}
           </div>
         );
       },
@@ -3587,11 +3584,15 @@ function JobsPageContent() {
               // On hold tints the whole line: the status chip alone was easy to
               // miss when scanning a page of rows for what is stuck.
               rowClassName={(j) =>
-                isJobOnHoldComplaint(j)
-                  ? COMPLAINT_ROW_CLASS
-                  : j.status === "on_hold"
-                    ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
-                    : undefined
+                cn(
+                  // Altura fixa (15/10/2026, padrão do vertex-saas): nada na célula muda a altura da linha.
+                  "h-[52px] [&>td]:py-0",
+                  isJobOnHoldComplaint(j)
+                    ? COMPLAINT_ROW_CLASS
+                    : j.status === "on_hold"
+                      ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
+                      : undefined,
+                )
               }
               page={page}
               totalPages={totalPages}
