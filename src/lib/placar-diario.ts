@@ -132,13 +132,17 @@ async function ticketsUrgentes(): Promise<{ reclamacoes: TicketZd[]; semResposta
  * `checkatrade-lead:`). Quem veio do Checkatrade e respondeu no WhatsApp é a mesma pessoa:
  * conta uma vez, como Checkatrade, pelo telefone. Lista de prospecção importada não é lead.
  */
-export async function leadsDoMes(sb: SupabaseClient, inicioMes: string): Promise<Placar["leads"]> {
-  const inicioIso = `${inicioMes}T00:00:00Z`;
+export async function leadsDoMes(sb: SupabaseClient, inicioMes: string, fimIso?: string): Promise<Placar["leads"]> {
+  const inicioIso = inicioMes.includes("T") ? inicioMes : `${inicioMes}T00:00:00Z`;
   const fim9 = (t: string | null | undefined) => (t ?? "").replace(/\D/g, "").slice(-9);
-  const [{ data: leadsRaw }, { data: ckRaw }] = await Promise.all([
-    sb.from("site_leads").select("channel, phone, won_at").gte("created_at", inicioIso).limit(5000),
-    sb.from("clients").select("id, phone").gte("created_at", inicioIso).ilike("notes", "%checkatrade-lead:%").limit(5000),
-  ]);
+  // `fimIso` (opcional): o funil do Pulse segue o período do filtro (15/10/2026).
+  let qLeads = sb.from("site_leads").select("channel, phone, won_at").gte("created_at", inicioIso);
+  let qCk = sb.from("clients").select("id, phone").gte("created_at", inicioIso).ilike("notes", "%checkatrade-lead:%");
+  if (fimIso) {
+    qLeads = qLeads.lte("created_at", fimIso);
+    qCk = qCk.lte("created_at", fimIso);
+  }
+  const [{ data: leadsRaw }, { data: ckRaw }] = await Promise.all([qLeads.limit(5000), qCk.limit(5000)]);
   const ck = (ckRaw ?? []) as Array<{ id: string; phone: string | null }>;
   const telefonesCk = new Set(ck.map((c) => fim9(c.phone)).filter((t) => t.length === 9));
   const doSite = ((leadsRaw ?? []) as Array<{ channel: string | null; phone: string | null; won_at: string | null }>).filter((l) => !telefonesCk.has(fim9(l.phone)));

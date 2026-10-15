@@ -184,3 +184,37 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
     origem,
   };
 }
+
+/**
+ * Funil de um período qualquer (dono, 15/10/2026: com "Today" no filtro o funil
+ * continuava mostrando o mês). Mesmas regras do funil do mês em `montarPulseCeo`:
+ * leads e quotes pela criação, jobs pela criação, entregues pela conclusão,
+ * pagos pela data de pagamento da fatura.
+ */
+export async function montarFunilDoPeriodo(sb: SupabaseClient, deIso: string, ateIso: string): Promise<PulseCeo["funil"]> {
+  const de = deIso.slice(0, 10);
+  const ate = ateIso.slice(0, 10);
+  const [leads, { count: quotes }, { data: fechadosRaw }, { data: entreguesRaw }, { data: pagRaw }] = await Promise.all([
+    leadsDoMes(sb, deIso, ateIso),
+    sb.from("quotes").select("id", { count: "exact", head: true }).gte("created_at", deIso).lte("created_at", ateIso).is("deleted_at", null),
+    sb.from("jobs").select("status, client_price, extras_amount").is("deleted_at", null).gte("created_at", deIso).lte("created_at", ateIso).limit(5000),
+    sb.from("jobs").select("status, client_price, extras_amount").is("deleted_at", null).in("status", [...STATUS_ENTREGUE]).gte("completed_date", de).lte("completed_date", ate).limit(5000),
+    sb.from("invoices").select("amount, amount_paid").is("deleted_at", null).gte("paid_date", de).lte("paid_date", ate).limit(5000),
+  ]);
+  type J = { status: string; client_price: number | null; extras_amount: number | null };
+  const fechados = ((fechadosRaw ?? []) as J[]).filter((j) => j.status !== "cancelled" && j.status !== "deleted");
+  const entregues = (entreguesRaw ?? []) as J[];
+  const pagos = ((pagRaw ?? []) as Array<{ amount: number | null; amount_paid: number | null }>).map((f) =>
+    Number(f.amount_paid ?? 0) > 0 ? Number(f.amount_paid) : Number(f.amount ?? 0),
+  );
+  return {
+    leads: leads.total,
+    porCanal: leads.porCanal,
+    quotes: quotes ?? 0,
+    fechados: { n: fechados.length, valor: r2(fechados.reduce((t, j) => t + valor(j), 0)) },
+    entregues: { n: entregues.length, valor: r2(entregues.reduce((t, j) => t + valor(j), 0)) },
+    pagos: { n: pagos.length, valor: r2(pagos.reduce((t, v) => t + v, 0)) },
+    conversao: leads.taxa,
+    convertidos: leads.convertidos,
+  };
+}
