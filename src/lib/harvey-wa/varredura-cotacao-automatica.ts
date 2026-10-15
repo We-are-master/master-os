@@ -29,6 +29,7 @@ import { baixarMidia, ehDoHarvey, enviarTexto, historico, scNotificacao, vozDaCo
 import { idDaIntegracaoWhatsApp, telefoneE164 } from "./primeiro-contato";
 import { melhoresParceirosParaCotacao, nomeDoParceiro, MIN_CONVIDADOS } from "./melhores-parceiros";
 import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_PEDIU_CONTEXTO, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
   decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres, margemDe, precoDoLance,
@@ -317,6 +318,7 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
     if (!aplicar) { out.acoes.push(`${quem}: context complete but NO partner covers ${ctx.servico} at ${ctx.postcode}: would note + harvey_no_bids`); return true; }
     await nota(t.id, `🤖 Auto-quote: context is complete but no active partner covers ${ctx.servico} at ${ctx.postcode}. Nobody was invited. This needs a person: widen the trade or the area, or call a partner.`);
     await addTicketTags(t.id, [TAG_SEM_LANCE, TAG_FIM]);
+    await precisaDeAcao(t.id, `No partner covers ${ctx.servico} at ${ctx.postcode}: widen the trade or area, or call a partner`);
     out.acoes.push(`${quem}: no partner covers it, sent to the team`);
     return true;
   }
@@ -431,6 +433,7 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
     const via = podeFalar ? await falarComCliente(t, user, conv, texto, q.service_type) : null;
     await nota(t.id, `🤖 Auto-quote: 24h and no partner bid on ${q.reference}. ${via ? `Customer told we're still working on it (${via}), no time promised.` : "Customer NOT messaged: the WhatsApp 24h window is closed."}\n\nThis needs a person: call a partner, widen the area, or price it in-house.`);
     await addTicketTags(t.id, [TAG_SEM_LANCE]);
+    await precisaDeAcao(t.id, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners or call`);
     // lead_gen tira o ticket do Action Required (a view exclui); passada a cotação ele já não é lead.
     if (t.tags.includes("lead_gen")) await removeTicketTags(t.id, ["lead_gen"]);
     await sb.from("quotes").update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() }).eq("id", q.id);
@@ -484,6 +487,7 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
       additionalTags: [TAG_QUOTE_ENVIADA, TAG_FIM],
     });
     if (t.tags.includes(TAG_SEM_LANCE)) await removeTicketTags(t.id, [TAG_SEM_LANCE]);
+    await acaoFeita(t.id);
     out.acoes.push(`${quem}: ${resumo}, sent (${via})`);
     return true;
   }
@@ -495,6 +499,7 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
     additionalTags: [TAG_PARA_REVISAR, TAG_FIM],
   });
   if (t.tags.includes(TAG_SEM_LANCE)) await removeTicketTags(t.id, [TAG_SEM_LANCE]);
+  await precisaDeAcao(t.id, `Quote ${q.reference} priced at £${total.toFixed(2)}, not sent automatically (${decisao.motivos.join(", ")}): check and send`);
   out.acoes.push(`${quem}: ${resumo}, Quote Ready for review (${decisao.motivos.join(", ")})`);
   return true;
 }

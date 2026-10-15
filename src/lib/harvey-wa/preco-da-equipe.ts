@@ -34,6 +34,23 @@ export function precosDaEquipe(conversa: Fala[]): number[] {
   return [...achados];
 }
 
+/**
+ * O preço numa mensagem da equipe (dono, 15/10/2026: preço dado no chat vai para
+ * 🟠 Approval). Mais de um valor ("£80 labour + £20 materials = £100", "£100,
+ * deposit £50"): vale o maior, que é o total; os outros vão na nota.
+ */
+export function precoNaMensagem(texto: string): { preco: number; outros: number[] } | null {
+  const todos = precosDaEquipe([{ papel: "equipe", texto }]);
+  if (!todos.length) return null;
+  const preco = Math.max(...todos);
+  return { preco, outros: todos.filter((p) => p !== preco) };
+}
+
+/** Status do ticket que ainda está antes do preço: Lead, Open, New, Needs Quote, In Conversation (WhatsApp) ou vazio. */
+export function ticketAntesDoPreco(statusId: number | null | undefined, antes: number[]): boolean {
+  return statusId == null || antes.includes(Number(statusId));
+}
+
 /** O valor pedido é um dos que a equipe deu? Centavo a centavo. */
 export function precoConfere(pedido: unknown, conversa: Fala[]): boolean {
   const n = Math.round(Number(pedido) * 100) / 100;

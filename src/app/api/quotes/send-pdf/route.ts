@@ -16,6 +16,7 @@ import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
 import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
 import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
+import { acaoFeita } from "@/lib/fila-de-acao";
 import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
 import { umTicketEmail, umTicketWhatsAppLigado } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
@@ -526,6 +527,10 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Quote enviada: a ação nossa acabou (fila-de-acao.ts). Com await: void morre na Vercel.
+      const fila = await acaoFeita(zdTicketId);
+      if (!fila.ok) console.warn("[send-pdf] Action Required:", fila.linha);
+
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id:   quoteId,
@@ -611,6 +616,8 @@ export async function POST(req: NextRequest) {
         const sentAt = new Date().toISOString();
         const statusWrite = await persistQuoteSentToCustomer(supabase, quoteId, sentAt, paraEmail.includes("@") ? paraEmail : undefined);
         if (statusWrite.error) console.error("[send-pdf] status update failed after ticket delivery:", statusWrite.error.message);
+        const fila = await acaoFeita(r.ticketId);
+        if (!fila.ok) console.warn("[send-pdf] Action Required:", fila.linha);
         const { error: auditErr } = await supabase.from("audit_logs").insert({
           entity_type: "quote",
           entity_id:   quoteId,

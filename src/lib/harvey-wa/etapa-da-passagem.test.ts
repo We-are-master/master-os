@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { etapaDaPassagem } from "./etapa-da-passagem";
+import { etapaDaPassagem, textoDaPassagem } from "./etapa-da-passagem";
 
 test("o que o Harvey declara em need manda", () => {
   assert.equal(etapaDaPassagem("call", "anything"), "call");
@@ -35,4 +35,10 @@ test("promessa feita ao cliente sem chamar a ferramenta também decide", () => {
   assert.equal(etapaDaPassagem(undefined, `${semFerramenta} Of course, I'll get someone from the team to give you a call now.`), "call");
   assert.equal(etapaDaPassagem(undefined, `${semFerramenta} That is electrical work rather than a handyman job. Let me grab someone from the team.`), "quote");
   assert.equal(etapaDaPassagem(undefined, `${semFerramenta} Let me grab someone from the team for this.`), null);
+});
+
+test("a linha da fila de ação diz o que fazer e por quê", () => {
+  assert.equal(textoDaPassagem("call", "Customer asked  for a call back"), "Harvey handed over (call the customer): Customer asked for a call back");
+  assert.equal(textoDaPassagem("complaint", "unhappy with the tiling"), "Harvey handed over (complaint, Leo to handle): unhappy with the tiling");
+  assert.equal(textoDaPassagem(undefined, ""), "Harvey handed over (pick up the chat)");
 });
