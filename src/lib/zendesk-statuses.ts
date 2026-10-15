@@ -153,8 +153,10 @@ export function baseStatusForCustomStatusId(
 }
 
 /**
- * Tag da fila 🚨 Needs Attention (reclamação e operação, do responsável de operação).
- * O nome fica "com_leo" por enquanto: views e gatilhos do Zendesk dependem dele.
- * Renomear é mudança no Zendesk primeiro, depois aqui.
+ * Tag da fila 🚨 Needs Attention (reclamação e operação, do papel de operação, não de uma
+ * pessoa: dono, 16/10/2026). Era "com_leo"; a view e o gatilho do funil aceitam as duas
+ * durante a troca, e `TAGS_NEEDS_ATTENTION` lê as duas.
  */
-export const TAG_NEEDS_ATTENTION = "com_leo";
+export const TAG_NEEDS_ATTENTION = "ops_attention";
+/** Tags que ainda contam como Needs Attention (a antiga até os tickets abertos migrarem). */
+export const TAGS_NEEDS_ATTENTION = [TAG_NEEDS_ATTENTION, "com_leo"] as const;

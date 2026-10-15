@@ -37,7 +37,7 @@ import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-jo
 import { syncJobFinanceServer } from "@/lib/sync-job-finance-server";
 import { getZendeskTicketId, isZendeskConfigured, zendeskApi } from "@/lib/zendesk";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
-import { TAG_NEEDS_ATTENTION, ZD_STATUS_COMPLAINT } from "@/lib/zendesk-statuses";
+import { TAGS_NEEDS_ATTENTION, ZD_STATUS_COMPLAINT } from "@/lib/zendesk-statuses";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import type { Account, Invoice, Job } from "@/types/database";
 
@@ -118,7 +118,7 @@ async function jaAvisado(admin: SupabaseClient, jobId: string, novo: string): Pr
   return !error && (count ?? 0) > 0;
 }
 
-/** Reclamação no ticket do job: status Complaint ou tag `com_leo` / `complaint`. Sem Zendesk = não sabe = false. */
+/** Reclamação no ticket do job: status Complaint ou tag `ops_attention` / `complaint`. Sem Zendesk = não sabe = false. */
 async function ticketEmReclamacao(job: Job): Promise<boolean> {
   const ticketId = getZendeskTicketId(job);
   if (!ticketId || !isZendeskConfigured()) return false;
@@ -126,7 +126,7 @@ async function ticketEmReclamacao(job: Job): Promise<boolean> {
   const t = r.ticket;
   if (!t) return false;
   if (Number(t.custom_status_id) === ZD_STATUS_COMPLAINT) return true;
-  return (t.tags ?? []).some((tag) => tag === TAG_NEEDS_ATTENTION || tag === "complaint");
+  return (t.tags ?? []).some((tag) => (TAGS_NEEDS_ATTENTION as readonly string[]).includes(tag) || tag === "complaint");
 }
 
 type Faturas = { linhas: Invoice[]; total: number | null; semanal: boolean };
