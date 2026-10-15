@@ -204,72 +204,101 @@ CREATE TRIGGER profiles_guard_privileges
   FOR EACH ROW EXECUTE FUNCTION public.profiles_guard_privileges();
 
 -- =============================================================================
--- Tabelas que qualquer login lia inteiras (varredura de 15/10/2026, login de
--- parceiro sem perfil). Policy RESTRICTIVE soma com AND: por mais que exista uma
--- regra "true" antiga, quem não é equipe só passa pela exceção da própria linha.
+-- Tabelas abertas (pg_policies com "true" para authenticated) e tabelas sem RLS,
+-- que a chave pública dos sites lia sem login (15/10/2026).
+--
+-- Padrão em cada tabela:
+--   staff_all    PERMISSIVE: a equipe faz tudo (garante o OS quando o RLS é ligado agora)
+--   staff_only   RESTRICTIVE: soma com AND, então regra "true" antiga não abre mais
+--                para quem não é equipe; a exceção, quando existe, é a linha do próprio usuário.
+-- Anônimo (sem login) não tem policy: com RLS ligado, não lê nada.
+-- Conferido antes: portal do parceiro, portal de clientes e sites leem estas
+-- tabelas pelo service role, menos as exceções abaixo.
 -- =============================================================================
 
--- Só equipe, sem exceção.
+CREATE OR REPLACE FUNCTION public._fixfy_lock_table(t text, excecao text DEFAULT NULL)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  cond text := CASE WHEN excecao IS NULL THEN 'public.is_internal_staff()'
+                    ELSE format('public.is_internal_staff() OR (%s)', excecao) END;
+BEGIN
+  IF to_regclass('public.' || t) IS NULL THEN
+    RETURN;
+  END IF;
+  EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+  EXECUTE format('DROP POLICY IF EXISTS staff_all ON public.%I', t);
+  EXECUTE format(
+    'CREATE POLICY staff_all ON public.%I FOR ALL TO authenticated
+       USING (public.is_internal_staff()) WITH CHECK (public.is_internal_staff())', t);
+  EXECUTE format('DROP POLICY IF EXISTS staff_only ON public.%I', t);
+  EXECUTE format(
+    'CREATE POLICY staff_only ON public.%I AS RESTRICTIVE FOR ALL TO authenticated
+       USING (%s) WITH CHECK (%s)', t, cond, cond);
+END;
+$$;
+
+-- Só equipe.
 DO $$
 DECLARE
   t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'account_service_prices', 'admin_config', 'commission_pool_shares', 'commission_tiers',
-    'email_suppressions', 'invoice_payment_installments', 'job_extra_entries',
-    'job_recurrence_series', 'job_visits', 'labour_prices', 'marketing_touches',
-    'outreach_campaign_recipients', 'outreach_campaigns', 'outreach_templates',
-    'payroll_internal_costs', 'self_bill_payment_installments', 'service_material_kits',
-    'service_pricebook', 'short_links', 'supplier_prices', 'workforce_contract_signatures',
-    'workforce_onboarding_requests'
+    'account_service_prices', 'activities', 'admin_config', 'bills', 'business_units',
+    'client_addresses', 'client_source_accounts', 'commission_pool_shares',
+    'commission_run_items', 'commission_runs', 'commission_tiers', 'company_settings',
+    'dashboard_views', 'email_suppressions', 'invoice_payment_installments',
+    'job_extra_entries', 'job_recurrence_series', 'job_timer_sessions', 'job_visits',
+    'labour_prices', 'marketing_touches', 'outreach_campaign_recipients',
+    'outreach_campaigns', 'outreach_templates', 'partner_notes', 'pay_run_items',
+    'pay_runs', 'payment_links', 'payroll_internal_costs', 'payroll_recurring_bills',
+    'pipeline_deals', 'self_bill_payment_installments', 'service_material_kits',
+    'service_pricebook', 'short_links', 'supplier_prices', 'team_members',
+    'workforce_contract_signatures', 'workforce_onboarding_requests'
   ] LOOP
+    PERFORM public._fixfy_lock_table(t);
+  END LOOP;
+END $$;
+
+-- short_links: a resolução é no servidor (/r/[slug] com service role); a leitura anônima sai.
+DROP POLICY IF EXISTS short_links_anon_resolve ON public.short_links;
+
+-- O parceiro mexe só no que é dele.
+SELECT public._fixfy_lock_table(t, 'partner_id IN (SELECT id FROM public.partners WHERE auth_user_id = auth.uid())')
+FROM unnest(ARRAY['partner_contract_signatures', 'partner_service_prices', 'partner_document_requests']) AS t;
+
+-- Cada usuário, a própria linha.
+SELECT public._fixfy_lock_table('users', 'id = auth.uid()');
+SELECT public._fixfy_lock_table('user_locations', 'user_id = auth.uid()');
+
+-- Portal de clientes: a própria conta, os orçamentos que já pode ver e o histórico dos imóveis dela.
+SELECT public._fixfy_lock_table('accounts', 'id = public.current_portal_account_id()');
+SELECT public._fixfy_lock_table('quote_line_items', 'quote_id IN (SELECT id FROM public.quotes)');
+SELECT public._fixfy_lock_table('audit_logs',
+  'entity_type = ''property'' AND entity_id IN (SELECT id FROM public.account_properties)');
+
+-- Catálogos que os portais leem no navegador: leitura para quem está logado, escrita só da equipe.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['contract_versions', 'service_categories', 'service_catalog'] LOOP
     IF to_regclass('public.' || t) IS NULL THEN CONTINUE; END IF;
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('DROP POLICY IF EXISTS staff_only ON public.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS staff_all ON public.%I', t);
     EXECUTE format(
-      'CREATE POLICY staff_only ON public.%I AS RESTRICTIVE FOR ALL TO authenticated
+      'CREATE POLICY staff_all ON public.%I FOR ALL TO authenticated
          USING (public.is_internal_staff()) WITH CHECK (public.is_internal_staff())', t);
-  END LOOP;
-END $$;
-
--- O parceiro mexe só no que é dele (assinaturas, rate card, pedidos de documento).
-DO $$
-DECLARE
-  t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['partner_contract_signatures', 'partner_service_prices', 'partner_document_requests'] LOOP
-    IF to_regclass('public.' || t) IS NULL THEN CONTINUE; END IF;
-    EXECUTE format('DROP POLICY IF EXISTS staff_or_own_partner ON public.%I', t);
-    EXECUTE format(
-      'CREATE POLICY staff_or_own_partner ON public.%I AS RESTRICTIVE FOR ALL TO authenticated
-         USING (public.is_internal_staff() OR partner_id IN (SELECT id FROM public.partners WHERE auth_user_id = auth.uid()))
-         WITH CHECK (public.is_internal_staff() OR partner_id IN (SELECT id FROM public.partners WHERE auth_user_id = auth.uid()))', t);
-  END LOOP;
-END $$;
-
--- users (cadastro do app do parceiro): cada um a própria linha.
-DROP POLICY IF EXISTS staff_or_self ON public.users;
-CREATE POLICY staff_or_self ON public.users AS RESTRICTIVE FOR ALL TO authenticated
-  USING (public.is_internal_staff() OR id = auth.uid())
-  WITH CHECK (public.is_internal_staff() OR id = auth.uid());
-
--- Catálogos que o portal lê (contratos a assinar, categorias): leitura livre para
--- quem está logado, escrita só da equipe.
-DO $$
-DECLARE
-  t text;
-  c text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['contract_versions', 'service_categories'] LOOP
-    IF to_regclass('public.' || t) IS NULL THEN CONTINUE; END IF;
-    FOREACH c IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
-      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'staff_write_' || lower(c), t);
-      IF c = 'INSERT' THEN
-        EXECUTE format('CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR INSERT TO authenticated WITH CHECK (public.is_internal_staff())', 'staff_write_insert', t);
-      ELSE
-        EXECUTE format('CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR %s TO authenticated USING (public.is_internal_staff())', 'staff_write_' || lower(c), t, c);
-      END IF;
-    END LOOP;
+    EXECUTE format('DROP POLICY IF EXISTS logged_in_read ON public.%I', t);
+    EXECUTE format('CREATE POLICY logged_in_read ON public.%I FOR SELECT TO authenticated USING (true)', t);
+    EXECUTE format('DROP POLICY IF EXISTS staff_write_insert ON public.%I', t);
+    EXECUTE format('CREATE POLICY staff_write_insert ON public.%I AS RESTRICTIVE FOR INSERT TO authenticated WITH CHECK (public.is_internal_staff())', t);
+    EXECUTE format('DROP POLICY IF EXISTS staff_write_update ON public.%I', t);
+    EXECUTE format('CREATE POLICY staff_write_update ON public.%I AS RESTRICTIVE FOR UPDATE TO authenticated USING (public.is_internal_staff())', t);
+    EXECUTE format('DROP POLICY IF EXISTS staff_write_delete ON public.%I', t);
+    EXECUTE format('CREATE POLICY staff_write_delete ON public.%I AS RESTRICTIVE FOR DELETE TO authenticated USING (public.is_internal_staff())', t);
   END LOOP;
 END $$;
 
@@ -278,3 +307,5 @@ DROP POLICY IF EXISTS clients_insert_staff ON public.clients;
 CREATE POLICY clients_insert_staff ON public.clients
   FOR INSERT TO authenticated
   WITH CHECK (public.is_internal_staff() OR source_account_id = public.current_portal_account_id());
+
+DROP FUNCTION public._fixfy_lock_table(text, text);
