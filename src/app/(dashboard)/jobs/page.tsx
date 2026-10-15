@@ -2948,7 +2948,7 @@ function JobsPageContent() {
           >
             {/* Só o avatar da conta e o nome (15/10/2026); endereço, telefone e scope ficam no hover. */}
             <div className="flex items-center gap-2 min-w-0">
-              <Avatar name={item.client_name} size="sm" className="shrink-0" src={logo} />
+              <Avatar name={item.client_name} size="sm" className="!h-[27px] !w-[27px] shrink-0 text-[10px]" src={logo} />
               <p className="m-0 min-w-0 truncate text-[13px] font-medium text-text-primary">{item.client_name}</p>
             </div>
           </HoverPreview>
@@ -3586,7 +3586,7 @@ function JobsPageContent() {
               rowClassName={(j) =>
                 cn(
                   // Altura fixa (15/10/2026, padrão do vertex-saas): nada na célula muda a altura da linha.
-                  "h-[44px] [&>td]:py-0",
+                  "h-[41px] [&>td]:py-0",
                   isJobOnHoldComplaint(j)
                     ? COMPLAINT_ROW_CLASS
                     : j.status === "on_hold"
