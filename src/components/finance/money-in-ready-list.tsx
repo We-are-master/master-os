@@ -1,7 +1,9 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Briefcase, Check, ChevronDown, FileText } from "lucide-react";
+import { CheckCheck, ChevronDown, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { displayBillingReference } from "@/lib/billing-reference";
 import type { AttentionAccountGroup } from "@/lib/billing-standalone-metrics";
@@ -201,12 +203,23 @@ function MoneyInReadyListInner({
                         <span className="shrink-0 text-[13px] font-semibold text-text-primary">
                           {displayBillingReference(row.invoice.reference)}
                         </span>
-                        <span className="truncate text-[12px] text-text-tertiary">
-                          · {row.clientName}
-                          {job?.title?.trim() ? ` – ${job.title.trim()}` : ""}
-                          {jobDateYmd ? ` · job ${formatDate(jobDateYmd)}` : ""}
-                        </span>
+                        {job && jobRef ? (
+                          <a
+                            href={`/jobs/${job.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="shrink-0 text-[12px] font-medium text-primary underline-offset-2 hover:underline"
+                            title={`Open ${jobRef}${jobDateYmd ? ` · ${formatDate(jobDateYmd)}` : ""}`}
+                          >
+                            · {jobRef}
+                          </a>
+                        ) : null}
+                        <span className="truncate text-[12px] text-text-tertiary">· {row.clientName}</span>
                       </div>
+                      {job?.status ? (
+                        <Badge variant={jobStatusBadgeVariant(job.status)} size="sm" marker className="shrink-0">
+                          {jobStatusLabel(job.status)}
+                        </Badge>
+                      ) : null}
                       <span
                         className={cn(
                           "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
@@ -225,26 +238,15 @@ function MoneyInReadyListInner({
                         {formatCurrency(row.balanceDue)}
                       </span>
                       <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        {job ? (
-                          <button
-                            type="button"
-                            title={`Open ${jobRef}${jobDateYmd ? ` · ${formatDate(jobDateYmd)}` : ""}`}
-                            aria-label={`Open ${jobRef}`}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface-hover"
-                            onClick={() => window.open(`/jobs/${job.id}`, "_blank", "noopener,noreferrer")}
-                          >
-                            <Briefcase className="h-3.5 w-3.5" />
-                          </button>
-                        ) : null}
                         {canSelect ? (
                           <button
                             type="button"
-                            title="Mark this invoice as received"
-                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium text-[var(--ok)] hover:bg-[var(--success-light)]"
+                            title="Mark as received"
+                            aria-label="Mark as received"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
                             onClick={() => onMarkReceived(row.invoice.id)}
                           >
-                            <Check className="h-3.5 w-3.5" />
-                            Received
+                            <CheckCheck className="h-3.5 w-3.5" />
                           </button>
                         ) : null}
                         <button

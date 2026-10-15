@@ -7,7 +7,7 @@ import { formatBritishDate } from "@/lib/utils/date";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, BarChart3, Briefcase, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink , History } from "lucide-react";
+import { Plus, Download, RefreshCw, BarChart3, Briefcase, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink , History } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
@@ -15,6 +15,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
@@ -2758,6 +2759,30 @@ function ledgerNextDueLabel(
   return { text: formatDate(nextDueYmd), overdue: todayYmd > nextDueYmd };
 }
 
+/** Número do job que abre o job (dono, 15/10/2026). Não abre o drawer da linha. */
+function JobRefLink({ reference, jobId }: { reference: string; jobId?: string | null }) {
+  if (!jobId) return <span className="truncate text-[12px] text-text-tertiary">· {reference}</span>;
+  return (
+    <a
+      href={`/jobs/${jobId}`}
+      onClick={(e) => e.stopPropagation()}
+      className="truncate text-[12px] font-medium text-primary underline-offset-2 hover:underline"
+      title={`Open ${reference}`}
+    >
+      · {reference}
+    </a>
+  );
+}
+
+/** Fase do job no padrão de chip do OS. */
+function JobPhaseBadge({ status }: { status: string }) {
+  return (
+    <Badge variant={jobStatusBadgeVariant(status)} size="sm" marker>
+      {jobStatusLabel(status)}
+    </Badge>
+  );
+}
+
 function InvoiceLedgerRow({
   inv,
   todayYmd,
@@ -2816,12 +2841,17 @@ function InvoiceLedgerRow({
         <span className="flex min-w-0 items-baseline gap-1.5">
           <span className="shrink-0 text-[13px] font-semibold text-text-primary">{displayBillingReference(inv.reference)}</span>
           {inv.job_reference ? (
-            <span className="truncate text-[12px] text-text-tertiary">· {inv.job_reference}</span>
+            <JobRefLink reference={inv.job_reference} jobId={jobsByRef[inv.job_reference.trim()]?.id} />
           ) : null}
         </span>
       </td>
       <td className={cn("whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")}>
-        <InvoiceStatusPill status={st} />
+        {/* A fase do job diz mais que o status da fatura (o status já é a aba: Draft ou Ready). */}
+        {inv.job_reference && jobsByRef[inv.job_reference.trim()]?.status ? (
+          <JobPhaseBadge status={jobsByRef[inv.job_reference.trim()]!.status} />
+        ) : (
+          <InvoiceStatusPill status={st} />
+        )}
       </td>
       <td className={cn("whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-text-primary", compact ? "px-3 py-1.5" : "px-3 py-2")}>
         {formatCurrency(total)}
@@ -2851,15 +2881,15 @@ function InvoiceLedgerRow({
           {canMarkPaid ? (
             <button
               type="button"
-              title="Mark this invoice as received"
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium text-[var(--ok)] hover:bg-[var(--success-light)]"
+              title="Mark as received"
+              aria-label="Mark as received"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
               onClick={(e) => {
                 e.stopPropagation();
                 onMarkPaid(inv.id);
               }}
             >
-              <Check className="h-3.5 w-3.5" />
-              Received
+              <CheckCheck className="h-3.5 w-3.5" />
             </button>
           ) : null}
           <button
@@ -3530,25 +3560,7 @@ function SelfBillGroupedLedger({
                                   const linked = jobsBySelfBillId[sb.id] ?? [];
                                   const only = linked.length === 1 ? linked[0] : null;
                                   if (!only) return null;
-                                  const jobYmd =
-                                    only.scheduled_date?.trim().slice(0, 10) ||
-                                    only.scheduled_start_at?.trim().slice(0, 10) ||
-                                    "";
-                                  const refShowsJob = sb.reference?.includes(only.reference) ?? false;
-                                  return (
-                                    <button
-                                      type="button"
-                                      title={`Open ${only.reference}${jobYmd ? ` · ${formatDate(jobYmd)}` : ""}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.open(`/jobs/${only.id}`, "_blank", "noopener,noreferrer");
-                                      }}
-                                      className="inline-flex shrink-0 items-center gap-1 rounded border border-border-light px-1.5 py-0.5 text-[10px] font-medium text-text-secondary hover:bg-surface-hover"
-                                    >
-                                      <Briefcase className="h-3 w-3" aria-hidden />
-                                      {refShowsJob ? null : only.reference}
-                                    </button>
-                                  );
+                                  return <JobRefLink reference={only.reference} jobId={only.id} />;
                                 })()}
                                 {sb.bill_origin === "internal" ? (
                                   <Badge variant="info" size="sm" className="text-[9px] uppercase tracking-wide">
@@ -3581,7 +3593,15 @@ function SelfBillGroupedLedger({
                           </div>
                           <div className="bl-sb-row__cols">
                             <span className="bl-sb-row__statuscell">
-                              <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                              {(() => {
+                                // Self-bill de um job só: a fase do job, como na linha da fatura.
+                                const linked = jobsBySelfBillId[sb.id] ?? [];
+                                return linked.length === 1 && label !== "Paid" && label !== "Overdue" ? (
+                                  <JobPhaseBadge status={linked[0]!.status} />
+                                ) : (
+                                  <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                                );
+                              })()}
                             </span>
                             <span
                               className="bl-sb-row__amount text-sm tabular-nums"
@@ -3614,12 +3634,12 @@ function SelfBillGroupedLedger({
                               {showRowMarkPaid && canSelect ? (
                                 <button
                                   type="button"
-                                  title="Mark this self-bill as paid"
-                                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium text-[var(--ok)] hover:bg-[var(--success-light)]"
+                                  title="Mark as paid"
+                                  aria-label="Mark as paid"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
                                   onClick={() => void onMarkPaid(sb.id)}
                                 >
-                                  <Check className="h-3.5 w-3.5" />
-                                  Paid
+                                  <CheckCheck className="h-3.5 w-3.5" />
                                 </button>
                               ) : null}
                               {showRowSend && sb.bill_origin !== "internal" && !!sb.partner_id?.trim() && !isSelfBillPayoutVoided(sb) ? (
