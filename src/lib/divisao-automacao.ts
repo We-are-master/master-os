@@ -97,7 +97,7 @@ export async function alertasDeAutomacao(sb: SupabaseClient, agora = new Date())
     .from("jobs")
     .select("reference, card_charge_status, card_refused_reason")
     .in("card_charge_status", ["refused", "requires_action"])
-    .eq("status", "final_check")
+    .in("status", ["final_check", "awaiting_payment"])
     .is("deleted_at", null);
   const cartaoRecusado = ((rec ?? []) as Array<{ reference: string; card_charge_status: string; card_refused_reason: string | null }>).map(
     (j) => `${j.reference}: ${j.card_charge_status === "refused" ? "card refused" : "bank asked the customer to confirm"}${j.card_refused_reason ? ` (${j.card_refused_reason})` : ""}`,

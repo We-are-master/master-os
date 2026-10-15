@@ -14,7 +14,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { enviarConfirmacaoDoCliente, motivoParaNaoConfirmar, MOTIVO_MENSAGENS_DESLIGADAS } from "./send";
+import { enviarConfirmacaoDoCliente, motivoParaNaoConfirmar, MOTIVO_MENSAGENS_DESLIGADAS, MOTIVO_SO_POR_EMAIL } from "./send";
 import { fakeSupabase } from "./fake-supabase.test-helper";
 
 type Job = Record<string, unknown>;
@@ -48,13 +48,14 @@ function banco(job: Job, conta: Record<string, unknown> = { id: "acc-fixfy", com
   });
 }
 
-const ENV = ["CLIENT_MESSAGING_ENABLED", "SUNSHINE_APP_ID", "SUNSHINE_KEY_ID", "SUNSHINE_KEY_SECRET", "FIXFY_AGENT_MODEL", "CLIENT_WA_VIA"];
+const ENV = ["CLIENT_MESSAGING_ENABLED", "SUNSHINE_APP_ID", "SUNSHINE_KEY_ID", "SUNSHINE_KEY_SECRET", "FIXFY_AGENT_MODEL", "CONFIRMACAO_WHATSAPP", "CLIENT_WA_VIA"];
 let salvo: Record<string, string | undefined> = {};
 
 describe("confirmação ao cliente", () => {
   beforeEach(() => {
     salvo = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
     process.env.CLIENT_MESSAGING_ENABLED = "1";
+    process.env.CONFIRMACAO_WHATSAPP = "on";
     process.env.SUNSHINE_APP_ID = "app";
     process.env.SUNSHINE_KEY_ID = "key";
     process.env.SUNSHINE_KEY_SECRET = "secret";
@@ -90,6 +91,17 @@ describe("confirmação ao cliente", () => {
     assert.equal(r.estado, "pulado");
     assert.equal(motivoDe(r), MOTIVO_MENSAGENS_DESLIGADAS);
     assert.equal(tabelas.jobs[0].client_confirmation_skipped, MOTIVO_MENSAGENS_DESLIGADAS);
+    assert.equal(chamou, false);
+  });
+
+  test("sem CONFIRMACAO_WHATSAPP a confirmação fica só no e-mail do ticket (dono, 14/10/2026)", async () => {
+    delete process.env.CONFIRMACAO_WHATSAPP;
+    let chamou = false;
+    const { client, tabelas } = banco(COM_PARCEIRO);
+    const r = await enviarConfirmacaoDoCliente(client, "job-1", { agora: AGORA, enviar: async () => { chamou = true; return { messageId: "x", to: "" }; } });
+    assert.equal(r.estado, "pulado");
+    assert.equal(motivoDe(r), MOTIVO_SO_POR_EMAIL);
+    assert.equal(tabelas.jobs[0].client_confirmation_skipped, MOTIVO_SO_POR_EMAIL);
     assert.equal(chamou, false);
   });
 

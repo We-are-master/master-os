@@ -11,6 +11,7 @@ import {
   dispatchQuoteRejectedZendesk,
 } from "@/lib/zendesk-lifecycle";
 import { createServiceClient } from "@/lib/supabase/service";
+import { notifyPartnerJobZendesk } from "@/lib/notify-partner-job-zendesk-server";
 import type { JobStatus, QuoteStatus } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -125,7 +126,13 @@ export async function POST(req: NextRequest) {
        * deploy, então só avisa quem cruzar daqui para frente. Uma vez só por job.
        */
       if (status === "awaiting_payment") {
-        lifecycle.completed = await dispatchJobCompletedZendesk(id, supabase);
+        const aviso = await dispatchJobCompletedZendesk(id, supabase);
+        lifecycle.completed = aviso;
+        // O parceiro recebe o "job concluído" na mesma conversa do job (dono,
+        // 14/10/2026), uma vez só: só quando o aviso ao cliente acabou de sair.
+        if (aviso.posted) {
+          lifecycle.partnerCompleted = (await notifyPartnerJobZendesk(supabase, id, { kind: "completed" })).body;
+        }
       } else if (status === "cancelled") {
         lifecycle.cancelled = await dispatchJobCancelledZendesk(id, supabase);
       }

@@ -668,7 +668,7 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Booking rescheduled — ${data.jobReference}`;
+  const subject = `Booking rescheduled · ${data.jobReference}`;
 
   const safe = {
     name:    escapeHtml(data.recipientFirstName || "there"),
@@ -705,7 +705,7 @@ ${partnerEmailLogoHeaderRow("16px 40px")}
           fontSize: "26px",
           lineHeight: "34px",
         })}
-        <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Just a quick heads up — your job has been moved to a new date. Please check the updated schedule below and save it to your calendar.</p>
+        <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Quick heads up: this job has moved. The old schedule is crossed out below, the new one is in green. Please update your calendar.</p>
       </td></tr>
 
       <tr><td style="padding:0 40px;" class="px-mobile">

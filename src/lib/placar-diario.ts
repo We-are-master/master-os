@@ -192,7 +192,7 @@ export async function urgentesAgora(sb: SupabaseClient, agora = new Date()): Pro
   const { data: atrasados } = await sb.from("jobs").select("reference, scheduled_date, partner_name").eq("status", "late").is("deleted_at", null).limit(30);
   for (const j of (atrasados ?? []) as Array<{ reference: string; scheduled_date: string | null; partner_name: string | null }>)
     urgentes.push({ tipo: "late", texto: `${j.reference} · late${j.partner_name ? ` · ${j.partner_name}` : ""}` });
-  const { data: cartao } = await sb.from("jobs").select("reference, card_refused_reason").in("card_charge_status", ["refused", "requires_action"]).eq("status", "final_check").is("deleted_at", null).limit(30);
+  const { data: cartao } = await sb.from("jobs").select("reference, card_refused_reason").in("card_charge_status", ["refused", "requires_action"]).in("status", ["final_check", "awaiting_payment"]).is("deleted_at", null).limit(30);
   for (const j of (cartao ?? []) as Array<{ reference: string; card_refused_reason: string | null }>)
     urgentes.push({ tipo: "card", texto: `${j.reference} · card refused${j.card_refused_reason ? ` (${j.card_refused_reason})` : ""}` });
   return urgentes;

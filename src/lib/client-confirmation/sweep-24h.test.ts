@@ -14,35 +14,31 @@ import {
  * de 4 horas no verão britânico e 3 no inverno, então um horário fixo no plist
  * andaria uma hora sozinho duas vezes por ano. Quem decide é esta função.
  */
-describe("janela do lembrete de véspera", () => {
-  it("18h de Londres no verão britânico manda", () => {
-    // 17:00 UTC = 18:00 BST
-    assert.equal(horaEmLondres(new Date("2026-08-24T17:00:00Z")), 18);
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T17:00:00Z")), true);
+describe("janela do lembrete de véspera (9h-17h de Londres)", () => {
+  it("10h de Londres no verão britânico manda", () => {
+    // 09:00 UTC = 10:00 BST
+    assert.equal(horaEmLondres(new Date("2026-08-24T09:00:00Z")), 10);
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T09:00:00Z")), true);
   });
 
-  it("18h de Londres no inverno manda, mesmo sendo outro UTC", () => {
-    // 18:00 UTC = 18:00 GMT
-    assert.equal(horaEmLondres(new Date("2026-12-10T18:00:00Z")), 18);
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-12-10T18:00:00Z")), true);
+  it("10h de Londres no inverno manda, mesmo sendo outro UTC", () => {
+    // 10:00 UTC = 10:00 GMT
+    assert.equal(horaEmLondres(new Date("2026-12-10T10:00:00Z")), 10);
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-12-10T10:00:00Z")), true);
   });
 
-  it("a mesma hora do Mac cai dentro no verão e fora no inverno", () => {
-    // 14:00 em São Paulo (UTC-3) = 17:00 UTC.
-    const veraoBritanico = new Date("2026-08-24T17:00:00Z"); // 18:00 em Londres
-    const invernoBritanico = new Date("2026-12-10T17:00:00Z"); // 17:00 em Londres
-    assert.equal(dentroDaJanelaDoLembrete(veraoBritanico), true);
-    assert.equal(dentroDaJanelaDoLembrete(invernoBritanico), false);
+  it("a mesma hora UTC cai dentro no inverno e fora no verão", () => {
+    const veraoBritanico = new Date("2026-08-24T16:00:00Z"); // 17:00 em Londres
+    const invernoBritanico = new Date("2026-12-10T16:00:00Z"); // 16:00 em Londres
+    assert.equal(dentroDaJanelaDoLembrete(veraoBritanico), false);
+    assert.equal(dentroDaJanelaDoLembrete(invernoBritanico), true);
   });
 
-  it("manhã da véspera não manda: o dia ainda vai mudar", () => {
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T09:00:00Z")), false); // 10:00 Londres
-  });
-
-  it("17h59 de Londres ainda não, 22h já não", () => {
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T16:59:00Z")), false); // 17:59
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T21:00:00Z")), false); // 22:00
-    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T20:59:00Z")), true);  // 21:59
+  it("8h59 ainda não, 9h já, 16h59 sim, 17h não", () => {
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T07:59:00Z")), false); // 08:59
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T08:00:00Z")), true);  // 09:00
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T15:59:00Z")), true);  // 16:59
+    assert.equal(dentroDaJanelaDoLembrete(new Date("2026-08-24T16:00:00Z")), false); // 17:00
   });
 
   it("às 18h de Londres, o alvo é o dia seguinte", () => {

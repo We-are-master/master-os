@@ -106,7 +106,7 @@ export function buildClientJobRescheduledEmail(data: ClientRescheduleData): {
     `Now: ${data.newDateLine}${data.newTimeLine ? ` ${data.newTimeLine}` : ""}`,
     "",
     data.reason?.trim() ? `Why: ${data.reason.trim()}` : "",
-    `${data.jobTitle || "Your booking"}${data.propertyAddress ? ` — ${data.propertyAddress}` : ""}`,
+    `${data.jobTitle || "Your booking"}${data.propertyAddress ? ` · ${data.propertyAddress}` : ""}`,
     `Reference ${data.jobReference}`,
     "",
     "If the new date doesn't work for you, just reply to this email and we'll find one that does.",
