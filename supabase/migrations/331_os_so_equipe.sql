@@ -220,6 +220,18 @@ CREATE TRIGGER profiles_guard_privileges
 -- tabelas pelo service role, menos as exceções abaixo.
 -- =============================================================================
 
+CREATE TEMP TABLE _fixfy_pulou (tabela text) ON COMMIT DROP;
+
+CREATE OR REPLACE FUNCTION public._fixfy_is_owner(t text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT pg_has_role(current_user, c.relowner, 'MEMBER')
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = t;
+$$;
+
 CREATE OR REPLACE FUNCTION public._fixfy_lock_table(t text, excecao text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
@@ -230,6 +242,11 @@ DECLARE
                     ELSE format('public.is_internal_staff() OR (%s)', excecao) END;
 BEGIN
   IF to_regclass('public.' || t) IS NULL THEN
+    RETURN;
+  END IF;
+  -- Tabela de outro dono (ex.: criada pelo painel): não dá para mexer daqui; anota e segue.
+  IF NOT public._fixfy_is_owner(t) THEN
+    INSERT INTO _fixfy_pulou VALUES (t);
     RETURN;
   END IF;
   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
@@ -267,7 +284,12 @@ BEGIN
 END $$;
 
 -- short_links: a resolução é no servidor (/r/[slug] com service role); a leitura anônima sai.
-DROP POLICY IF EXISTS short_links_anon_resolve ON public.short_links;
+DO $$
+BEGIN
+  IF public._fixfy_is_owner('short_links') THEN
+    DROP POLICY IF EXISTS short_links_anon_resolve ON public.short_links;
+  END IF;
+END $$;
 
 -- O parceiro mexe só no que é dele.
 SELECT public._fixfy_lock_table(t, 'partner_id IN (SELECT id FROM public.partners WHERE auth_user_id = auth.uid())')
@@ -290,6 +312,10 @@ DECLARE
 BEGIN
   FOREACH t IN ARRAY ARRAY['contract_versions', 'service_categories', 'service_catalog'] LOOP
     IF to_regclass('public.' || t) IS NULL THEN CONTINUE; END IF;
+    IF NOT public._fixfy_is_owner(t) THEN
+      INSERT INTO _fixfy_pulou VALUES (t);
+      CONTINUE;
+    END IF;
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS staff_all ON public.%I', t);
     EXECUTE format(
@@ -313,5 +339,9 @@ CREATE POLICY clients_insert_staff ON public.clients
   WITH CHECK (public.is_internal_staff() OR source_account_id = public.current_portal_account_id());
 
 DROP FUNCTION public._fixfy_lock_table(text, text);
+DROP FUNCTION public._fixfy_is_owner(text);
+
+-- Tabelas que ficaram de fora por serem de outro dono (resolver à parte).
+SELECT tabela AS pulou_por_ser_de_outro_dono FROM _fixfy_pulou ORDER BY 1;
 
 COMMIT;
