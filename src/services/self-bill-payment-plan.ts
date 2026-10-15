@@ -106,7 +106,9 @@ export async function repairSelfBillPaymentPlanActiveFlag(
   const supabase = client ?? getSupabase();
   const installments = await listInstallmentsForSelfBill(selfBillId);
   if (installments.length === 0) return false;
-  const firstDue = installments[0]!.due_date?.slice(0, 10);
+  // Vencimento = próxima parcela em aberto. A 1ª já paga não pode voltar a ser o
+  // vencimento (15/10/2026: SB-14541 virou "atrasado desde 12/10" ao abrir o job).
+  const firstDue = (nextOpenSelfBillInstallment(installments) ?? installments[0])!.due_date?.slice(0, 10);
   const patch: { payment_plan_active: boolean; due_date?: string } = { payment_plan_active: true };
   if (firstDue && /^\d{4}-\d{2}-\d{2}$/.test(firstDue)) patch.due_date = firstDue;
   const { error } = await supabase.from("self_bills").update(patch).eq("id", selfBillId);
