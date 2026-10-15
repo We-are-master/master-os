@@ -297,6 +297,20 @@ function collectSyncedKeys(
   return [...out, ...extras];
 }
 
+/**
+ * O usuário do Zendesk do parceiro, numa consulta à parte.
+ *
+ * O select pedia `partners ( zendesk_user_id )` embutido, e em produção não existe
+ * relação jobs→partners que o PostgREST enxergue: a sincronização inteira morria com
+ * "Could not find a relationship between 'jobs' and 'partners'" e o formulário do
+ * ticket nunca era preenchido (achado 15/10/2026, JOB-9730). Nunca lança.
+ */
+async function zendeskUserDoParceiro(supabase: SupabaseClient, partnerId: string | null): Promise<number | string | null> {
+  if (!partnerId) return null;
+  const { data } = await supabase.from("partners").select("zendesk_user_id").eq("id", partnerId).maybeSingle();
+  return (data as { zendesk_user_id?: number | string | null } | null)?.zendesk_user_id ?? null;
+}
+
 export async function syncJobZendeskFormFields(
   jobId: string,
   client?: SupabaseClient,
@@ -316,7 +330,6 @@ export async function syncJobZendeskFormFields(
       status, auto_assign_invited_partner_ids, auto_assign_expires_at,
       client_name, property_address, scope,
       external_source, external_ref, partner_id, partner_ids,
-      partners ( zendesk_user_id ),
       clients ( email, phone )
     `)
     .eq("id", jobId)
@@ -347,9 +360,7 @@ export async function syncJobZendeskFormFields(
     job as Parameters<typeof buildJobZendeskFormFieldEntries>[0],
   );
 
-  const partnerRow = (job as { partners?: { zendesk_user_id?: number | string | null } | { zendesk_user_id?: number | string | null }[] | null }).partners;
-  const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-  const rawAssignee = partner?.zendesk_user_id;
+  const rawAssignee = await zendeskUserDoParceiro(supabase, (job as { partner_id?: string | null }).partner_id ?? null);
   const assigneeId =
     (job as { partner_id?: string | null }).partner_id && rawAssignee != null
       ? Number(rawAssignee)
@@ -396,7 +407,6 @@ export async function syncQuoteZendeskFormFields(
       status, quote_type, start_date_option_1,
       client_email, client_name, property_address, scope,
       external_source, external_ref, partner_id, client_id,
-      partners ( zendesk_user_id ),
       clients ( email, phone )
     `)
     .eq("id", quoteId)
@@ -421,9 +431,7 @@ export async function syncQuoteZendeskFormFields(
     catalog_service_id: catalogId,
   });
 
-  const partnerRow = (quote as { partners?: { zendesk_user_id?: number | string | null } | { zendesk_user_id?: number | string | null }[] | null }).partners;
-  const partner = Array.isArray(partnerRow) ? partnerRow[0] : partnerRow;
-  const rawAssignee = partner?.zendesk_user_id;
+  const rawAssignee = await zendeskUserDoParceiro(supabase, (quote as { partner_id?: string | null }).partner_id ?? null);
   const assigneeId =
     (quote as { partner_id?: string | null }).partner_id && rawAssignee != null
       ? Number(rawAssignee)
