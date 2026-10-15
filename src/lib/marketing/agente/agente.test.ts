@@ -60,10 +60,11 @@ test("relâmpago do dia e relâmpago no ar", () => {
   assert.equal(relampagoNoAr(new Date("2026-10-22T21:30:00Z")), null);
 });
 
-test("a lista cresce em degraus e depois abre", () => {
-  assert.equal(tetoDaLista(new Date("2026-10-15T12:00:00Z")), 600);
-  assert.equal(tetoDaLista(new Date("2026-10-21T12:00:00Z")), 1000);
-  assert.equal(tetoDaLista(new Date("2026-11-10T12:00:00Z")), Number.POSITIVE_INFINITY);
+test("a lista cresce 1.000 por dia até 5 mil", () => {
+  assert.equal(tetoDaLista(new Date("2026-10-14T20:00:00Z")), 1000);
+  assert.equal(tetoDaLista(new Date("2026-10-15T12:00:00Z")), 2000);
+  assert.equal(tetoDaLista(new Date("2026-10-17T12:00:00Z")), 4000);
+  assert.equal(tetoDaLista(new Date("2026-11-10T12:00:00Z")), 5000);
 });
 
 test("o template do WhatsApp tem as quatro variáveis que o envio preenche", () => {
@@ -132,4 +133,12 @@ test("posição do lead: novo, demorando, antigo, em andamento, cliente recente 
 test("a lista semanal recebe só as edições de terça", () => {
   const semanais = CLUBE.filter(vaiParaSemanal);
   assert.ok(semanais.length >= 12 && semanais.every((e) => new Date(`${e.dia}T12:00:00Z`).getUTCDay() === 2));
+});
+
+import { ONDAS } from "./b2b";
+test("agências: nenhuma onda manda e-mail no fim de semana", () => {
+  for (const o of ONDAS) for (const e of SEQUENCIA_B2B) {
+    const dia = quandoSai(e, o.inicio).getUTCDay();
+    assert.ok(dia !== 0 && dia !== 6, `onda ${o.n} · ${e.key} cai no fim de semana`);
+  }
 });

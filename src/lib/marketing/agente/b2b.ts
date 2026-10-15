@@ -500,7 +500,15 @@ export async function montarB2B(opcoes: { aplicar: boolean; agendar: boolean; on
 /* ═══════════════════ Ondas ═══════════════════ */
 
 /** As ondas no ar. Onda nova = uma linha aqui e `--b2b-onda=N --aplicar`. */
-export const ONDAS: Array<{ n: number; inicio: string }> = [{ n: 1, inicio: "2026-10-15" }];
+// 200 por dia (dono, 14/10/2026). O início de cada onda só pode deslocar a
+// sequência em 0, 1, 4 ou 7 dias: qualquer outro joga e-mail no fim de semana.
+export const ONDAS: Array<{ n: number; inicio: string }> = [
+  { n: 1, inicio: "2026-10-15" },
+  { n: 2, inicio: "2026-10-15" },
+  { n: 3, inicio: "2026-10-16" },
+  { n: 4, inicio: "2026-10-19" },
+  { n: 5, inicio: "2026-10-22" },
+];
 
 const ehCaixaDeEquipe = (nome: string | null) => !nome || /\bteam$/i.test(nome.trim());
 
