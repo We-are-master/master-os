@@ -13,6 +13,7 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
 import { ClientSavedCard } from "@/components/clients/client-saved-card";
+import { ClientNotesCard } from "@/components/clients/client-notes-card";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -1082,13 +1083,8 @@ function ClientDetailDrawer({
                 </div>
               )}
 
-              {/* Notes */}
-              {client.notes && (
-                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30/60 border-l-3 border-amber-400">
-                  <p className="text-[10px] font-semibold text-amber-700 uppercase mb-1">Notes</p>
-                  <p className="text-sm text-text-secondary">{client.notes}</p>
-                </div>
-              )}
+              {/* Notes: um bloco por pedido, sem as etiquetas técnicas do Checkatrade (15/10/2026). */}
+              <ClientNotesCard notes={client.notes} />
 
               {/* Last Job */}
               {client.last_job_date && (
