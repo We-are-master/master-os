@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import { comentarioDoLeo, htmlDoLeo, textoDoLeo } from "./email-do-leo";
 
 describe("e-mail do Leo", () => {
-  it("sai com o Leo como autor e a assinatura dele", () => {
+  it("sai com o Leo como autor e sem assinatura no corpo (o Zendesk põe a dele)", () => {
     const c = comentarioDoLeo("Hi Ann, just checking in.");
     assert.equal(c.public, true);
     assert.equal(c.author_id, 6227542863391);
     assert.match(c.html_body, /Kind regards,<br>Leo/);
-    assert.match(c.html_body, /<strong>Leonardo Piovesan<\/strong> \| Operations/);
+    assert.doesNotMatch(c.html_body, /Leonardo Piovesan/);
+  });
+  it("fora do Zendesk a assinatura vai no corpo", () => {
+    assert.match(htmlDoLeo("Hi Ann", "Kind regards,", true), /<strong>Leonardo Piovesan<\/strong> \| Operations/);
   });
   it("parágrafos viram <p> e o texto do cliente é escapado", () => {
     const h = htmlDoLeo("Hi <b>Ann</b>,\n\nLine one\nline two");
