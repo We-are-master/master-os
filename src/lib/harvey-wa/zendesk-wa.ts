@@ -513,8 +513,11 @@ export async function ticketParaAprovacao(telefone: string | null, quem: string,
   if (!telefone || !isZendeskConfigured()) return { ticket: null, linha: "" };
   const ticket = await ticketPeloTelefone(telefone);
   if (!ticket) return { ticket: null, linha: "" };
-  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null; support_type?: string; status: string } }>(`tickets/${ticket}.json`);
+  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null; support_type?: string; status: string; assignee_id?: number | null; tags?: string[] } }>(`tickets/${ticket}.json`);
   if (t.support_type === "ai_agent" || ["solved", "closed"].includes(t.status)) return { ticket, linha: "" };
+  // Com o Leo nada é automático (dono, 15/10/2026: ele testa preço e conduz a conversa):
+  // ticket dele, com_leo ou preço escrito por ele não mexe no status nem devolve ao Harvey.
+  if (ehDoLeo({ assignee: t.assignee_id ?? null, tags: t.tags ?? [], quem })) return { ticket, linha: "" };
   if (!ticketAntesDoPreco(t.custom_status_id, [ZD_STATUS_LEAD, ZD_STATUS_OPEN, ZD_STATUS_NEW, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_WHATSAPP])) return { ticket, linha: "" };
   const libras = (v: number) => `£${v.toFixed(2).replace(/\.00$/, "")}`;
   const outros = achado.outros.length ? ` (also in the message: ${achado.outros.map(libras).join(", ")})` : "";
@@ -533,6 +536,11 @@ export async function ticketParaAprovacao(telefone: string | null, quem: string,
 
 /** Leonardo, diretor de operações: dono da Needs Attention (dono, 15/10/2026). */
 const LEO_ZENDESK = Number(process.env.ZENDESK_OPS_AGENT_ID?.trim() || 6227542863391);
+
+/** Ticket ou mensagem do Leo: atribuído a ele, com a tag com_leo, ou preço escrito por ele. */
+export function ehDoLeo(e: { assignee: number | null; tags: string[]; quem: string }): boolean {
+  return e.assignee === LEO_ZENDESK || e.tags.includes("com_leo") || /\bleo(nardo)?\b/i.test(e.quem);
+}
 
 /**
  * Reclamação e assunto de operação são do Leo: tag com_leo (🚨 Needs Attention) e o
