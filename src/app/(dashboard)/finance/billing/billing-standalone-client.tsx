@@ -1582,9 +1582,17 @@ function BillingStandaloneInner() {
           .sort((x, y) => x.sequence - y.sequence)[0];
         if (next) return Number(next.amount ?? 0);
       }
-      return Number(sb.net_payout ?? 0);
+      /**
+       * Draft = o que o parceiro vai receber pelos jobs já atribuídos (dono, 15/10/2026),
+       * não só os concluídos. O `net_payout` continua sendo o que se PAGA (só concluído);
+       * aqui é a previsão, igual à fatura em draft do lado do cliente.
+       */
+      const previsto = (data.jobsBySelfBillId[sb.id] ?? [])
+        .filter((j) => !j.deleted_at && !j.partner_cancelled_at && j.status !== "cancelled")
+        .reduce((t, j) => t + Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0), 0);
+      return Math.max(Number(sb.net_payout ?? 0), Math.round(previsto * 100) / 100);
     },
-    [data.installmentsBySelfBillId],
+    [data.installmentsBySelfBillId, data.jobsBySelfBillId],
   );
 
   const buildingRuns = useMemo(() => {
@@ -1594,7 +1602,7 @@ function BillingStandaloneInner() {
         sb.status !== "paid" &&
         !sb.wise_paid_at &&
         !selfBillCountsAsReady(sb) &&
-        Number(sb.net_payout ?? 0) > 0.005 &&
+        selfBillAmountOnDue(sb) > 0.005 &&
         sb.bill_origin !== "internal" &&
         /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
     );

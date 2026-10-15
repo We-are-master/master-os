@@ -1793,7 +1793,9 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
  * quando moveu.
  */
 export async function relinkSelfBillIfMisplaced(job: Job, client?: SupabaseClient): Promise<string | null> {
-  if (!job.self_bill_id?.trim() || !job.partner_id?.trim() || !canLinkJobToSelfBill(job)) return null;
+  // Job ainda não concluído também muda de documento (parceiro trocado, data remarcada):
+  // ele já mora no draft do parceiro desde a atribuição.
+  if (!job.self_bill_id?.trim() || !job.partner_id?.trim() || !(canLinkJobToSelfBill(job) || canDraftSelfBillForJob(job))) return null;
   const supabase = client ?? getSupabase();
   const { data: sbRow } = await supabase
     .from("self_bills")

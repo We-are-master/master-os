@@ -10,7 +10,7 @@ import {
   cancelOpenSelfBillsForJobCancellation,
   ensureWeeklySelfBillForJob,
   relinkSelfBillIfMisplaced,
-  canLinkJobToSelfBill,
+  canDraftSelfBillForJob,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
@@ -1175,7 +1175,9 @@ export async function updateJob(
       console.error("updateJob: relink self-bill failed", { jobId: row.id, ref: row.reference }, e);
     }
   }
-  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canLinkJobToSelfBill(row)) {
+  // Parceiro com data = self-bill em draft na hora (dono, 15/10/2026), como a fatura
+  // nasce em draft quando o job tem preço. Antes só entrava na conclusão.
+  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canDraftSelfBillForJob(row)) {
     try {
       const sbId = await ensureWeeklySelfBillForJob(row);
       if (sbId) row = { ...row, self_bill_id: sbId };
