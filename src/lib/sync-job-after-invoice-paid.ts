@@ -124,9 +124,15 @@ export async function applyManualInvoicePaymentToJobLedger(
 
   if (!hasExistingSource && payAmt > EPS) {
     const paidDate = (inv.paid_date as string) || new Date().toISOString().split("T")[0];
+    /**
+     * Fatura de entrada paga à mão vira pagamento de ENTRADA (15/10/2026). Antes ia sempre
+     * como "customer_final": a sincronização usava esse valor para quitar também a fatura
+     * final, e o job aparecia todo pago com só a entrada no banco (achado no JOB-9733).
+     */
+    const ehEntrada = String((inv as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit";
     const paymentRow = {
       job_id: job.id,
-      type: "customer_final",
+      type: ehEntrada ? "customer_deposit" : "customer_final",
       amount: Math.round(payAmt * 100) / 100,
       payment_date: paidDate,
       note: `${sourceLabel} · ${(inv as { reference?: string }).reference ?? invoiceId}`,
@@ -175,6 +181,18 @@ export async function syncJobAfterInvoicePaidToLedger(
   const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
   if (!jobId) return;
   await finalizeJobAfterInvoicePaid(client, jobId);
+  // Entrada de cotação paga à mão faz o mesmo que o webhook do Stripe: cotação convertida e
+  // aviso ao parceiro (15/10/2026). Só age com a cotação em awaiting_payment.
+  const { data: inv } = await client.from("invoices").select("invoice_kind, job_reference").eq("id", invoiceId).maybeSingle();
+  const i = inv as { invoice_kind?: string | null; job_reference?: string | null } | null;
+  if (i?.invoice_kind === "deposit" && i.job_reference) {
+    try {
+      const { aposEntradaDaCotacaoPaga } = await import("@/lib/quote-accept-job-fields");
+      await aposEntradaDaCotacaoPaga(client, i.job_reference, sourceLabel === "Stripe" ? "stripe_invoice" : "manual_mark_paid");
+    } catch (e) {
+      console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up failed", e);
+    }
+  }
 }
 
 /** Bulk mark-paid: ledger rows in parallel, then one finalize pass per unique job. */

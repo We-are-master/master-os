@@ -272,7 +272,13 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   /** When invoice total is slightly above `jobCustomerBillableRevenueForCollections` (e.g. CCZ/parking in invoice but not yet in job row), deposit/final-only allocation can stay 0 — pool customer payments if close enough. */
   const pooled = Math.round(Math.min(depSum + finSum, amt) * 100) / 100;
   const maxJobRevenueHint = Math.max(totalBillable, scheduleTotal, ticketPlusExtras);
-  if (pooled > allocated + EPS && Math.abs(amt - maxJobRevenueHint) <= 50) {
+  /**
+   * Só para fatura única do job ("combined"/"other"). Em fatura de ENTRADA ou FINAL a
+   * tolerância de £50 misturava os pagamentos: final de £50 num job de £100 recebia a
+   * entrada e aparecia paga sem o cliente pagar o restante (15/10/2026, JOB-9736).
+   */
+  const faturaUnica = kind !== "deposit" && kind !== "final";
+  if (faturaUnica && pooled > allocated + EPS && Math.abs(amt - maxJobRevenueHint) <= 50) {
     allocated = pooled;
   }
 

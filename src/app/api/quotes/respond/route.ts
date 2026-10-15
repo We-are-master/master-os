@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { dataDoJobNoAceite, nomeDoParceiroNoAceite, prepararJobDoAceite } from "@/lib/quote-accept-job-fields";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
@@ -9,7 +10,6 @@ import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compa
 import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { dispatchJobCreatedZendesk, dispatchQuoteRejectedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id",
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2",
       )
       .eq("id", quoteId)
       .single();
@@ -148,6 +148,10 @@ export async function POST(req: NextRequest) {
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
+
+    // Job do aceite já com o nome do parceiro e a data proposta no lance (15/10/2026).
+    const parceiroNoAceite = await nomeDoParceiroNoAceite(supabase, quote);
+    const dataNoAceite = dataDoJobNoAceite(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null });
 
     const qClientId = (quote as { client_id?: string | null }).client_id?.trim() ?? "";
     const acceptBilling = await resolveNominalBillingParty(supabase, {
@@ -206,7 +210,8 @@ export async function POST(req: NextRequest) {
         client_name: quote.client_name ?? "",
         property_address: quote.property_address ?? "Address to be confirmed",
         partner_id: quote.partner_id ?? null,
-        partner_name: quote.partner_name ?? null,
+        partner_name: parceiroNoAceite,
+        scheduled_date: dataNoAceite,
         quote_id: quoteId,
         status: hasPartner ? "scheduled" : "unassigned",
         progress: 0,
@@ -368,11 +373,9 @@ export async function POST(req: NextRequest) {
         console.error("Quote accept (deposit): Zendesk dispatch failed", err);
       });
       if (hasPartner) {
-        void ensureWeeklySelfBillForJob({ ...baseJobRow, id: job.id, reference: job.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
-          .then((sbId) => {
-            if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
-          })
-          .catch((e) => console.error("Quote accept: self-bill create failed", e));
+        // Self-bill já no aceite; o aviso ao parceiro espera a entrada paga (aposEntradaDaCotacaoPaga).
+        const jobId = job.id;
+        after(() => prepararJobDoAceite(supabase, jobId, { avisarParceiro: false }).then(() => undefined));
       }
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
@@ -433,7 +436,8 @@ export async function POST(req: NextRequest) {
       client_name: quote.client_name ?? "",
       property_address: quote.property_address ?? "Address to be confirmed",
       partner_id: quote.partner_id ?? null,
-      partner_name: quote.partner_name ?? null,
+      partner_name: parceiroNoAceite,
+      scheduled_date: dataNoAceite,
       quote_id: quoteId,
       status: hasPartnerNoDep ? "scheduled" : "unassigned",
       progress: 0,
@@ -552,11 +556,9 @@ export async function POST(req: NextRequest) {
       console.error("Quote accept (no deposit): Zendesk dispatch failed", err);
     });
     if (hasPartnerNoDep) {
-      void ensureWeeklySelfBillForJob({ ...baseJobRowNoDep, id: jobNoDep.id, reference: jobNoDep.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
-        .then((sbId) => {
-          if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", jobNoDep.id);
-        })
-        .catch((e) => console.error("Quote accept (no deposit): self-bill create failed", e));
+      // Sem entrada: self-bill e aviso ao parceiro já no aceite.
+      const jobId = jobNoDep.id;
+      after(() => prepararJobDoAceite(supabase, jobId, { avisarParceiro: true }).then(() => undefined));
     }
     void supabase.from("audit_logs").insert({
       entity_type: "quote",
