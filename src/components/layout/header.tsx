@@ -475,7 +475,7 @@ export function Header() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
       className={cn(
-        "z-20 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
+        "z-20 flex h-12 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
