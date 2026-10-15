@@ -3534,9 +3534,15 @@ function JobsPageContent() {
               onRowClick={openJobDetail}
               rowHref={(j) => `/jobs/${j.id}`}
               // On hold tints the whole line: the status chip alone was easy to
-              // miss when scanning a page of rows for what is stuck.
+              // miss when scanning a page of rows for what is stuck. A complaint
+              // gets blood red with a bar on the left (owner, 15/10/2026), so it
+              // never reads as one more amber row next to the other holds.
               rowClassName={(j) =>
-                j.status === "on_hold" ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]" : undefined
+                isJobOnHoldComplaint(j)
+                  ? "bg-red-100 hover:bg-red-200/80 shadow-[inset_4px_0_0_#991B1B] dark:bg-red-950/40 dark:hover:bg-red-950/60"
+                  : j.status === "on_hold"
+                    ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
+                    : undefined
               }
               page={page}
               totalPages={totalPages}
