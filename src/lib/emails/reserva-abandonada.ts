@@ -6,7 +6,8 @@
  *      (limpeza fala de cômodo e checklist; conserto fala do trabalho feito)
  *   3  9h30 do dia seguinte ao 2      10% com código já aplicado
  *
- * Texto aprovado pelo dono em 24/09/2026. Parente das campanhas
+ * Texto aprovado pelo dono em 24/09/2026; voz do Victor desde 15/10/2026 (a
+ * resposta continua caindo no ticket do lead). Parente das campanhas
  * (`campanha-layout`), com cabeçalho branco e logo pequeno, laranja só no botão, tudo em
  * tabela e estilo em linha. Os ícones do e-mail 2 são PNG em
  * `public/email/abandono/`, porque o Gmail não mostra SVG.
@@ -121,7 +122,7 @@ function cartaoDaReserva(d: ReservaAbandonada, comDesconto: boolean): string {
        <div style="font-size:26px; line-height:32px; font-weight:800; color:${CLIENT_BRAND.navy};">${formatarLibras(d.promo.discountedPrice)}</div>
        <div style="font-size:12px; line-height:18px; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.percentOff}% off applied</div>`
     : `<div style="font-size:26px; line-height:32px; font-weight:800; color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</div>
-       <div style="font-size:12px; line-height:18px; color:${CLIENT_BRAND.gray};">Fixed price, VAT included</div>`;
+       <div style="font-size:12px; line-height:18px; color:${CLIENT_BRAND.gray};">Fixed price, the total you pay</div>`;
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px; background:${CLIENT_BRAND.canvas}; border:1px solid ${CLIENT_BRAND.line}; border-radius:12px;">
     <tr>
       <td valign="middle" style="padding:18px 20px;">
@@ -212,7 +213,7 @@ ${preheaderOculto(opts.preheader)}
         <h1 class="h1-mobile" style="margin:0 0 20px; font-size:28px; line-height:35px; font-weight:800; letter-spacing:-0.02em; color:${CLIENT_BRAND.navy};">${escapeHtml(opts.titulo)}</h1>
         ${p(`Hi ${escapeHtml(opts.nome)},`)}
         ${opts.corpo}
-        <p style="margin:0 0 30px; font-size:16px; line-height:24px; color:${CLIENT_BRAND.ink}; font-weight:600;">The Fixfy Team</p>
+        <p style="margin:0 0 30px; font-size:16px; line-height:24px; color:${CLIENT_BRAND.ink}; font-weight:600;">Victor Braz<br><span style="font-weight:400; font-size:14px; color:${CLIENT_BRAND.gray};">Operations Director, Fixfy</span></p>
       </td></tr>
     </table>
     <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
@@ -236,7 +237,7 @@ function primeiroNome(d: ReservaAbandonada): string {
 
 function rodapeTexto(d: ReservaAbandonada): string {
   const ref = refDoTicket(d.ticketRef);
-  return `\n\nThe Fixfy Team\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
+  return `\n\nVictor Braz\nOperations Director, Fixfy\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
 }
 
 // ---------------------------------------------------------------- os três
@@ -248,24 +249,24 @@ export function email1(d: ReservaAbandonada): EmailPronto {
   const subject = "You're almost there!";
   const preheader = `Finish your booking: ${d.service.name} · ${formatarLibras(d.price)} fixed price`;
   const corpo = [
-    p(`We have saved the details of your ${escapeHtml(d.service.name)} booking, so you will not need to start again.`),
+    p(`I noticed you started booking ${escapeHtml(d.service.withArticle)} and did not finish, so we have kept your details saved. There is no need to start again.`),
     cartaoDaReserva(d, false),
-    p(`Your fixed price is <b style="color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</b>. There are no hidden charges added at checkout.`),
-    p("Your booking has not been confirmed yet, but you can continue from exactly where you stopped."),
+    p(`Your fixed price is <b style="color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</b>, and that's what you pay. Nothing gets added at checkout.`),
+    p("Nothing's confirmed yet. You can pick up exactly where you left off."),
     botao("Finish my booking", d.resumeUrl),
-    blocoWhatsApp("Have a question before booking?", d.whatsappUrl),
+    blocoWhatsApp("Got a question first? Message us.", d.whatsappUrl),
   ].join("");
   const text = `Hi ${nome},
 
-We have saved the details of your ${d.service.name} booking, so you will not need to start again.
+I noticed you started booking ${d.service.withArticle} and did not finish, so we have kept your details saved. There is no need to start again.
 
-Your fixed price is ${formatarLibras(d.price)}. There are no hidden charges added at checkout.
+Your fixed price is ${formatarLibras(d.price)}, and that's what you pay. Nothing gets added at checkout.
 
-Your booking has not been confirmed yet, but you can continue from exactly where you stopped.
+Nothing's confirmed yet. You can pick up exactly where you left off.
 
 Finish my booking: ${d.resumeUrl}
 
-Have a question before booking? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+Got a question first? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
   return { subject, preheader, text, html: montar({ preheader, etiqueta: "Booking saved", titulo: "Your fixed price is waiting", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
 }
 
@@ -277,28 +278,28 @@ export function email2(d: ReservaAbandonada): EmailPronto {
   const preheader = "Clear pricing, report photos, secure payment and a 14-day guarantee.";
   const fotos = limpeza ? "Photos of every room once the service is complete" : "Photos of the finished work once the job is complete";
   const garantia = limpeza
-    ? "If anything on the agreed checklist is not completed correctly, let us know within 14 days and we will return to put it right at no additional cost."
-    : "If any of the agreed work is not done correctly, let us know within 14 days and we will return to put it right at no additional cost.";
+    ? "If anything on the agreed checklist isn't done right, tell us within 14 days and we'll come back and put it right, free."
+    : "If any of the agreed work isn't done right, tell us within 14 days and we'll come back and put it right, free.";
   const itens = [
-    { icone: "price", texto: "A clear fixed price, including VAT" },
+    { icone: "price", texto: "A clear fixed price, the total you pay" },
     { icone: "photos", texto: fotos },
     { icone: "guarantee", texto: "A 14-day Fixfy guarantee" },
     { icone: "secure", texto: "Secure payment through Stripe" },
     { icone: "nohidden", texto: "No hidden charges" },
   ];
   const corpo = [
-    p("If you paused because you wanted to check a few details, here is what you can expect from Fixfy:"),
+    p("If you paused because you wanted to know a little more first, here is what you can expect from us:"),
     listaComIcones(itens, base),
     p(garantia),
-    p("Your details are still saved, so you can continue without entering everything again."),
+    p("Your details are still saved, so it's about a minute to finish."),
     botao("Finish my booking", d.resumeUrl),
-    blocoWhatsApp("Would you prefer to speak with someone first?", d.whatsappUrl),
+    blocoWhatsApp("Rather talk to someone first?", d.whatsappUrl),
   ].join("");
   const text = `Hi ${nome},
 
-If you paused because you wanted to check a few details, here is what you can expect from Fixfy:
+If you paused because you wanted to know a little more first, here is what you can expect from us:
 
-- A clear fixed price, including VAT
+- A clear fixed price, the total you pay
 - ${fotos}
 - A 14-day Fixfy guarantee
 - Secure payment through Stripe
@@ -306,11 +307,11 @@ If you paused because you wanted to check a few details, here is what you can ex
 
 ${garantia}
 
-Your details are still saved, so you can continue without entering everything again.
+Your details are still saved, so it's about a minute to finish.
 
 Finish my booking: ${d.resumeUrl}
 
-Would you prefer to speak with someone first? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+Rather talk to someone first? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
   return { subject, preheader, text, html: montar({ preheader, etiqueta: "Before you book", titulo: "Everything included, nothing hidden", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
 }
 
@@ -332,18 +333,18 @@ export function email3(d: ReservaAbandonada): EmailPronto {
     ? `Your unique code is ${navy(escapeHtml(d.promo.code))}, and it has already been applied to your booking. The discount is valid until ${navy(escapeHtml(validade))}. After that time, the code will expire automatically.`
     : `We've applied code ${navy(escapeHtml(d.promo.code))} to your booking.`;
   const corpo = [
-    p(`We have added a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
+    p(`This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
     cartaoDaReserva(d, true),
     p(`Original price: ${formatarLibras(d.price)}<br>Your discounted price: ${navy(formatarLibras(d.promo.discountedPrice))}`),
     caixaDoCodigo(d),
     p(frasesDoCodigo),
-    p("Use the button below to continue from where you stopped and confirm your booking with the discount applied."),
+    p("The button below takes you back to where you stopped, with the discount already on."),
     botao(`Finish my booking with ${pct}% off`, d.resumeUrl),
-    blocoWhatsApp("Have a question before confirming?", d.whatsappUrl),
+    blocoWhatsApp("Any question before you confirm?", d.whatsappUrl),
   ].join("");
   const text = `Hi ${nome},
 
-We have added a ${unico ? "personal " : ""}${pct}% discount to your saved ${d.service.name} booking.
+This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${pct}% discount to your saved ${d.service.name} booking.
 
 Original price: ${formatarLibras(d.price)}
 Your discounted price: ${formatarLibras(d.promo.discountedPrice)}
@@ -354,7 +355,7 @@ The discount is valid until ${validade}. After that time, the code will expire a
 
 Finish my booking with ${pct}% off: ${d.resumeUrl}
 
-Have a question before confirming? Chat with us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+Any question before you confirm? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
   return {
     subject,
     preheader,
