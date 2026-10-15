@@ -238,7 +238,7 @@ function GlobalSearch() {
 
   const searchInput = (ref: RefObject<HTMLInputElement | null>, autoFocus?: boolean) => (
     <div className="relative flex items-center">
-      <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-secondary" />
+      <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
       <input
         ref={ref}
         autoFocus={autoFocus}
@@ -274,7 +274,7 @@ function GlobalSearch() {
       {/* Desktop */}
       <div ref={containerRef} className="relative hidden md:block">
         <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-secondary" />
+          <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
           <input
             ref={inputRef}
             value={query}
@@ -286,7 +286,7 @@ function GlobalSearch() {
               if (query.trim().length >= 2) setOpen(true);
             }}
             placeholder="Search"
-            className="h-[30px] w-full max-w-96 rounded-lg border border-fx-line bg-surface-secondary pl-9 pr-16 text-[13px] text-text-primary placeholder:text-text-tertiary transition-all hover:border-fx-line-2 focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
+            className="h-[27px] w-full max-w-96 rounded-lg border border-fx-line bg-surface-secondary pl-8 pr-16 text-[12px] text-text-primary placeholder:text-text-tertiary transition-all hover:border-fx-line-2 focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
           />
           {query ? (
             <button
@@ -301,7 +301,7 @@ function GlobalSearch() {
               <X className="h-3.5 w-3.5" />
             </button>
           ) : (
-            <kbd className="absolute right-2.5 select-none rounded-sm border border-fx-line bg-fx-paper px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+            <kbd className="absolute right-2 select-none rounded-sm border border-fx-line bg-fx-paper px-1 py-px font-mono text-[9px] text-text-tertiary">
               ⌘K
             </kbd>
           )}
@@ -326,7 +326,7 @@ function GlobalSearch() {
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
-        className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
+        className="flex h-[27px] w-[27px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
         aria-label="Search"
       >
         <Search className="h-5 w-5" />
@@ -418,12 +418,12 @@ function ThemeMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="relative flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
+        className="relative flex h-[27px] w-[27px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
         title="Style"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <Sparkles className="h-[18px] w-[18px]" />
+        <Sparkles className="h-[15px] w-[15px]" />
       </button>
 
       <AnimatePresence>
@@ -475,13 +475,13 @@ export function Header() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: 0.1 }}
       className={cn(
-        "z-20 flex h-10 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
+        "z-20 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-fx-line bg-surface px-3 transition-all duration-300 sm:gap-3 sm:px-6",
       )}
     >
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
         <button
           onClick={toggleMobile}
-          className="lg:hidden h-[30px] w-[30px] rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
+          className="lg:hidden h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -493,7 +493,7 @@ export function Header() {
         <Link
           href="/activity"
           className={cn(
-            "hidden h-[30px] w-[30px] items-center justify-center rounded-lg transition-colors sm:flex",
+            "hidden h-[27px] w-[27px] items-center justify-center rounded-lg transition-colors sm:flex",
             activityLogActive
               ? "bg-primary/15 text-primary"
               : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
@@ -501,26 +501,26 @@ export function Header() {
           title="Activity log"
           aria-label="Activity log"
         >
-          <History className="h-[18px] w-[18px]" />
+          <History className="h-[15px] w-[15px]" />
         </Link>
         <NotificationsMenu />
         <div className="mx-0.5 hidden h-6 w-px bg-border sm:mx-1 sm:block" />
         <div className="flex items-center gap-2.5 pl-1">
           <div className="text-right hidden sm:block">
-            <p className="text-sm font-semibold text-text-primary leading-tight">{displayName}</p>
+            <p className="text-[12px] font-semibold text-text-primary leading-tight">{displayName}</p>
             {displayRole && (
-              <p className="text-[11px] text-text-tertiary">{displayRole}</p>
+              <p className="text-[10px] text-text-tertiary">{displayRole}</p>
             )}
           </div>
-          <Avatar name={displayName} size="sm" />
+          <Avatar name={displayName} size="sm" className="!h-[29px] !w-[29px]" />
         </div>
         <button
           type="button"
           onClick={handleSignOut}
-          className="h-[30px] w-[30px] rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
+          className="h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
           title="Sign out"
         >
-          <LogOut className="h-[18px] w-[18px]" />
+          <LogOut className="h-[15px] w-[15px]" />
         </button>
       </div>
     </motion.header>
