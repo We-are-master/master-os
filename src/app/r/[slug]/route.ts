@@ -1,5 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createTradePortalAutoLoginUrl } from "@/lib/partner-portal-link";
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import {
   createPartnerBidToken,
   createPartnerJobAcceptToken,
@@ -155,6 +157,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
       target = `/job/report?token=${encodeURIComponent(createPartnerReportToken(porJob[1]!, parceiro))}`;
     } catch (err) {
       console.error("[short-link] não consegui assinar o link do job:", err);
+    }
+    /**
+     * Uma porta só (15/10/2026): o clique no e-mail entra no PORTAL já logado, direto na
+     * aba Report do job. O portal pede o formulário com `?embed=1` para mostrar dentro
+     * da gaveta. Se o login automático falhar, segue para o formulário, que funciona sozinho.
+     */
+    if (req.nextUrl.searchParams.get("embed") !== "1") {
+      try {
+        const portal = resolvePartnerTradePortalBaseUrl();
+        const entrar = await createTradePortalAutoLoginUrl(supabase, parceiro, portal, 1);
+        const destino = `/?job=${encodeURIComponent(porJob[1]!)}&tab=report`;
+        return NextResponse.redirect(`${entrar}&next=${encodeURIComponent(destino)}`, 302);
+      } catch (err) {
+        console.error("[short-link] login automático do portal falhou, segue para o formulário:", err);
+      }
     }
   } else {
     const fresco = tokenFresco(row.entity_ref);

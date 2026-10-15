@@ -642,6 +642,12 @@ export default function PublicReportForm({
       } catch {
         /* nada */
       }
+      // Dentro do portal: avisa a página de fora para atualizar o job (15/10/2026).
+      try {
+        if (window.parent !== window) window.parent.postMessage({ type: "fixfy-report-submitted", jobReference }, "*");
+      } catch {
+        /* sem portal em volta */
+      }
       onSubmitted();
     } catch (err) {
       /**
