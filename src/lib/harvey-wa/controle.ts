@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { zendeskApi } from "@/lib/zendesk";
 import { devolverAoHarvey, historico, INTEGRACAO_HARVEY, passarParaEquipe, type MensagemSc } from "./sunshine";
 import { grupoDaConversa } from "./zendesk-wa";
+import { motivoDaDevolucao } from "./equipe-dona";
 
 export async function assumirConversa(sb: SupabaseClient, conversationId: string, quem: string, onde: string) {
   const agora = new Date().toISOString();
@@ -36,7 +37,7 @@ async function moverGrupo(sb: SupabaseClient, conversationId: string, comHarvey:
  *  - as horas saem da conversa de verdade e o chase recomeça (1h, 4h, 20h);
  *  - cliente falou por último: o Harvey responde na hora, no nome de quem atendia.
  */
-export async function devolverConversa(sb: SupabaseClient, conversationId: string) {
+export async function devolverConversa(sb: SupabaseClient, conversationId: string, opcoes: { pessoa?: string } = {}) {
   const agora = new Date().toISOString();
   await devolverAoHarvey(conversationId);
   const msgs = await historico(conversationId, 40).catch(() => [] as MensagemSc[]);
@@ -47,7 +48,8 @@ export async function devolverConversa(sb: SupabaseClient, conversationId: strin
     .update({
       estado: "harvey",
       passou_em: null,
-      motivo_passagem: null,
+      // Devolvida por uma pessoa: a trava de dono (equipe-dona.ts) não vale para o que veio antes.
+      motivo_passagem: opcoes.pessoa ? motivoDaDevolucao(opcoes.pessoa) : null,
       chases: 0,
       ...(ultimaDoCliente ? { cliente_em: ultimaDoCliente.received } : {}),
       harvey_em: ultimaNossa?.received ?? null,

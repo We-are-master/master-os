@@ -43,7 +43,7 @@
  * Roda na rota /api/cron/harvey-wa (n8n a cada 10 min); ?dry-run=1 só lista.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { comentarioDoLeo } from "./email-do-leo";
+import { autorDosEmails, comentarioDoEmail } from "./email-do-leo";
 import { zendeskApi, addTicketTags, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { ajustesDoHarvey, janelaAberta } from "./ajustes";
@@ -366,8 +366,8 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
         feito.push(`WhatsApp ${passo === 1 ? "check-in" : "last message"} (${tpl})`);
       }
     } else if (cliente) {
-      // Sai do Leo, com a assinatura dele, que o Zendesk acrescenta (dono, 15/10/2026).
-      corpoDoTicket.comment = { ...comentarioDoLeo(emailDoPasso(passo, l.nome, l.servico).replace(/\n\nThank you,$/, ""), "Thank you,") };
+      // Sai de quem assina os e-mails (papel autor_emails), com a assinatura que o Zendesk acrescenta (dono, 15/10/2026).
+      corpoDoTicket.comment = { ...comentarioDoEmail(emailDoPasso(passo, l.nome, l.servico).replace(/\n\nThank you,$/, ""), (await autorDosEmails()).zendesk_user_id, "Thank you,") };
       feito.push(`email to ${cliente.email}`);
     }
     if (!corpoDoTicket.comment) {

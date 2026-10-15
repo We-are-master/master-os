@@ -4,12 +4,12 @@
  *
  *   call      -> 📞 To Call      o cliente pediu ligação ou quer falar com uma pessoa
  *   quote     -> 📝 Needs Quote  falta uma pessoa dar o preço (elétrica, gás, fora da tabela)
- *   complaint -> 🚨 Complaint    reclamação, serviço mal feito, reembolso: vai para o Leo
- *   booking   -> fica onde está, mas vai para o Leo (reserva existente, remarcar, cancelar, transferência)
+ *   complaint -> 🚨 Complaint    reclamação, serviço mal feito, reembolso: vai para a operação
+ *   booking   -> fica onde está, mas vai para a operação (reserva existente, remarcar, cancelar, transferência)
  *   null      -> o ticket fica onde está
  *
  * Dono, 15/10/2026: tudo entra New/Open e alguém classifica, e o Harvey conta como
- * alguém. Reclamação e assunto de operação são do Leo (Needs Attention, tag com_leo).
+ * alguém. Reclamação e assunto de operação são do responsável de operação (Needs Attention, tag com_leo).
  *
  * O Harvey diz o que precisa em `need`. O motivo escrito é a segunda prova: modelo que
  * esquece o campo ainda cai na etapa certa quando o texto é claro.
@@ -40,8 +40,8 @@ export function etapaDaPassagem(need: unknown, motivo: string | null | undefined
 const PROXIMA_ACAO: Record<string, string> = {
   call: "call the customer",
   quote: "price this job",
-  complaint: "complaint, Leo to handle",
-  booking: "existing booking, Leo to handle",
+  complaint: "complaint, operations to handle",
+  booking: "existing booking, operations to handle",
 };
 
 /** A linha da fila de ação (fila-de-acao.ts) quando o Harvey passa: o que fazer e o motivo dele. */

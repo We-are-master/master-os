@@ -118,7 +118,7 @@ export function decidirFinalCheck(e: EntradaFinalCheck): DecisaoFinalCheck {
 
   const equipe = (codigo: MotivoParaEquipe, motivo: string): DecisaoFinalCheck => ({ acao: "equipe", codigo, motivo });
 
-  if (e.complaint) return equipe("complaint", "the job or its ticket is in Complaint / with Leo");
+  if (e.complaint) return equipe("complaint", "the job or its ticket is in Complaint / with operations");
   if (e.complaintUnknown) return equipe("complaint", "could not read the Zendesk ticket to rule out a complaint");
   if (!e.reportGate.ok) return equipe("report_incomplete", e.reportGate.message ?? "the report is not complete");
 

@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, estado: "equipe" });
     }
     if (corpo.acao === "devolver") {
-      await devolverConversa(sb, id);
+      await devolverConversa(sb, id, { pessoa: quem });
       return NextResponse.json({ ok: true, estado: "harvey" });
     }
     return NextResponse.json({ error: "unknown action" }, { status: 400 });

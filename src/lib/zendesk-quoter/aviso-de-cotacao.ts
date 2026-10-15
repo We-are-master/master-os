@@ -41,6 +41,7 @@
 import { addTicketTags, isZendeskConfigured, removeTicketTags, updateTicket } from "@/lib/zendesk";
 import { ZD_STATUS_BIDDING, ZD_STATUS_ON_HOLD } from "@/lib/zendesk-statuses";
 import { postcodesNoTexto } from "./achar-job";
+import { idsDoPapel, responsavel } from "@/lib/responsavel-operacao";
 
 /** Mesmo par local do `quoter.ts`: o cliente do Zendesk em `lib/zendesk` não
  *  expõe busca nem leitura de comentários. */
@@ -65,13 +66,15 @@ export const TAG_POSTCODE_RECEBIDO = "harvey_postcode_recebido";
  * Quem assina o aviso.
  *
  * Não pode ser o Harvey: o assento dele no Zendesk é Contributor, cujo
- * `ticket_comment_access` é `none` — ele não é autor de comentário nenhum. O
- * padrão é o Leonardo, agente pleno, porque quem responde ao aviso cai em quem
- * toca a entrega. O token continua sendo o do Victor, e é ele que o Zendesk
- * registra como updater: é isso que mantém os triggers de agente disparando.
+ * `ticket_comment_access` é `none` — ele não é autor de comentário nenhum. É um
+ * agente pleno, porque quem responde ao aviso cai em quem toca a entrega: o papel
+ * "autor_aviso_cotacao" (responsavel-operacao.ts, editável em /agents/harvey;
+ * padrão HARVEY_AVISO_AUTOR_ID). O token continua sendo o do dono da integração, e é
+ * ele que o Zendesk registra como updater: é isso que mantém os triggers de agente disparando.
  */
-export const AUTOR_DO_AVISO =
-  Number(process.env.HARVEY_AVISO_AUTOR_ID?.trim() || "6227542863391");
+export async function autorDoAviso(): Promise<number> {
+  return (await responsavel("autor_aviso_cotacao")).zendesk_user_id;
+}
 
 export type DecisaoDoAviso =
   | { fala: true; cara: "cotando" | "pede_postcode"; tag: string; html: string; status: number; resumo: string }
@@ -181,7 +184,7 @@ export async function avisarNoTicket(args: {
       customStatusId: d.status,
       htmlBody: d.html,
       publicComment: true,
-      authorId: AUTOR_DO_AVISO,
+      authorId: await autorDoAviso(),
       additionalTags: [d.tag],
     });
     return `── Customer reply ──\nSent: ${d.resumo}.`;
@@ -213,12 +216,14 @@ export async function avisarNoTicket(args: {
  */
 export function respondeuComPostcode(
   comentarios: Array<{ authorId: number; publico: boolean; corpo: string; papel?: string }>,
-  autorDoAviso: number,
+  autorDoAviso: number | number[],
 ): boolean {
+  // Lista: quem assina hoje e quem assinava antes (o papel pode ter mudado com ticket parado).
+  const autores = new Set(Array.isArray(autorDoAviso) ? autorDoAviso : [autorDoAviso]);
   let ondeParamos = -1;
   for (let i = 0; i < comentarios.length; i++) {
     const c = comentarios[i]!;
-    if (c.publico && c.authorId === autorDoAviso) ondeParamos = i;
+    if (c.publico && autores.has(c.authorId)) ondeParamos = i;
   }
   if (ondeParamos === -1) return false;
   return comentarios
@@ -243,6 +248,7 @@ export async function desparquearRespondidos(postar: boolean): Promise<number[]>
   }
   const { results } = (await res.json()) as { results?: Array<{ id: number }> };
   const destravados: number[] = [];
+  const autores = await idsDoPapel("autor_aviso_cotacao");
 
   for (const t of results ?? []) {
     const r = await fetch(`${zdBase()}/tickets/${t.id}/comments.json?include=users`, { headers: H });
@@ -254,7 +260,7 @@ export async function desparquearRespondidos(postar: boolean): Promise<number[]>
     const papel = new Map((j.users ?? []).map((u) => [u.id, u.role]));
     const veio = respondeuComPostcode(
       j.comments.map((c) => ({ authorId: c.author_id, publico: c.public, corpo: c.body, papel: papel.get(c.author_id) })),
-      AUTOR_DO_AVISO,
+      autores,
     );
     if (!veio) continue;
 

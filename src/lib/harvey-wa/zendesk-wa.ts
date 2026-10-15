@@ -12,9 +12,10 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
+import { responsavel } from "@/lib/responsavel-operacao";
 import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
-import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL, TAG_NEEDS_ATTENTION } from "@/lib/zendesk-statuses";
 import { ticketAntesDoPreco } from "./preco-da-equipe";
 import type { Identidade } from "./identidade";
 import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
@@ -531,25 +532,25 @@ export async function ticketParaAprovacao(telefone: string | null, quem: string,
   return { ticket, linha: `ticket ${ticket} → Approval (${libras(achado.preco)})` };
 }
 
-/** Leonardo, diretor de operações: dono da Needs Attention (dono, 15/10/2026). */
-const LEO_ZENDESK = Number(process.env.ZENDESK_OPS_AGENT_ID?.trim() || 6227542863391);
-
 /**
- * Reclamação e assunto de operação são do Leo: tag com_leo (🚨 Needs Attention) e o
- * ticket atribuído a ele. Reclamação também vira 🚨 Complaint, mesmo em ticket de job:
- * o job em si não muda, só o ticket.
+ * Reclamação e assunto de operação são do responsável de operação (papel "operacao" em
+ * responsavel-operacao.ts, editável em /agents/harvey): tag com_leo (🚨 Needs Attention;
+ * o nome da tag fica, views e gatilhos do Zendesk dependem dele) e o ticket atribuído a
+ * essa pessoa. Reclamação também vira 🚨 Complaint, mesmo em ticket de job: o job em si
+ * não muda, só o ticket.
  */
-export async function ticketParaOLeo(telefone: string | null, reclamacao: boolean, motivo: string): Promise<string> {
+export async function ticketParaOperacao(telefone: string | null, reclamacao: boolean, motivo: string): Promise<string> {
   if (!telefone || !isZendeskConfigured()) return "";
   const ticket = await ticketPeloTelefone(telefone);
   if (!ticket) return "sem ticket";
   for (let espera = 0; espera < 6 && (await tipoDoTicket(ticket)) === "ai_agent"; espera++) await new Promise((r) => setTimeout(r, 2500));
+  const dono = await responsavel("operacao");
   await zendeskApi(`tickets/${ticket}.json`, {
     method: "PUT",
-    body: { ticket: { assignee_id: LEO_ZENDESK, ...(reclamacao ? { custom_status_id: ZD_STATUS_COMPLAINT } : {}), comment: { public: false, body: `${reclamacao ? "Complaint" : "Operations"}, for Leo: ${motivo}` } } },
+    body: { ticket: { assignee_id: dono.zendesk_user_id, ...(reclamacao ? { custom_status_id: ZD_STATUS_COMPLAINT } : {}), comment: { public: false, body: `${reclamacao ? "Complaint" : "Operations"}, for ${dono.nome}: ${motivo}` } } },
   });
-  await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["com_leo"] } });
-  return `ticket ${ticket} → Leo${reclamacao ? " (Complaint)" : ""}`;
+  await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [TAG_NEEDS_ATTENTION] } });
+  return `ticket ${ticket} → ${dono.nome}${reclamacao ? " (Complaint)" : ""}`;
 }
 
 /** Os tickets abertos que nasceram antes da conversa desta pessoa (lead do Checkatrade, site). */

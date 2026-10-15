@@ -26,7 +26,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOLeo, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -34,6 +34,7 @@ import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
 import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
+import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
@@ -181,7 +182,36 @@ async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string 
   const { data: estado } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
   if (estado && estado.estado !== "harvey") return false;
   const msgs = await historico(conversationId).catch(() => []);
-  return !msgs.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
+  return !msgs.some(ehDaEquipe);
+}
+
+/**
+ * A conversa foi para a equipe pela trava de dono (equipe-dona.ts) e ninguém da equipe
+ * escreveu nas últimas N horas: volta ao Harvey, que responde normalmente (e pode fechar
+ * pelo preço da equipe com book_team_price). Conversa assumida de outro jeito fica onde está.
+ */
+async function equipeLargouAConversa(conversationId: string): Promise<boolean> {
+  const sb = createServiceClient();
+  const { data: est } = await sb.from("harvey_wa_conversas").select("estado, motivo_passagem").eq("conversation_id", conversationId).maybeSingle();
+  if (est?.estado !== "equipe" || !String(est.motivo_passagem ?? "").startsWith(MARCA_EQUIPE_DONA)) return false;
+  const msgs = await historico(conversationId).catch(() => null);
+  if (!msgs || equipeDonaDaConversa(msgs, Date.now(), horasDaEquipeDona()).dona) return false;
+  await sb.from("harvey_wa_conversas").update({ estado: "harvey", passou_em: null, motivo_passagem: null, chases: 0, atualizado_em: new Date().toISOString() }).eq("conversation_id", conversationId);
+  console.log("[harvey-wa] trava de dono vencida: a conversa volta ao Harvey", conversationId);
+  return true;
+}
+
+/**
+ * Trava de dono (dono, 15/10/2026): alguém da equipe escreveu há menos de N horas. O
+ * Harvey não fala nada; a conversa vai para a equipe (ticket sai do "AI agent" e fica
+ * editável). O Reply Status 🔴 sai em depoisDaMensagem (a última fala é do cliente).
+ */
+async function calarPelaEquipe(sb: ReturnType<typeof createServiceClient>, conversationId: string, dona: Extract<DonaDaConversa, { dona: true }>): Promise<string> {
+  const motivo = `${MARCA_EQUIPE_DONA} ${dona.quem} wrote at ${dona.em}, Harvey stays out until ${dona.liberaEm}`;
+  await passarParaEquipe(conversationId, `${dona.quem} is handling this chat`).catch((e) => console.error("[harvey-wa] trava de dono, passar:", e));
+  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivo, chases: 3 }).eq("conversation_id", conversationId);
+  console.log("[harvey-wa] calado:", motivo);
+  return `calado: ${dona.quem} é dono da conversa até ${dona.liberaEm}`;
 }
 
 type LeadWa = { lead_externo?: string | null; job_id?: string | null; ticket_id?: number | string | null; origem?: string | null } | null;
@@ -273,7 +303,7 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
   // A equipe deu o preço no chat: ticket para 🟠 Approval (e a conversa volta ao Harvey para fechar).
-  if (msg.author.type === "business" && msg.author.displayName && !ehDoHarvey(msg) && est?.phone && est.tipo !== "parceiro") {
+  if (ehDaEquipe(msg) && est?.phone && est.tipo !== "parceiro") {
     await precoDaEquipeNoChat(conversa.id, est.phone as string, msg).catch((e) => console.error("[harvey-wa] preço da equipe:", e));
   }
   // Grupo do ticket: 🤖 Harvey enquanto ele atende, Fixfy Support com a equipe (parceiro fica onde está).
@@ -325,7 +355,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const msg = evento.payload.message;
   // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
   // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
-  if (conversa?.id && msg?.author.type === "business" && msg.author.displayName && !ehDoHarvey(msg)) {
+  if (conversa?.id && msg && ehDaEquipe(msg)) {
     const sbEquipe = createServiceClient();
     const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
     if (est?.estado === "harvey") {
@@ -343,7 +373,8 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     // Conversa que nasceu do NOSSO template (lead do Checkatrade) cai com a equipe no
     // Zendesk, e o Harvey nunca respondia (Kit Bransby, 07/10/2026). Se nenhuma pessoa
     // da equipe escreveu ainda, o Harvey assume e segue.
-    if (!(await ehLeadDoTemplateSemEquipe(conversa.id, msg.author.userId))) return "ignorado: conversa com a equipe";
+    // E a conversa que a trava de dono passou para a equipe volta depois de N horas sem ninguém da equipe.
+    if (!(await ehLeadDoTemplateSemEquipe(conversa.id, msg.author.userId)) && !(await equipeLargouAConversa(conversa.id))) return "ignorado: conversa com a equipe";
     await devolverAoHarvey(conversa.id);
   }
   // Só WhatsApp. O chat do site (web) e qualquer outro canal seguem o fluxo de sempre.
@@ -388,6 +419,10 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const msgs = await historico(conversa.id);
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
+  // Quem da equipe escreveu é dono da conversa por N horas: nada do Harvey por cima.
+  // Give back por uma pessoa vale como ordem: o que a equipe escreveu antes não trava.
+  const dona = equipeDonaDaConversa(msgs, Date.now(), horasDaEquipeDona(), devolvidaEm(estado?.motivo_passagem as string | null | undefined));
+  if (dona.dona) return calarPelaEquipe(sb, conversa.id, dona);
 
   // De qual anúncio veio: a mensagem pronta de anúncio mais recente manda (quem já falou com a
   // gente e depois clica num anúncio passa a contar para ele). Sem nenhuma no histórico, vale o lead.
@@ -436,7 +471,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     }
     const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
     const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
-    const equipeEscreveu = depois.some((m) => m.author.type === "business" && m.author.displayName && !ehDoHarvey(m));
+    const equipeEscreveu = depois.some(ehDaEquipe);
     if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
     // O cliente mandou mais alguma coisa enquanto o Harvey escrevia (texto e logo depois a foto): a mensagem
     // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
@@ -503,8 +538,8 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       // Sem `need` (modelo esqueceu, ou prometeu a equipe sem chamar a ferramenta), o que ele disse ao cliente também conta.
       const etapa = etapaDaPassagem(r.precisaDe, r.precisaDe ? r.passarParaEquipe : `${r.passarParaEquipe} ${r.resposta ?? ""}`);
       if (etapa === "complaint" || etapa === "booking") {
-        // Reclamação e operação: do Leo (Needs Attention). Reclamação vira 🚨 Complaint.
-        await ticketParaOLeo(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para o Leo:", e));
+        // Reclamação e operação: do responsável de operação (Needs Attention). Reclamação vira 🚨 Complaint.
+        await ticketParaOperacao(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para a operação:", e));
       } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
     }
     // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).

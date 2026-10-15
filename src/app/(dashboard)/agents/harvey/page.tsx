@@ -6,6 +6,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { lerAjustes } from "@/lib/harvey-wa/ajustes";
+import { lerPapeis } from "@/lib/responsavel-operacao";
 import { lerEdicoes } from "@/lib/harvey-wa/conhecimento";
 import { SECOES_CLIENTE, SECOES_PARCEIRO } from "@/lib/harvey-wa/prompt";
 import { versaoAtual, type TabelaDePrecos } from "@/lib/os-documentos";
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HarveyAgentPage() {
   const sb = createServiceClient();
-  const [cliente, parceiro, { data: pausa }, catalogo, ajustes] = await Promise.all([
+  const [cliente, parceiro, { data: pausa }, catalogo, ajustes, papeis] = await Promise.all([
     lerEdicoes(sb, "cliente").catch(() => ({})),
     lerEdicoes(sb, "parceiro").catch(() => ({})),
     sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle(),
@@ -25,6 +26,7 @@ export default async function HarveyAgentPage() {
       .then(([v, servicos]) => (v?.documento.formato === 3 ? paraCatalogo(gerarTabelaDoSite(v.documento.layout, v.documento.mapa, servicos)) : null))
       .catch(() => null),
     lerAjustes(sb),
+    lerPapeis(sb),
   ]);
   return (
     <AgenteHarvey
@@ -33,6 +35,7 @@ export default async function HarveyAgentPage() {
       pausado={pausa?.valor === true}
       catalogo={catalogo}
       ajustes={ajustes}
+      papeis={papeis}
     />
   );
 }

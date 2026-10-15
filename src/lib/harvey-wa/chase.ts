@@ -20,6 +20,7 @@ import { maxChases, pensar, type Fala } from "./cerebro";
 import { contextoDaPessoa, catalogo, paraFalas, sessaoAtual } from "./motor";
 import { chamarSite } from "./site";
 import { enviarTexto, historico, vozDaConversa } from "./sunshine";
+import { devolvidaEm, equipeDonaDaConversa, horasDaEquipeDona } from "./equipe-dona";
 
 const DEGRAUS_H = [1, 4, 20];
 /** Teste: HARVEY_WA_CHASE_ESCALA=0.05 vira 3 min, 12 min e 1h. */
@@ -41,7 +42,7 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
   const desde = new Date(agora.getTime() - JANELA_H * 3_600_000).toISOString();
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, phone, cliente_em, harvey_em, chases, checkout_method, sinal_recebido_em, liberado_em")
+    .select("conversation_id, phone, cliente_em, harvey_em, chases, checkout_method, sinal_recebido_em, liberado_em, motivo_passagem")
     .eq("estado", "harvey")
     .lt("chases", maxChases())
     .gte("cliente_em", desde)
@@ -61,6 +62,12 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     out.olhados++;
 
     const todas = await historico(c.conversation_id as string);
+    // Alguém da equipe escreveu há menos de N horas (equipe-dona.ts): nada de chase por cima dela.
+    const dona = equipeDonaDaConversa(todas, agora.getTime(), horasDaEquipeDona(), devolvidaEm(c.motivo_passagem as string | null));
+    if (dona.dona) {
+      out.detalhes.push(`${c.conversation_id}: ${dona.quem} owns the chat until ${dona.liberaEm}, no chase`);
+      continue;
+    }
     const voz = vozDaConversa(todas);
     const msgs = voz ? todas : sessaoAtual(todas);
     const ultima = msgs[msgs.length - 1];
