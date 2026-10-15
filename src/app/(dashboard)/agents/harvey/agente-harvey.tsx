@@ -6,7 +6,7 @@
  * site só para leitura. Texto em inglês como o resto do OS, sem travessão.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { Tabs } from "@/components/ui/tabs";
 import type { SecaoDoPrompt, PerfilDoHarvey } from "@/lib/harvey-wa/prompt";
 import type { EdicaoSalva } from "@/lib/harvey-wa/conhecimento";
 import type { AjustesDoHarvey } from "@/lib/harvey-wa/ajustes";
+import type { PapeisDaEquipe, PapelDaEquipe } from "@/lib/responsavel-operacao";
 
 type Precos = Record<string, number | null>;
 export type Catalogo = {
@@ -67,12 +68,14 @@ export function AgenteHarvey({
   pausado,
   catalogo,
   ajustes,
+  papeis,
 }: {
   secoes: Record<PerfilDoHarvey, SecaoDoPrompt[]>;
   edicoes: Record<PerfilDoHarvey, Record<string, EdicaoSalva>>;
   pausado: boolean;
   catalogo: Catalogo | null;
   ajustes: Ajustes;
+  papeis: Papeis;
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<"cliente" | "parceiro" | "precos">("cliente");
@@ -108,6 +111,8 @@ export function AgenteHarvey({
         </PageHeader>
 
         <CartaoDeAjustes inicial={ajustes} onSalvo={() => router.refresh()} />
+
+        <CartaoDePapeis inicial={papeis} onSalvo={() => router.refresh()} />
 
         <section className="rounded-xl border border-border-light bg-surface-secondary p-4">
           <h2 className="mb-2 text-sm font-semibold text-text-primary">Fixed rules (shared with the website, set in code)</h2>
@@ -492,6 +497,101 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
           </Button>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+type Papeis = PapeisDaEquipe & { atualizado_em: string | null; atualizado_por: string | null };
+type AgenteZd = { id: number; name: string; email: string | null };
+
+const PAPEIS_NA_TELA: Array<[PapelDaEquipe, string, string]> = [
+  ["operacao", "Operations owner", "Complaints and operations hand-offs are assigned to them (Needs Attention)."],
+  ["autor_emails", "Sender of chase emails", "Quote and lead follow-up emails go out in their name, with their Zendesk signature."],
+  ["autor_aviso_cotacao", "Sender of quote notices", "Signs the \"we're working on a quote\" reply and quotes sent by email."],
+];
+
+/** Papéis da equipe: quem faz cada coisa é ajuste, não pessoa no código (dono, 15/10/2026). Só admin edita. */
+function CartaoDePapeis({ inicial, onSalvo }: { inicial: Papeis; onSalvo: () => void }) {
+  const base = () => Object.fromEntries(PAPEIS_NA_TELA.map(([p]) => [p, inicial[p].zendesk_user_id])) as Record<PapelDaEquipe, number>;
+  const [escolha, setEscolha] = useState<Record<PapelDaEquipe, number>>(base);
+  const [agentes, setAgentes] = useState<AgenteZd[] | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const mudou = JSON.stringify(escolha) !== JSON.stringify(base());
+
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/agents/harvey/papeis")
+      .then(async (r) => {
+        const j = (await r.json().catch(() => ({}))) as { agentes?: AgenteZd[]; error?: string };
+        if (!vivo) return;
+        if (!r.ok) setAviso(j.error ?? `Could not load Zendesk agents (${r.status})`);
+        else setAgentes(j.agentes ?? []);
+      })
+      .catch(() => vivo && setAviso("Could not load Zendesk agents"));
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  async function salvarPapeis() {
+    setOcupado(true);
+    try {
+      const res = await fetch("/api/agents/harvey/papeis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(escolha) });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? `failed (${res.status})`);
+      toast.success("Team roles saved: they apply within a minute");
+      onSalvo();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  const SELECT = "h-9 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary focus:border-primary focus:outline-none";
+  return (
+    <section className="space-y-4 rounded-xl border border-border-light bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-text-primary">Team roles</h2>
+        <span className="text-xs text-text-tertiary">
+          {inicial.atualizado_em ? `Last changed by ${inicial.atualizado_por ?? "team"}, ${quando(inicial.atualizado_em)}` : "Default roles"}
+        </span>
+      </div>
+      <div className="grid gap-4 md:grid-cols-3">
+        {PAPEIS_NA_TELA.map(([papel, rotulo, nota]) => (
+          <label key={papel} className="space-y-1.5">
+            <span className="block text-sm font-medium text-text-primary">{rotulo}</span>
+            <span className="block text-xs text-text-tertiary">{nota}</span>
+            {agentes ? (
+              <select className={SELECT} value={escolha[papel]} onChange={(e) => setEscolha({ ...escolha, [papel]: Number(e.target.value) })}>
+                {agentes.some((a) => a.id === escolha[papel]) ? null : <option value={escolha[papel]}>{inicial[papel].nome}</option>}
+                {agentes.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.email ? ` (${a.email})` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="block text-sm text-text-secondary">{inicial[papel].nome}</span>
+            )}
+          </label>
+        ))}
+      </div>
+      {aviso ? <p className="text-xs text-text-tertiary">{aviso}</p> : null}
+      {agentes ? (
+        <div className="flex items-center gap-2">
+          <Button size="sm" disabled={!mudou} loading={ocupado} onClick={salvarPapeis}>
+            Save roles
+          </Button>
+          {mudou ? (
+            <Button size="sm" variant="outline" onClick={() => setEscolha(base())}>
+              Discard changes
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

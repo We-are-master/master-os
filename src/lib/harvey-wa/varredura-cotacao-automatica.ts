@@ -23,7 +23,7 @@ import { ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, 
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { escolherMelhorLance, type Lance } from "@/lib/quote-melhor-lance";
-import { AUTOR_DO_AVISO } from "@/lib/zendesk-quoter/aviso-de-cotacao";
+import { autorDoAviso } from "@/lib/zendesk-quoter/aviso-de-cotacao";
 import { guardarFotosDoTicket } from "@/lib/zendesk-quoter/guardar-fotos";
 import { baixarMidia, ehDoHarvey, enviarTexto, historico, scNotificacao, vozDaConversa, type MensagemSc } from "./sunshine";
 import { idDaIntegracaoWhatsApp, telefoneE164 } from "./primeiro-contato";
@@ -200,7 +200,7 @@ async function falarComCliente(t: Ticket, user: Usuario, conv: Conversa, texto: 
     });
     return "WhatsApp template";
   }
-  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: AUTOR_DO_AVISO, body: `${texto}\n\nKind regards,\nFixfy Team` } } } });
+  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: await autorDoAviso(), body: `${texto}\n\nKind regards,\nFixfy Team` } } } });
   return "email";
 }
 

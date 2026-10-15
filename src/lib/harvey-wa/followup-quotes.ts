@@ -25,7 +25,7 @@
  * `quote_closed_by_customer`. Só 8h às 20h de Londres.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { comentarioDoLeo, htmlDoLeo, textoDoLeo } from "./email-do-leo";
+import { autorDosEmails, comentarioDoEmail, htmlDoEmail, textoDoEmail } from "./email-do-leo";
 import { zendeskApi, addTicketTags } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { historico, scApi, scNotificacao } from "./sunshine";
@@ -71,7 +71,7 @@ export function ehB2B(t: Pick<Ticket, "tags">): boolean {
 }
 
 export function textoDaCobranca(passo: 1 | 2 | 3, nome: string, b2b = false): string {
-  // Tom profissional, na voz de quem assina (o Leo), e a frase de fecho em parágrafo próprio: dono, 15/10/2026.
+  // Tom profissional, na voz de quem assina (papel autor_emails), e a frase de fecho em parágrafo próprio: dono, 15/10/2026.
   if (b2b) {
     return {
       1: `Hi ${nome},\n\nI am following up on the quote we sent. Should you wish to proceed, please reply with your preferred date and we will confirm the booking.`,
@@ -110,10 +110,11 @@ async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
 }
 
 async function emailDoResend(para: string, assunto: string, texto: string) {
+  const { nome } = await autorDosEmails();
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: "Leonardo Piovesan · Fixfy <no-reply@getfixfy.com>", reply_to: "hello@getfixfy.com", to: [para], subject: assunto, text: textoDoLeo(texto), html: htmlDoLeo(texto, "Kind regards,", true) }),
+    body: JSON.stringify({ from: `${nome.replace(/[<>"]/g, "")} · Fixfy <no-reply@getfixfy.com>`, reply_to: "hello@getfixfy.com", to: [para], subject: assunto, text: textoDoEmail(texto, nome), html: htmlDoEmail(texto, "Kind regards,", nome) }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(`Resend ${r.status}`);
@@ -184,9 +185,9 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       try {
         const resposta = RESPOSTA_DE_FECHAMENTO(nome);
         if (ehWhatsApp && conversa) {
-          await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: "Fixfy" }, content: { type: "text", text: resposta } } });
+          await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: "Fixfy" }, content: { type: "text", text: resposta }, metadata: { origem: "quote_closed" } } });
         } else {
-          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoLeo(resposta) } } });
+          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta, (await autorDosEmails()).zendesk_user_id) } } });
         }
         await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`);
         out.fechados.push(`${quem}: closed (${motivo})`);
@@ -217,7 +218,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
 
     try {
       if (ehWhatsApp && janelaAberta && conversa) {
-        await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: texto } } });
+        await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: texto }, metadata: { origem: "quote_chase" } } });
       } else if (ehWhatsApp || (!b2b && user?.phone)) {
         await scNotificacao({
           destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: user?.phone },
@@ -237,7 +238,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       }
       if (!ehWhatsApp) {
         // Ticket de e-mail (B2B ou B2C): o lembrete vai no próprio ticket, e a resposta cai nele.
-        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoLeo(texto) } } });
+        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(texto, (await autorDosEmails()).zendesk_user_id) } } });
       } else if (email) {
         await emailDoResend(email, "Your Fixfy quote", texto);
       }

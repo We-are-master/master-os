@@ -16,7 +16,7 @@ test("sem need, o motivo escrito decide", () => {
   assert.equal(etapaDaPassagem(undefined, "Gas hob ignition, team to take over"), "quote");
 });
 
-test("reclamação vira complaint; reserva existente e transferência vão para o Leo", () => {
+test("reclamação vira complaint; reserva existente e transferência vão para a operação", () => {
   assert.equal(etapaDaPassagem("complaint", "anything"), "complaint");
   assert.equal(etapaDaPassagem("booking", "anything"), "booking");
   assert.equal(etapaDaPassagem(undefined, "Customer is unhappy with the clean and wants a refund"), "complaint");
@@ -39,6 +39,6 @@ test("promessa feita ao cliente sem chamar a ferramenta também decide", () => {
 
 test("a linha da fila de ação diz o que fazer e por quê", () => {
   assert.equal(textoDaPassagem("call", "Customer asked  for a call back"), "Harvey handed over (call the customer): Customer asked for a call back");
-  assert.equal(textoDaPassagem("complaint", "unhappy with the tiling"), "Harvey handed over (complaint, Leo to handle): unhappy with the tiling");
+  assert.equal(textoDaPassagem("complaint", "unhappy with the tiling"), "Harvey handed over (complaint, operations to handle): unhappy with the tiling");
   assert.equal(textoDaPassagem(undefined, ""), "Harvey handed over (pick up the chat)");
 });

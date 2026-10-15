@@ -151,3 +151,10 @@ export function baseStatusForCustomStatusId(
   if (customStatusId == null) return null;
   return STATUS_CATEGORY[customStatusId] ?? null;
 }
+
+/**
+ * Tag da fila 🚨 Needs Attention (reclamação e operação, do responsável de operação).
+ * O nome fica "com_leo" por enquanto: views e gatilhos do Zendesk dependem dele.
+ * Renomear é mudança no Zendesk primeiro, depois aqui.
+ */
+export const TAG_NEEDS_ATTENTION = "com_leo";

@@ -53,7 +53,7 @@ export type CampanhaInput = {
   notaDoRodape?: string;
   /** Selo laranja à direita do logo ("FIXFY CLUB", "36 HOURS ONLY"). Sem selo, só o logo. */
   selo?: string;
-  /** Quem assina. Sem isto, "Leo at Fixfy". */
+  /** Quem assina. Sem isto, "The Fixfy Team". */
   assinatura?: Assinatura;
 };
 
@@ -64,7 +64,7 @@ export const ASSINATURA_DO_VICTOR: Assinatura = {
   nome: "Victor Braz",
   linha: "Operations Director, Fixfy. Reply to this email and I will get back to you personally.",
 };
-const ASSINATURA_PADRAO: Assinatura = { nome: "Leo at Fixfy", linha: "Reply to this email and a real person answers." };
+const ASSINATURA_PADRAO: Assinatura = { nome: "The Fixfy Team", linha: "Reply to this email and a real person answers." };
 
 /**
  * Cabeçalho compacto (dono, 15/10/2026, versão C): faixa navy baixa com o logo
