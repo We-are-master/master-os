@@ -10,7 +10,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { renderCampanha } from "@/lib/emails/campanha-layout";
+import { ASSINATURA_DO_VICTOR, renderCampanha } from "@/lib/emails/campanha-layout";
 import { unsubscribeUrl } from "@/lib/email/unsubscribe";
 import { SITE } from "./calendario";
 import { remetente } from "./clube";
@@ -25,21 +25,20 @@ export const ASSUNTO_DA_AVALIACAO = "How did we do?";
 
 export function htmlDaAvaliacao(nome: string | undefined, saida: string): string {
   return renderCampanha({
-    preheader: "Two minutes to tell us, and £20 off for a friend.",
+    preheader: "Honest answer welcome. And £20 off for a friend.",
     etiqueta: "Thank you",
     selo: "Thank you",
-    titulo: "Thank you for booking with Fixfy",
+    titulo: "Thanks for booking with us",
     nome,
     blocos: [
-      { tipo: "texto", html: "We hope everything was done the way you wanted. If anything was missed, reply to this email within 14 days of the job and we will come back to put it right." },
-      { tipo: "lista", titulo: "If you were happy, two things help us more than anything", itens: [
-        "A short Google review, so the next person knows what to expect",
-        "Passing us on: a friend who books with the code <strong>REFER20</strong> gets £20 off any booking of £100 or more",
-      ] },
+      { tipo: "texto", html: "Victor here. I hope the job went the way you wanted." },
+      { tipo: "texto", html: "If anything was missed, just reply within 14 days of the job and we'll come back and put it right. This comes straight to me, and I read every one." },
+      { tipo: "texto", html: "If you were happy, two things help a small team like ours more than anything. A short Google review, so the next person knows what to expect. And passing us on: a friend who books with <strong>REFER20</strong> gets £20 off any booking of £100 or more." },
     ],
     oferta: { codigo: "REFER20", valor: "£20 off", sobre: "for a friend, on bookings of £100 or more", validade: "31 March" },
     cta: { texto: "Leave a review", url: LINK_DO_GOOGLE },
     unsubscribeUrl: saida,
+    assinatura: ASSINATURA_DO_VICTOR,
     notaDoRodape: `Book again any time at <a href="${SITE}" style="color:inherit;">getfixfy.com</a>.`,
   });
 }

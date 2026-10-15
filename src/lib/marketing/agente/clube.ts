@@ -12,7 +12,7 @@
  */
 
 import { ofertaDaPeca } from "@/lib/email-sequences/render";
-import { renderCampanha, type Bloco, type OfertaNoEmail } from "@/lib/emails/campanha-layout";
+import { ASSINATURA_DO_VICTOR, renderCampanha, type Bloco, type OfertaNoEmail } from "@/lib/emails/campanha-layout";
 import { pecaDoClube, type PecaDoClube } from "./clube-servicos";
 import { CLUBE, SITE, quandoSaiAEdicao, type EdicaoDoClube } from "./calendario";
 import { agendarBroadcast, broadcasts, criarBroadcast, type BroadcastResend } from "./resend";
@@ -23,13 +23,14 @@ export const LINK_DE_SAIDA = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 
 /**
  * Marketing sai do subdomínio `news`, nunca do domínio que manda confirmação e
- * cobrança, e sempre como Fixfy Team. Padrão no código de propósito: não
+ * cobrança, e no nome do Victor desde 15/10/2026. Padrão no código de propósito: não
  * depende de variável na Vercel.
  */
 export function remetente(): { from: string; reply_to: string } {
   return {
-    from: process.env.MARKETING_AGENTE_FROM?.trim() || "Fixfy Team <team@news.getfixfy.com>",
-    reply_to: process.env.MARKETING_AGENTE_REPLY_TO?.trim() || "hello@getfixfy.com",
+    // Voz do Victor (dono, 15/10/2026): sai no nome dele e a resposta cai na caixa dele.
+    from: process.env.MARKETING_AGENTE_FROM?.trim() || "Victor at Fixfy <victor@news.getfixfy.com>",
+    reply_to: process.env.MARKETING_AGENTE_REPLY_TO?.trim() || "victor@getfixfy.com",
   };
 }
 
@@ -39,6 +40,7 @@ export function htmlDoBroadcast(p: {
 }): string {
   return renderCampanha({
     selo: "Fixfy Club",
+    assinatura: ASSINATURA_DO_VICTOR,
     ...p,
     nome: NOME_DO_CONTATO,
     // Depoimento só entra quando for de cliente de verdade. Os da agenda eram texto de exemplo.
