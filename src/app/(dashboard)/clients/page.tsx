@@ -12,6 +12,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
+import { ClientSavedCard } from "@/components/clients/client-saved-card";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -1065,6 +1066,9 @@ function ClientDetailDrawer({
                 ) : null}
                 {!client.source_account_id ? <> · {sourceLabels[client.source]} source</> : null}
               </p>
+
+              {/* Cartão salvo (15/10/2026): fica junto dos números do cliente. */}
+              <ClientSavedCard client={client as Parameters<typeof ClientSavedCard>[0]["client"]} />
 
               {/* Tags */}
               {client.tags && client.tags.length > 0 && (
