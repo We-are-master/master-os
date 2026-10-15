@@ -178,6 +178,8 @@ export function CashflowWeekDetailModal({
   const totalOut = soma(paidOut) + soma(dueOut);
   const net = Math.round((totalIn - totalOut) * 100) / 100;
   const opening = Number(openingBalance ?? 0);
+  /** O caixa de abertura vale no 1º dia do período (segunda que abre a semana ou a quinzena). */
+  const inicio = detail?.startYmd ?? breakdown?.weekStart ?? null;
   const closing = Math.round((opening + net) * 100) / 100;
 
   const porTipo = (lines: CashflowBreakdownLine[], kind: CashflowBreakdownLine["kind"]) => lines.filter((l) => l.kind === kind);
@@ -196,7 +198,8 @@ export function CashflowWeekDetailModal({
           <div className="min-w-0">
             <p className="m-0 flex items-center gap-1 text-[11px] text-text-tertiary">
               Opening balance
-              <FixfyHintIcon text="Money in the bank at the start of the period. Click to edit; the next periods carry it forward." />
+              {inicio ? <span className="font-medium text-text-secondary">· {dia(inicio)}</span> : null}
+              <FixfyHintIcon text="Money in the bank on the first day of the period, before anything comes in or goes out. Click to edit; the next periods carry it forward." />
             </p>
             {editingOpening && breakdown && onSaveOpeningBalance ? (
               <div className="mt-0.5 flex items-center gap-1.5">
