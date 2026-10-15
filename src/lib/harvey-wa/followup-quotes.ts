@@ -25,6 +25,7 @@
  * `quote_closed_by_customer`. Só 8h às 20h de Londres.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { comentarioDoLeo, htmlDoLeo, textoDoLeo } from "./email-do-leo";
 import { zendeskApi, addTicketTags } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { historico, scApi, scNotificacao } from "./sunshine";
@@ -70,17 +71,18 @@ export function ehB2B(t: Pick<Ticket, "tags">): boolean {
 }
 
 export function textoDaCobranca(passo: 1 | 2 | 3, nome: string, b2b = false): string {
+  // Tom profissional, na voz de quem assina (o Leo), e a frase de fecho em parágrafo próprio: dono, 15/10/2026.
   if (b2b) {
     return {
-      1: `Hi ${nome}, just checking you received our quote. If you're happy to go ahead, reply with the date that suits you and we'll get it booked in.`,
-      2: `Hi ${nome}, following up on our quote. If anything in it needs adjusting, scope, timing or access, tell us and we'll send a revised version the same day.`,
-      3: `Hi ${nome}, this is our last follow-up on this quote. If we don't hear back in the next two days we'll close it on our side, and you can reopen it any time by replying to this email.`,
+      1: `Hi ${nome},\n\nI am following up on the quote we sent. Should you wish to proceed, please reply with your preferred date and we will confirm the booking.`,
+      2: `Hi ${nome},\n\nFollowing up on our quote. If any part of it needs adjusting, whether scope, timing or access, please let me know and we will issue a revised version the same day.`,
+      3: `Hi ${nome},\n\nThis is our final follow-up on this quote. If we do not hear back within the next two days, we will close it on our side.\n\nYou can reopen it at any time by replying to this email.`,
     }[passo];
   }
   return {
-    1: `Hi ${nome}, just checking you received our quote. If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in. Any questions, just ask.`,
-    2: `Hi ${nome}, following up on our quote. If you'd like anything changed, the date, the scope or anything else, just tell us and we'll sort it.`,
-    3: `Hi ${nome}, last follow-up on our quote from us. If we don't hear back in the next two days we'll close it, and you can always message us again whenever you're ready.`,
+    1: `Hi ${nome},\n\nI wanted to follow up on the quote we sent you. If you would like to go ahead, please reply with a date that suits you and we will arrange the booking.\n\nIf you have any questions, I will be happy to help.`,
+    2: `Hi ${nome},\n\nFollowing up on our quote. If you would like any changes to the scope or the timing, please let me know and I will send you a revised quote.`,
+    3: `Hi ${nome},\n\nThis is my final follow-up regarding our quote. If we do not hear from you within the next two days, we will close it on our side.\n\nYou are welcome to get in touch again at any time.`,
   }[passo];
 }
 
@@ -97,7 +99,7 @@ export function motivoDeDesistencia(texto: string | null | undefined): "booked_e
 }
 
 const RESPOSTA_DE_FECHAMENTO = (nome: string) =>
-  `No problem at all, ${nome}, thanks for letting us know. We'll close this quote on our side. If anything changes, just message us here.`;
+  `Hi ${nome},\n\nThank you for letting us know. We have closed this quote on our side.\n\nShould anything change, please do not hesitate to get in touch.`;
 
 async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
   await zendeskApi(`tickets/${t.id}.json`, {
@@ -111,7 +113,7 @@ async function emailDoResend(para: string, assunto: string, texto: string) {
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: "Fixfy Team <no-reply@getfixfy.com>", reply_to: "hello@getfixfy.com", to: [para], subject: assunto, text: `${texto}\n\nKind regards,\nFixfy Team` }),
+    body: JSON.stringify({ from: "Leonardo Piovesan · Fixfy <no-reply@getfixfy.com>", reply_to: "hello@getfixfy.com", to: [para], subject: assunto, text: textoDoLeo(texto), html: htmlDoLeo(texto, "Kind regards,", true) }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(`Resend ${r.status}`);
@@ -184,7 +186,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
         if (ehWhatsApp && conversa) {
           await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: "Fixfy" }, content: { type: "text", text: resposta } } });
         } else {
-          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, body: `${resposta}\n\nKind regards,\nFixfy Team` } } } });
+          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoLeo(resposta) } } });
         }
         await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`);
         out.fechados.push(`${quem}: closed (${motivo})`);
@@ -235,7 +237,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       }
       if (!ehWhatsApp) {
         // Ticket de e-mail (B2B ou B2C): o lembrete vai no próprio ticket, e a resposta cai nele.
-        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, body: `${texto}\n\nKind regards,\nFixfy Team` } } } });
+        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoLeo(texto) } } });
       } else if (email) {
         await emailDoResend(email, "Your Fixfy quote", texto);
       }
