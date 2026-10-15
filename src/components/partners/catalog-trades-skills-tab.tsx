@@ -305,7 +305,7 @@ export function CatalogTradesSkillsTab(props: Props) {
   if (!hasCatalog) {
     return (
       <div className="p-6 text-sm text-text-tertiary text-center">
-        No services in Settings → Services yet. Add services there — they appear here automatically.
+        No services in Settings → Pricing yet. Add services there — they appear here automatically.
       </div>
     );
   }
@@ -372,8 +372,8 @@ export function CatalogTradesSkillsTab(props: Props) {
         </h3>
         <p className="text-xs text-text-tertiary mt-1">
           {isAccount
-            ? "What this account can book. Enable trades, certificates, and other services from Settings → Services — new rows appear here automatically."
-            : "What this partner does. Enable trades, certificates, cleaning, and other services from Settings → Services — we match jobs to enabled rows."}
+            ? "What this account can book. Enable trades, certificates, and other services from Settings → Pricing — new rows appear here automatically."
+            : "What this partner does. Enable trades, certificates, cleaning, and other services from Settings → Pricing — we match jobs to enabled rows."}
         </p>
       </div>
 

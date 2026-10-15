@@ -50,10 +50,10 @@ type PricingArea = "catalog" | "labour" | "materials" | "quote";
 
 function AreaSegment({ area, onChange }: { area: PricingArea; onChange: (a: PricingArea) => void }) {
   const tabs: { id: PricingArea; label: string }[] = [
-    { id: "catalog", label: "Catalog" },
+    { id: "catalog", label: "Catalogue" },
     { id: "labour", label: "Labour" },
     { id: "materials", label: "Materials" },
-    { id: "quote", label: "Quote" },
+    { id: "quote", label: "Estimator" },
   ];
   return (
     <div className="fx-seg">
@@ -573,7 +573,7 @@ function StatusSegment({
   const tabs: { id: ServicesStatusFilter; label: string }[] = [
     { id: "active", label: "Active" },
     { id: "all", label: "All" },
-    { id: "thin", label: "Thin margin" },
+    { id: "thin", label: "Low margin" },
   ];
   return (
     <div className="fx-seg">
@@ -717,8 +717,8 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
       ) : (
         <PageHeader
           eyebrow="Catalog · Pricing"
-          title="Services"
-          subtitle="The standard price list: what you pay, what you charge, what you keep. Items On website are what the website, the checkout and Harvey use. Accounts and partners with their own rates override these."
+          title="Pricing"
+          subtitle="Manage standard service prices, labour rates and material costs. Account and partner rates override these defaults where configured."
         >
           <AreaSegment area={area} onChange={setArea} />
           {headerActions}

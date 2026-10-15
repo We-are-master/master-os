@@ -1,5 +1,8 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { OS_PAGE_HELP } from "@/lib/os-copy";
+
 import { useState } from "react";
 import { Crown, Download } from "lucide-react";
 import { formatBritishDate } from "@/lib/utils/date";
@@ -102,6 +105,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
         <h1 className="m-0 font-display text-[20px] font-bold leading-none tracking-tight text-text-primary">
           {greeting}, {firstName}.
         </h1>
+        <FixfyHintIcon label="Overview" text={OS_PAGE_HELP.Overview} />
         <p className="m-0 text-[12px] leading-none text-fx-mute">
           {formatLongDate(today)}
           {typeof todaysJobsCount === "number" && (
@@ -121,10 +125,10 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
                 ? "bg-fx-navy text-white border-fx-navy"
                 : "bg-card text-text-secondary border-fx-line hover:bg-fx-paper",
             )}
-            title="CEO financial dashboard"
+            title="Financial overview"
           >
             <Crown className="h-3.5 w-3.5" />
-            CEO
+            Financial overview
           </button>
         )}
         <CurrencyToggle />

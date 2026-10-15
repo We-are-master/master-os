@@ -59,10 +59,10 @@ function PulseInner() {
                 <LiveOperations />
               </PulseStrip>
               <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr]">
-                <PulseStrip title="This month" hint="Revenue, costs and margin for the selected period.">
+                <PulseStrip title="Period results" hint="Revenue, costs and margin for the selected period.">
                   <Financials />
                 </PulseStrip>
-                <PulseStrip title="To receive" hint="Unpaid invoices: what is open, what is overdue and what platforms pay on their own cycle.">
+                <PulseStrip title="Receivables" hint="Unpaid invoices: what is open, what is overdue and what platforms pay on their own cycle.">
                   <MoneyReceivable />
                 </PulseStrip>
               </div>

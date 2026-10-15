@@ -4,29 +4,20 @@ import type { RunwayViewMode } from "@/lib/billing-runway-views";
 /** In-product copy explaining Cash-Flow Runway buckets. */
 
 const PL_HINT = [
-  "Projection by week (Mon–Sun), not payments already made.",
-  "Top line (P&L): receivables due minus payouts and expenses due that week — not realized cash.",
-  "Green (up): open invoice balances whose due date falls in that week (excludes draft, on hold, paid).",
-  "Coral (down): self-bills due that week (approved, ready, draft/accumulating) + open expenses (bills) due that week.",
-  "Click any week column to open a line-item breakdown.",
-  "Use ← → to shift the 10-week window when no period filter is active.",
+  "Open receivables minus self-bills and expenses due in each period. This is a forecast, not realised profit.",
+  "Receivables exclude draft, on-hold and paid invoices. Outgoings include open expenses and self-bills, including drafts.",
+  "Select a period to review its line items.",
 ].join(" ");
 
 const ACCRUAL_HINT = [
-  "Forward projection by week (Mon–Sun) — full pipeline scenario with running cash balance.",
-  "Top line (Em caixa): opening cash + pipeline revenue − all costs due, carried week to week.",
-  "Green (up): draft + open invoices + scheduled jobs without invoice yet (by expected due date from account terms).",
-  "Coral (down): all self-bills due (approved, ready, draft) + open bills + pending payroll.",
-  "Click a week for Revenue / Partners / Admin breakdown. Edit opening cash per week in the modal.",
-  "Default opening balance: Settings → Setup → Finance. Window: 10 weeks when no period filter.",
+  "Project the running balance using pipeline revenue and costs due in each period.",
+  "Includes draft and open invoices, scheduled jobs without invoices, self-bills, open expenses and pending payroll.",
+  "The closing balance carries forward. Select a period to review items or set its opening balance.",
 ].join(" ");
 
 const CASH_HINT = [
-  "Cash runway by week (Mon–Sun) — money actually in and out, plus your bank balance carry-forward.",
-  "Green (up): customer payments from job_payments by payment date (deposit + final).",
-  "Coral (down): past weeks show paid self-bills and expenses; current and future weeks show projected dues.",
-  "Top line (Em caixa): opening cash + in − out. Set opening cash per week in the week breakdown modal.",
-  "Default opening balance comes from Settings → Setup → Finance. Click a week for details.",
+  "Customer receipts are grouped by payment date. Past outgoings use paid self-bills and expenses; current and future outgoings include projected amounts.",
+  "Closing balance is the opening balance plus receipts minus outgoings. Select a period to review items or set its opening balance.",
 ].join(" ");
 
 export const CASHFLOW_RUNWAY_HINT = PL_HINT;
@@ -65,9 +56,9 @@ export function cashflowWeekColumnTitle(
 ): string {
   const parts = [weekTitle];
   if ((view === "cash" || view === "accrual") && closingBalance !== undefined) {
-    parts.push(`Em caixa: ${formatCurrency(closingBalance)}`);
+    parts.push(`Closing balance: ${formatCurrency(closingBalance)}`);
   } else if (cashflowWeekHasActivity(moneyIn, moneyOut)) {
-    parts.push(`P&L: ${formatCashflowWeekPnl(moneyIn, moneyOut)}`);
+    parts.push(`Due-date forecast: ${formatCashflowWeekPnl(moneyIn, moneyOut)}`);
   }
   if (moneyIn > 0) {
     parts.push(

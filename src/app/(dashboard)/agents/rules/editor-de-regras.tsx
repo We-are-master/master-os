@@ -82,7 +82,7 @@ export function EditorDeRegras({ atual, versoes, embedded = false }: { atual: Ve
             {versaoNoAr}
           </div>
         ) : (
-          <PageHeader title="Rules" subtitle="What applies to customers, partners and accounts. Agents read these before every reply; the website shows the customer ones.">
+          <PageHeader title="Policies" subtitle="What applies to customers, partners and accounts. Agents read these before every reply; the website shows the customer ones.">
             {versaoNoAr}
           </PageHeader>
         )}

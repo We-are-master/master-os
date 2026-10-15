@@ -108,7 +108,7 @@ function SettingsPageInner() {
       <div className="space-y-6">
         <PageHeader
           title="Settings"
-          subtitle={isAdmin ? "The system is modular — only the Admin profile can change navigation, permissions and system configuration. All other profiles use what is configured." : "Manage your profile."}
+          subtitle={isAdmin ? "Manage business settings, users and access permissions. Administrative options depend on your role." : "Manage your profile."}
         >
           {isAdmin && (
             <Badge variant="primary" dot size="md">
@@ -498,7 +498,7 @@ function TeamTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Users access</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Users</h3>
           <p className="text-sm text-text-tertiary">{members.length} members · click the sliders icon to set per-user permission overrides</p>
         </div>
         <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setInviteOpen(true)}>
@@ -898,7 +898,7 @@ function NavigationTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Navigation</h3>
           <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role&apos;s permissions.</p>
         </div>
         {canEditConfig && (
@@ -1104,7 +1104,7 @@ function PermissionsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Roles & permissions</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Permissions</h3>
           <p className="text-sm text-text-tertiary">The system is modular: each role sees only what is enabled. Only Admin can make changes.</p>
         </div>
         {canEditConfig && (
@@ -1327,7 +1327,7 @@ function SystemTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-text-primary">System configuration</h3>
+        <h3 className="text-lg font-semibold text-text-primary">System</h3>
         <p className="text-sm text-text-tertiary">Company branding, PDF templates and system preferences. Admin only.</p>
       </div>
 
@@ -1493,7 +1493,7 @@ function SystemTab() {
             <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
               Partner, employee, and contractor document rules are configured in{" "}
               <Link href="/settings?tab=setup&section=partners" className="text-primary font-medium hover:underline">
-                Settings → Setup → Partners
+                Settings → Business settings → Partners
               </Link>
               {" "}(Partner documents and Workforce documents sections). Use Request / Mandatory toggles to control upload links, onboarding, and compliance scoring.
             </p>
@@ -1539,7 +1539,7 @@ function SystemTab() {
             <BrandingImageUpload
               kind="pdf-logo"
               label="PDF & email logo"
-              description="Used on quote PDFs and customer emails. Statement/receipt overrides live in Settings → Setup → Finance."
+              description="Used on quote PDFs and customer emails. Statement/receipt overrides live in Settings → Business settings → Finance."
               value={form.logo_url}
               onChange={(v) => update("logo_url", v)}
               placeholder="https://your-domain.com/logo.png"
@@ -1621,8 +1621,8 @@ function SystemTab() {
               label="Timezone"
               defaultValue="Europe/London"
               options={[
-                { value: "Europe/London", label: "London (GMT)" },
-                { value: "America/New_York", label: "New York (EST)" },
+                { value: "Europe/London", label: "London" },
+                { value: "America/New_York", label: "New York" },
                 { value: "America/Sao_Paulo", label: "Sao Paulo (BRT)" },
               ]}
             />

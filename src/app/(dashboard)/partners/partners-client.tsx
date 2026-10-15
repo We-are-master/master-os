@@ -921,9 +921,9 @@ const emptyForm = {
 };
 
 const CREATE_PARTNER_WIZARD_STEPS = [
-  { id: "info", label: "Partner info" },
-  { id: "documents", label: "Documents" },
-  { id: "rates", label: "Rate card" },
+  { id: "info", label: "Details" },
+  { id: "documents", label: "Documents", hint: "Review uploaded files, compliance records and contracts." },
+  { id: "rates", label: "Service rates" },
 ] as const;
 
 type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
@@ -2454,7 +2454,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               className="max-w-full"
               options={[
                 { id: "directory", label: "Directory", count: totalPartners },
-                { id: "team", label: "Team (App)", count: teamMembers.length },
+                { id: "team", label: "App users", count: teamMembers.length },
               ]}
               value={viewMode}
               onChange={(id) => {
@@ -4218,10 +4218,10 @@ function PartnerDocumentsSubNav({
   onChange: (id: PartnerDocumentsSubTab) => void;
   complianceCount?: number;
 }) {
-  const items: { id: PartnerDocumentsSubTab; label: string; count?: number }[] = [
-    { id: "files", label: "Files" },
-    { id: "compliance", label: "Compliance", count: complianceCount },
-    { id: "contracts", label: "Contracts" },
+  const items: { id: PartnerDocumentsSubTab; label: string; hint?: string; count?: number }[] = [
+    { id: "files", label: "Files", hint: "Review uploaded partner files." },
+    { id: "compliance", label: "Compliance", hint: "Review required certificates and their status.", count: complianceCount },
+    { id: "contracts", label: "Contracts", hint: "Review partner agreements." },
   ];
   return (
     <div className="px-4 sm:px-6 pt-4 pb-0 border-b border-border-light bg-card/95 backdrop-blur-sm sticky top-0 z-[1]">
@@ -5244,11 +5244,11 @@ function PartnerDetailDrawer({
 
   if (teamMember) {
     const appTabs = [
-      { id: "profile", label: "Profile" },
-      { id: "jobs", label: "Jobs", count: appJobs.length },
-      { id: "location", label: "Location" },
-      { id: "financial", label: "Financial" },
-      { id: "actions", label: "Actions" },
+      { id: "profile", label: "Profile", hint: "Review the app user profile." },
+      { id: "jobs", label: "Jobs", hint: "Review jobs linked to this partner.", count: appJobs.length },
+      { id: "location", label: "Location", hint: "Review available location information." },
+      { id: "financial", label: "Finance", hint: "Review financial information and balances." },
+      { id: "actions", label: "Account actions", hint: "Manage this app account." },
     ];
     return (
       <Drawer open={true} onClose={onClose} title={teamMember.full_name} subtitle={teamMember.email} width="w-[620px]">
@@ -5508,10 +5508,11 @@ function PartnerDetailDrawer({
   // sections: of the eleven active partners, rate cards were filled on five and
   // the other three are read far more often than they are edited.
   const drawerTabs = [
-    { id: "overview", label: "Overview" },
+    { id: "overview", label: "Overview", hint: "Review partner details, trades, coverage and agreed rates." },
     {
       id: "documents",
       label: "Documents",
+      hint: "Review uploaded files, compliance records and contracts.",
       count:
         complianceAttentionCount > 0
           ? complianceAttentionCount
@@ -5519,9 +5520,9 @@ function PartnerDetailDrawer({
             ? documents.length
             : undefined,
     },
-    { id: "financial", label: "Finance" },
-    { id: "jobs", label: "Jobs", count: realJobsCount },
-    { id: "selfbills", label: "Self-bills", count: selfBills.length },
+    { id: "financial", label: "Finance", hint: "Review financial information and balances." },
+    { id: "jobs", label: "Jobs", hint: "Review jobs linked to this partner.", count: realJobsCount },
+    { id: "selfbills", label: "Self-bills", hint: "Review self-billing documents issued for this partner's work.", count: selfBills.length },
   ];
 
   return (
@@ -6193,7 +6194,7 @@ function PartnerDetailDrawer({
                   <PartnerCancellationsSection partnerId={partner.id} canEdit={canManagePartners} />
                 </DrawerSection>
 
-                <DrawerSection title="Rate card" summary="Prices agreed with this partner">
+                <DrawerSection title="Service rates" summary="Prices agreed with this partner">
                   <PartnerServiceRatesTabSection
                     partnerId={partner.id}
                     partner={{
@@ -7549,8 +7550,8 @@ function PartnerDetailDrawer({
             <div className="flex gap-2">
               {(
                 [
-                  { id: "praise" as const, label: "Good" },
-                  { id: "complaint" as const, label: "Bad / poor" },
+                  { id: "praise" as const, label: "Positive" },
+                  { id: "complaint" as const, label: "Complaint" },
                 ] as const
               ).map((opt) => (
                 <button

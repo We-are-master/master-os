@@ -498,8 +498,8 @@ export function Header() {
               ? "bg-primary/15 text-primary"
               : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
           )}
-          title="Activity log"
-          aria-label="Activity log"
+          title="Audit log"
+          aria-label="Audit log"
         >
           <History className="h-[15px] w-[15px]" />
         </Link>

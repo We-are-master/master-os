@@ -364,7 +364,7 @@ export function VisitsTab({
               </Button>
             </div>
             <p className="text-[11px] text-text-tertiary">
-              Finishing moves the job to Final checks and opens the review.
+              Finishing moves the job to Final review and opens the review.
             </p>
           </div>
         </Modal>

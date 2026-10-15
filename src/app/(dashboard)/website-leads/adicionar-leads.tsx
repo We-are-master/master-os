@@ -184,7 +184,7 @@ export function ImportarLeads({ canais, aberto, fechar, pronto }: { canais: Cana
             Columns: <span className="font-mono">{CABECALHOS_CSV.join(", ")}</span>. Only email <b>or</b> phone is required.
           </p>
           <p className="mb-0 mt-1 text-xs text-text-secondary">
-            <b>channel</b>: {canais.filter((c) => c.active).map((c) => c.key).join(", ")} (names and aliases from Settings → Lead origins also work). <b>status</b>: new, hot, contacted, lost.
+            <b>channel</b>: {canais.filter((c) => c.active).map((c) => c.key).join(", ")} (names and aliases from Settings → Lead sources also work). <b>status</b>: new, hot, contacted, lost.
             <b> tags</b>: separate with ; or ,. <b>created_at</b>: 2026-09-24 14:30 or 24/09/2026.
           </p>
         </div>

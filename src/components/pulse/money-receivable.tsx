@@ -36,7 +36,7 @@ export function MoneyReceivable() {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 [&>*]:min-w-0">
       <KpiCard
-        label="Awaiting Payment"
+        label="Outstanding"
         hint={`Unpaid invoices ${periodo} that are not overdue yet, counting the open balance. Platforms past their date are here too: they pay on their own cycle.`}
         countBesideHint={d ? d.aguardando.n : null}
         value={d ? pulseMoney(d.aguardando.valor) : "—"}
@@ -49,7 +49,7 @@ export function MoneyReceivable() {
         value={d ? pulseMoney(d.vencido.valor) : "—"}
       />
       <KpiCard
-        label="Paid"
+        label="Collected"
         hint={bounds ? `Money received ${rangeLabel || "in the selected period"} (invoice payment date).` : "Money received this month (invoice payment date)."}
         countBesideHint={d ? d.pago.n : null}
         value={d ? pulseMoney(d.pago.valor) : "—"}

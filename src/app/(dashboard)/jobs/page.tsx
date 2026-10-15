@@ -713,9 +713,9 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
   in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
   on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  final_check: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Paid & completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Lost & cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
@@ -1558,7 +1558,7 @@ function JobsPageContent() {
       },
       {
         id: "final_check",
-        title: "Final checks",
+        title: "Final review",
         color: "bg-violet-500",
         items: scheduleSortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
       },
@@ -1730,12 +1730,12 @@ function JobsPageContent() {
     // "Active jobs" hidden for now: it is the union of the tabs beside it, so it
     // duplicated every row and made the strip read as eight filters when there
     // are seven. `status === "all"` still works from a link.
-    { id: "action_required", label: "Action required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
-    { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
-    { id: "in_progress", label: "In progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
-    { id: "final_check", label: "Final checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
-    { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
+    { id: "action_required", label: "Action required", hint: "Jobs requiring an operational action. Open a job to review the reason.", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
+    { id: "scheduled", label: "Scheduled", hint: "Jobs in the scheduled queue under the current filters.", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
+    { id: "in_progress", label: "In progress", hint: "Jobs currently being carried out.", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
+    { id: "final_check", label: "Final review", hint: "Jobs awaiting review of completion details and reports.", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting payment", hint: "Jobs awaiting customer payment under the current workflow.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "closed", label: "Closed", hint: "Closed jobs. Use the outcome filter to distinguish completed, cancelled and lost work.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
   useEffect(() => {
@@ -3321,10 +3321,10 @@ function JobsPageContent() {
   const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
   const jobsPageInfoTooltip = useMemo(() => {
     const parts = [
-      "Track and manage jobs.",
-      "First KPI = active pipeline (Action Required through Final Checks). Avg time = mean wall-clock duration from scheduled anchor (start of booking) to first transition into Final Checks (audit), in the same schedule window.",
-      "On Active jobs, Revenue & Cost sum the Job Amount and partner Cost columns in the list.",
-      "On other tabs, Avg ticket & margin use the same schedule window as the list when Dates is set.",
+      "Manage assignments, visits, reports and customer payments.",
+      "Active jobs covers the operational pipeline through Final review. Average duration runs from the scheduled start to the first recorded Final review.",
+      "Revenue and cost use job amounts and partner costs.",
+      "Average job value and margin use the same date window as the list.",
     ];
     if (scheduleWindowLine) parts.push(scheduleWindowLine);
     return parts.join("\n\n");
@@ -3333,7 +3333,7 @@ function JobsPageContent() {
   return (
     <PageTransition className="flex min-h-0 flex-col h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)] overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-5">
-        <PageHeader title="Jobs management" infoTooltip={jobsPageInfoTooltip}>
+        <PageHeader title="Jobs" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DateRangeFilter
               value={{

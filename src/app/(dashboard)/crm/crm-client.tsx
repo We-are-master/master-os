@@ -1016,7 +1016,7 @@ function ImportModal({
     <Modal open={open} onClose={onClose} title="Import" subtitle="Bring your accounts and target lists into the CRM." size="lg">
       <div className="space-y-4 px-5 py-4">
         <Tabs
-          tabs={[{ id: "accounts", label: "Existing accounts" }, { id: "csv", label: "CSV list" }]}
+          tabs={[{ id: "accounts", label: "Existing accounts" }, { id: "csv", label: "CSV import" }]}
           activeTab={tab}
           onChange={(id) => setTab(id as "accounts" | "csv")}
         />

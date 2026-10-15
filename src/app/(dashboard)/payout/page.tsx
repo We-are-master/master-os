@@ -397,7 +397,7 @@ export default function PayoutPage() {
       <div className="space-y-6 px-1 pb-24 sm:px-0">
         {/* ── 1. Header ─────────────────────────────────────────────────── */}
         <PageHeader
-          title="Payout"
+          title="Payouts"
           subtitle="Operations' weekly payment run — Workforce, Partners & Expenses"
         >
           <Button

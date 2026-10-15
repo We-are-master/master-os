@@ -310,13 +310,13 @@ export function OutreachClient() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Outreach" subtitle="Send personalised emails to partners and outside contacts." />
+      <PageHeader title="Email campaigns" subtitle="Send personalised emails to partners and outside contacts." />
 
       <Tabs
         tabs={[
-          { id: "compose", label: "Compor", count: totalRecipients || undefined },
-          { id: "templates", label: "Templates", count: templates.length || undefined },
-          { id: "history", label: "Histórico", count: campaigns.length || undefined },
+          { id: "compose", label: "Compose", hint: "Choose recipients and compose a personalised email.", count: totalRecipients || undefined },
+          { id: "templates", label: "Templates", hint: "Manage reusable email templates.", count: templates.length || undefined },
+          { id: "history", label: "Sent campaigns", hint: "Review previously sent campaigns.", count: campaigns.length || undefined },
         ]}
         activeTab={activeTab}
         onChange={(id) => setActiveTab(id as TabId)}

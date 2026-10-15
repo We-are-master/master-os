@@ -123,9 +123,9 @@ export function AgenteHarvey({
 
         <Tabs
           tabs={[
-            { id: "cliente", label: "With customers", count: editados("cliente") || undefined },
-            { id: "parceiro", label: "With partners", count: editados("parceiro") || undefined },
-            { id: "precos", label: "Prices" },
+            { id: "cliente", label: "Customers", count: editados("cliente") || undefined },
+            { id: "parceiro", label: "Partners", count: editados("parceiro") || undefined },
+            { id: "precos", label: "Pricing" },
           ]}
           activeTab={aba}
           onChange={(id) => setAba(id as typeof aba)}

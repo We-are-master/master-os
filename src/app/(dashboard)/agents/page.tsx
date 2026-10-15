@@ -37,8 +37,8 @@ function Toggle({ view }: { view: "agents" | "rules" }) {
   );
   return (
     <div className="inline-flex rounded-lg border border-border-light bg-surface-secondary p-0.5">
-      {item("agents", "Agents")}
-      {item("rules", "Rules")}
+      {item("agents", "AI agents")}
+      {item("rules", "Policies")}
     </div>
   );
 }
@@ -46,7 +46,7 @@ function Toggle({ view }: { view: "agents" | "rules" }) {
 async function RulesView() {
   const sb = createServiceClient();
   const [atual, versoes] = await Promise.all([versaoAtual<Regras>(sb, "regras"), historico(sb, "regras")]);
-  if (!atual) return <p className="text-sm text-text-tertiary">No rules yet. Apply migration 316.</p>;
+  if (!atual) return <p className="text-sm text-text-tertiary">Policies are not available yet. Contact your administrator to complete setup.</p>;
   return <EditorDeRegras atual={atual} versoes={versoes} embedded />;
 }
 

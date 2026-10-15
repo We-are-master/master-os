@@ -71,7 +71,7 @@ export default function AssetsPage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="Assets"
+          title="Properties"
           subtitle="Physical sites and properties linked to client accounts — not the account billing address."
         >
           <Link

@@ -136,7 +136,7 @@ export default function PartnerPipelinePage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Partner onboarding pipeline" subtitle="Track partner applications through the onboarding process.">
+        <PageHeader title="Partner onboarding" subtitle="Track partner applications through the onboarding process.">
           <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
           <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />}>Invite Partner</Button>
         </PageHeader>

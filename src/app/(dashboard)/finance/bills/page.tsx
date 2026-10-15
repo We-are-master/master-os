@@ -517,7 +517,7 @@ export default function BillsPage() {
     <PageTransition>
       <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
-          title="Bills & expenses"
+          title="Expenses"
           infoTooltip="Track recurring and one-off costs. Bills are scheduled automatically — mark paid only for debit/financing lines. Filter by type or payment status."
         >
           <Button
@@ -590,7 +590,7 @@ export default function BillsPage() {
         <div className="flex flex-wrap gap-1.5">
           {([
             { id: "all", label: "All" },
-            { id: "one_off", label: "One-Off" },
+            { id: "one_off", label: "One-off" },
             { id: "recurring", label: "Recurring" },
             { id: "unpaid", label: "Unpaid" },
             { id: "paid", label: "Paid" },

@@ -94,7 +94,7 @@ const STAGES: Stage[] = [
   },
   {
     id: "final_checks",
-    title: "Final checks",
+    title: "Final review",
     tone: "violet",
     matches: (s) => s === "final_check" || s === "need_attention",
     dropStatus: "final_check",

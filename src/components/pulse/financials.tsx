@@ -423,7 +423,7 @@ export function Financials() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           label="Revenue"
-          hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Setup (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
+          hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Business settings (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
           value={loading ? "—" : formatGbp(totals.revenue)}
           sub={revenueGoalUi.sub}
           variant={revenueGoalUi.variant}
@@ -432,24 +432,24 @@ export function Financials() {
           detailsLabel="View revenue breakdown"
         />
         <KpiCard
-          label="Operating Cost"
-          hint={`Partner cost + materials + per-job expenses for the same pipeline. Gross margin is what is left of revenue after this cost, before fixed costs. Target comes from Setup.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
+          label="Job costs"
+          hint={`Partner cost + materials + per-job expenses for the same pipeline. Gross margin is what is left of revenue after this cost, before fixed costs. Target comes from Business settings.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
           value={loading ? "—" : formatGbp(totals.operatingCost)}
           topRight={<StatusDot color="bg-fx-amber" />}
           onShowDetails={() => setOpenModal("operating")}
-          detailsLabel="View operating cost breakdown"
+          detailsLabel="View job cost breakdown"
         />
         <KpiCard
-          label="Fixed Costs"
-          hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Bills & expenses (monthly burn, pro-rated) and one-off bills due in the period."
+          label="Overheads"
+          hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Expenses (monthly burn, pro-rated) and one-off bills due in the period."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
           topRight={<StatusDot color="bg-fx-blue" />}
           onShowDetails={isAdmin ? () => setOpenModal("fixed") : undefined}
-          detailsLabel="View fixed cost breakdown (admin)"
+          detailsLabel="View overhead breakdown (admin)"
         />
         <KpiCard
-          label="Net Margin"
-          hint={`Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead.${loading ? "" : `\n\n${margemTexto(margens.liquida, "net margin", "healthy")}`}`}
+          label="Projected result"
+          hint={`Pipeline revenue minus job costs and overheads. This is a projected result, not cash received.${loading ? "" : `\n\n${margemTexto(margens.liquida, "net margin", "healthy")}`}`}
           variant={
             !loading && totals.netMargin < 0
               ? "alert"
@@ -489,7 +489,7 @@ export function Financials() {
       <Modal
         open={openModal === "operating"}
         onClose={() => setOpenModal(null)}
-        title="Operating cost breakdown"
+        title="Job cost breakdown"
         subtitle={`Partners + materials + expenses · ${periodLabel} · ${formatGbp(totals.operatingCost)}`}
         size="lg"
       >
@@ -515,7 +515,7 @@ export function Financials() {
       <Modal
         open={isAdmin && openModal === "fixed"}
         onClose={() => setOpenModal(null)}
-        title="Fixed costs breakdown"
+        title="Overhead breakdown"
         subtitle={`Workforce ${formatGbp(totals.workforce)} + Expenses ${formatGbp(totals.bills)} · ${periodLabel}`}
         size="lg"
       >
@@ -569,17 +569,17 @@ export function Financials() {
       <Modal
         open={openModal === "net"}
         onClose={() => setOpenModal(null)}
-        title="Net margin breakdown"
-        subtitle={`Revenue − Operating Cost − Fixed Costs · ${periodLabel}`}
+        title="Projected result breakdown"
+        subtitle={`Revenue − Job costs − Overheads · ${periodLabel}`}
         size="lg"
       >
         <div className="px-5 py-5">
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SummaryRow label="Revenue" value={totals.revenue} tone="green" />
-            <SummaryRow label="Operating Cost" value={-totals.operatingCost} tone="amber" />
-            <SummaryRow label="Fixed Costs" value={-totals.fixedCost} tone="blue" />
+            <SummaryRow label="Job costs" value={-totals.operatingCost} tone="amber" />
+            <SummaryRow label="Overheads" value={-totals.fixedCost} tone="blue" />
             <SummaryRow
-              label="Net Margin"
+              label="Projected result"
               value={totals.netMargin}
               tone={totals.netMargin >= 0 ? "green" : "red"}
               emphasis
