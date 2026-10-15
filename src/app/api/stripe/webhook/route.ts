@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { aposEntradaDaCotacaoPaga } from "@/lib/quote-accept-job-fields";
 import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
@@ -74,41 +75,9 @@ export async function POST(req: NextRequest) {
       // `awaiting_payment` to `converted_to_job`. Safe no-op if the invoice
       // isn't a deposit or the job/quote can't be resolved.
       if (fullyPaid && inv.invoice_kind === "deposit" && inv.job_reference) {
+        // Entrada paga: cotação vai para converted_to_job e o parceiro recebe o aviso (15/10/2026).
         try {
-          const { data: jobRow } = await supabaseAdmin
-            .from("jobs")
-            .select("id, quote_id")
-            .eq("reference", inv.job_reference)
-            .maybeSingle();
-          const quoteId = (jobRow as { quote_id?: string | null } | null)?.quote_id ?? null;
-          if (quoteId) {
-            const { data: quoteRow } = await supabaseAdmin
-              .from("quotes")
-              .select("id, reference, status")
-              .eq("id", quoteId)
-              .maybeSingle();
-            const q = (quoteRow ?? null) as { id: string; reference?: string | null; status?: string | null } | null;
-            if (q && q.status === "awaiting_payment") {
-              const { error: qErr } = await supabaseAdmin
-                .from("quotes")
-                .update({ status: "converted_to_job", updated_at: new Date().toISOString() })
-                .eq("id", q.id);
-              if (qErr) {
-                console.error("Stripe webhook: quote -> converted_to_job update failed", qErr);
-              } else {
-                void supabaseAdmin.from("audit_logs").insert({
-                  entity_type: "quote",
-                  entity_id: q.id,
-                  entity_ref: q.reference ?? null,
-                  action: "status_changed",
-                  field_name: "status",
-                  old_value: "awaiting_payment",
-                  new_value: "converted_to_job",
-                  metadata: { invoice_id: invoiceId, deposit_paid: true, source: "stripe_webhook" },
-                });
-              }
-            }
-          }
+          await aposEntradaDaCotacaoPaga(supabaseAdmin, inv.job_reference, "stripe_webhook");
         } catch (e) {
           console.error("Stripe webhook: advance quote after deposit failed", e);
         }

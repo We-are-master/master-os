@@ -181,6 +181,18 @@ export async function syncJobAfterInvoicePaidToLedger(
   const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
   if (!jobId) return;
   await finalizeJobAfterInvoicePaid(client, jobId);
+  // Entrada de cotação paga à mão faz o mesmo que o webhook do Stripe: cotação convertida e
+  // aviso ao parceiro (15/10/2026). Só age com a cotação em awaiting_payment.
+  const { data: inv } = await client.from("invoices").select("invoice_kind, job_reference").eq("id", invoiceId).maybeSingle();
+  const i = inv as { invoice_kind?: string | null; job_reference?: string | null } | null;
+  if (i?.invoice_kind === "deposit" && i.job_reference) {
+    try {
+      const { aposEntradaDaCotacaoPaga } = await import("@/lib/quote-accept-job-fields");
+      await aposEntradaDaCotacaoPaga(client, i.job_reference, sourceLabel === "Stripe" ? "stripe_invoice" : "manual_mark_paid");
+    } catch (e) {
+      console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up failed", e);
+    }
+  }
 }
 
 /** Bulk mark-paid: ledger rows in parallel, then one finalize pass per unique job. */
