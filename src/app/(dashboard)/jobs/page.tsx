@@ -3153,6 +3153,10 @@ function JobsPageContent() {
       sortOptions: JOB_SORT_FINANCE,
       render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} className={LIST_CHIP_CLASS} />,
     },
+    // A seta de avançar fase saiu da lista (dono, 15/10/2026); a coluna fica só no
+    // Final checks, com a bolinha do report.
+    ...(status === "final_check"
+      ? ([
     {
       key: "actions",
       label: "",
@@ -3187,7 +3191,9 @@ function JobsPageContent() {
             }}
           />
         ),
-    },
+    }
+        ] as Column<Job>[])
+      : []),
   ];
 
   const partnerCostColumn: Column<Job> = useMemo(
@@ -3460,7 +3466,6 @@ function JobsPageContent() {
                 {(
                   [
                     { id: "list", icon: List, label: "List" },
-                    { id: "kanban", icon: LayoutGrid, label: "Kanban" },
                     { id: "map", icon: MapIcon, label: "Map" },
                     // Route only exists for one partner's day: no partner filter, no button.
                     ...(routeViewEligible ? [{ id: "route", icon: RouteIcon, label: "Route" }] : []),
