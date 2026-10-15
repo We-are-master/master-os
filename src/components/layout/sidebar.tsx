@@ -169,7 +169,9 @@ function NavLink({
         ) : (
           <Icon className={iconClassName} />
         )}
-        <AnimatePresence>
+        {/* initial={false}: ao recarregar o nome já nasce visível. Com a animação de entrada
+            o HTML do servidor vinha com opacidade 0 e o menu ficava só com ícones até o JS. */}
+        <AnimatePresence initial={false}>
           {!collapsed && (
             <motion.span
               initial={{ opacity: 0, width: 0 }}
@@ -218,14 +220,17 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
             "object-contain object-left shrink-0",
             collapsed ? "h-8 w-8 rounded-[8px]" : "h-10 w-[140px] object-left"
           )}
+          width={collapsed ? 32 : 140}
+          height={collapsed ? 32 : 40}
           onError={() => setImgErr(true)}
         />
       ) : (
         <>
           {collapsed ? (
-            <img src="/favicon.svg" alt={title} className="h-8 w-8 shrink-0 rounded-[8px]" />
+            <img src="/favicon.svg" alt={title} width={32} height={32} className="h-8 w-8 shrink-0 rounded-[8px]" />
           ) : (
-            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} className="h-10 w-[140px] shrink-0 object-contain object-left" />
+            // width/height no HTML: a logo nasce com 140×40 mesmo antes do CSS chegar.
+            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} width={140} height={40} className="h-10 w-[140px] shrink-0 object-contain object-left" />
           )}
         </>
       )}

@@ -1,3 +1,5 @@
+import { categoriaDoServico } from "@/lib/report-category";
+import { registrarReportLink } from "@/lib/report-link-events";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
@@ -154,12 +156,17 @@ export async function GET(req: NextRequest) {
     id: string;
     reference: string;
     serviceType: string | null;
+    /** Categoria do serviço do job: decide o formulário do report. */
+    categorySlug: string | null;
     status: string;
     title: string | null;
     propertyAddress: string | null;
     startReportSubmitted: boolean;
     finalReportSubmitted: boolean;
   } | null = null;
+
+  /** Por que o formulário do report não abre, em palavras para o parceiro. */
+  let reportBlock: { motivo: string; mensagem: string } | null = null;
 
   // Bid context: when this is a partner-bid token AND the quote is still in
   // bidding state, surface the partner display name + any existing bid the
@@ -210,18 +217,40 @@ export async function GET(req: NextRequest) {
     // uses job.title (via pickReportTemplate) as the fallback.
     const { data: jobRow, error: jobLookupError } = await supabase
       .from("jobs")
-      .select("id, reference, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
+      .select("id, reference, status, title, property_address, partner_id, start_report_submitted, final_report_submitted, catalog_service_id")
       .eq("id", tokenJobId)
       .is("deleted_at", null)
       .maybeSingle();
     console.log(
       `[respond-info] partner_report job lookup: id=${tokenJobId} found=${!!jobRow} jobPartnerId=${jobRow?.partner_id ?? "null"} tokenPartnerId=${tokenPartnerId} match=${!!jobRow && jobRow.partner_id === tokenPartnerId} err=${jobLookupError?.message ?? "none"}`,
     );
-    if (jobRow && jobRow.partner_id === tokenPartnerId) {
+    /**
+     * O motivo de não abrir, dito com todas as letras (15/10/2026): antes tudo virava
+     * "link inválido" e o parceiro achava que o link tinha quebrado.
+     */
+    const statusJob = String((jobRow as { status?: string } | null)?.status ?? "");
+    reportBlock = !jobRow
+      ? { motivo: "job_removido", mensagem: "This job is no longer in our system. Please contact the Fixfy team." }
+      : !jobRow.partner_id || jobRow.partner_id !== tokenPartnerId
+        ? { motivo: "outro_parceiro", mensagem: "This job is no longer assigned to you, so there is no report to send. If you think this is wrong, contact the Fixfy team." }
+        : statusJob === "cancelled"
+          ? { motivo: "cancelado", mensagem: "This job was cancelled, so no report is needed. Thank you." }
+          : statusJob === "completed" || statusJob === "awaiting_payment"
+            ? { motivo: "concluido", mensagem: "This job is already closed and approved. Thank you, nothing else is needed." }
+            : null;
+    await registrarReportLink(supabase, {
+      jobId: jobRow?.id ?? tokenJobId,
+      partnerId: tokenPartnerId,
+      event: reportBlock ? "open_refused" : "open",
+      ok: !reportBlock,
+      detail: reportBlock?.motivo ?? null,
+    });
+    if (jobRow && jobRow.partner_id === tokenPartnerId && !reportBlock) {
       linkedJob = {
         id:                    jobRow.id,
         reference:             jobRow.reference,
         serviceType:           quote.service_type ?? null,
+        categorySlug:          await categoriaDoServico(supabase, (jobRow as { catalog_service_id?: string | null }).catalog_service_id),
         status:                jobRow.status as string,
         title:                 (jobRow.title as string | null) ?? null,
         propertyAddress:       (jobRow.property_address as string | null) ?? null,
@@ -306,6 +335,7 @@ export async function GET(req: NextRequest) {
     photoUrls,
     tokenKind,
     linkedJob,
+    reportBlock,
     bidContext,
   };
   console.log(

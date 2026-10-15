@@ -32,6 +32,16 @@ interface Submission {
 
 type Who = "client" | "partner" | "office";
 
+type MensagemDoJournal = {
+  id: string;
+  author: "partner" | "office";
+  author_name: string | null;
+  body: string | null;
+  photos: string[];
+  visible_to_partner: boolean;
+  created_at: string;
+};
+
 type Entry = {
   key: string;
   who: Who;
@@ -96,6 +106,49 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
   const [loading, setLoading] = useState(true);
   const [allOpen, setAllOpen] = useState(false);
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  /** Mensagens do journal (mig 333): escritório e parceiro, com fotos. */
+  const [mensagens, setMensagens] = useState<MensagemDoJournal[]>([]);
+  const [recarga, setRecarga] = useState(0);
+  const [texto, setTexto] = useState("");
+  const [fotos, setFotos] = useState<File[]>([]);
+  const [visivel, setVisivel] = useState(true);
+  const [postando, setPostando] = useState(false);
+  const [erroPost, setErroPost] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    fetch(`/api/jobs/${job.id}/complaint-messages`)
+      .then((r) => (r.ok ? r.json() : { messages: [] }))
+      .then((j: { messages?: MensagemDoJournal[] }) => {
+        if (vivo) setMensagens(j.messages ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [job.id, recarga]);
+
+  const postar = async () => {
+    if (!texto.trim() && fotos.length === 0) return;
+    setPostando(true);
+    setErroPost(null);
+    try {
+      const form = new FormData();
+      form.set("body", texto.trim());
+      form.set("visible", visivel ? "1" : "0");
+      for (const f of fotos) form.append("photos[]", f);
+      const r = await fetch(`/api/jobs/${job.id}/complaint-messages`, { method: "POST", body: form });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? `Error ${r.status}`);
+      setTexto("");
+      setFotos([]);
+      setRecarga((n) => n + 1);
+    } catch (e) {
+      setErroPost(e instanceof Error ? e.message : "Could not post");
+    } finally {
+      setPostando(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -241,12 +294,39 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
       });
     }
 
+    for (const m of mensagens) {
+      out.push({
+        key: `msg-${m.id}`,
+        who: m.author === "partner" ? "partner" : "office",
+        at: m.created_at,
+        author: m.author_name?.trim() || (m.author === "partner" ? job.partner_name?.trim() || "Partner" : "Fixfy"),
+        body: (
+          <div className="space-y-1.5">
+            {m.body ? <p className="m-0 whitespace-pre-wrap">{m.body}</p> : null}
+            {m.photos.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {m.photos.map((u) => (
+                  <a key={u} href={u} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u} alt="" className="h-16 w-16 rounded-md border border-border-light object-cover" />
+                  </a>
+                ))}
+              </div>
+            ) : null}
+            {m.author === "office" && !m.visible_to_partner ? (
+              <p className="m-0 text-[11px] text-text-tertiary">Internal: the partner does not see this.</p>
+            ) : null}
+          </div>
+        ),
+      });
+    }
+
     return out.sort((a, b) => {
       const ta = a.at ? new Date(a.at).getTime() : 0;
       const tb = b.at ? new Date(b.at).getTime() : 0;
       return ta - tb;
     });
-  }, [job, logs, submission, zendeskSubdomain]);
+  }, [job, logs, submission, zendeskSubdomain, mensagens]);
 
   const aguardando = job.status === "on_hold" && !submission;
   // Journal (dono, 15/10/2026): tabela "Date and time | Message", mais nova em cima,
@@ -276,6 +356,48 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the journal
         </p>
       ) : null}
+
+      {/* Escrever no journal (15/10/2026): texto, fotos e se o parceiro vê. */}
+      <div className="mx-4 mt-3 rounded-xl border border-border bg-card px-3 py-2.5">
+        <textarea
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          rows={2}
+          placeholder="Write to the partner, or a note for the team"
+          className="min-h-[44px] w-full resize-y border-0 bg-transparent p-0 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+        />
+        {fotos.length ? (
+          <p className="m-0 mt-1 text-[11px] text-text-secondary">
+            {fotos.length} photo{fotos.length === 1 ? "" : "s"} ready ·{" "}
+            <button type="button" className="text-primary hover:underline" onClick={() => setFotos([])}>remove</button>
+          </p>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-border-light pt-2">
+          <label className="cursor-pointer text-[12px] font-medium text-primary hover:underline">
+            Add photos
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              multiple
+              className="sr-only"
+              onChange={(e) => setFotos((f) => [...f, ...Array.from(e.target.files ?? [])].slice(0, 10))}
+            />
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-text-secondary">
+            <input type="checkbox" checked={visivel} onChange={(e) => setVisivel(e.target.checked)} className="h-3.5 w-3.5" />
+            Partner sees it
+          </label>
+          {erroPost ? <span className="text-[12px] text-[var(--bad,#dc2626)]">{erroPost}</span> : null}
+          <button
+            type="button"
+            disabled={postando || (!texto.trim() && fotos.length === 0)}
+            onClick={() => void postar()}
+            className="ml-auto inline-flex h-7 items-center rounded-md bg-[var(--nav-bg,#020040)] px-3 text-[12px] font-medium text-white disabled:opacity-40"
+          >
+            {postando ? "Posting…" : "Post"}
+          </button>
+        </div>
+      </div>
 
       <table className="mt-2 w-full border-collapse text-left text-[13px]">
         <thead>

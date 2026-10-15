@@ -1,5 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { createTradePortalAutoLoginUrl } from "@/lib/partner-portal-link";
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import {
   createPartnerBidToken,
   createPartnerJobAcceptToken,
@@ -141,8 +143,60 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
   const row = data as { target_path: string; entity_ref?: string | null };
   let target = String(row.target_path);
 
-  const fresco = tokenFresco(row.entity_ref);
-  if (fresco) target = comTokenNovo(target, fresco, req.url);
+  /**
+   * Link do report por job (`job:<id>:report`, 15/10/2026): o token sai para o parceiro
+   * que está no job AGORA. Sem parceiro, a tela diz isso em vez de "link inválido".
+   */
+  const porJob = /^job:([0-9a-f-]{36}):report$/i.exec(String(row.entity_ref ?? ""));
+  if (porJob) {
+    const { data: j } = await supabase.from("jobs").select("partner_id").eq("id", porJob[1]!).is("deleted_at", null).maybeSingle();
+    const parceiro = (j as { partner_id?: string | null } | null)?.partner_id;
+    if (!j) return NextResponse.redirect(new URL("/quote/respond?token=invalid&motivo=job_removido", req.url), 302);
+    if (!parceiro) return NextResponse.redirect(new URL("/quote/respond?token=invalid&motivo=sem_parceiro", req.url), 302);
+    try {
+      target = `/job/report?token=${encodeURIComponent(createPartnerReportToken(porJob[1]!, parceiro))}`;
+    } catch (err) {
+      console.error("[short-link] não consegui assinar o link do job:", err);
+    }
+    /**
+     * Uma porta só (15/10/2026): o clique no e-mail entra no PORTAL já logado, direto na
+     * aba Report do job. O portal pede o formulário com `?embed=1` para mostrar dentro
+     * da gaveta. Se o login automático falhar, segue para o formulário, que funciona sozinho.
+     */
+    if (req.nextUrl.searchParams.get("embed") !== "1") {
+      try {
+        const portal = resolvePartnerTradePortalBaseUrl();
+        const entrar = await createTradePortalAutoLoginUrl(supabase, parceiro, portal, 1);
+        const destino = `/?job=${encodeURIComponent(porJob[1]!)}&tab=report`;
+        return NextResponse.redirect(`${entrar}&next=${encodeURIComponent(destino)}`, 302);
+      } catch (err) {
+        console.error("[short-link] login automático do portal falhou, segue para o formulário:", err);
+      }
+    }
+  } else {
+    const fresco = tokenFresco(row.entity_ref);
+    if (fresco) target = comTokenNovo(target, fresco, req.url);
+
+    /**
+     * Reclamação / pausa (15/10/2026): o clique no e-mail entra no PORTAL já logado,
+     * direto no job, onde está o journal da reclamação. Vale para o parceiro que está no
+     * job agora; se o login automático falhar, segue para o formulário de sempre.
+     */
+    const pausa = /^job:([0-9a-f-]{36}):partner:([0-9a-f-]{36}):on_hold$/i.exec(String(row.entity_ref ?? ""));
+    if (pausa && req.nextUrl.searchParams.get("embed") !== "1") {
+      const { data: j } = await supabase.from("jobs").select("partner_id").eq("id", pausa[1]!).is("deleted_at", null).maybeSingle();
+      const parceiro = (j as { partner_id?: string | null } | null)?.partner_id;
+      if (parceiro && parceiro === pausa[2]) {
+        try {
+          const portal = resolvePartnerTradePortalBaseUrl();
+          const entrar = await createTradePortalAutoLoginUrl(supabase, parceiro, portal, 1);
+          return NextResponse.redirect(`${entrar}&next=${encodeURIComponent(`/?job=${pausa[1]}`)}`, 302);
+        } catch (err) {
+          console.error("[short-link] login automático do portal (pausa) falhou, segue para o formulário:", err);
+        }
+      }
+    }
+  }
 
   const absolute = /^https?:\/\//i.test(target)
     ? target

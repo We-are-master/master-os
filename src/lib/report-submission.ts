@@ -178,6 +178,44 @@ export function plannedPhotoShape(
   return mergeReportPhotos(existing, fresh);
 }
 
+/**
+ * Fotos que já subiram uma a uma (15/10/2026) no formato que o persist guarda: as
+ * chaves `start:kitchen` / `final:after` passam pelos mesmos slots permitidos, e
+ * cada endereço tem que estar no bucket do PRÓPRIO job (nada de URL de fora).
+ */
+export function uploadedPhotoShape(
+  template: ReportTemplate,
+  kind: "start" | "final",
+  uploads: Record<string, string[]>,
+  jobId: string,
+): string[] | Record<string, string[]> {
+  const doJob = (u: string) => typeof u === "string" && u.includes(`/${BUCKET}/${jobId}/`);
+  const comoArquivos: Record<string, File[]> = {};
+  const urls: Record<string, string[]> = {};
+  for (const [chave, lista] of Object.entries(uploads ?? {})) {
+    const validas = (Array.isArray(lista) ? lista : []).filter(doJob);
+    urls[chave] = validas;
+    comoArquivos[chave] = validas.map(() => new File([], "x"));
+  }
+  const allowed = slotsForKind(template, kind);
+  const daMetade = fotosDaMetade(comoArquivos, kind);
+  const urlsDaMetade: Record<string, string[]> = {};
+  for (const [chave, lista] of Object.entries(urls)) {
+    const meu = `${kind}:`;
+    const alheio = kind === "start" ? "final:" : "start:";
+    if (chave.startsWith(alheio)) continue;
+    const slot = chave.startsWith(meu) ? chave.slice(meu.length) : chave;
+    urlsDaMetade[slot] = [...(urlsDaMetade[slot] ?? []), ...lista];
+  }
+  if (allowed === null) {
+    const flatSlot = kind === "start" ? "before" : "after";
+    return daMetade[flatSlot] ? urlsDaMetade[flatSlot] ?? [] : [];
+  }
+  const out: Record<string, string[]> = {};
+  for (const slot of Object.keys(daMetade)) if (allowed.has(slot)) out[slot] = urlsDaMetade[slot] ?? [];
+  return out;
+}
+
 // ─── Payload shape ───────────────────────────────────────────────────────────
 
 export interface BuiltReportPayload {

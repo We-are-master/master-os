@@ -1,3 +1,4 @@
+import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
@@ -11,8 +12,6 @@ import {
   replyToSideConversation,
   setTicketJobReference,
 } from "@/lib/zendesk";
-import { createPartnerReportToken } from "@/lib/quote-response-token";
-import { appBaseUrl } from "@/lib/app-base-url";
 import { ZD_STATUS_SCHEDULED } from "@/lib/zendesk-statuses";
 
 export const dynamic = "force-dynamic";
@@ -90,10 +89,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     );
   }
 
-  const token = createPartnerReportToken(String(job.id), String(job.partner_id));
-  const base = appBaseUrl();
-  // Semantic /job/report path for partner work-report submission.
-  const reportUrl = `${base}/job/report?token=${encodeURIComponent(token)}`;
+  // Sempre o link curto por job (15/10/2026): o longo quebrava quando saía de outro ambiente.
+  const reportUrl = await buildPartnerJobReportUrl(String(job.id), String(job.partner_id));
 
   const subject = `Submit work report — ${String(job.reference ?? "")}`;
   const { html, text } = buildPartnerReportRequestEmail({
