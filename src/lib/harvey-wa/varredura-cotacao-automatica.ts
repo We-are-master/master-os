@@ -28,6 +28,7 @@ import { guardarFotosDoTicket } from "@/lib/zendesk-quoter/guardar-fotos";
 import { baixarMidia, ehDoHarvey, enviarTexto, historico, scNotificacao, vozDaConversa, type MensagemSc } from "./sunshine";
 import { idDaIntegracaoWhatsApp, telefoneE164 } from "./primeiro-contato";
 import { melhoresParceirosParaCotacao, nomeDoParceiro, MIN_CONVIDADOS } from "./melhores-parceiros";
+import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_PEDIU_CONTEXTO, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
   decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres, margemDe, precoDoLance,
@@ -54,6 +55,7 @@ type QuoteRow = {
   id: string; reference: string; status: string; title: string | null; service_type: string | null; catalog_service_id: string | null;
   postcode: string | null; property_address: string | null; scope: string | null; images: unknown; total_value: number | null;
   partner_cost: number | null; partner_id: string | null; bidding_started_at: string | null; client_email: string | null;
+  automation_status?: string | null;
 };
 
 function campo(t: Ticket, id: number): string | null {
@@ -86,7 +88,7 @@ async function entrouEmNeedsQuote(ticketId: number): Promise<Date | null> {
 async function quoteDoTicket(sb: SupabaseClient, ticketId: number): Promise<QuoteRow | null> {
   const { data } = await sb
     .from("quotes")
-    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email")
+    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email, automation_status")
     .eq("external_source", "zendesk")
     .eq("external_ref", String(ticketId))
     .is("deleted_at", null)
@@ -398,6 +400,15 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
   const horas = inicio ? (agora.getTime() - new Date(inicio).getTime()) / H : 0;
   const passo = proximoPassoDoLeilao({ tags: t.tags, horasDesdeConvite: horas, temLance: !!escolha || (q.status === "quote_ready" && Number(q.total_value) > 0) });
   if (!passo) return false;
+  /**
+   * Lance com escopo em dúvida não vira preço aqui. O quote-lances-sweep
+   * perguntou ao parceiro (ou chamou gente) porque o lance contradiz o pedido
+   * do cliente; precificar por cima mandaria ao cliente o que ele recusou.
+   */
+  if (passo === "precificar" && marcaDeEscopo(q.automation_status)) {
+    out.pulados.push(`${quem}: ${q.reference} bid scope is being checked with the partner, not pricing`);
+    return false;
+  }
 
   if (passo === "lembrar_parceiros") {
     const r = await lembrarParceiros(sb, t, q, aplicar);
