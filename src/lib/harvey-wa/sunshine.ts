@@ -72,6 +72,16 @@ export function ehDoHarvey(m: MensagemSc): boolean {
 }
 
 /**
+ * O próprio Harvey falando, no nome dele. Mensagem da equipe mandada pelo canal do
+ * Harvey (assinada "Fixfy Team" ou com o nome de alguém) não conta: com a conversa
+ * na equipe ela é a equipe respondendo, e o Reply Status tem que ficar 🟢 (dono,
+ * 15/10/2026: o motor virava 🔴 três segundos depois de cada mensagem da equipe).
+ */
+export function ehOHarveyNoNomeDele(m: MensagemSc): boolean {
+  return ehDoHarvey(m) && (m.author.displayName ?? NOME_DO_HARVEY) === NOME_DO_HARVEY;
+}
+
+/**
  * Em nome de quem o Harvey fala: a última pessoa da equipe que escreveu na
  * conversa (por ela mesma ou pelo Harvey no nome dela). Sem ninguém, ele mesmo.
  */
