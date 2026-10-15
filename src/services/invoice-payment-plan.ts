@@ -275,8 +275,11 @@ export async function syncPaymentPlanFromAmountPaid(
   for (const inst of active) {
     const amt = Math.round(Number(inst.amount ?? 0) * 100) / 100;
     const shouldBePaid = remaining + PAYMENT_PLAN_EPS >= amt;
+    // Parcela coberta consome o valor, já marcada ou não. Antes só a pendente
+    // descontava, e uma parcela que já vinha paga deixava o valor dela "sobrando"
+    // para pagar a seguinte (15/10/2026: 2ª parcela da RCP-2026-916 virou paga sozinha).
+    if (shouldBePaid) remaining = Math.round((remaining - amt) * 100) / 100;
     if (shouldBePaid && inst.status === "pending") {
-      remaining = Math.round((remaining - amt) * 100) / 100;
       await client
         .from("invoice_payment_installments")
         .update({ status: "paid", paid_at: now })

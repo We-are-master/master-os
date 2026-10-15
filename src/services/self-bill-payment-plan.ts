@@ -329,8 +329,11 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
   for (const inst of active) {
     const amt = Math.round(Number(inst.amount ?? 0) * 100) / 100;
     const shouldBePaid = remaining + PAYMENT_PLAN_EPS >= amt;
+    // Parcela coberta consome o valor, já marcada ou não. Antes só a pendente
+    // descontava, e uma parcela que já vinha paga deixava o valor dela "sobrando"
+    // para pagar a seguinte (15/10/2026: 2ª parcela da RCP-2026-916 virou paga sozinha).
+    if (shouldBePaid) remaining = Math.round((remaining - amt) * 100) / 100;
     if (shouldBePaid && inst.status === "pending") {
-      remaining = Math.round((remaining - amt) * 100) / 100;
       await supabase
         .from("self_bill_payment_installments")
         .update({ status: "paid", paid_at: now })
@@ -345,7 +348,9 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
 
   const refreshed = await listInstallmentsForSelfBill(selfBillId);
   const next = nextOpenSelfBillInstallment(refreshed);
-  const allPaid = amountPaid + PAYMENT_PLAN_EPS >= netPayout;
+  // Documento ainda sem valor (job em andamento) nunca está "todo pago": sem esta
+  // guarda, qualquer pagamento > 0 fechava o self-bill como pago.
+  const allPaid = netPayout > PAYMENT_PLAN_EPS && amountPaid + PAYMENT_PLAN_EPS >= netPayout && !next;
   const patch: Record<string, unknown> = {};
   if (next) patch.due_date = next.due_date.slice(0, 10);
   if (allPaid && sb.status !== "paid") patch.status = "paid";

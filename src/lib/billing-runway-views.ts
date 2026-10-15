@@ -544,6 +544,25 @@ export function buildRunwayPeriodDetail(startYmd: string, weeks: number, args: B
       amount,
     });
   }
+  // Parcela de parceiro já paga (documento ainda aberto): conta no dia em que saiu.
+  for (const sb of args.selfBills) {
+    if (sb.status === "paid" || sb.wise_paid_at) continue;
+    for (const inst of args.installmentsBySelfBillId?.[sb.id] ?? []) {
+      if (inst.status !== "paid") continue;
+      const pd = (inst.paid_at ?? inst.due_date ?? "").slice(0, 10);
+      if (!pd || !noPeriodo(pd)) continue;
+      const amount = roundMoney(Number(inst.amount ?? 0));
+      if (amount <= 0.02) continue;
+      paidOut.push({
+        id: `paid-inst-${inst.id}`,
+        kind: sb.bill_origin === "internal" ? "payroll" : "self_bill",
+        label: sb.partner_name?.trim() || "Partner",
+        detail: [sb.reference?.trim(), "instalment"].filter(Boolean).join(" · "),
+        dueYmd: pd,
+        amount,
+      });
+    }
+  }
   for (const bill of args.bills ?? []) {
     if (bill.status !== "paid") continue;
     const pd = bill.paid_at?.trim().slice(0, 10) ?? "";
