@@ -343,9 +343,9 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
   in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
   on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  final_check: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
   awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
@@ -763,7 +763,7 @@ const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"]
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
   { label: "On site", statuses: ["in_progress"], icon: HardHat },
   { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
-  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Final review", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
   { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
   { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
@@ -3317,7 +3317,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const updated = await updateJob(jobId, payload, { skipSelfBillSync: opts?.skipSelfBillSync });
       setJob(updated);
       if (didAutoFinalCheck) {
-        toast.success("All reports validated — job moved to Final check.");
+        toast.success("All reports validated — job moved to Final review.");
         void logAudit({
           entityType: "job",
           entityId: jobId,
@@ -3330,7 +3330,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           userName: profile?.full_name,
         }).catch(() => {});
         if (updated.partner_id) {
-          const statusLabel = statusConfig.final_check?.label ?? "Final check";
+          const statusLabel = statusConfig.final_check?.label ?? "Final review";
           notifyAssignedPartnerAboutJob({
             partnerId: updated.partner_id,
             job: updated,
@@ -5347,7 +5347,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             duration: 12000,
             description: `Pay link for £${Number(payload.amount).toFixed(2)}`,
             action: {
-              label: "Copy pay link",
+              label: "Copy payment link",
               onClick: () => {
                 void navigator.clipboard
                   .writeText(linkDoExtra)
@@ -6656,7 +6656,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const groups: { key: ExtraHistoryBucket; label: string; entries: ExtraHistoryEntry[] }[] = [
       { key: "extra", label: "Labour", entries: [] },
       { key: "materials", label: "Materials", entries: [] },
-      { key: "ccz", label: "CCZ", entries: [] },
+      { key: "ccz", label: "Congestion charge", entries: [] },
       { key: "parking", label: "Parking", entries: [] },
     ];
     for (const entry of entries) {
@@ -7407,7 +7407,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               },
                               {
                                 key: "copy_link",
-                                label: "Copy pay link",
+                                label: "Copy payment link",
                                 hint: "Full open balance",
                                 icon: Copy,
                                 disabled: !(primaryInvoiceForBadge ?? jobInvoices[0])?.reference,
@@ -7419,7 +7419,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               },
                               {
                                 key: "partial",
-                                label: "Request part of the balance",
+                                label: "Request partial payment",
                                 hint: "Pick a %, then copy or email",
                                 icon: Percent,
                                 disabled: loadingInvoices || jobInvoices.length === 0,
@@ -7484,7 +7484,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           : []),
                         {
                           key: "partner_extra",
-                          label: "Add partner extra",
+                          label: "Add partner charge",
                           hint: "Raises what the partner gets",
                           icon: Plus,
                           disabled: !job.partner_id?.trim() || job.status === "cancelled",
@@ -7559,7 +7559,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ...(job.status !== "cancelled" && job.status !== "deleted" && job.status !== "completed"
                           ? [{
                               key: "finish",
-                              label: "Finish",
+                              label: "Complete job",
                               hint: "Review report and send invoice",
                               icon: CheckCircle2,
                               onSelect: () => openFinalReview(),
@@ -8115,7 +8115,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           {[
                             {
                               key: "ccz",
-                              label: "CCZ",
+                              label: "Congestion charge",
                               on: effectiveCustomerInCcz,
                               fee: accessFees.cczFeeGbp,
                               disabled: job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz),
@@ -8333,7 +8333,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
-                    ...(canManageJobs ? [{ label: "Setup", index: 5 as const }] : []),
+                    ...(canManageJobs ? [{ label: "Settings", index: 5 as const }] : []),
                   ] as const
                 ).map((tab) => (
                   <button
@@ -8350,6 +8350,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     {tab.label}
                   </button>
                 ))}
+                <span className="inline-flex items-center px-2">
+                  <FixfyHintIcon label="Job details" text={{
+                    0: "Review the scope of work and service details.",
+                    1: "Review the primary visit and any additional visits linked to this job.",
+                    2: "Review documents and files linked to this job.",
+                    3: "Review completion reports and their approval status.",
+                    4: "Review job financial details.",
+                    5: "Manage job configuration and operational settings.",
+                    6: "Review the complaint and the actions needed to resolve it.",
+                  }[detailTab] ?? "Review information linked to this job."} />
+                </span>
               </div>
               <div className="p-3 space-y-3 bg-surface-secondary dark:bg-[#161c26]">
               {detailTab === 0 ? (
@@ -9330,7 +9341,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsClient)}`} />
                   ) : null}
                   {clientExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(clientExtraPlainDisplay)}`} /> : null}
-                  {clientExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(clientExtraCczDisplay)}`} /> : null}
+                  {clientExtraCczDisplay > 0.02 ? <FinLedgerRow label="Congestion charge" amount={`+${formatCurrency(clientExtraCczDisplay)}`} /> : null}
                   {clientExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(clientExtraParkingDisplay)}`} /> : null}
                   {clientExtraMaterialsDisplay > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(clientExtraMaterialsDisplay)}`} /> : null}
                   <FinLedgerRow label="Client pays" amount={formatCurrency(billableRevenue)} strong />
@@ -9454,7 +9465,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsPartner)}`} />
                   ) : null}
                   {partnerExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(partnerExtraPlainDisplay)}`} /> : null}
-                  {partnerExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(partnerExtraCczDisplay)}`} /> : null}
+                  {partnerExtraCczDisplay > 0.02 ? <FinLedgerRow label="Congestion charge" amount={`+${formatCurrency(partnerExtraCczDisplay)}`} /> : null}
                   {partnerExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(partnerExtraParkingDisplay)}`} /> : null}
                   {partnerMaterialsLine > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(partnerMaterialsLine)}`} /> : null}
                   {hasPartnerDeductions
@@ -11337,7 +11348,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               >
                 {([
-                  { key: "ccz", label: "CCZ", fee: accessFees.cczFeeGbp },
+                  { key: "ccz", label: "Congestion charge", fee: accessFees.cczFeeGbp },
                   { key: "parking", label: "Parking", fee: accessFees.parkingFeeGbp },
                 ] as const).map((row) => {
                   const active = Number(partnerAssignExtraInputs[row.key]) > 0;

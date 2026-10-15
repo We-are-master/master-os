@@ -23,22 +23,22 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Learn",
     items: [
-      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "New" },
+      { label: "Training", href: "/school", icon: "graduation-cap", badge: "New" },
     ],
   },
   {
     label: "Overview",
     items: [
-      { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
+      { label: "Overview", href: "/", icon: "grid-2x2", permission: "dashboard" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
-      { label: "Live view", href: "/schedule", icon: "calendar", permission: "jobs" },
+      { label: "Live operations", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
     ],
   },
   {
     label: "Operations",
     items: [
-      { label: "Leads", href: "/leads", icon: "user-circle", permission: "leads" },
+      { label: "Partner offers", href: "/leads", icon: "user-circle", permission: "leads" },
       // Leads e CRM numa tela só (11/10/2026): B2C (site, WhatsApp, lançados à mão) e B2B
       // (empresas), com o botão no topo. O /leads acima é outra coisa (jobs oferecidos a
       // parceiros) e fica escondido do menu.

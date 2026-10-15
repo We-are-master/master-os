@@ -321,7 +321,7 @@ export function ServiceCatalogTab() {
   ];
 
   const viewTabs = [
-    { id: "manage", label: "Manage" },
+    { id: "manage", label: "Services" },
     { id: "overview", label: "Overview" },
   ];
 

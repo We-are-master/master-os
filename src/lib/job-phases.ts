@@ -376,7 +376,7 @@ export function canAdvanceJob(
   }
   if (nextStatus === "final_check") {
     if (!isJobOnSiteWorkStatus(job.status)) {
-      return { ok: false, message: "Move to Final Check from the on-site (In progress) step." };
+      return { ok: false, message: "Move to Final review from the on-site (In progress) step." };
     }
     return { ok: true };
   }
@@ -507,7 +507,7 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
     if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
       return {
         ok: false,
-        message: "Job must be in Final check or on site before sending the report and invoice.",
+        message: "Job must be in Final review or on site before sending the report and invoice.",
       };
     }
     return { ok: true };

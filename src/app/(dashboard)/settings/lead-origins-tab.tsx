@@ -85,7 +85,7 @@ export function LeadOriginsTab() {
     const { error } = await getSupabase().from("lead_channels").upsert(linhas, { onConflict: "key" });
     setSalvando(false);
     if (error) { setErro(error.message); return; }
-    toast.success("Lead origins saved");
+    toast.success("Lead sources saved");
     aplicar(await buscar());
   }
 
@@ -93,7 +93,7 @@ export function LeadOriginsTab() {
     <Card>
       <CardHeader>
         <div>
-          <CardTitle>Lead origins</CardTitle>
+          <CardTitle>Lead sources</CardTitle>
           <p className="mt-1 text-sm text-text-secondary">
             Where a lead came from. Used in Leads (filter, Add lead) and in the CSV import. Inactive origins disappear from the forms but old leads keep them.
           </p>

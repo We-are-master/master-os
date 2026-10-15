@@ -196,7 +196,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       const label = lead.reference?.trim() || lead.name?.trim() || "this lead";
       if (
         !confirm(
-          `Delete ${label}? It will be removed from Leads, Pulse, and the Trade Portal. The linked Fixfy client contact is kept.`,
+          `Delete ${label}? It will be removed from Partner offers, Overview and the Trade Portal. The linked Fixfy client contact is kept.`,
         )
       ) {
         return;
@@ -597,8 +597,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     <PageTransition>
       <div className="min-w-0 space-y-4 sm:space-y-5">
         <PageHeader
-          title="Leads"
-          subtitle="Capture opportunities before quoting — offer interested leads to partners."
+          title="Partner offers"
+          subtitle="Review service opportunities and offer them to interested partners."
           className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
         >
           <Button

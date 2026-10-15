@@ -102,6 +102,7 @@ export function MonthGoal() {
   // (dono, 11/10/2026: "muita info, queria algo mais visual").
   const dica = d
     ? [
+        "Uses the current London calendar month, independently of the page date filter.",
         `Booked: ${m(receita)} in ${d.jobs} jobs (everything with a visit this month, open jobs included).`,
         `Delivered: ${m(d.entregue)} in ${d.jobsEntregues} jobs.`,
         `Gross margin: ${margem.toFixed(1)}%.`,
@@ -115,13 +116,13 @@ export function MonthGoal() {
     : "This month against the goal chosen in Settings.";
 
   return (
-    <section aria-label="Month goal" className="rounded-xl border border-fx-line bg-card px-4 py-3">
+    <section aria-label="Monthly target" className="rounded-xl border border-fx-line bg-card px-4 py-3">
       {/* Meta numa faixa só (15/10/2026): valor, barra e distância lado a lado. */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div className="min-w-0">
           <p className="m-0 inline-flex items-center gap-1.5 text-[11px] font-semibold text-fx-coral">
-            {nomeDoMes} goal
-            <FixfyHintIcon text={dica} placement="bottom-start" />
+            {nomeDoMes} target
+            <FixfyHintIcon label="Monthly target" text={dica} placement="bottom-start" />
             <span className="font-normal text-text-tertiary">· {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left</span>
           </p>
           <p className="m-0 mt-1 whitespace-nowrap leading-none">

@@ -1,3 +1,4 @@
+import { updatedNavigationLabel } from "./nav-labels";
 import type { NavGroup, NavItem } from "@/lib/constants";
 
 function markItemHrefsDeep(item: NavItem, sink: Set<string>) {
@@ -63,6 +64,7 @@ export function mergeNewNavItems(
       }
 
       storedHrefs.add(cItem.href);
+      local.label = updatedNavigationLabel(cItem.href, local.label, cItem.label);
       // Stored navs saved before a permission key was added to the canonical
       // item won't carry it — backfill so the filter can act on them.
       if (!local.permission && cItem.permission) local.permission = cItem.permission;

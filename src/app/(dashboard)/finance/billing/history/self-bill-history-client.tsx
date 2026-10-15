@@ -219,8 +219,8 @@ export function SelfBillHistoryClient() {
   return (
     <PageTransition className="flex min-h-0 flex-col gap-4">
       <PageHeader
-        title="Self-bill history"
-        infoTooltip={"Self-bills that are settled: paid, archived after payout, or rejected. Billing keeps the ones still in flight."}
+        title="Self-bill archive"
+        infoTooltip={"Review paid, archived and rejected self-bills. Active items remain in Billing."}
       >
         <Link
           href="/finance/billing"

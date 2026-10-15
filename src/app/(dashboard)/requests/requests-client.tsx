@@ -387,12 +387,12 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
   }, [selectedRequest, drawerFields, refreshSilent]);
 
   const tabs = [
-    { id: "all", label: "All requests", count: statusCounts.all ?? 0 },
-    { id: "new", label: "New", count: statusCounts.new ?? 0 },
-    { id: "approved", label: "Approved", count: statusCounts.approved ?? 0 },
-    { id: "converted_to_quote", label: "Converted to quote", count: statusCounts.converted_to_quote ?? 0 },
-    { id: "converted_to_job", label: "Converted to job", count: statusCounts.converted_to_job ?? 0 },
-    { id: "declined", label: "Not qualified", count: statusCounts.declined ?? 0 },
+    { id: "all", label: "All requests", hint: "All service requests under the current filters.", count: statusCounts.all ?? 0 },
+    { id: "new", label: "New", hint: "Requests awaiting initial review.", count: statusCounts.new ?? 0 },
+    { id: "approved", label: "Approved", hint: "Requests approved for the next stage.", count: statusCounts.approved ?? 0 },
+    { id: "converted_to_quote", label: "Converted to quote", hint: "Requests converted into a quote.", count: statusCounts.converted_to_quote ?? 0 },
+    { id: "converted_to_job", label: "Converted to job", hint: "Requests converted into a job.", count: statusCounts.converted_to_job ?? 0 },
+    { id: "declined", label: "Not qualified", hint: "Requests marked as not qualified.", count: statusCounts.declined ?? 0 },
   ];
 
   const handleBulkStatusChange = async (newStatus: string) => {
@@ -1101,7 +1101,7 @@ export function RequestsClient({ initialData }: RequestsClientProps = {}) {
         {selectedRequest && (
           <div className="flex flex-col h-full">
             <Tabs
-              tabs={[{ id: "details", label: "Details" }, { id: "history", label: "History" }]}
+              tabs={[{ id: "details", label: "Details", hint: "Review the service request and contact details." }, { id: "history", label: "History", hint: "Review recorded request events." }]}
               activeTab={drawerTab}
               onChange={setDrawerTab}
               className="px-6 pt-2"

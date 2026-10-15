@@ -30,7 +30,7 @@ const PIPELINE_DEFS = [
   { id: "ready", label: "Ready to book", color: "bg-amber-500", match: (j: OpsJob) => j.status === "unassigned" },
   { id: "scheduled", label: "Scheduled", color: "bg-sky-500", match: (j: OpsJob) => j.status === "scheduled" || j.status === "late" },
   { id: "progress", label: "In progress", color: "bg-orange-500", match: (j: OpsJob) => IN_PROGRESS_STATUSES.has(j.status) },
-  { id: "final", label: "Final checks", color: "bg-violet-500", match: (j: OpsJob) => j.status === "final_check" },
+  { id: "final", label: "Final review", color: "bg-violet-500", match: (j: OpsJob) => j.status === "final_check" },
   { id: "awaiting", label: "Awaiting payment", color: "bg-rose-500", match: (j: OpsJob) => j.status === "awaiting_payment" },
 ] as const;
 

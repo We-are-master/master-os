@@ -29,7 +29,7 @@ const TIPO: Record<UrgenteDoPulse["tipo"], { titulo: string; tom: Tom; icone: Re
   no_partner: { titulo: "No partner", tom: "red", icone: <UserX className="h-4 w-4" /> },
   late: { titulo: "Late", tom: "amber", icone: <Clock className="h-4 w-4" /> },
   card: { titulo: "Card refused", tom: "red", icone: <CreditCard className="h-4 w-4" /> },
-  final_check: { titulo: "Final check waiting", tom: "amber", icone: <ClipboardCheck className="h-4 w-4" /> },
+  final_check: { titulo: "Final review waiting", tom: "amber", icone: <ClipboardCheck className="h-4 w-4" /> },
   quote_ready: { titulo: "Quote ready to send", tom: "blue", icone: <FileText className="h-4 w-4" /> },
 };
 
@@ -52,7 +52,7 @@ export function AlertsFeed() {
   return (
     <SectionCard
       className={PULSE_FORECAST_PAIR_CARD_CLASS}
-      title="Needs Attention"
+      title="Action required"
       subtitle={<span className="block truncate whitespace-nowrap">{loading ? "loading" : `${itens.length} item${itens.length === 1 ? "" : "s"}`}</span>}
       bodyClassName={cn("p-0", PULSE_FORECAST_PAIR_BODY_SCROLL_CLASS)}
     >

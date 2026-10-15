@@ -13,33 +13,33 @@ import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
  * renderizada no servidor), mas aparecem aqui como abas e saem da lateral.
  */
 const ADMIN_TABS = [
-  { id: "ai-briefs", label: "AI & Daily brief" },
-  { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
-  { id: "agents", label: "Agents" },
-  { id: "services", label: "Services" },
-  { id: "lead-origins", label: "Lead origins" },
-  { id: "navigation", label: "Navigation" },
-  { id: "permissions", label: "Roles & permissions" },
-  { id: "team", label: "Users access" },
-  { id: "system", label: "System" },
+  { id: "ai-briefs", label: "AI & briefs", hint: "Configure AI settings and scheduled daily summaries." },
+  { id: "setup", label: "Business settings", hint: "Configure operating rules, finance defaults and document requirements.", count: SETUP_TAB_BADGE_COUNT },
+  { id: "agents", label: "AI agents", hint: "Manage AI agents and the guidance used in their conversations." },
+  { id: "services", label: "Pricing", hint: "Manage service prices, labour rates, material costs and quote calculations." },
+  { id: "lead-origins", label: "Lead sources", hint: "Manage the sources used to classify incoming leads." },
+  { id: "navigation", label: "Navigation", hint: "Configure menu labels, destinations and visibility." },
+  { id: "permissions", label: "Permissions", hint: "Define the access and actions available to each role." },
+  { id: "team", label: "Users", hint: "Manage user accounts, invitations and access roles." },
+  { id: "system", label: "System", hint: "Configure company information, integrations and system preferences." },
 ] as const;
 
 /** Abas que são páginas próprias. */
 export const SETTINGS_PAGE_TABS: Record<string, string> = { agents: "/agents", services: "/services" };
 
-export function useSettingsTabs(): { id: string; label: string; count?: number }[] {
+export function useSettingsTabs(): { id: string; label: string; hint?: string; count?: number }[] {
   const { profile } = useProfile();
   const { can } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
   return useMemo(() => {
-    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My profile" }];
+    const tabs: { id: string; label: string; hint?: string; count?: number }[] = [{ id: "profile", label: "Profile", hint: "Update your personal details and account preferences." }];
     for (const t of ADMIN_TABS) {
       // Quem já via Agents/Services pela lateral continua vendo pela aba.
       const allowed =
         isAdmin ||
         (t.id === "agents" && can("dashboard")) ||
         (t.id === "services" && can("service_catalog"));
-      if (allowed) tabs.push({ id: t.id, label: t.label, count: "count" in t ? t.count : undefined });
+      if (allowed) tabs.push({ id: t.id, label: t.label, hint: t.hint, count: "count" in t ? t.count : undefined });
     }
     return tabs;
   }, [isAdmin, can]);

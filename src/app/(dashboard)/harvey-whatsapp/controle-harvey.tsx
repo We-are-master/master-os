@@ -59,7 +59,7 @@ export function ControleHarvey({ conversas, pausado, pausaInfo }: { conversas: C
   return (
     <PageTransition>
       <div className="space-y-6">
-        <PageHeader title="Harvey · WhatsApp" subtitle="Take over any conversation here: the Zendesk ticket unlocks and Harvey stops replying.">
+        <PageHeader title="WhatsApp" subtitle="Take over any conversation here: the Zendesk ticket unlocks and Harvey stops replying.">
           <Button
             variant={pausado ? "primary" : "outline"}
             loading={ocupado === "pausa"}

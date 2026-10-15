@@ -62,13 +62,14 @@ export function WorkforceSectionTitle({
 export const WORKFORCE_DRAWER_TAB_CONFIG: {
   id: WorkforceDrawerTab;
   label: string;
+  hint?: string;
   contractorOnly?: boolean;
 }[] = [
-  { id: "overview", label: "Profile" },
-  { id: "documents", label: "Documents" },
-  { id: "schedule", label: "Schedule", contractorOnly: true },
-  { id: "finance", label: "Finance" },
-  { id: "access", label: "Login details" },
+  { id: "overview", label: "Profile", hint: "Review employment details, contact information and payment arrangements." },
+  { id: "documents", label: "Documents", hint: "Review required documents and their current status." },
+  { id: "schedule", label: "Schedule", hint: "Manage the contractor's working schedule.", contractorOnly: true },
+  { id: "finance", label: "Finance", hint: "Review service fees, commissions and payment records." },
+  { id: "access", label: "Access", hint: "Manage linked system access and login details." },
 ];
 
 export function WorkforceKpiGrid({

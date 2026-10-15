@@ -231,7 +231,7 @@ export function PaymentHistoryTab() {
 
       <aside className="rounded-xl border border-border-light bg-white shadow-sm">
         <div className="border-b border-border-light px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-wider text-text-tertiary">Activity log</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-text-tertiary">Audit log</p>
         </div>
         <div className="max-h-[600px] overflow-y-auto">
           {timeline.length === 0 ? (

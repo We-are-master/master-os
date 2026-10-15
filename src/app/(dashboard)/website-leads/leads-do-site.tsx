@@ -87,11 +87,11 @@ const ESTADO: Record<LeadDaTela["status"], { rotulo: string; badge: BadgeVariant
 };
 
 const ABAS = [
-  { id: "open", label: "Open", filtro: (l: LeadDaTela) => ["new", "hot", "contacted"].includes(l.status) },
-  { id: "hot", label: "Hot", filtro: (l: LeadDaTela) => l.status === "hot" },
-  { id: "contacted", label: "In contact", filtro: (l: LeadDaTela) => l.status === "contacted" },
-  { id: "lost", label: "Lost", filtro: (l: LeadDaTela) => l.status === "lost" || l.status === "unsubscribed" },
-  { id: "all", label: "All", filtro: (l: LeadDaTela) => l.status !== "won" },
+  { id: "open", label: "Open", hint: "Enquiries currently marked new, high interest or contacted.", filtro: (l: LeadDaTela) => ["new", "hot", "contacted"].includes(l.status) },
+  { id: "hot", label: "High interest", hint: "Enquiries marked as high interest.", filtro: (l: LeadDaTela) => l.status === "hot" },
+  { id: "contacted", label: "Contacted", hint: "Enquiries where contact has been recorded.", filtro: (l: LeadDaTela) => l.status === "contacted" },
+  { id: "lost", label: "Closed", hint: "Enquiries marked lost or unsubscribed.", filtro: (l: LeadDaTela) => l.status === "lost" || l.status === "unsubscribed" },
+  { id: "all", label: "All leads", hint: "All enquiries except those already converted to clients.", filtro: (l: LeadDaTela) => l.status !== "won" },
 ] as const;
 
 /** As colunas do quadro, na ordem do funil. "Customer" mostra quem pagou nos últimos 30 dias. */
@@ -477,7 +477,7 @@ export function LeadsDoSite({ leads, canais, exemplo = false }: { leads: LeadDaT
         {aberto ? (
           <div className="flex min-h-0 min-w-0 flex-col">
             <Tabs
-              tabs={[{ id: "overview", label: "Overview" }, { id: "timeline", label: "Timeline", count: aberto.atividades.length }]}
+              tabs={[{ id: "overview", label: "Overview", hint: "Review contact details and the current enquiry." }, { id: "timeline", label: "Activity", hint: "Review recorded events and follow-up activity.", count: aberto.atividades.length }]}
               activeTab={abaDoLead}
               onChange={setAbaDoLead}
               variant="quote-drawer"

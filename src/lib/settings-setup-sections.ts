@@ -30,7 +30,7 @@ export type SetupSectionMeta = {
 export const SETUP_SECTIONS: SetupSectionMeta[] = [
   {
     id: "working-calendar",
-    label: "Working calendar",
+    label: "Working hours",
     description: "Office hours and the days you operate.",
     icon: CalendarClock,
   },

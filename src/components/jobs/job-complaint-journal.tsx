@@ -84,7 +84,7 @@ const STATUS: Record<string, string> = {
   in_progress_phase1: "In progress",
   in_progress_phase2: "In progress",
   scheduled: "Scheduled",
-  final_check: "Final checks",
+  final_check: "Final review",
   awaiting_payment: "Awaiting payment",
   completed: "Completed",
   cancelled: "Cancelled",
