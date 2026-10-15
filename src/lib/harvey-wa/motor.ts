@@ -14,6 +14,7 @@ import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
 import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem } from "./etapa-da-passagem";
+import { registrarDecisao } from "./diario";
 import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
@@ -453,6 +454,10 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
+  // Diário: passagem e link de pagamento são as decisões que alguém precisa enxergar de manhã.
+  const ticketDoDiario = r.passarParaEquipe || r.checkout ? await ticketPeloTelefone(telefone).catch(() => null) : null;
+  if (r.passarParaEquipe) await registrarDecisao({ origem: "whatsapp", ticketId: ticketDoDiario, quoteRef: /\bQT-\d{4}-\d+\b/.exec(r.passarParaEquipe)?.[0] ?? null, decisao: `Handed the WhatsApp chat to the team: ${r.passarParaEquipe}`, regra: r.precisaDe ? `hand_off_to_team (need: ${r.precisaDe})` : "hand_off_to_team", pendente: `Team: ${r.precisaDe ?? "pick up the chat"}` }, sb);
+  if (r.checkout) await registrarDecisao({ origem: "whatsapp", ticketId: ticketDoDiario, decisao: `Sent a ${r.checkout.deposit ? "deposit" : "full"} payment link ${r.checkout.ref}: £${r.checkout.sinal} now of £${r.checkout.total}`, regra: "create_payment_link (card only, catalogue price)", pendente: `Customer: pay ${r.checkout.ref}` }, sb);
   await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
 
   // Veio de anúncio: a Meta fica sabendo do lead (1ª cotação) e do checkout (link ou banco).
