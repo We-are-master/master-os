@@ -27,6 +27,7 @@ import type { Account, Invoice, Job } from "@/types/database";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
+import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
 
 export { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
 
@@ -143,7 +144,8 @@ export async function sendInvoiceEmail(
   admin: SupabaseClient,
   invoiceId: string,
   options: {
-    userId: string;
+    /** null = envio do sistema (POST /api/jobs): o histórico fica sem usuário, com `userName` dizendo quem foi. */
+    userId: string | null;
     userName: string;
     requestPercent?: number;
     jobId?: string | null;
@@ -250,7 +252,29 @@ export async function sendInvoiceEmail(
   // aberto, então a fatura entra nele. A Resend copiava o support@, e o Zendesk
   // abria um ticket novo para cada fatura (#51315 e #51318, 13/10/2026).
   let ticketUsado: number | undefined;
-  if (umTicketEmail()) {
+  // Job ligado a um ticket (dono, 15/10/2026: "fica tudo no mesmo ticket"): a cobrança da
+  // criação e a fatura entram SEMPRE nesse ticket, com ou sem a chave do um-ticket. Ticket de
+  // WhatsApp = conversa lateral por e-mail (nunca texto no WhatsApp); ticket de e-mail do
+  // próprio cliente = resposta pública no fio dele.
+  const ticketDoJob = getZendeskTicketId(job);
+  if (ticketDoJob && isZendeskConfigured()) {
+    try {
+      const r = await entregarEmailNoTicket({
+        ticket: { id: Number(ticketDoJob), origem: "job", canal: null },
+        para: { email: emailTo, nome: billing.displayName },
+        cc: ccDaConta,
+        assunto: subject,
+        html: bodyHtml,
+        anexos: [anexoPdf],
+        soEmail: true,
+      });
+      ticketUsado = r.ticketId;
+      console.log(`[invoice-send-email] ${inv.reference}: no ticket do job #${r.ticketId} (${r.modo})`);
+    } catch (err) {
+      console.error("[invoice-send-email] ticket do job falhou, segue pela Resend:", err);
+    }
+  }
+  if (ticketUsado == null && umTicketEmail()) {
     const achado = await acharTicketDoPedido(admin, { jobId: job?.id ?? null, clientId: job?.client_id ?? null, email: emailTo });
     if (achado.tipo === "ticket") {
       try {

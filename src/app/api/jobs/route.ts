@@ -60,6 +60,8 @@ import {
 import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 import { autoAssignGate, suggestedPartnerMarginPctFor } from "@/lib/auto-assign-gate";
+import { decideApiChargeOnCreate, loadChargeAccount, parseChargeOnCreate } from "@/lib/charge-on-create";
+import { chargeJobOnCreateServer, type ChargeOnCreateResult } from "@/lib/ensure-job-invoice-server";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -269,6 +271,21 @@ export const runtime  = "nodejs";
  *     internal_notes?:  string       // Free-text, office-only notes (e.g. a
  *                                    //   linked external ticket URL).
  *                                    //   Persisted on jobs.internal_notes.
+ *     charge_on_create?: number|string, // payment request at creation, the
+ *                                    //   same as the create modal (PR #750).
+ *                                    //   1..100 = percent (100 = full),
+ *                                    //   "full" / "charge_full", "deposit_50" /
+ *                                    //   "charge_50", "deposit" (= 50),
+ *                                    //   "on_completion" / "charge_on_completion"
+ *                                    //   (= nothing now). Absent or "" = the
+ *                                    //   ACCOUNT decides: no account or
+ *                                    //   collection_mode "card_upfront" → 50%
+ *                                    //   deposit; "invoice" → nothing.
+ *                                    //   Platforms (email_include_invoice_on_final
+ *                                    //   = false) and jobs paid at booking are
+ *                                    //   never charged. When it charges, the OS
+ *                                    //   ensures the job invoice and emails the
+ *                                    //   "almost there" booking request.
  *   }
  *
  * Behavior:
@@ -293,7 +310,14 @@ export const runtime  = "nodejs";
  *     the Zendesk ticket (client name, postcode from subject when the
  *     address field carries an email, auto_assign checkbox, catalog id).
  *
- * Response: 201 { id, reference, status, report_link, partners_notified? }
+ * Response: 201 { id, reference, status, report_link, partners_notified?,
+ *                charge_on_create? }
+ *
+ *   - charge_on_create: present when a charge was requested or applied by the
+ *     account default: { sent, percent, source?, to?, pay_url?,
+ *     invoice_reference?, reason? }. `pay_url` is `/pay/<INV>?pct=N` (no pct
+ *     when 100) so the caller can also send it on WhatsApp. A failure here
+ *     never undoes the job: sent=false + reason.
  *
  *   - report_link: echoes the value supplied in the request when present
  *     (persisted on jobs.report_link). When the caller didn't send one,
@@ -404,6 +428,8 @@ export async function POST(req: NextRequest) {
    */
   const imagesIn        = capJobImagesArray(coerceJobImagesArray(body.images));
   const internalNotesIn = nullish(body.internal_notes);
+  // Cobrança na criação (15/10/2026): o pedido é lido aqui; quem decide é a conta, depois do insert.
+  const chargeRequestIn = parseChargeOnCreate(body.charge_on_create);
 
   /**
    * Reserva já paga no ato: o site B2C passa o cartão ANTES de o job existir,
@@ -1423,6 +1449,36 @@ export async function POST(req: NextRequest) {
     }).catch((err) => console.error("[api/jobs] auto-assign invites failed:", err));
   }
 
+  // ─── Cobrança na criação (o mesmo do modal, PR #750) ─────────────────
+  // ESPERADA antes da resposta: na Vercel a função congela depois dela, e um
+  // `void` aqui nunca mandaria o e-mail. Roda depois do ticket ligado, para o
+  // e-mail cair no ticket do pedido quando o um-ticket estiver ligado. Falhar
+  // aqui nunca desfaz o job: volta sent=false com o motivo.
+  let chargeOnCreate: ChargeOnCreateResult | undefined;
+  {
+    const chargeAccount = await loadChargeAccount(supabase, clientId).catch(() => null);
+    const decision = decideApiChargeOnCreate({
+      request: chargeRequestIn,
+      account: chargeAccount,
+      paidAtBooking: paymentStatusIn,
+    });
+    if (decision.charge) {
+      chargeOnCreate = await chargeJobOnCreateServer(supabase, {
+        jobId: String(inserted.id),
+        percent: decision.percent,
+        source: decision.source,
+      });
+      if (!chargeOnCreate.sent) console.warn("[api/jobs] charge_on_create not sent:", inserted.reference, chargeOnCreate.reason);
+    } else if (decision.requested && decision.reason) {
+      chargeOnCreate = {
+        sent: false,
+        percent: chargeRequestIn.kind === "charge" ? chargeRequestIn.percent : 0,
+        source: "requested",
+        reason: decision.reason,
+      };
+    }
+  }
+
   return NextResponse.json(
     {
       id:          inserted.id,
@@ -1442,6 +1498,7 @@ export async function POST(req: NextRequest) {
       ...(customerMessageHtmlIn
         ? { customer_requester_set: customerRequesterSet, customer_message_posted: customerMessagePosted }
         : {}),
+      ...(chargeOnCreate ? { charge_on_create: chargeOnCreate } : {}),
     },
     { status: 201 },
   );

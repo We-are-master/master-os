@@ -12,9 +12,12 @@ import {
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
+import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Folga para o final check automático que roda em `after()` (fatura, PDF, e-mail).
+export const maxDuration = 120;
 
 const ALLOWED_ROLES = new Set(["admin", "manager", "operator"]);
 
@@ -217,6 +220,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (template === "certificate") {
     const freshCertificate = (fotos.certificate ?? []).length > 0;
     after(() => fillCertificateExpiry(admin, job.id, { force: overwrite && freshCertificate }));
+  }
+
+  // Final check automático (FINAL_CHECK_AUTO=1) só na primeira gravação que leva o job a
+  // final check: edição de relatório nunca dispara aprovação nem e-mail.
+  if (FINAL_CHECK_AUTO_ON() && moveToFinalCheck && !overwrite) {
+    after(async () => {
+      const r = await runFinalCheckAutomatico(admin, job.id, { origem: "report_submitted" });
+      console.log(`[final-check-auto] ${job.reference}: ${r.feito}`);
+    });
   }
 
   return NextResponse.json({

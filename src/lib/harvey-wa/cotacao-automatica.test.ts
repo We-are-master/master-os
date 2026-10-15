@@ -103,3 +103,12 @@ describe("auto-quote: from bid to price", () => {
     assert.doesNotMatch(t, /—/);
   });
 });
+
+describe("auto-quote: quote text with the accept link (Fase 1 auto send)", () => {
+  it("carries the link and no em dash", () => {
+    const t = textoDaQuote({ nome: "Chloe", servico: "Carpentry", total: 480, referencia: "QT-2026-1180", link: "https://app.getfixfy.com/quote/respond?token=x&action=accept" });
+    assert.match(t, /£480\.00/);
+    assert.match(t, /accept it here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept/);
+    assert.doesNotMatch(t, /[—–]/);
+  });
+});

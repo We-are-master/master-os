@@ -13,6 +13,7 @@ import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 import { decidirDesconto } from "./desconto";
+import { faltandoParaCotar, postcodeDaCotacao } from "./pedido-de-cotacao";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -29,6 +30,10 @@ export type Contas = {
   salvarDocumento?: (tipo: string, mediaUrl: string) => Promise<unknown>;
   /** Job com o preço que a equipe deu no chat + link do sinal de 50% (ver `reserva-da-equipe.ts`). */
   reservarPrecoDaEquipe?: (r: Omit<import("./reserva-da-equipe").ReservaDaEquipe, "telefone" | "ticketId">) => Promise<import("./reserva-da-equipe").ResultadoDaReserva>;
+  /** Em que pé estão as cotações do cliente (get_quote_status, ver contas.ts). */
+  statusDasCotacoes?: () => Promise<unknown>;
+  /** Pergunta do cliente ao profissional que cotou, na side conversation dele (ask_partner). */
+  perguntarAoParceiro?: (pergunta: string) => Promise<unknown>;
 };
 
 export type Contexto = {
@@ -60,6 +65,8 @@ export type Contexto = {
   ticketDaConversa?: () => Promise<number | null>;
   /** Quem da equipe estava falando com o cliente: o Harvey continua no nome dessa pessoa (dono, 08/10/2026). */
   falaComo?: string | null;
+  /** Postcodes que o OS já tem desta pessoa (lead do Checkatrade, site, cliente): valem no request_quote. */
+  postcodesConhecidos?: string[];
 };
 
 /** Continuar a conversa no nome de quem da equipe falava, sem se apresentar. */
@@ -97,6 +104,8 @@ export type Resultado = {
   fichaDoJob?: FichaDoJob | null;
   /** Documentos de parceiro gravados nesta resposta (para o log). */
   documentos: unknown[];
+  /** Cotação pedida com o Harvey ficando na conversa: o motor põe o ticket em Bidding e a nota para a equipe. */
+  cotacaoPedida?: { referencia: string; nota: string } | null;
 };
 
 const MODELO = () => process.env.HARVEY_WA_MODEL?.trim() || "gpt-5.4";
@@ -221,12 +230,13 @@ const FERRAMENTAS_CLIENTE = [
     type: "function",
     function: {
       name: "hand_off_to_team",
-      description: "Pass the conversation to a person from the team. Use it for complaints, existing bookings, requests for a person, paying by bank transfer, anything outside the catalogue or anything you do not know. What you write goes into an internal note on the ticket.",
+      description:
+        "Pass the conversation to a person from the team. Use it only for complaints, changes to existing bookings, an explicit request to speak to a person, paying by bank transfer, business terms (credit, payment terms, contracts), or something you really do not know. Not for pricing work outside the catalogue (use request_quote) and not for electrical, gas or appliance repairs (we do not do them: decline politely). What you write goes into an internal note on the ticket.",
       parameters: {
         type: "object",
         properties: {
           reason: { type: "string", description: "one line in English: what is needed and why" },
-          need: { type: "string", enum: ["call", "quote", "complaint", "booking", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: a person has to price the job (electrical, gas, building work, anything outside the catalogue). complaint: they are unhappy with a job, want a refund, or something went wrong. booking: about an existing booking (reschedule, cancel, who is coming, timing) or paying by bank transfer. other: anything else" },
+          need: { type: "string", enum: ["call", "quote", "complaint", "booking", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: only when request_quote failed and a person has to price the job. complaint: they are unhappy with a job, want a refund, or something went wrong. booking: about an existing booking (reschedule, cancel, who is coming, timing) or paying by bank transfer. other: anything else" },
           details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
           job: {
             type: "object",
@@ -277,21 +287,43 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "request_quote",
       description:
-        "Asks the team for a proper quote, with the photos they sent. Use it only when the job is not in the catalogue or cannot be priced from it, AND they said yes to getting a quote. Before calling it, collect everything the team needs, one question per message: the full address (house number, street, postcode), photos of every area involved, exactly what needs doing (for painting: which rooms, walls/ceilings/woodwork, same colour or new colour; for repairs: what is broken and where; for cleaning: bedrooms, bathrooms, empty or furnished), whether the property is empty or lived in, and when they want it done. Never quote bespoke or made-to-measure work yourself, and decline work at height (gutters, roofs, high ladders). Then tell them the team will send the quote and hand off happens automatically.",
+        "Asks our professionals for a fixed price, with the photos they sent. Use it for work that is not in the catalogue, or where the photos, a video or the details decide the price (repairs outside the price list, bespoke work, projects), once they want a price. The minimum: what needs doing (clear, with what the photos show), the postcode, and photos or a short video (or why they cannot send any). The full address, whether the property is empty or lived in, and when they want it done help the professionals: include them if you have them, but never hold the request for them (ask for the address later, before booking). The right professionals are asked straight away and you stay in the chat. Never quote bespoke work yourself, and decline work at height (gutters, roofs, high ladders).",
       parameters: {
         type: "object",
         properties: {
           service_type: { type: "string", description: "the trade, e.g. Plumbing, Carpentry, Painting, Cleaning" },
           description: { type: "string", description: "the job in English: what needs doing, which rooms/areas, and what you saw in the photos" },
-          postcode: { type: "string" },
-          address: { type: "string", description: "house number and street" },
-          occupancy: { type: "string", description: "empty, furnished, or lived in" },
-          timing: { type: "string", description: "when they want it done" },
+          postcode: { type: "string", description: "the postcode they gave, or the one already on their request" },
+          address: { type: "string", description: "house number and street, only if you have it" },
+          occupancy: { type: "string", description: "empty, furnished, or lived in, only if you know" },
+          timing: { type: "string", description: "when they want it done, only if you know" },
           no_photos_reason: { type: "string", description: "only if they cannot send photos: why" },
           name: { type: "string" },
           email: { type: "string" },
         },
-        required: ["service_type", "description", "postcode", "address", "occupancy", "timing"],
+        required: ["service_type", "description", "postcode"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_quote_status",
+      description:
+        "Where their quote is now (inviting professionals, waiting for prices, priced, sent) with the total and the accept link once it was sent, and the professional's answer to any question they asked. Use it whenever they ask for news on a quote, instead of handing off.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ask_partner",
+      description:
+        "Sends the customer's question about the work being quoted (materials, finish, what is included, how long it takes) to the professional who priced it, by email. Use it when you cannot answer from the quote yourself. The answer comes back later: never guess it.",
+      parameters: {
+        type: "object",
+        properties: { question: { type: "string", description: "the customer's question in plain English, as the professional should read it" } },
+        required: ["question"],
       },
     },
   },
@@ -613,17 +645,12 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
-    // O postcode tem que ter vindo do cliente, não da imaginação do modelo.
-    const pc = String(a.postcode ?? "").replace(/\s+/g, "").toUpperCase();
-    const disse = ctx.textoDoCliente?.replace(/\s+/g, "").toUpperCase() ?? "";
-    if (!pc || !disse.includes(pc.slice(0, Math.max(3, pc.length - 3)))) return { error: "Ask for their postcode first (they have not given it)." };
-    // O time não volta ao cliente para perguntar o básico (dono, 09/10/2026): sem isto, não passa.
-    const faltando: string[] = [];
-    if (!String(a.address ?? "").trim() || !/\d/.test(String(a.address))) faltando.push("the full address (house number and street)");
-    if (!String(a.occupancy ?? "").trim()) faltando.push("whether the property is empty or lived in");
-    if (!String(a.timing ?? "").trim()) faltando.push("when they want it done");
-    if ((ctx.fotos?.length ?? 0) === 0 && !String(a.no_photos_reason ?? "").trim()) faltando.push("photos of the areas involved");
-    if (faltando.length) return { error: `Before asking the team, get ${faltando.join(", ")}. Ask one thing at a time.` };
+    // O postcode vem do cliente (chat) ou do cadastro do lead, nunca da imaginação do modelo.
+    const postcode = postcodeDaCotacao(a.postcode, ctx.textoDoCliente, ctx.postcodesConhecidos ?? []);
+    // O mínimo para chamar parceiro (dono, 15/10/2026): descrição + postcode + fotos (ou o motivo).
+    const faltando = faltandoParaCotar({ descricao: a.description, postcode, fotos: ctx.fotos?.length ?? 0, semFotos: a.no_photos_reason });
+    if (faltando.length) return { error: `Before asking the professionals, get ${faltando.join(", ")}. Ask one thing at a time.` };
+    const endereco = typeof a.address === "string" && /\d/.test(a.address) ? a.address.trim() : undefined;
     const q = (await ctx.contas.pedirCotacao({
       serviceType: String(a.service_type ?? "General Maintenance"),
       description: [
@@ -632,17 +659,38 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
         a.timing ? `When: ${a.timing}.` : "",
         a.no_photos_reason ? `No photos: ${a.no_photos_reason}.` : "",
       ].filter(Boolean).join("\n"),
-      postcode: String(a.postcode ?? ""),
-      address: typeof a.address === "string" ? a.address : undefined,
+      postcode: postcode!,
+      address: endereco,
       name: typeof a.name === "string" ? a.name : undefined,
       email: typeof a.email === "string" ? a.email : undefined,
-    })) as { reference?: string; error?: string };
-    if (q.reference) {
-      r.passarParaEquipe = `quote requested on WhatsApp: ${q.reference}`;
-      r.notaParaEquipe = `Quote ${q.reference} created in the OS with the photos.\nJob: ${a.description}\nPostcode: ${a.postcode}${a.address ? `\nAddress: ${a.address}` : ""}`;
-      r.fichaDoJob = fichaDaFerramenta({ customer_name: a.name, email: a.email, address: a.address, postcode: a.postcode, service: a.service_type, scope: a.description });
+    })) as { reference?: string; invited?: number; error?: string };
+    if (!q.reference) return q;
+    const nota = [
+      `Quote ${q.reference} created in the OS with the photos.`,
+      `Job: ${a.description}`,
+      `Postcode: ${postcode}${endereco ? `\nAddress: ${endereco}` : "\nAddress: not yet (Harvey asks before booking)"}`,
+      a.occupancy ? `Property: ${a.occupancy}` : null,
+      a.timing ? `When: ${a.timing}` : null,
+    ].filter(Boolean).join("\n");
+    if (!q.invited) {
+      // Ninguém convidado (porta desligada ou nenhum parceiro do ofício na área): exceção, vai para a equipe como antes.
+      r.passarParaEquipe = `quote requested on WhatsApp: ${q.reference} (no professional invited automatically)`;
+      r.notaParaEquipe = `${nota}\nNo partner was invited automatically: invite partners or price it in-house.`;
+      r.fichaDoJob = fichaDaFerramenta({ customer_name: a.name, email: a.email, address: endereco, postcode, service: a.service_type, scope: a.description });
+      return { reference: q.reference, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
     }
-    return { ...q, note: "Tell them in one line the team is putting the quote together and will send it here. Do not promise a time or a price." };
+    // Fase 1: o Harvey fica na conversa. A equipe só recebe a nota no ticket.
+    r.cotacaoPedida = { referencia: q.reference, nota: `${nota}\n${q.invited} professional(s) invited to bid. Harvey stays in the chat and sends the price when it is in.` };
+    return {
+      reference: q.reference,
+      professionalsAsked: q.invited,
+      note: `Tell them in one line that our professionals are pricing it now and the fixed price usually comes by tomorrow, here on WhatsApp. Never promise an exact time or a price.${endereco ? "" : " You do not have the full address yet: ask for it later, before booking, not now."}`,
+    };
+  }
+  if (nome === "get_quote_status") return ctx.contas?.statusDasCotacoes ? ctx.contas.statusDasCotacoes() : { error: "not available" };
+  if (nome === "ask_partner") {
+    if (!ctx.contas?.perguntarAoParceiro) return { error: "not available" };
+    return ctx.contas.perguntarAoParceiro(String(a.question ?? ""));
   }
   if (nome === "register_business") {
     if (!ctx.contas?.registrarEmpresa) return { error: "not available" };

@@ -124,10 +124,13 @@ export function textoAindaCotando(nome: string, servico?: string | null): string
   return `Hi ${nome}, just a quick update: we're still working on the prices${sobre} with our specialists and will send your quote very soon. Thanks for your patience.`;
 }
 
-export function textoDaQuote(a: { nome: string; servico?: string | null; total: number; referencia?: string | null }): string {
+export function textoDaQuote(a: { nome: string; servico?: string | null; total: number; referencia?: string | null; /** link para aceitar a quote (envio automático do lance) */ link?: string | null }): string {
   const sobre = a.servico?.trim() ? ` for the ${a.servico.trim().toLowerCase()} work` : "";
   const ref = a.referencia ? ` (${a.referencia})` : "";
-  return `Hi ${a.nome}, your quote${sobre} is ready${ref}: £${a.total.toFixed(2)} for the job as described, fixed price. If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in. Any questions, just ask.`;
+  const seguir = a.link
+    ? `If you're happy to go ahead, you can accept it here: ${a.link}`
+    : "If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in.";
+  return `Hi ${a.nome}, your quote${sobre} is ready${ref}: £${a.total.toFixed(2)} for the job as described, fixed price. ${seguir} Any questions, just ask.`;
 }
 
 export type PassoDoLeilao = "lembrar_parceiros" | "avisar_cliente" | "precificar" | null;

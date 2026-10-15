@@ -22,9 +22,9 @@ import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
 import { externalIdDoLead } from "./primeiro-contato";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
-import { reservasDoCliente, situacaoDoParceiro } from "./contas";
+import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOLeo, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOLeo, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -32,7 +32,7 @@ import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
 import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
-import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -95,6 +95,8 @@ export async function contextoDaPessoa(
     custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
     registrarEmpresa: (dados) => registrarEmpresa(sb, telefone, dados),
     reservarPrecoDaEquipe: async (r) => reservarPrecoDaEquipe(sb, { ...r, telefone, ticketId: await ticketPeloTelefone(telefone).catch(() => null), quemDeuOPreco: extra.falaComo ?? null }),
+    statusDasCotacoes: () => statusDasCotacoes(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    perguntarAoParceiro: (pergunta) => perguntarAoParceiro(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null, pergunta }),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
@@ -104,6 +106,15 @@ export async function contextoDaPessoa(
       : {}),
   };
   let sobreQuem: string | undefined;
+  // Postcodes que o OS já tem desta pessoa: o request_quote aceita sem o cliente redigitar (dono, 15/10/2026).
+  const postcodesConhecidos: string[] = [];
+  if (quem.tipo === "cliente") {
+    if (quem.cliente.postcode) postcodesConhecidos.push(quem.cliente.postcode);
+    if (/checkatrade-lead:/.test(quem.cliente.notes ?? "")) {
+      const b = parseLeadBrief({ ...quem.cliente, name: quem.cliente.full_name, notes: quem.cliente.notes ?? null });
+      if (b.postcode) postcodesConhecidos.push(b.postcode);
+    }
+  }
   if (quem.tipo === "parceiro") {
     const p = quem.parceiro;
     sobreQuem = `Partner in our system: ${p.contact_name ?? p.company_name ?? "unknown name"}${p.company_name ? ` (${p.company_name})` : ""}, ${p.trade ?? "trade not set"}, account status ${p.status}.`;
@@ -114,14 +125,14 @@ export async function contextoDaPessoa(
     if (pedido && !lista.length) {
       // Lead do Checkatrade que recebeu o nosso primeiro contato (primeiro-contato.ts).
       sobreQuem = pedido;
-      return { quem, contas, sobreQuem };
+      return { quem, contas, sobreQuem, postcodesConhecidos };
     }
     sobreQuem =
       `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. ` +
       `Their bookings (recent and upcoming): ${JSON.stringify((reservas as { reservas?: unknown[] } | null)?.reservas ?? [])}. ` +
       "Use this to understand what they are messaging about: a job that is coming up (confirm the details), a job already done (thank them; any problem or complaint goes to the team), a balance to pay (send the link), or something new (sell as usual). If it is not clear, ask one short question.";
   }
-  return { quem, contas, sobreQuem };
+  return { quem, contas, sobreQuem, postcodesConhecidos };
 }
 
 /** Até 4 fotos (as mais recentes) que o cliente mandou nesta conversa, como data URL. */
@@ -209,7 +220,7 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
   // O Harvey passou para a equipe ("let me grab someone"): a última fala é dele, mas a vez
   // é NOSSA. Sem isto o ticket ficava 🟢 e voltava para a view Leads (Max, 08/10/2026).
   const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
-  const harveyPassou = est?.estado === "equipe" && ehDoHarvey(ultima);
+  const harveyPassou = est?.estado === "equipe" && ehOHarveyNoNomeDele(ultima);
   await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" || harveyPassou ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
 }
 
@@ -356,14 +367,19 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   const voz = vozDaConversa(msgs);
   const sessao = voz ? msgs : sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
-  const { quem, contas, sobreQuem: sobreDaPessoa } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
+  const { quem, contas, sobreQuem: sobreDaPessoa, postcodesConhecidos } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
+  // O lead do site/WhatsApp também pode ter o postcode (da cotação do site ou de uma cotação anterior).
+  if (leadExistente) {
+    const { data: lead } = await sb.from("site_leads").select("postcode").eq("id", leadExistente).maybeSingle();
+    if (lead?.postcode) postcodesConhecidos.push(String(lead.postcode));
+  }
   // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
   const sobreQuem =
     [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null, telefone ? await contextoDaRetomada(sb, telefone) : null].filter(Boolean).join(" ") || undefined;
 
   const r = await pensar(
     paraFalas(sessao),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone) },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone), postcodesConhecidos },
     chamarSite,
     await catalogo(),
   );
@@ -389,7 +405,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
     // resposta que é só texto: link de pagamento, cotação e passagem já aconteceram e precisam ser ditos.
     const clienteEscreveuDeNovo = depois.some((m) => m.author.type === "user" && m.id !== msg.id);
-    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
+    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.cotacaoPedida && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
     await enviarTexto(conversa.id, r.resposta, voz);
   }
 
@@ -457,6 +473,12 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     console.log("[harvey-wa] passagem:", feitoNota);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
+  // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Bidding e nota para a equipe, conversa continua com ele.
+  if (r.cotacaoPedida && !r.passarParaEquipe) {
+    const feito = await cotacaoPedidaNoTicket(telefone, `🤖 Harvey asked partners to price this on WhatsApp (he stays in the chat).\n\n${r.cotacaoPedida.nota}`).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] cotação pedida:", r.cotacaoPedida.referencia, feito);
+    await registrarDecisao({ origem: "whatsapp", ticketId: await ticketPeloTelefone(telefone).catch(() => null), quoteRef: r.cotacaoPedida.referencia, decisao: `Asked partners to price ${r.cotacaoPedida.referencia} and kept the WhatsApp chat`, regra: "request_quote (Fase 1: Harvey stays)", pendente: "Partners: send a bid" }, sb);
+  }
   // Diário: passagem e link de pagamento são as decisões que alguém precisa enxergar de manhã.
   const ticketDoDiario = r.passarParaEquipe || r.checkout ? await ticketPeloTelefone(telefone).catch(() => null) : null;
   if (r.passarParaEquipe) await registrarDecisao({ origem: "whatsapp", ticketId: ticketDoDiario, quoteRef: /\bQT-\d{4}-\d+\b/.exec(r.passarParaEquipe)?.[0] ?? null, decisao: `Handed the WhatsApp chat to the team: ${r.passarParaEquipe}`, regra: r.precisaDe ? `hand_off_to_team (need: ${r.precisaDe})` : "hand_off_to_team", pendente: `Team: ${r.precisaDe ?? "pick up the chat"}` }, sb);
@@ -469,7 +491,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   if (r.cotacao && quem.tipo !== "parceiro")
     await assuntoPadraoNaConversa(telefone, { origem: deAnuncio ? "WhatsApp ad" : "WhatsApp", servico: r.cotacao.servico, nome: quem.tipo === "cliente" ? quem.cliente.full_name : (msg.author.displayName ?? null), postcode: r.cotacao.postcode }).catch((e) => console.error("[harvey-wa] assunto", e));
   if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
-  return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
+  return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.cotacaoPedida ? `cotação ${r.cotacaoPedida.referencia}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
 
 /**

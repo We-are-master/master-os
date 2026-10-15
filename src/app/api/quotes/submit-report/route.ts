@@ -14,9 +14,12 @@ import { registrarReportLink } from "@/lib/report-link-events";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
+import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
+// Folga para o final check automático que roda em `after()` (fatura, PDF, e-mail).
+export const maxDuration = 120;
 
 function getServiceSupabase() {
   return createClient(
@@ -225,6 +228,16 @@ export async function POST(req: NextRequest) {
   // it runs after the response so the form closes at the speed it always did.
   if (template === "certificate") {
     after(() => fillCertificateExpiry(supabase, job.id));
+  }
+
+  // Final check automático (FINAL_CHECK_AUTO=1): aprova e manda o e-mail final, ou deixa
+  // para a equipe com nota no ticket. Em `after()`, esperado pela Vercel (um `void` morreria
+  // com a resposta), para o formulário do parceiro não esperar fatura, PDF e e-mail.
+  if (FINAL_CHECK_AUTO_ON()) {
+    after(async () => {
+      const r = await runFinalCheckAutomatico(supabase, job.id, { origem: "report_submitted" });
+      console.log(`[final-check-auto] ${job.reference}: ${r.feito}`);
+    });
   }
 
   return NextResponse.json({ ok: true, jobReference: job.reference, nota: veredito.nota, faixa: veredito.faixa });

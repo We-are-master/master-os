@@ -1,4 +1,5 @@
 import { getServerSupabase } from "@/lib/supabase/server-cached";
+import { createServiceClient } from "@/lib/supabase/service";
 import type { AccountProperty, AccountPropertyDocument, AuditLog, Client } from "@/types/database";
 
 export type AccountPropertyRequestRow = {
@@ -115,7 +116,9 @@ export async function fetchAccountPropertyDetailBundle(
 
   let partnerCompliance: PartnerComplianceRow[] = [];
   if (partnerIds.length > 0) {
-    const { data: parts } = await supabase
+    // partners é só da equipe (331). Os ids vêm dos jobs que esta sessão já
+    // pode ler, e só saem nome e compliance: o resto da linha nunca vai ao cliente.
+    const { data: parts } = await createServiceClient()
       .from("partners")
       .select("id, company_name, compliance_score")
       .in("id", partnerIds);

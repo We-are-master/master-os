@@ -102,6 +102,21 @@ Canonical field IDs live in [`src/lib/zendesk-os-catalog-mapping.ts`](../src/lib
 | Auto-Assign | `5811578972703` | `auto_assign` | Boolean |
 | Report link | `5754991026207` | `report_link` | Optional URL |
 | Ticket id | `{{ticket.id}}` | `ticket_id` | **Always send** — idempotency + reconcile |
+| Charge on create *(to be created)* | `<new field id>` | `charge_on_create` | Optional dropdown: `charge_full` / `charge_50` / `charge_on_completion`. Blank = the account decides (see below) |
+
+### Charge on create (payment request at creation)
+
+Same as the "Charge" choice in the OS create-job modal. Add to the Liquid body:
+
+```liquid
+  "charge_on_create":   "{{ticket.ticket_field_<CHARGE_FIELD_ID>}}",
+```
+
+Accepted values: a number 1..100 (percent, 100 = full), `full` / `charge_full`, `deposit_50` / `charge_50` (any `charge_N` / `deposit_N`), `deposit` (= 50), `on_completion` / `charge_on_completion` (nothing now).
+
+When blank or absent, the **account** decides, like the modal: client with no account or account with **Card upfront** (`collection_mode = card_upfront`) gets a 50% deposit request; account on **invoice** gets nothing (invoice after the job). Platforms (account toggle **Invoice** off, `email_include_invoice_on_final = false`) and jobs paid at booking are never charged. Weekly-consolidated accounts (Every N days / Every Friday) get no per-job invoice and no charge.
+
+When it charges, the OS creates the job invoice if missing and emails the "almost there" booking request. The 201 carries `charge_on_create: { sent, percent, source, to?, pay_url?, invoice_reference?, reason? }`; a failed charge never undoes the job. Re-posting the same `ticket_id` returns the existing job and does not charge again.
 
 ### Band field by service (Type of Work UUID)
 
