@@ -130,6 +130,7 @@ import {
   formatHourMinuteAmPm,
   jobFinishYmd,
   jobScheduleYmd,
+  compactJobSchedule,
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -2828,13 +2829,16 @@ function JobsPageContent() {
       render: (item) => (
         <div className="min-w-0 leading-tight">
           <p className="text-[13px] font-semibold text-text-primary truncate">{item.reference}</p>
-          <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
+          {/* Uma linha só (15/10/2026): nome comprido não pode mudar a altura da linha. */}
+          <p className="max-w-[9rem] truncate text-[10px] text-text-tertiary" title={normalizeTypeOfWork(item.title) || item.title}>
+            {normalizeTypeOfWork(item.title) || item.title}
+          </p>
         </div>
       ),
     },
     {
       key: "client_name",
-      label: "Client / property",
+      label: "Client",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
       sortable: true,
@@ -2942,12 +2946,10 @@ function JobsPageContent() {
               ) : null
             }
           >
-            <div className="flex items-start gap-2 min-w-0">
-              <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
-              <div className="min-w-0 leading-tight">
-                <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
-                <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
-              </div>
+            {/* Só o avatar da conta e o nome (15/10/2026); endereço, telefone e scope ficam no hover. */}
+            <div className="flex items-center gap-2 min-w-0">
+              <Avatar name={item.client_name} size="xs" className="shrink-0" src={logo} />
+              <p className="m-0 min-w-0 truncate text-[13px] font-medium text-text-primary">{item.client_name}</p>
             </div>
           </HoverPreview>
         );
@@ -2956,40 +2958,39 @@ function JobsPageContent() {
     {
       key: "schedule",
       label: "Schedule",
-      minWidth: "200px",
-      cellClassName: "min-w-[12.5rem] max-w-[16rem]",
+      minWidth: "190px",
+      cellClassName: "min-w-[11.5rem]",
       sortable: true,
       sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
-        const line = formatJobScheduleListLabel(item);
+        /**
+         * Uma linha (15/10/2026). O chip SUBSTITUI a data quando ela diz menos que ele:
+         * hoje, amanhã, em 2 dias ou atrasado (data passada e job ainda não feito).
+         * Fora disso, a data. A janela de chegada vem sempre depois.
+         */
         const detail = formatJobScheduleLine(item);
-        const secondaryLine = jobManagementScheduleSecondaryLine(item);
+        const ag = compactJobSchedule(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        const timingKind = getJobScheduleTimingKind(item);
-        const hasChip = Boolean(timingKind);
+        if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
+        const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
+        const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
+        // Sem chip "On site" (dono, 15/10/2026): só os de data.
+        const chip: { texto: string; cls: string } | null = atrasado
+            ? { texto: "Late", cls: "bg-[var(--danger-light,#fee2e2)] text-[var(--bad,#dc2626)]" }
+            : ag.relative === "Today"
+              ? { texto: "Today", cls: "bg-[var(--success-light)] text-[var(--ok)]" }
+              : ag.relative === "Tomorrow" || ag.relative === "In 2 days"
+                ? { texto: ag.relative, cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
+                : null;
         return (
-          // Bloco alinhado à esquerda (data, chegada e cronômetro começam na mesma
-          // margem) e centralizado na coluna, como o título "Schedule".
-          <div className="mx-auto flex w-fit min-w-0 max-w-full flex-col items-start text-left">
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-              {hasChip ? (
-                <JobScheduleTimingChip job={item} title={detail} />
-              ) : line ? (
-                <span
-                  className="text-[11px] text-text-secondary leading-snug whitespace-normal break-words"
-                  title={detail ?? undefined}
-                >
-                  {line}
-                </span>
-              ) : (
-                <span className="text-[11px] text-text-tertiary">—</span>
-              )}
-            </div>
-            {isOnsiteInProgress ? (
-              <ScheduleInProgressLiveSecondary job={item} />
-            ) : secondaryLine ? (
-              <p className="mt-0.5 text-[10px] text-text-tertiary leading-tight">{secondaryLine}</p>
-            ) : null}
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? `${ag.date}${ag.time ? ` · ${ag.time}` : ""}`}>
+            {chip ? (
+              <span className={cn("inline-flex h-[22px] items-center rounded-md px-2 text-[11px] font-medium", chip.cls)}>{chip.texto}</span>
+            ) : (
+              <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
+            )}
+            {/* Com chip, ele ocupa a célula toda; data e horário ficam no hover (15/10/2026). */}
+            {ag.time && !chip ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
           </div>
         );
       },
@@ -3049,15 +3050,12 @@ function JobsPageContent() {
           const st = effectiveJobStatusForDisplay(item);
           const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
-            <div className="inline-flex flex-col items-start gap-0.5">
+            <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true} className={onHoldBadge?.className}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
-              {st === "on_hold" ? (
-                <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-              ) : null}
             </div>
           );
         }
@@ -3075,7 +3073,7 @@ function JobsPageContent() {
           const variantTag = JOB_STATUS_BADGE_VARIANT[statusKey];
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={variantTag} dot>{lbl}</Badge>
+              <Badge variant={variantTag} dot className={LIST_CHIP_CLASS}>{lbl}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
@@ -3085,15 +3083,12 @@ function JobsPageContent() {
         const onHoldBadge = jobOnHoldDisplayBadge(item);
         const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex flex-col items-start gap-0.5">
+          <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot} className={onHoldBadge?.className}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
-            {st === "on_hold" ? (
-              <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-            ) : null}
           </div>
         );
       },
@@ -3156,7 +3151,7 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
-      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} />,
+      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} className={LIST_CHIP_CLASS} />,
     },
     {
       key: "actions",
@@ -3592,11 +3587,15 @@ function JobsPageContent() {
               // On hold tints the whole line: the status chip alone was easy to
               // miss when scanning a page of rows for what is stuck.
               rowClassName={(j) =>
-                isJobOnHoldComplaint(j)
-                  ? COMPLAINT_ROW_CLASS
-                  : j.status === "on_hold"
-                    ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
-                    : undefined
+                cn(
+                  // Altura fixa (15/10/2026, padrão do vertex-saas): nada na célula muda a altura da linha.
+                  "h-[41px] [&>td]:py-0",
+                  isJobOnHoldComplaint(j)
+                    ? COMPLAINT_ROW_CLASS
+                    : j.status === "on_hold"
+                      ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
+                      : undefined,
+                )
               }
               page={page}
               totalPages={totalPages}
@@ -4028,6 +4027,9 @@ const JOBS_KANBAN_DROP_STATUS: Record<string, Job["status"] | undefined> = {
   final_check: "final_check",
   awaiting_payment: "awaiting_payment",
 };
+
+/** Status e Payment da lista com a mesma largura (dono, 15/10/2026): o Payment é o padrão. */
+const LIST_CHIP_CLASS = "min-w-[112px] justify-center";
 
 export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;

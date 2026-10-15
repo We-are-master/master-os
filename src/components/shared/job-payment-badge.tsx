@@ -11,9 +11,17 @@ const VARIANT: Record<JobPaymentState, BadgeVariant> = {
 };
 
 /** Rótulo da coluna Payment do Jobs Management (ver `jobPaymentState`). */
-export function JobPaymentBadge({ state, size = "sm" }: { state: JobPaymentState; size?: "sm" | "md" }) {
+export function JobPaymentBadge({
+  state,
+  size = "sm",
+  className,
+}: {
+  state: JobPaymentState;
+  size?: "sm" | "md";
+  className?: string;
+}) {
   return (
-    <Badge variant={VARIANT[state]} size={size}>
+    <Badge variant={VARIANT[state]} size={size} className={className}>
       {JOB_PAYMENT_LABEL[state]}
     </Badge>
   );
