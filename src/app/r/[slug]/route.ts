@@ -141,8 +141,25 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
   const row = data as { target_path: string; entity_ref?: string | null };
   let target = String(row.target_path);
 
-  const fresco = tokenFresco(row.entity_ref);
-  if (fresco) target = comTokenNovo(target, fresco, req.url);
+  /**
+   * Link do report por job (`job:<id>:report`, 15/10/2026): o token sai para o parceiro
+   * que está no job AGORA. Sem parceiro, a tela diz isso em vez de "link inválido".
+   */
+  const porJob = /^job:([0-9a-f-]{36}):report$/i.exec(String(row.entity_ref ?? ""));
+  if (porJob) {
+    const { data: j } = await supabase.from("jobs").select("partner_id").eq("id", porJob[1]!).is("deleted_at", null).maybeSingle();
+    const parceiro = (j as { partner_id?: string | null } | null)?.partner_id;
+    if (!j) return NextResponse.redirect(new URL("/quote/respond?token=invalid&motivo=job_removido", req.url), 302);
+    if (!parceiro) return NextResponse.redirect(new URL("/quote/respond?token=invalid&motivo=sem_parceiro", req.url), 302);
+    try {
+      target = `/job/report?token=${encodeURIComponent(createPartnerReportToken(porJob[1]!, parceiro))}`;
+    } catch (err) {
+      console.error("[short-link] não consegui assinar o link do job:", err);
+    }
+  } else {
+    const fresco = tokenFresco(row.entity_ref);
+    if (fresco) target = comTokenNovo(target, fresco, req.url);
+  }
 
   const absolute = /^https?:\/\//i.test(target)
     ? target

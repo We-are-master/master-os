@@ -7,7 +7,10 @@ import {
   parseReportPhotoEntries,
   persistReportSubmission,
   plannedPhotoShape,
+  uploadedPhotoShape,
 } from "@/lib/report-submission";
+import { photosRefused } from "@/lib/public-report-templates";
+import { registrarReportLink } from "@/lib/report-link-events";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
@@ -120,6 +123,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Job cancelado não recebe report (15/10/2026): antes o envio o empurrava para Final checks.
+  if (job.status === "cancelled") {
+    await registrarReportLink(supabase, { jobId: job.id, partnerId: tokenPartnerId, event: "submit_refused", ok: false, detail: "cancelado" });
+    return NextResponse.json({ error: "This job was cancelled, so no report is needed." }, { status: 409 });
+  }
+
   if (job.start_report_submitted && job.final_report_submitted) {
     return NextResponse.json(
       { error: "A report has already been submitted for this job." },
@@ -134,15 +143,29 @@ export async function POST(req: NextRequest) {
    * nota pelo mesmo motivo: submeteu, já sabe como ficou.
    */
   const fotos = parseReportPhotoEntries(form);
+  /** Fotos que já subiram uma a uma pelo /report-upload (15/10/2026). */
+  let enviadas: Record<string, string[]> = {};
+  try {
+    enviadas = JSON.parse(String(form.get("uploaded") ?? "{}")) as Record<string, string[]>;
+  } catch {
+    enviadas = {};
+  }
+  const jaNoStart = uploadedPhotoShape(template, "start", enviadas, job.id);
+  const jaNoFinal = uploadedPhotoShape(template, "final", enviadas, job.id);
   const veredito = validarSubmissaoDeReport({
     template,
     finalData,
-    startPhotos: plannedPhotoShape(template, "start", fotos, null),
-    finalPhotos: plannedPhotoShape(template, "final", fotos, null),
+    // A limpeza guarda escopo e dano na chegada, e "cliente recusou foto" tira a exigência:
+    // o link público não passava nenhum dos dois e prendia quem dizia a verdade.
+    startData,
+    photosRefused: photosRefused({ ...startData, ...finalData }),
+    startPhotos: plannedPhotoShape(template, "start", fotos, jaNoStart),
+    finalPhotos: plannedPhotoShape(template, "final", fotos, jaNoFinal),
     timerStartedAt: job.partner_timer_started_at ?? null,
     timerEndedAt: job.partner_timer_ended_at ?? null,
   });
   if (!veredito.ok) {
+    await registrarReportLink(supabase, { jobId: job.id, partnerId: tokenPartnerId, event: "submit_refused", ok: false, detail: veredito.motivos.join(" · ").slice(0, 500) });
     return NextResponse.json(
       {
         error: "The report is missing what the client platform requires.",
@@ -169,8 +192,19 @@ export async function POST(req: NextRequest) {
       finalData,
       photos: fotos,
       writeStart: true,
+      existingStartPhotos: jaNoStart,
+      existingFinalPhotos: jaNoFinal,
     },
   );
+
+  await registrarReportLink(supabase, {
+    jobId: job.id,
+    partnerId: tokenPartnerId,
+    event: result.ok ? "submit" : "submit_refused",
+    ok: result.ok,
+    detail: result.ok ? null : result.error ?? "save failed",
+    meta: { fotosNaHora: Object.values(enviadas).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0), fotosNoPacote: Object.values(fotos).reduce((n, l) => n + l.length, 0) },
+  });
 
   if (!result.ok) {
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
