@@ -138,7 +138,7 @@ import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-f
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { createPaymentPlan } from "@/services/invoice-payment-plan";
 import { createSelfBillPaymentPlan } from "@/services/self-bill-payment-plan";
-import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
+import { ensureWeeklySelfBillForJob, setJobPartnerInstalments } from "@/services/self-bills";
 import {
   partnerCapForJobForm,
   partnerPlanRowsFromClientSchedule,
@@ -2012,11 +2012,15 @@ function JobsPageContent() {
                 materials_cost: firstJob.materials_cost,
               });
               if (partnerCap > 0.02) {
-                await createSelfBillPaymentPlan(
-                  selfBillId,
-                  partnerCap,
-                  partnerPaymentPlanTemplate.installments,
-                );
+                /**
+                 * Datas combinadas com o parceiro (dono, 15/10/2026): self-bill próprio do
+                 * job, já em Ready, com as parcelas nas datas acordadas. Antes o plano caía
+                 * no balde da quinzena e dividia o balde inteiro.
+                 */
+                const proprio = (await setJobPartnerInstalments(firstJob.id, true)) ?? selfBillId;
+                await createSelfBillPaymentPlan(proprio, partnerCap, partnerPaymentPlanTemplate.installments);
+                await refreshSelfBillPayoutState(proprio);
+                firstJob = { ...firstJob, self_bill_id: proprio };
               }
             }
           } catch (invErr) {

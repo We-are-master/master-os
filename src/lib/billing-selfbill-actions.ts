@@ -103,6 +103,11 @@ export function computeSelfBillAmountDue(
   let base = 0;
   if (sb.bill_origin === "internal") {
     base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  } else if (sb.dedicated_job_id && sb.payment_plan_active) {
+    // Job parcelado com datas combinadas (mig 326): vale o combinado menos o já
+    // pago, mesmo com o job em andamento. Quanto sai por vez é a parcela (abaixo).
+    const pago = (jobs ?? []).reduce((t, j) => t + (partnerPaidByJobId[j.id] ?? 0), 0);
+    base = Math.max(0, Math.round((Number(sb.net_payout ?? 0) - pago) * 100) / 100);
   } else {
     const list = jobs ?? [];
     // Documento só de visita tem zero linha de job e não pode cair no

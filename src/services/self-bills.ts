@@ -552,6 +552,38 @@ async function refreshSelfBillTotalsAndStatus(
   /** Manual office cancel / reject must not be reopened by linked jobs until user explicitly reopens. */
   if (SELF_BILL_TERMINAL_STATUSES.includes(before.status)) return;
 
+  /**
+   * Job parcelado com datas combinadas (dono, 15/10/2026): o self-bill próprio já
+   * nasce pronto, com o valor combinado com o parceiro, e cada parcela sai na data
+   * dela. Não espera a conclusão como o balde da quinzena. Job cancelado ou
+   * arquivado segue a regra normal abaixo (void).
+   */
+  if (before.dedicated_job_id && before.payment_plan_active) {
+    const { data: jd } = await supabase
+      .from("jobs")
+      .select("partner_cost, materials_cost, status, deleted_at, partner_cancelled_at")
+      .eq("id", before.dedicated_job_id)
+      .maybeSingle();
+    const j = jd as { partner_cost?: number | null; materials_cost?: number | null; status?: string; deleted_at?: string | null; partner_cancelled_at?: string | null } | null;
+    if (j && !j.deleted_at && j.status !== "cancelled" && !j.partner_cancelled_at) {
+      const custo = Math.round((Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0)) * 100) / 100;
+      const pronto = ["ready_to_pay", "awaiting_payment", "pending_review", "audit_required"].includes(before.status);
+      const { error: upErr } = await supabase
+        .from("self_bills")
+        .update({
+          jobs_count: 1,
+          job_value: Math.round(Number(j.partner_cost ?? 0) * 100) / 100,
+          materials: Math.round(Number(j.materials_cost ?? 0) * 100) / 100,
+          net_payout: custo,
+          ...(pronto ? {} : { status: "ready_to_pay" }),
+          ...(before.approved_at ? {} : { approved_at: new Date().toISOString() }),
+        })
+        .eq("id", selfBillId);
+      if (upErr) throw upErr;
+      return;
+    }
+  }
+
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
 
@@ -1508,12 +1540,17 @@ export async function mirrorClientInstalmentsOnDedicatedSelfBill(
 
   const { data: sb, error: sbErr } = await supabase
     .from("self_bills")
-    .select("net_payout, dedicated_job_id")
+    .select("net_payout, dedicated_job_id, status, approved_at")
     .eq("id", selfBillId)
     .maybeSingle();
   if (sbErr) throw sbErr;
-  const row = sb as { net_payout: number | null; dedicated_job_id: string | null } | null;
+  const row = sb as { net_payout: number | null; dedicated_job_id: string | null; status?: string; approved_at?: string | null } | null;
   if (!row?.dedicated_job_id) return false;
+  // O total do parceiro é o combinado no job, não o "já concluído" do balde.
+  const { data: jc } = await supabase.from("jobs").select("partner_cost, materials_cost").eq("id", row.dedicated_job_id).maybeSingle();
+  const combinado =
+    Math.round((Number((jc as { partner_cost?: number } | null)?.partner_cost ?? 0) + Number((jc as { materials_cost?: number } | null)?.materials_cost ?? 0)) * 100) / 100;
+  row.net_payout = combinado > 0 ? combinado : Number(row.net_payout ?? 0);
   const drafts = partnerInstalmentsMirroringClient(clientRows, Number(row.net_payout ?? 0));
   if (drafts.length === 0) return false;
 
@@ -1525,13 +1562,32 @@ export async function mirrorClientInstalmentsOnDedicatedSelfBill(
   if (atErr) throw atErr;
   const linhas = (atuais ?? []) as { amount: number; due_date: string; status: string }[];
   if (linhas.some((r) => r.status === "paid")) return false;
-  const iguais =
-    linhas.length === drafts.length &&
-    linhas.every(
-      (r, i) =>
-        Math.abs(Number(r.amount) - drafts[i]!.amount) < 0.005 && String(r.due_date).slice(0, 10) === drafts[i]!.due_date,
+  /**
+   * Parceiro já tem parcelas (combinadas na mão ou espelhadas antes): as DATAS e a
+   * divisão ficam; se o valor do parceiro mudou, as parcelas acompanham na mesma
+   * proporção. Só o plano novo copia o do cliente.
+   */
+  if (linhas.length > 0) {
+    const net = Math.round(Number(row.net_payout ?? 0) * 100) / 100;
+    const soma = Math.round(linhas.reduce((t, r) => t + Number(r.amount), 0) * 100) / 100;
+    if (net <= 0 || Math.abs(soma - net) < 0.01) return true;
+    const escaladas = partnerInstalmentsMirroringClient(linhas, net);
+    for (const [i, d] of escaladas.entries()) {
+      await supabase
+        .from("self_bill_payment_installments")
+        .update({ amount: d.amount })
+        .eq("self_bill_id", selfBillId)
+        .eq("sequence", i + 1);
+    }
+    await historicoDoJob(
+      supabase,
+      job.id,
+      "Partner instalments updated to the new amount",
+      `${escaladas.map((d) => `£${d.amount.toFixed(2)} on ${dataCurta(d.due_date)}`).join(" · ")}. Same dates and split.`,
+      { self_bill_id: selfBillId },
     );
-  if (iguais) return true;
+    return true;
+  }
 
   const { error: delErr } = await supabase.from("self_bill_payment_installments").delete().eq("self_bill_id", selfBillId);
   if (delErr) throw delErr;
@@ -1545,9 +1601,16 @@ export async function mirrorClientInstalmentsOnDedicatedSelfBill(
     })),
   );
   if (insErr) throw insErr;
+  const pronto = ["ready_to_pay", "awaiting_payment", "pending_review", "audit_required"].includes(row.status ?? "");
   const { error: upErr } = await supabase
     .from("self_bills")
-    .update({ payment_plan_active: true, due_date: drafts[0]!.due_date })
+    .update({
+      payment_plan_active: true,
+      due_date: drafts.find((d) => d.due_date >= new Date().toISOString().slice(0, 10))?.due_date ?? drafts[0]!.due_date,
+      net_payout: row.net_payout,
+      ...(pronto ? {} : { status: "ready_to_pay" }),
+      ...(row.approved_at ? {} : { approved_at: new Date().toISOString() }),
+    })
     .eq("id", selfBillId);
   if (upErr) throw upErr;
   await historicoDoJob(

@@ -81,9 +81,16 @@ export async function createPaymentPlan(
   if (error) throw error;
 
   const firstDue = drafts[0]!.due_date.slice(0, 10);
+  /**
+   * Datas combinadas = cobrança pronta (dono, 15/10/2026): a fatura sai do draft e
+   * vai para Ready to receive, com cada parcela na data dela.
+   */
+  const { data: atual } = await supabase.from("invoices").select("status").eq("id", invoiceId).maybeSingle();
+  const saiDoDraft = (atual as { status?: string } | null)?.status === "draft";
   await updateInvoice(invoiceId, {
     due_date: firstDue,
     payment_plan_active: true,
+    ...(saiDoDraft ? { status: "pending" } : {}),
   } as Partial<Invoice>);
 
   return (data ?? []) as InvoicePaymentInstallment[];
