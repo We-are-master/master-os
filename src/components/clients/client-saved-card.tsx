@@ -55,8 +55,7 @@ export function ClientSavedCard({ client }: { client: CardFields }) {
 
   const brand = brandLabel(client.card_brand);
   return (
-    <section aria-label="Saved card" className="space-y-2">
-      <p className="m-0 text-[12px] font-medium text-text-secondary">Saved card</p>
+    <section aria-label="Saved card">
       <div className="flex flex-wrap items-center gap-4">
         {/* O cartão em miniatura: navy sólido, como os botões do OS. */}
         <div

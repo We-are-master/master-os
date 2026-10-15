@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseClientNotes } from "./client-notes";
+import { instanteDoUuidV7, parseClientNotes } from "./client-notes";
 
 const lead =
   "checkatrade-lead:01a1405f-cece-7733-a939-baf68de20b71\n\ncheckatrade-account:main\n\nEnquiry · General Maintenance\n\nI have a 3-door wardrobe to disassemble.\n\nThe customer is flexible on the start date.";
@@ -30,4 +30,11 @@ test("nota escrita à mão segue como texto", () => {
 
 test("nota vazia não gera bloco", () => {
   assert.deepEqual(parseClientNotes("  \n "), []);
+});
+
+test("data do lead sai do UUIDv7 do Checkatrade", () => {
+  const at = instanteDoUuidV7("01a1405f-cece-7733-a939-baf68de20b71");
+  assert.ok(at && at.startsWith("2026-"), String(at));
+  assert.equal(instanteDoUuidV7("not-a-uuid"), null);
+  assert.equal(instanteDoUuidV7("01a1405f-cece-4733-a939-baf68de20b71"), null);
 });

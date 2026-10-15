@@ -13,6 +13,8 @@ export type ClientNoteBlock = {
   source: string | null;
   /** Id curto do lead, para quem precisa achar no Checkatrade. */
   leadId: string | null;
+  /** Quando o lead chegou: o id do Checkatrade é UUIDv7 e carrega o instante nos 48 primeiros bits. */
+  at: string | null;
   /** "Enquiry · General Maintenance". */
   title: string | null;
   paragraphs: string[];
@@ -24,11 +26,21 @@ const TAG = /^([a-z][a-z0-9-]*):\s*(\S+)$/i;
 const AVAILABILITY = /^the customer (is|would|wants|needs)\b.*\b(start|date|asap|soon|weeks?|days?|flexible)\b/i;
 
 function novoBloco(): ClientNoteBlock {
-  return { source: null, leadId: null, title: null, paragraphs: [], availability: null };
+  return { source: null, leadId: null, at: null, title: null, paragraphs: [], availability: null };
 }
 
 function vazio(b: ClientNoteBlock): boolean {
   return !b.source && !b.leadId && !b.title && b.paragraphs.length === 0 && !b.availability;
+}
+
+/** Instante gravado num UUIDv7 (ms desde 1970 nos 12 primeiros dígitos hex), ou null. */
+export function instanteDoUuidV7(id: string): string | null {
+  const hex = id.replace(/-/g, "");
+  if (!/^[0-9a-f]{32}$/i.test(hex) || hex[12] !== "7") return null;
+  const ms = parseInt(hex.slice(0, 12), 16);
+  // Só aceita datas plausíveis (2020 a 2100): id que não é v7 de verdade não vira data.
+  if (!Number.isFinite(ms) || ms < Date.UTC(2020, 0, 1) || ms > Date.UTC(2100, 0, 1)) return null;
+  return new Date(ms).toISOString();
 }
 
 export function parseClientNotes(notes: string | null | undefined): ClientNoteBlock[] {
@@ -49,6 +61,7 @@ export function parseClientNotes(notes: string | null | undefined): ClientNoteBl
         if (!vazio(atual)) blocos.push(atual);
         atual = novoBloco();
         atual.leadId = valor.slice(0, 8);
+        atual.at = instanteDoUuidV7(valor);
         atual.source = atual.source ?? "Checkatrade";
         continue;
       }
