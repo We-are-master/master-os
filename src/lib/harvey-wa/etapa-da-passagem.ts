@@ -36,3 +36,17 @@ export function etapaDaPassagem(need: unknown, motivo: string | null | undefined
   if (PEDE_PRECO.test(texto)) return "quote";
   return null;
 }
+
+const PROXIMA_ACAO: Record<string, string> = {
+  call: "call the customer",
+  quote: "price this job",
+  complaint: "complaint, Leo to handle",
+  booking: "existing booking, Leo to handle",
+};
+
+/** A linha da fila de ação (fila-de-acao.ts) quando o Harvey passa: o que fazer e o motivo dele. */
+export function textoDaPassagem(need: unknown, motivo: string | null | undefined): string {
+  const etapa = etapaDaPassagem(need, motivo);
+  const porque = String(motivo ?? "").replace(/\s+/g, " ").trim();
+  return `Harvey handed over (${etapa ? PROXIMA_ACAO[etapa] : "pick up the chat"})${porque ? `: ${porque}` : ""}`;
+}

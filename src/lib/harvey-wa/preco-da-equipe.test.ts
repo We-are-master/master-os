@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { janelaParaOJob, precoConfere, precosDaEquipe, valorEmLibras } from "./preco-da-equipe";
+import { janelaParaOJob, precoConfere, precoNaMensagem, precosDaEquipe, ticketAntesDoPreco, valorEmLibras } from "./preco-da-equipe";
 import type { Fala } from "./cerebro";
 
 const conversa: Fala[] = [
@@ -45,4 +45,16 @@ test("a janela combinada vira o formato do job", () => {
   assert.equal(janelaParaOJob("9 to 3pm"), "09:00-15:00");
   assert.equal(janelaParaOJob("morning"), null);
   assert.equal(janelaParaOJob("3pm to 9am"), null);
+});
+
+test("preço numa mensagem da equipe: vale o maior", () => {
+  assert.deepEqual(precoNaMensagem("We can do it for £80,00."), { preco: 80, outros: [] });
+  assert.deepEqual(precoNaMensagem("£80 labour + £20 materials = £100"), { preco: 100, outros: [80, 20] });
+  assert.equal(precoNaMensagem("We'll send someone tomorrow"), null);
+});
+
+test("ticket antes do preço", () => {
+  assert.equal(ticketAntesDoPreco(1, [1, 2]), true);
+  assert.equal(ticketAntesDoPreco(null, [1, 2]), true);
+  assert.equal(ticketAntesDoPreco(3, [1, 2]), false);
 });

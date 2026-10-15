@@ -13,6 +13,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { chargeJobBalanceOnSavedCard, CARD_ON_FILE_ON } from "@/lib/stripe-card-charge";
 import { getZendeskTicketId, isZendeskConfigured, zendeskApi } from "@/lib/zendesk";
 import { finalizeJobAfterInvoicePaid } from "@/lib/sync-job-after-invoice-paid";
+import { jobPagoSemAcao, precisaDeAcao } from "@/lib/fila-de-acao";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -68,6 +69,10 @@ export async function POST(req: NextRequest) {
         body: { ticket: { comment: { public: false, body: texto } } },
       }).catch((e) => console.error("[card-retry] note failed", e));
     }
+    // Fila de ação: pago tira o "cobrar"; sem mais tentativas automáticas, cobrar é com a gente.
+    if (r.status === "charged") await jobPagoSemAcao(admin, { jobId: job.id });
+    else if (r.status === "refused" && !r.retryAt) await precisaDeAcao(ticketId, `${job.reference}: card declined again, no more automatic tries: chase payment by link`);
+    else if (r.status === "requires_action") await precisaDeAcao(ticketId, `${job.reference}: card needs the customer's bank confirmation: send them the payment link`);
   }
   return NextResponse.json({ ok: true, ensaio, results: out });
 }

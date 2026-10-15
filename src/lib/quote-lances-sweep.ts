@@ -30,6 +30,7 @@ import {
   type EsperaDeEscopo, type EventoDeSideConversation,
 } from "@/lib/quote-lance-escopo";
 import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -203,6 +204,8 @@ export async function varrerLancesParaRascunho(
         r.detalhes.push(`${q.reference}: aviso de silêncio falhou, não marco — ${String(err)}`);
         continue;
       }
+      const fila = await precisaDeAcao(q.external_ref, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners or call`);
+      if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
       await supabase
         .from("quotes")
         .update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() })
@@ -306,7 +309,7 @@ export async function varrerLancesParaRascunho(
       enviada = envio.enviado;
       if (enviada) r.enviadasSozinhas++;
       else {
-        const aviso = await chamarEquipeParaOLance(supabase, q.id, Number(q.external_ref));
+        const aviso = await chamarEquipeParaOLance(supabase, q.id, q.reference, Number(q.external_ref));
         if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
       }
     }
@@ -411,6 +414,8 @@ async function mandarSozinho(
   } catch (err) {
     console.error(`[lances] ${q.reference}: status do ticket após envio`, err);
   }
+  // A quote saiu: nada nosso a fazer até o cliente responder.
+  await acaoFeita(ticketId);
   await postarNotaInterna(ticketId, [
     `🤖 HARVEY — ${q.reference} SENT to the customer by ${via}: ${libras(total)}`,
     "",
@@ -432,10 +437,11 @@ async function mandarSozinho(
  * Então, em ordem, cada passo sem derrubar o próximo:
  *  1. o status do ticket acompanha a quote (com `await`);
  *  2. se o Harvey segura a conversa do WhatsApp, ela passa para a equipe;
- *  3. Reply Status 🔴 e sem `harvey_ai`: a view mostra o ticket.
+ *  3. Reply Status 🔴 e sem `harvey_ai`: a view mostra o ticket;
+ *  4. Action Required Yes com a próxima ação (fila-de-acao.ts).
  * Devolve uma linha para o relatório quando algum passo falha.
  */
-async function chamarEquipeParaOLance(supabase: SupabaseClient, quoteId: string, ticketId: number): Promise<string | null> {
+async function chamarEquipeParaOLance(supabase: SupabaseClient, quoteId: string, referencia: string, ticketId: number): Promise<string | null> {
   const falhas: string[] = [];
   await syncQuoteZendeskStatus(quoteId, supabase).catch((err: unknown) => falhas.push(`sync do status: ${String(err).slice(0, 120)}`));
   if (!Number.isFinite(ticketId) || ticketId <= 0) return falhas.length ? falhas.join("; ") : null;
@@ -451,6 +457,8 @@ async function chamarEquipeParaOLance(supabase: SupabaseClient, quoteId: string,
   } catch (err) {
     falhas.push(`marcar o ticket: ${String(err).slice(0, 120)}`);
   }
+  const fila = await precisaDeAcao(ticketId, `Bids are in on ${referencia}: review the draft and send the quote`);
+  if (!fila.ok) falhas.push(fila.linha);
   return falhas.length ? falhas.join("; ") : null;
 }
 
@@ -511,7 +519,8 @@ async function escopoParaGente(
   } catch (err) {
     return `nota saiu, mas marcar o ticket falhou: ${String(err).slice(0, 120)}`;
   }
-  return null;
+  const fila = await precisaDeAcao(ticketId, `Scope check on ${q.reference}: read the partner's side conversation and decide the price`);
+  return fila.ok ? null : fila.linha;
 }
 
 type ResultadoDaChecagem =

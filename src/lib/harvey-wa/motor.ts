@@ -13,8 +13,10 @@
 import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
 import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
-import { etapaDaPassagem } from "./etapa-da-passagem";
+import { etapaDaPassagem, textoDaPassagem } from "./etapa-da-passagem";
 import { registrarDecisao } from "./diario";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
+import { precoNaMensagem } from "./preco-da-equipe";
 import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
@@ -24,7 +26,7 @@ import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOLeo, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOLeo, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -270,8 +272,43 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   }
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
+  // A equipe deu o preço no chat: ticket para 🟠 Approval (e a conversa volta ao Harvey para fechar).
+  if (msg.author.type === "business" && msg.author.displayName && !ehDoHarvey(msg) && est?.phone && est.tipo !== "parceiro") {
+    await precoDaEquipeNoChat(conversa.id, est.phone as string, msg).catch((e) => console.error("[harvey-wa] preço da equipe:", e));
+  }
   // Grupo do ticket: 🤖 Harvey enquanto ele atende, Fixfy Support com a equipe (parceiro fica onde está).
   if (est?.phone && est.tipo !== "parceiro") await grupoDaConversa(est.phone as string, est.estado === "harvey").catch((e) => console.error("[harvey-wa] grupo:", e));
+}
+
+/**
+ * Preço dado pela EQUIPE no chat (dono, 15/10/2026). Equipe aqui é quem escreveu pelo
+ * Zendesk (não o Harvey, nem no nome de alguém): é o mesmo critério do book_team_price
+ * (`precosDaEquipe` lê só falas da equipe), então o valor que vai para Approval é o
+ * que o Harvey aceita reservar.
+ *
+ * Ticket antes do preço → 🟠 Approval, 🟢, Action Required No, nota interna. Depois a
+ * conversa volta para o Harvey (`devolverConversa`, o mesmo Give back da tela): com ela
+ * na equipe ele fica calado e o "yes" do cliente não viraria reserva. A equipe que
+ * escrever de novo reassume sozinha (processarMensagem). HARVEY_WA_PRECO_DEVOLVE=0
+ * desliga só a devolução.
+ */
+async function precoDaEquipeNoChat(conversationId: string, telefone: string, msg: MensagemSc): Promise<void> {
+  if (msg.content.type !== "text") return;
+  const achado = precoNaMensagem(msg.content.text ?? "");
+  if (!achado) return;
+  const quem = msg.author.displayName?.trim() || "the team";
+  const { ticket, linha } = await ticketParaAprovacao(telefone, quem, achado);
+  if (!ticket || !linha) return;
+  const fila = await acaoFeita(ticket);
+  console.log("[harvey-wa] preço da equipe:", linha, "·", fila.linha);
+  const sb = createServiceClient();
+  await registrarDecisao({ origem: "whatsapp", ticketId: ticket, decisao: `${quem} gave £${achado.preco} in the WhatsApp chat: ticket moved to Approval`, regra: "team price in chat → Approval (owner, 15/10/2026)", pendente: "Customer: accept the price" }, sb);
+  if (process.env.HARVEY_WA_PRECO_DEVOLVE === "0") return;
+  const { data: est } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  if (est?.estado !== "equipe") return;
+  const { devolverConversa } = await import("./controle");
+  await devolverConversa(sb, conversationId);
+  console.log("[harvey-wa] conversa devolvida ao Harvey depois do preço da equipe");
 }
 
 /** Um evento da Sunshine: a resposta (ou a pausa) e depois a contabilidade no Zendesk. */
@@ -470,7 +507,9 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
         await ticketParaOLeo(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para o Leo:", e));
       } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
     }
-    console.log("[harvey-wa] passagem:", feitoNota);
+    // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).
+    const fila = await precisaDeAcao(await ticketPeloTelefone(telefone).catch(() => null), textoDaPassagem(r.precisaDe, r.passarParaEquipe), { esperarAgente: true });
+    console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
   // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Bidding e nota para a equipe, conversa continua com ele.
