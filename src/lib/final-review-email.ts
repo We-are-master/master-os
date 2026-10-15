@@ -19,6 +19,7 @@ import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
+import { renderJobReportV2PdfBuffer } from "@/lib/pdf/render-job-report-v2";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, ticketDoWhatsApp, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
@@ -166,6 +167,28 @@ export async function sendFinalReviewEmail(
   }
 
   /**
+   * Report novo (V2) em PDF (15/10/2026): jobs com o report pelo link/portal não têm
+   * linha em `job_reports`, então o cliente recebia fotos soltas. Sem PDF legado, vai o
+   * PDF montado do start_report + final_report (as fotos já estão dentro dele).
+   */
+  let pdfV2Anexado = false;
+  if (includeReport && attachments.length === 0) {
+    try {
+      const pdf = await renderJobReportV2PdfBuffer(admin, jobId);
+      if (pdf) {
+        attachments.push({
+          filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}-report.pdf`,
+          content: pdf.buffer,
+          contentType: "application/pdf",
+        });
+        pdfV2Anexado = true;
+      }
+    } catch (e) {
+      console.error("final-review-email: report V2 PDF failed, falls back to photos:", e);
+    }
+  }
+
+  /**
    * Anexos do PRÓPRIO relatório (V2), a pedido do dono em 17/08/2026: o email
    * de conclusão ia só com o PDF legado do app do parceiro — que a maioria
    * dos jobs não tem — e o certificado do EICR, que é o produto que o
@@ -201,6 +224,8 @@ export async function sendFinalReviewEmail(
       if (totalBytes + buf.length > 15 * 1024 * 1024) break;
       totalBytes += buf.length;
       const ehPdf = /\.pdf(\?|$)/i.test(u);
+      // Com o PDF do report anexado, foto solta seria repetida: só seguem os PDFs (certificados).
+      if (pdfV2Anexado && !ehPdf) continue;
       attachments.push({
         filename: ehPdf
           ? `${safe}-certificate${++nPdf > 1 ? `-${nPdf}` : ""}.pdf`
