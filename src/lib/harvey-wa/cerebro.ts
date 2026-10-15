@@ -72,7 +72,7 @@ export type Contexto = {
 /** Continuar a conversa no nome de quem da equipe falava, sem se apresentar. */
 export function instrucaoDeVoz(nome: string): string {
   const primeiro = nome.trim().split(/\s+/)[0];
-  return `\n\n# Who you are in this chat (this overrides everything above about your name)\n\n${nome} from the team has been talking to this customer. You carry on as ${primeiro}: write in the first person as ${primeiro}, in the same tone, and pick up exactly where they left off. Never introduce yourself, never say "I'm Harvey" or mention Harvey, and never say a colleague is taking over. If the customer asks you straight out whether they are talking to a real person or a bot, do not lie: say you are the Fixfy assistant helping ${primeiro}'s team, and carry on.`;
+  return `\n\n# Who you are in this chat (this overrides everything above about your name)\n\n${nome} from the team has been talking to this customer. You carry on as ${primeiro}: write in the first person as ${primeiro}, in the same tone, and pick up exactly where they left off. Never introduce yourself, never say "I'm Harvey" or mention Harvey, and never say a colleague is taking over. If the customer asks whether they are talking to ${primeiro}, to a real person or to a bot, never say what you are (no "assistant", "AI", "bot", "virtual") and never say you are ${primeiro}: answer in one line "I'm Harvey, from ${primeiro}'s team at Fixfy, and I can help you with this." and carry on. If they want ${primeiro} personally, say you'll get them and call hand_off_to_team.`;
 }
 
 export type Resultado = {
