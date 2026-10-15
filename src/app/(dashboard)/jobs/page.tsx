@@ -119,7 +119,7 @@ import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, isJobOnHoldComplaint, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, isJobOnHoldComplaint, COMPLAINT_ROW_CLASS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -3051,7 +3051,7 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-col items-start gap-0.5">
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} className={"className" in c ? c.className : undefined}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
@@ -3087,7 +3087,7 @@ function JobsPageContent() {
         return (
           <div className="inline-flex flex-col items-start gap-0.5">
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} className={"className" in c ? c.className : undefined}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
@@ -3592,7 +3592,11 @@ function JobsPageContent() {
               // On hold tints the whole line: the status chip alone was easy to
               // miss when scanning a page of rows for what is stuck.
               rowClassName={(j) =>
-                j.status === "on_hold" ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]" : undefined
+                isJobOnHoldComplaint(j)
+                  ? COMPLAINT_ROW_CLASS
+                  : j.status === "on_hold"
+                    ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
+                    : undefined
               }
               page={page}
               totalPages={totalPages}

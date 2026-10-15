@@ -7286,7 +7286,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
                 />
                 <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-                  <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
+                  <Badge variant={config.variant} dot={config.dot} size="sm" className={cn(statusColors.topBadgeClass || undefined, onHoldBadge?.className)}>
                     {config.label}
                   </Badge>
                   <JobScheduleTimingChip job={job} />
