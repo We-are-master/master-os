@@ -9054,7 +9054,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Mesmo cabeçalho do Billing documents: linha em cima, ícone e título. */}
-            <div className="space-y-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+            <div className="flex flex-col gap-3 border-t border-border-light pt-4 dark:border-[#2f3642]">
               <button
                 type="button"
                 onClick={() => setHistoryOpen((v) => !v)}
@@ -9062,7 +9062,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className="m-0 flex w-full items-center gap-1.5 text-left text-[12px] font-semibold text-text-primary"
               >
                 <History className="h-3.5 w-3.5 text-primary" aria-hidden />
-                Command history
+                History
                 <FixfyHintIcon text="Everything done on this job: status, dates, money, messages and instalments. Latest first." />
                 <ChevronDown
                   className={cn("ml-auto h-3.5 w-3.5 text-text-tertiary transition-transform", !historyOpen && "-rotate-90")}
@@ -9071,8 +9071,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </button>
               {historyOpen ? (
                 <>
-                  <div className="rounded-xl border border-border bg-card p-2.5">
-                    <div className="flex gap-2.5">
+                  <div className="rounded-xl border border-border bg-card px-3 py-2.5">
+                    <div className="flex items-start gap-3">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--nav-bg,#020040)] text-[12px] font-semibold text-white">
                         {(profile?.full_name?.trim() || "U").charAt(0).toUpperCase()}
                       </span>
@@ -9087,10 +9087,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         }}
                         rows={2}
                         placeholder="Write a note for the team"
-                        className="min-h-[52px] w-full resize-y border-0 bg-transparent p-0 pt-1.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+                        className="min-h-[44px] w-full resize-y border-0 bg-transparent p-0 pt-1.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
                       />
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-border-light pt-2">
                       <span className="text-[11px] text-text-tertiary">Only the team sees notes.</span>
                       <Button
                         type="button"

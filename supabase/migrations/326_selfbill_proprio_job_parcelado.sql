@@ -31,10 +31,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_self_bills_dedicated_job_open
   WHERE dedicated_job_id IS NOT NULL
     AND status NOT IN ('paid', 'rejected', 'payout_archived', 'payout_cancelled', 'payout_lost');
 
-NOTIFY pgrst, 'reload schema';
 
 -- Cobrança automática por parcela: o cron marca quando pediu, para pedir uma vez só.
 ALTER TABLE public.invoice_payment_installments
   ADD COLUMN IF NOT EXISTS requested_at timestamptz;
+
+-- Escolhido ao criar a cobrança: o cron só pede parcela de fatura com isto ligado.
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS instalments_auto_charge boolean NOT NULL DEFAULT false;
 
 NOTIFY pgrst, 'reload schema';
