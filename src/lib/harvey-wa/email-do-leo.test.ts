@@ -7,7 +7,7 @@ describe("e-mail do Leo", () => {
     const c = comentarioDoLeo("Hi Ann, just checking in.");
     assert.equal(c.public, true);
     assert.equal(c.author_id, 6227542863391);
-    assert.match(c.html_body, /Kind regards,<br>Leo/);
+    assert.match(c.html_body, /<p style="margin:0">Kind regards,<\/p>$/);
     assert.doesNotMatch(c.html_body, /Leonardo Piovesan/);
   });
   it("fora do Zendesk a assinatura vai no corpo", () => {
@@ -19,6 +19,6 @@ describe("e-mail do Leo", () => {
     assert.match(h, /Line one<br>line two/);
   });
   it("texto puro para o Resend termina com a assinatura", () => {
-    assert.match(textoDoLeo("Hi Ann"), /Kind regards,\nLeo\n\nLeonardo Piovesan \| Operations/);
+    assert.match(textoDoLeo("Hi Ann"), /Kind regards,\n\nLeonardo Piovesan \| Operations/);
   });
 });

@@ -51,11 +51,11 @@ describe("régua do follow-up de lead", () => {
     assert.equal(proximoPasso(1, vespera, vespera, d("2026-10-14T09:00:00Z")), 2);
   });
 
-  it("os três e-mails não têm travessão e assinam como Leo", () => {
+  it("os três e-mails não têm travessão e fecham com Thank you (a assinatura é a do Leo)", () => {
     for (const p of [2, 3, 4]) {
       const t = emailDoPasso(p, "Ann", "handyman work");
       assert.ok(!t.includes("—"), `passo ${p}`);
-      assert.ok(t.startsWith("Hi Ann,") && t.endsWith("Leo"), `passo ${p}`);
+      assert.ok(t.startsWith("Hi Ann,") && t.endsWith("Thank you,") && !t.includes("Fixfy Team"), `passo ${p}`);
       assert.ok(t.split("\n").length > 5, `passo ${p}`);
     }
   });

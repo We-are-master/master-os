@@ -5,7 +5,7 @@
  *
  * A assinatura mora no perfil do Leo no Zendesk, e o Zendesk a acrescenta também ao
  * comentário criado pela API: no teste de 15/10/2026 ela saiu duas vezes quando o corpo
- * também a trazia. Então o comentário leva só o texto e "Kind regards, Leo". O e-mail
+ * também a trazia. Então o comentário leva só o texto e "Kind regards,". O e-mail
  * que sai pelo Resend (fora do Zendesk) é que carrega a assinatura no corpo.
  * O autor sai de HARVEY_EMAIL_AUTHOR_ID (padrão: o usuário do Leo).
  */
@@ -28,7 +28,8 @@ export function htmlDoLeo(texto: string, despedida = "Kind regards,", comAssinat
     .split(/\n{2,}/)
     .map((p) => `<p style="margin:0 0 12px">${escapar(p).replace(/\n/g, "<br>")}</p>`)
     .join("");
-  return `${paragrafos}<p style="margin:0">${escapar(despedida)}<br>Leo</p>${comAssinatura ? ASSINATURA_HTML : ""}`;
+  // Só a despedida: o nome já está na assinatura logo abaixo (dono, 15/10/2026).
+  return `${paragrafos}<p style="margin:0">${escapar(despedida)}</p>${comAssinatura ? ASSINATURA_HTML : ""}`;
 }
 
 /** O comentário público pronto para o PUT do ticket: autor Leo, corpo em HTML; a assinatura o Zendesk põe. */
@@ -38,5 +39,5 @@ export function comentarioDoLeo(texto: string, despedida?: string) {
 
 /** Para e-mail fora do Zendesk (Resend): o mesmo fecho, em texto. */
 export function textoDoLeo(texto: string, despedida = "Kind regards,"): string {
-  return `${texto.trim()}\n\n${despedida}\nLeo\n\n${ASSINATURA_TEXTO}`;
+  return `${texto.trim()}\n\n${despedida}\n\n${ASSINATURA_TEXTO}`;
 }
