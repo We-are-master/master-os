@@ -7,10 +7,15 @@ import type { Profile } from "@/types/database";
 interface ProfileState {
   profile: Profile | null;
   loading: boolean;
+  /**
+   * Login sem acesso ao OS (15/10/2026): não tem linha em profiles ou o perfil
+   * está desativado. Parceiro e cliente do portal caem aqui e não veem o OS.
+   */
+  blocked: boolean;
   refresh: () => void;
 }
 
-const ProfileContext = createContext<ProfileState>({ profile: null, loading: true, refresh: () => {} });
+const ProfileContext = createContext<ProfileState>({ profile: null, loading: true, blocked: false, refresh: () => {} });
 
 export function useProfile() {
   return useContext(ProfileContext);
@@ -21,6 +26,7 @@ export { ProfileContext };
 export function useProfileLoader(): ProfileState {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [blocked, setBlocked] = useState(false);
 
   const load = useCallback(async () => {
     const supabase = getSupabase();
@@ -39,11 +45,19 @@ export function useProfileLoader(): ProfileState {
         .single();
 
       if (data && !error) {
-        setProfile(data as Profile);
+        const p = data as Profile;
+        // Perfil desativado não entra: o OS é só da equipe.
+        setBlocked(p.is_active === false);
+        setProfile(p.is_active === false ? null : p);
+      } else if (error?.code === "PGRST116") {
+        // A consulta respondeu e não há perfil: não é equipe (parceiro, cliente
+        // do portal). Antes isso virava "operator" e abria o OS inteiro.
+        setBlocked(true);
+        setProfile(null);
       } else {
-        // No profiles row (or the query failed): fail CLOSED. Synthesizing an
-        // admin here used to hand full UI access to any authenticated user
-        // without a profile — operator is the least-privileged real role.
+        // A consulta falhou (rede, timeout): não dá para afirmar que não é
+        // equipe, então segue como operator; o banco (is_internal_staff) é
+        // quem decide o que ele lê.
         setProfile({
           id: user.id,
           email: user.email ?? "",
@@ -75,7 +89,7 @@ export function useProfileLoader(): ProfileState {
   // creates a fresh object, triggering every ProfileContext.Provider consumer
   // to re-render unnecessarily (and re-runs the entire dashboard tree).
   return useMemo(
-    () => ({ profile, loading, refresh }),
-    [profile, loading, refresh],
+    () => ({ profile, loading, blocked, refresh }),
+    [profile, loading, blocked, refresh],
   );
 }

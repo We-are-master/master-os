@@ -12,6 +12,7 @@ import { AdminConfigProvider } from "@/hooks/use-admin-config";
 import { DuplicateConfirmProvider } from "@/contexts/duplicate-confirm-context";
 import { ForcePasswordChangeModal } from "@/components/layout/force-password-change-modal";
 import { ForceWorkforceRefresh } from "@/components/layout/force-workforce-refresh";
+import { SemAcessoAoOs } from "@/components/layout/sem-acesso-ao-os";
 
 const MasterBrainAssistant = dynamic(
   () =>
@@ -39,6 +40,8 @@ export default function DashboardLayoutClient({
     () => ({ collapsed, mobileOpen, toggle, toggleMobile, closeMobile }),
     [collapsed, mobileOpen, toggle, toggleMobile, closeMobile],
   );
+
+  if (!profileState.loading && profileState.blocked) return <SemAcessoAoOs />;
 
   return (
     <ThemeContext.Provider value={themeState}>
