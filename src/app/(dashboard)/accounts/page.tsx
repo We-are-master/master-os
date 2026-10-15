@@ -1493,10 +1493,10 @@ function AccountDetailDrawer({
             // Four tabs. Services, Rates and Portal moved into Overview as
             // sections: across the ten active accounts they were filled on 7, 2
             // and 1 respectively, so as tabs they were mostly a dead click.
-            { id: "overview", label: "Overview" },
-            { id: "clients", label: "Clients", count: clientsTotal || undefined },
-            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
-            { id: "finance", label: "Finance", count: invoices.length || undefined },
+            { id: "overview", label: "Overview", hint: "Review account details, services, agreed rates and portal access." },
+            { id: "clients", label: "Clients", hint: "Review clients linked to this account.", count: clientsTotal || undefined },
+            { id: "jobs", label: "Jobs", hint: "Review jobs linked to this account.", count: jobs.length || undefined },
+            { id: "finance", label: "Finance", hint: "Review invoices and balances linked to this account.", count: invoices.length || undefined },
           ]}
         />
       </div>

@@ -986,10 +986,10 @@ function ClientDetailDrawer({
   };
 
   const drawerTabs = [
-    { id: "overview", label: "Overview" },
-    { id: "history", label: `History (${jobs.length + quotes.length + requests.length})` },
-    { id: "addresses", label: "Addresses" },
-    { id: "edit", label: "Edit" },
+    { id: "overview", label: "Overview", hint: "Review client contact details and status." },
+    { id: "history", label: `Service history (${jobs.length + quotes.length + requests.length})` },
+    { id: "addresses", label: "Addresses", hint: "Manage service addresses linked to this client." },
+    { id: "edit", label: "Details", hint: "Update contact and client information." },
   ];
 
   const totalJobValue = jobs.reduce((s, j) => s + Number(j.client_price), 0);

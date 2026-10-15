@@ -169,7 +169,7 @@ export function AccountServiceRatesTabSection({
           </>
         ) : (
           <>
-            No catalogue rows match this account&apos;s trades. Check <strong>Settings → Services</strong>, then save
+            No catalogue rows match this account&apos;s trades. Check <strong>Settings → Pricing</strong>, then save
             <strong> Trades &amp; skills</strong> again.
           </>
         )}

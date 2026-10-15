@@ -1,5 +1,6 @@
 "use client";
 
+import { OS_PAGE_HELP } from "@/lib/os-copy";
 import { cn } from "@/lib/utils";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { motion } from "framer-motion";
@@ -24,7 +25,7 @@ interface PageHeaderProps {
  * not shown as a paragraph: it goes in the hint next to the title.
  */
 export function PageHeader({ title, subtitle, infoTooltip, titleAddon, children, className }: PageHeaderProps) {
-  const hint = infoTooltip ?? subtitle;
+  const hint = infoTooltip ?? subtitle ?? OS_PAGE_HELP[title];
   return (
     <motion.div
       variants={fadeInUp}
@@ -37,7 +38,7 @@ export function PageHeader({ title, subtitle, infoTooltip, titleAddon, children,
           <h1 className="m-0 font-display text-[20px] font-semibold leading-[1.3] tracking-[-0.02em] text-text-primary">
             {title}
           </h1>
-          {hint ? <FixfyHintIcon text={hint} /> : null}
+          {hint ? <FixfyHintIcon text={hint} label={title} /> : null}
         </div>
         {titleAddon}
       </div>

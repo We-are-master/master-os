@@ -208,7 +208,7 @@ export default function TicketsPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Tickets" subtitle="Support tickets from account portal users" />
+        <PageHeader title="Support" subtitle="Support tickets from account portal users" />
 
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -225,7 +225,7 @@ export default function TicketsPage() {
             onChange={(id) => setTab(id as typeof tab)}
             options={[
               { id: "open",     label: "Open",     count: counts.open + counts.in_progress + counts.awaiting },
-              { id: "mine",     label: "Mine",     count: tickets.filter((t) => t.assigned_to === profile?.id && t.status !== "resolved" && t.status !== "closed").length },
+              { id: "mine",     label: "Assigned to me",     count: tickets.filter((t) => t.assigned_to === profile?.id && t.status !== "resolved" && t.status !== "closed").length },
               { id: "resolved", label: "Resolved", count: counts.resolved },
               { id: "all",      label: "All" },
             ]}

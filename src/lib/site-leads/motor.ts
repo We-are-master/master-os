@@ -97,7 +97,8 @@ const HORA = 3_600_000;
  * único de 48 h e este fica de reserva.
  */
 const CODIGO_FIXO = "COMEBACK10";
-const REMETENTE_PADRAO = "Fixfy Team <no-reply@getfixfy.com>";
+/** No nome do Victor (dono, 15/10/2026); a resposta continua indo para o ticket do lead. */
+const REMETENTE_PADRAO = "Victor Braz at Fixfy <victor@getfixfy.com>";
 
 export function motorLigado(): boolean {
   return process.env.RESERVA_ABANDONADA?.trim().toLowerCase() === "on";

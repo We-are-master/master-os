@@ -5,10 +5,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { X } from "lucide-react";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { FixfyModalTopSteps, type FixfyModalStep } from "@/components/ui/fixfy-modal";
 
 interface ModalProps {
+  /** Opt-in focus containment for contextual help dialogs. */
+  manageFocus?: boolean;
   open: boolean;
   onClose: () => void;
   title: string;
@@ -40,6 +42,7 @@ const sizeStyles = {
 };
 
 export function Modal({
+  manageFocus = false,
   open,
   onClose,
   title,
@@ -56,6 +59,39 @@ export function Modal({
   onStepClick,
   layout = "default",
 }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!open || !manageFocus) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') ?? []);
+    (focusable()[0] ?? dialog)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      } else if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) { event.preventDefault(); dialog?.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+          event.preventDefault(); first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      previous?.focus();
+    };
+  }, [open, manageFocus, onClose]);
+
   const isWizard = layout === "wizard";
   const effectiveScrollBody = isWizard ? false : scrollBody;
 
@@ -97,6 +133,11 @@ export function Modal({
             className="absolute inset-0 bg-[rgba(10,10,31,0.36)] dark:bg-black/55"
           />
           <motion.div
+            ref={dialogRef}
+            role={manageFocus ? "dialog" : undefined}
+            aria-modal={manageFocus ? true : undefined}
+            aria-labelledby={manageFocus ? titleId : undefined}
+            tabIndex={manageFocus ? -1 : undefined}
             variants={modalTransition}
             initial="hidden"
             animate="visible"
@@ -116,7 +157,7 @@ export function Modal({
                   {headerLeading}
                 </span>
               ) : null}
-              <h2 className="m-0 min-w-0 truncate text-[13px] font-semibold text-text-primary">{title}</h2>
+              <h2 id={titleId} className="m-0 min-w-0 truncate text-[13px] font-semibold text-text-primary">{title}</h2>
               {subtitle ? <FixfyHintIcon text={subtitle} /> : null}
               <button
                 type="button"

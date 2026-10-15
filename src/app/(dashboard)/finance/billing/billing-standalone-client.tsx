@@ -1742,11 +1742,11 @@ function BillingStandaloneInner() {
           >
             {kpisVisible ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-              <KpiCard label="To collect · receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
-              <KpiCard label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
-              <KpiCard label="To pay · self-bills" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
-              <KpiCard label={`Net · ${kpiMonthLabel}`} value={`${kpiRow.netWeek >= 0 ? "+" : ""}${formatCurrency(kpiRow.netWeek)}`} sub={`in ${formatCurrency(kpiRow.weekIn)} · out ${formatCurrency(kpiRow.weekOut)}`} green={kpiRow.netWeek >= 0} />
-              <KpiCard label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
+              <KpiCard hint="Outstanding customer invoice balances under the current filters, including overdue balances." label="Receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
+              <KpiCard hint="Outstanding invoices past their due date under the current filters." label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
+              <KpiCard hint="Partner self-bills ready for payment with a remaining balance. Excludes workforce self-bills, drafts and paid items." label="Partner payables" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
+              <KpiCard hint="Incoming amounts minus outgoing amounts for the indicated period. This is a cash-flow measure, not profit." label={`Net · ${kpiMonthLabel}`} value={`${kpiRow.netWeek >= 0 ? "+" : ""}${formatCurrency(kpiRow.netWeek)}`} sub={`in ${formatCurrency(kpiRow.weekIn)} · out ${formatCurrency(kpiRow.weekOut)}`} green={kpiRow.netWeek >= 0} />
+              <KpiCard hint="Invoice payments recorded in the indicated month." label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
             </div>
             ) : null}
 
@@ -1765,7 +1765,7 @@ function BillingStandaloneInner() {
                   ) : null}
                   <div className="min-w-0">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-                      Cash-Flow Runway
+                      Cash forecast
                       <FixfyHintIcon
                         text={cashflowRunwayHintForView(runwayView)}
                         placement="bottom-start"
@@ -1776,7 +1776,7 @@ function BillingStandaloneInner() {
                     ) : null}
                     <p className="mt-0.5 text-[11px] text-text-tertiary">
                       {runwayView === "cash" || runwayView === "accrual"
-                        ? `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to see line items and edit Em caixa (opening balance)`
+                        ? `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to review items and set the opening balance`
                         : `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to see what is due in and out`}
                     </p>
                   </div>
@@ -1807,16 +1807,16 @@ function BillingStandaloneInner() {
                     <RunwayTabBtn active={runwayGranularity === "week"} onClick={() => { setRunwayGranularity("week"); setCashflowDetailWeekStart(null); }} label="Week" />
                   </div>
                   <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
-                    <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Accrual" />
-                    <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash" />
-                    <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="P&L" />
+                    <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Pipeline forecast" />
+                    <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash movements" />
+                    <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="Due-date forecast" />
                   </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                     {runwayView === "cash" ? (
                       <>
                         <span className="flex items-center gap-1.5 font-semibold text-text-primary">
-                          <span className="h-2 w-2 rounded-sm bg-primary" /> Em caixa
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Closing balance
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Payments in</span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Paid / projected out</span>
@@ -1824,7 +1824,7 @@ function BillingStandaloneInner() {
                     ) : runwayView === "accrual" ? (
                       <>
                         <span className="flex items-center gap-1.5 font-semibold text-text-primary">
-                          <span className="h-2 w-2 rounded-sm bg-primary" /> Em caixa
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Closing balance
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Pipeline revenue</span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> All costs due</span>
@@ -1878,7 +1878,7 @@ function BillingStandaloneInner() {
                         ? { type: "button" as const, onClick: () => setCashflowDetailWeekStart(w.weekStart) }
                         : {})}
                       title={cashflowWeekColumnTitle(runwayView, w.title, w.moneyIn, w.moneyOut, w.closingBalance)}
-                      aria-label={`${w.title}. ${showRunwayBalance ? `Em caixa ${pnlLabel}` : `Weekly P and L ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}.${canSeeFinanceOverview ? " View breakdown." : ""}`}
+                      aria-label={`${w.title}. ${showRunwayBalance ? `Closing balance ${pnlLabel}` : `Due-date forecast ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}.${canSeeFinanceOverview ? " View breakdown." : ""}`}
                       className={cn(
                         "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]",
                         canSeeFinanceOverview && "cursor-pointer transition-colors hover:bg-surface-hover/80",
@@ -1925,7 +1925,7 @@ function BillingStandaloneInner() {
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-                      Money In
+                      Customer invoices
                       <FixfyHintIcon
                         text={`Draft invoices and collectible receivables · ${periodBounds ? periodLabel : "All periods"}.`}
                         placement="bottom-start"
@@ -2119,7 +2119,7 @@ function BillingStandaloneInner() {
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-                      Money Out
+                      Partner self-bills
                       <FixfyHintIcon
                         text={`Self-bills by pay week · ${periodWorkWeekLabel}. Mark draft → Ready → Mark as paid.`}
                         placement="bottom-start"
@@ -3783,13 +3783,13 @@ function SelfBillGroupedLedger({
   );
 }
 
-function KpiCard({ label, value, sub, alert, coral, green }: { label: string; value: string; sub: string; alert?: boolean; coral?: boolean; green?: boolean }) {
+function KpiCard({ label, value, sub, hint, alert, coral, green }: { label: string; value: string; sub: string; hint?: string; alert?: boolean; coral?: boolean; green?: boolean }) {
   return (
     <div className={cn(
       "min-w-0 rounded-xl border bg-white px-3 py-3 shadow-sm sm:px-4",
       alert ? "border-red-200 bg-red-50/30" : coral ? "border-orange-200 bg-orange-50/30" : "border-border-light",
     )}>
-      <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px]">{label}</p>
+      <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px] inline-flex items-center gap-1.5">{label}{hint ? <FixfyHintIcon label={label} text={hint} /> : null}</p>
       <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-text-primary")}>{value}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-text-secondary sm:text-xs">{sub}</p>
     </div>

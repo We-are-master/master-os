@@ -53,7 +53,18 @@ export type CampanhaInput = {
   notaDoRodape?: string;
   /** Selo laranja à direita do logo ("FIXFY CLUB", "36 HOURS ONLY"). Sem selo, só o logo. */
   selo?: string;
+  /** Quem assina. Sem isto, "Leo at Fixfy". */
+  assinatura?: Assinatura;
 };
+
+export type Assinatura = { nome: string; linha: string };
+
+/** Voz do Victor no B2C (dono, 15/10/2026): Diretor de Operações, e a resposta cai na caixa dele. */
+export const ASSINATURA_DO_VICTOR: Assinatura = {
+  nome: "Victor Braz",
+  linha: "Operations Director, Fixfy. Reply to this email and I will get back to you personally.",
+};
+const ASSINATURA_PADRAO: Assinatura = { nome: "Leo at Fixfy", linha: "Reply to this email and a real person answers." };
 
 /**
  * Cabeçalho compacto (dono, 15/10/2026, versão C): faixa navy baixa com o logo
@@ -142,7 +153,7 @@ function caixaDaOferta(o: OfertaNoEmail): string {
       <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">${escapeHtml(o.valor)}</div>
       <div style="font-family:ui-monospace,Menlo,Consolas,monospace; font-size:30px; line-height:38px; font-weight:700; color:${CLIENT_BRAND.navy}; letter-spacing:0.04em; margin:8px 0 6px;">${escapeHtml(o.codigo)}</div>
       <div style="font-size:14px; line-height:21px; color:#44403C;">${escapeHtml(o.sobre)}</div>
-      <div style="font-size:12px; line-height:18px; color:${CLIENT_BRAND.gray}; margin-top:8px;">Enter it at checkout. Valid until ${escapeHtml(o.validade)}.</div>
+      <div style="font-size:12px; line-height:18px; color:${CLIENT_BRAND.gray}; margin-top:8px;">The button applies it for you, or enter it at checkout. Valid until ${escapeHtml(o.validade)}.</div>
     </td></tr>
   </table>`;
 }
@@ -214,8 +225,8 @@ ${preheaderOculto(input.preheader)}
           ${oferta}
           ${botao(input.cta.texto, input.cta.url)}
           <p style="margin:22px 0 0; font-size:15px; line-height:24px; color:${CLIENT_BRAND.body};">
-            Leo at Fixfy<br>
-            <span style="color:${CLIENT_BRAND.gray}; font-size:14px;">Reply to this email and a real person answers.</span>
+            ${escapeHtml((input.assinatura ?? ASSINATURA_PADRAO).nome)}<br>
+            <span style="color:${CLIENT_BRAND.gray}; font-size:14px;">${escapeHtml((input.assinatura ?? ASSINATURA_PADRAO).linha)}</span>
           </p>
         </td>
       </tr>

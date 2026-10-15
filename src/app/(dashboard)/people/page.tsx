@@ -646,7 +646,7 @@ export default function PeoplePage() {
       <div className="space-y-6">
         <PageHeader
           title="Workforce"
-          infoTooltip={"Working roster — internal employees and self-employed contractors. Open a card for profile photo, contact details, compliance documents, and pay.\n\nWorking lists everyone except offboard. Use Employees for PAYE staff and Contractors for self-billed. Finance → Payroll keeps commission runs and recurring bills."}
+          infoTooltip={"Manage employees and contractors, including documents, schedules, pay and system access. Use the status filter to review onboarding, active and offboarded records."}
         >
           {/* Roster filters ride in the header line — one bar for the page. */}
           <WorkforceTypeSegment

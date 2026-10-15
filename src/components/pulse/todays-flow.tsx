@@ -94,7 +94,7 @@ const STATUS_LABEL: Record<StatusKey, string> = {
   unassigned: "Unassigned",
   scheduled: "Scheduled",
   in_progress: "In Progress",
-  final_check: "Final Checks",
+  final_check: "Final review",
 };
 
 const RESULT_COLORS = {
@@ -438,7 +438,7 @@ export function TodaysFlow() {
       <SectionCard
         className={PULSE_FORECAST_PAIR_CARD_CLASS}
         bodyClassName="flex-1 min-h-0 px-5 py-4"
-        title={isForecast ? "Jobs Forecasting" : "Monthly Results"}
+        title={isForecast ? "Job forecast" : "Monthly results"}
         subtitle={
           isForecast
             ? `Next ${FORECAST_DAYS} days · ${forecastRangeLabel}`

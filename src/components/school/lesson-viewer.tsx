@@ -62,7 +62,7 @@ export function LessonViewer({ lessonId }: Props) {
       <div className="text-center py-16">
         <p className="text-text-secondary">Lesson not found.</p>
         <Link href="/school" className="text-text-primary text-sm font-medium mt-2 inline-block">
-          Back to Fixfy School
+          Back to training
         </Link>
       </div>
     );

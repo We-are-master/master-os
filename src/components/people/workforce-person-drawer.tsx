@@ -1427,7 +1427,7 @@ export function WorkforcePersonDrawer({
           drawing the same control depending on which drawer you opened. */}
       <div className="sticky top-0 z-[1] border-b border-border-light bg-card/95 px-4 pt-2 pb-0 backdrop-blur-sm sm:px-6">
         <Tabs
-          tabs={visibleDrawerTabs.map((t) => ({ id: t.id, label: t.label }))}
+          tabs={visibleDrawerTabs.map((t) => ({ id: t.id, label: t.label, hint: t.hint }))}
           activeTab={tab}
           onChange={(id) => setTab(id as WorkforceDrawerTab)}
         />

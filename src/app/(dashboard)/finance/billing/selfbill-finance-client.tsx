@@ -1304,7 +1304,7 @@ function SelfBillPageInner() {
                 onChange={(e) => setSearch(e.target.value)}
               />
               <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="Source">
-                {([{ id: "all", label: "All" }, { id: "partner", label: "Partners" }, { id: "internal", label: "Internal" }] as const).map(({ id, label }) => (
+                {([{ id: "all", label: "All" }, { id: "partner", label: "Partners" }, { id: "internal", label: "Workforce" }] as const).map(({ id, label }) => (
                   <button key={id} type="button" className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${originFilter === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary"}`} onClick={() => setOriginFilter(id)}>
                     {label}
                   </button>
@@ -1930,12 +1930,12 @@ export function SelfBillDetailDrawer({
   const cancelFeeTotals = selfBillCancellationFeeTotals(jobs);
   const workforceBreakdown = sb.bill_origin === "internal" ? sb.payout_breakdown : null;
 
-  const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; count?: number }> = [
-    { id: "details", label: "Details" },
-    { id: "jobs", label: "Jobs", count: jobs.length },
-    { id: "invoices", label: "Invoices", count: linkedInvoices.length || undefined },
-    { id: "payment", label: "Payment" },
-    { id: "activity", label: "Activity" },
+  const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; hint?: string; count?: number }> = [
+    { id: "details", label: "Details", hint: "Review the self-bill and its payee." },
+    { id: "jobs", label: "Jobs", hint: "Review jobs included in this self-bill.", count: jobs.length },
+    { id: "invoices", label: "Invoices", hint: "Review linked customer invoices.", count: linkedInvoices.length || undefined },
+    { id: "payment", label: "Payment", hint: "Review payment details and available payment actions." },
+    { id: "activity", label: "Activity", hint: "Review recorded events for this self-bill." },
   ];
 
   const isDraft = DRAFT_DB_STATUSES.has(sb.status);

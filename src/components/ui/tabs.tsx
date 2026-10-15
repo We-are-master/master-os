@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import type { JobsManagementTabAccent } from "@/lib/job-status-ui";
@@ -8,6 +9,7 @@ interface Tab {
   id: string;
   label: string;
   count?: number;
+  hint?: string;
   /** When set (Jobs management), active tab underline + count chip use this colour family. */
   accent?: JobsManagementTabAccent;
 }
@@ -46,6 +48,13 @@ const TAB_ACCENT: Record<
 };
 
 export function Tabs({ tabs, activeTab, onChange, variant = "default", className }: TabsProps) {
+  const selected = tabs.find((tab) => tab.id === activeTab);
+  const help = selected?.hint ? (
+    <span className="inline-flex shrink-0 items-center px-2">
+      <FixfyHintIcon text={selected.hint} label={selected.label} />
+    </span>
+  ) : null;
+
   if (variant === "quote-drawer") {
     return (
       <div
@@ -83,6 +92,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             ) : null}
           </button>
         ))}
+        {help}
       </div>
     );
   }
@@ -103,6 +113,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
           return (
           <button
             key={tab.id}
+            type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
               "relative shrink-0 snap-start whitespace-nowrap px-[11px] py-2 text-[13px] font-medium transition-colors duration-150 text-left",
@@ -132,6 +143,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
           </button>
         );
         })}
+        {help}
       </div>
     </div>
   );

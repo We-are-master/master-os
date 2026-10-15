@@ -97,7 +97,7 @@ export default function CorporatePipelinePage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="B2B Sales Pipeline" subtitle="Corporate client acquisition and deal management.">
+        <PageHeader title="Business pipeline" subtitle="Corporate client acquisition and deal management.">
           <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
           <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />}>New Account Lead</Button>
         </PageHeader>

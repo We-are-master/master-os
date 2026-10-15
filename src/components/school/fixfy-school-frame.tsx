@@ -41,7 +41,7 @@ export function FixfySchoolFrame({ className }: { className?: string }) {
       ref={iframeRef}
       key={src}
       src={src}
-      title="Fixfy School"
+      title="Training"
       className={cn(
         "w-full border-0 bg-surface-secondary dark:bg-[#0f1115]",
         className,

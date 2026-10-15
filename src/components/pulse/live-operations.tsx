@@ -201,7 +201,7 @@ export function LiveOperations() {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 [&>*]:min-w-0">
       <KpiCard
-        label="Live Now"
+        label="Active jobs"
         hint={kpiHint(`Every active job with a visit ${periodo}: unassigned, scheduled, in progress, on hold and final check.`, liveBreakdownHint)}
         variant="coral"
         value={loading ? "—" : stats.live_now.count}
@@ -215,12 +215,12 @@ export function LiveOperations() {
       />
       <KpiCard
         label={jobStatusLabel("in_progress")}
-        hint={kpiHint(`Jobs being carried out ${periodo}. Final check has its own card.`, loading ? null : kpiMoneyLine(stats.in_progress.revenue, "revenue"))}
+        hint={kpiHint(`Jobs being carried out ${periodo}. Final review has its own card.`, loading ? null : kpiMoneyLine(stats.in_progress.revenue, "revenue"))}
         value={loading ? "—" : stats.in_progress.count}
         topRight={<StatusDot color="bg-fx-blue" />}
       />
       <KpiCard
-        label="Final Check"
+        label="Final review"
         hint={kpiHint(`Work finished and waiting for the team to approve ${periodo}. Until then it is not invoiced or charged.`)}
         variant={stats.final_check.count > 0 ? "alert" : "default"}
         countBesideHint={loading ? null : stats.final_check.count}
@@ -228,7 +228,7 @@ export function LiveOperations() {
         topRight={<StatusDot color="bg-fx-coral" />}
       />
       <KpiCard
-        label="No Partner"
+        label="Unassigned"
         hint={kpiHint(`Jobs ${periodo} that still have nobody assigned.`, loading ? null : kpiMoneyLine(stats.no_partner.revenue, "revenue"))}
         variant={stats.no_partner.count > 0 ? "alert" : "default"}
         value={loading ? "—" : stats.no_partner.count}

@@ -145,8 +145,8 @@ export default function CompliancePage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="Compliance certificates"
-          subtitle="Per-property certificates (Gas Safe, EICR, PAT, Fire Safety) shown to portal users in their PropertyDrawer → Compliance tab."
+          title="Certificates"
+          subtitle="Review property certificates, expiry dates and uploaded documents."
         >
           <Button
             onClick={() => setDrawerOpen(true)}

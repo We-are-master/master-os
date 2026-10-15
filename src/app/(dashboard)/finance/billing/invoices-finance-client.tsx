@@ -336,7 +336,7 @@ const jobStatusColumnConfig: Record<
   scheduled: { label: "Scheduled", variant: "info" },
   late: { label: "Late", variant: "danger" },
   in_progress: { label: "In progress", variant: "primary" },
-  final_check: { label: "Final check", variant: "warning" },
+  final_check: { label: "Final review", variant: "warning" },
   awaiting_payment: { label: "Awaiting payment", variant: "danger" },
   need_attention: { label: "Need attention", variant: "warning" },
   completed: { label: "Paid & completed", variant: "success" },
@@ -2565,12 +2565,12 @@ export function InvoiceDetailDrawer({
     invoice.status !== "draft" &&
     invoice.status !== "audit_required";
 
-  const drawerTabs: Array<{ id: string; label: string; count?: number }> = [
-    { id: "overview", label: "Overview" },
-    { id: "details", label: "Details" },
-    { id: "stripe", label: "Stripe" },
-    { id: "job", label: "Job" },
-    { id: "history", label: "Activity" },
+  const drawerTabs: Array<{ id: string; label: string; hint?: string; count?: number }> = [
+    { id: "overview", label: "Overview", hint: "Review the invoice balance and payment status." },
+    { id: "details", label: "Details", hint: "Review invoice details and line items." },
+    { id: "stripe", label: "Stripe", hint: "Review payment information from Stripe." },
+    { id: "job", label: "Job", hint: "Review the job linked to this invoice." },
+    { id: "history", label: "Activity", hint: "Review recorded invoice events." },
   ];
 
   const linkedJobTotalCost = linkedJob ? linkedJob.partner_cost + linkedJob.materials_cost : 0;
@@ -3912,7 +3912,7 @@ export function InvoiceDetailDrawer({
               </div>
             </div>
             <div className="border-t border-border pt-4">
-              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Activity log</p>
+              <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Audit log</p>
               <AuditTimeline entityType="invoice" entityId={invoice.id} />
             </div>
           </div>
