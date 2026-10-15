@@ -27,6 +27,7 @@ export function htmlDaAvaliacao(nome: string | undefined, saida: string): string
   return renderCampanha({
     preheader: "Two minutes to tell us, and £20 off for a friend.",
     etiqueta: "Thank you",
+    selo: "Thank you",
     titulo: "Thank you for booking with Fixfy",
     nome,
     blocos: [
