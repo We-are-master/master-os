@@ -2965,8 +2965,8 @@ function JobsPageContent() {
       render: (item) => {
         /**
          * Uma linha (15/10/2026). O chip SUBSTITUI a data quando ela diz menos que ele:
-         * hoje, amanhã, em 2 dias, atrasado (data passada e job ainda não feito) ou no
-         * local. Fora disso, a data. A janela de chegada vem sempre depois.
+         * hoje, amanhã, em 2 dias ou atrasado (data passada e job ainda não feito).
+         * Fora disso, a data. A janela de chegada vem sempre depois.
          */
         const detail = formatJobScheduleLine(item);
         const ag = compactJobSchedule(item);
@@ -2974,9 +2974,8 @@ function JobsPageContent() {
         if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
         const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
         const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
-        const chip: { texto: string; cls: string } | null = isOnsiteInProgress
-          ? { texto: "On site", cls: "bg-[var(--info-light)] text-[var(--info,#2563eb)]" }
-          : atrasado
+        // Sem chip "On site" (dono, 15/10/2026): só os de data.
+        const chip: { texto: string; cls: string } | null = atrasado
             ? { texto: "Late", cls: "bg-[var(--danger-light,#fee2e2)] text-[var(--bad,#dc2626)]" }
             : ag.relative === "Today"
               ? { texto: "Today", cls: "bg-[var(--success-light)] text-[var(--ok)]" }
