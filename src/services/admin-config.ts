@@ -379,6 +379,7 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     export_data: true,
     manage_partners: true,
     manage_jobs: true,
+    finance_overview: true,
   },
   manager: {
     dashboard: true,
@@ -398,6 +399,9 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     export_data: true,
     manage_partners: true,
     manage_jobs: true,
+    // Fluxo de caixa da empresa e detalhes do Pulse: só admin por padrão;
+    // quem mais precisar ganha por override na pessoa.
+    finance_overview: false,
   },
   operator: {
     dashboard: true,
@@ -419,6 +423,7 @@ export const DEFAULT_PERMISSIONS: PermissionsByRole = {
     // nasce ligada aqui, só por override na pessoa (Workforce → Login Details).
     manage_partners: false,
     manage_jobs: false,
+    finance_overview: false,
   },
 };
 

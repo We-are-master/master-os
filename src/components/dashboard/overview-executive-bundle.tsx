@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { getCompanySettings } from "@/services/company";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
 import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 import { listCommissionTiers } from "@/services/tiers";
@@ -1372,6 +1373,9 @@ export function OverviewExecutiveBundle() {
  */
 function DailyOperationsDetails({ data }: { data: ReturnType<typeof useDailyOperations> }) {
   const [open, setOpen] = useState(false);
+  // Detalhe dia a dia é drill-down financeiro: sem `finance_overview` fica só o número do bloco.
+  const canSeeDetails = useAdminConfigOptional()?.can("finance_overview") ?? false;
+  if (!canSeeDetails) return null;
   return (
     <div className="space-y-2">
       <button

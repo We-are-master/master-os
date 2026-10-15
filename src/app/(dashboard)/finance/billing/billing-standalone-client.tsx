@@ -19,6 +19,7 @@ import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { useBillingStandaloneData } from "@/hooks/use-billing-standalone-data";
 import {
@@ -186,6 +187,9 @@ function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
+  const { can } = useAdminConfig();
+  /** Detalhe do fluxo de caixa da empresa: sem `finance_overview` a faixa mostra só os números. */
+  const canSeeFinanceOverview = can("finance_overview");
   const {
     setup: frontendSetup,
     refetch: refetchFrontendSetup,
@@ -1865,15 +1869,19 @@ function BillingStandaloneInner() {
                           : "flat"
                       : null;
                   const pnlLabel = topLabel;
+                  // Sem `finance_overview` a coluna é só leitura: div, sem clique nem hover.
+                  const WeekCol = canSeeFinanceOverview ? "button" : "div";
                   return (
-                    <button
+                    <WeekCol
                       key={w.weekStart}
-                      type="button"
+                      {...(canSeeFinanceOverview
+                        ? { type: "button" as const, onClick: () => setCashflowDetailWeekStart(w.weekStart) }
+                        : {})}
                       title={cashflowWeekColumnTitle(runwayView, w.title, w.moneyIn, w.moneyOut, w.closingBalance)}
-                      aria-label={`${w.title}. ${showRunwayBalance ? `Em caixa ${pnlLabel}` : `Weekly P and L ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}. View breakdown.`}
-                      onClick={() => setCashflowDetailWeekStart(w.weekStart)}
+                      aria-label={`${w.title}. ${showRunwayBalance ? `Em caixa ${pnlLabel}` : `Weekly P and L ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}.${canSeeFinanceOverview ? " View breakdown." : ""}`}
                       className={cn(
-                        "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px] cursor-pointer transition-colors hover:bg-surface-hover/80",
+                        "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]",
+                        canSeeFinanceOverview && "cursor-pointer transition-colors hover:bg-surface-hover/80",
                         w.isCurrentWeek && "is-today",
                         isSelected && "is-selected",
                       )}
@@ -1906,7 +1914,7 @@ function BillingStandaloneInner() {
                         </div>
                       ) : null}
                       <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
-                    </button>
+                    </WeekCol>
                   );
                 })}
               </div>
@@ -2347,7 +2355,7 @@ function BillingStandaloneInner() {
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
 
         <CashflowWeekDetailModal
-          open={cashflowDetailWeekStart !== null}
+          open={canSeeFinanceOverview && cashflowDetailWeekStart !== null}
           onClose={() => setCashflowDetailWeekStart(null)}
           view={runwayView}
           breakdown={cashflowDetailBreakdown}
