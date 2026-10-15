@@ -13,6 +13,10 @@
 --      Quem está desativado ou é parceiro deixa de passar em toda policy que usa a função.
 --   2. handle_new_user também pula quem chega com role = 'external_partner' no
 --      metadata (o que o portal manda hoje) e quem já é parceiro pelo e-mail.
+--
+-- Tudo numa transação: se qualquer passo falhar, nada fica pela metade.
+
+BEGIN;
 
 CREATE OR REPLACE FUNCTION public.is_internal_staff()
 RETURNS boolean
@@ -309,3 +313,5 @@ CREATE POLICY clients_insert_staff ON public.clients
   WITH CHECK (public.is_internal_staff() OR source_account_id = public.current_portal_account_id());
 
 DROP FUNCTION public._fixfy_lock_table(text, text);
+
+COMMIT;
