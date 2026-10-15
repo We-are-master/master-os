@@ -98,7 +98,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <h1 className="m-0 font-display text-[20px] font-bold leading-none tracking-tight text-text-primary">
           {greeting}, {firstName}.
         </h1>
@@ -109,14 +109,14 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
           )}
         </p>
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex flex-wrap items-center gap-1.5">
         <DateRangeFilter value={sharedValue} onChange={applyShared} />
         {canSeeCeo && (
           <button
             type="button"
             onClick={() => onToggleCeo(!ceoMode)}
             className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-[7px] rounded-md text-[13px] font-medium border transition-colors",
+              "inline-flex h-8 items-center gap-1.5 px-3 rounded-md text-[12px] font-medium border transition-colors",
               ceoMode
                 ? "bg-fx-navy text-white border-fx-navy"
                 : "bg-card text-text-secondary border-fx-line hover:bg-fx-paper",
@@ -132,7 +132,7 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
           type="button"
           onClick={exportar}
           disabled={exportando}
-          className="inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border border-fx-line bg-card text-text-primary transition-colors hover:bg-fx-paper disabled:opacity-50"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-fx-line bg-card text-text-primary transition-colors hover:bg-fx-paper disabled:opacity-50"
           title={exportando ? "Exporting…" : "Export this month's numbers (CSV)"}
           aria-label="Export this month's numbers as CSV"
         >
@@ -158,7 +158,7 @@ function CurrencyToggle() {
       title={title}
       aria-label={title}
       className={cn(
-        "inline-flex h-[33px] w-[33px] items-center justify-center rounded-md border text-[13px] font-semibold transition-colors",
+        "inline-flex h-8 w-8 items-center justify-center rounded-md border text-[13px] font-semibold transition-colors",
         currency === "BRL"
           ? "border-fx-navy bg-fx-navy text-white"
           : "border-fx-line bg-card text-text-primary hover:bg-fx-paper",

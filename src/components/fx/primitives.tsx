@@ -141,7 +141,7 @@ export function KpiCard({
     <div
       className={cn(
         // VOS UNO Insights metric card: same shell for every variant; only the number takes status colour.
-        "ins-card relative overflow-hidden px-3.5 pb-3 pt-3",
+        "ins-card relative overflow-hidden px-3.5 pb-2.5 pt-2.5",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -172,8 +172,8 @@ export function KpiCard({
       ) : null}
       <div
         className={cn(
-          "ins-v font-semibold tabular-nums tracking-[-0.04em] leading-[1.1] text-[22px]",
-          countAbove != null && countAbove !== "" && countBesideHint == null ? "mt-1" : "mt-2",
+          "ins-v font-semibold tabular-nums tracking-[-0.03em] leading-[1.1] text-[20px]",
+          countAbove != null && countAbove !== "" && countBesideHint == null ? "mt-1" : "mt-1.5",
           variant === "coral" && "text-text-primary",
           variant === "alert" && "text-fx-red",
           variant === "default" && "text-text-primary",

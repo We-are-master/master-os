@@ -37,23 +37,23 @@ export function MonthFunnel() {
         </span>
       }
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-fx-line sm:grid-cols-3 lg:grid-cols-6">
         {passos.map((p, i) => (
-          <div key={p.rotulo} className="relative min-w-0 rounded-lg border border-fx-line bg-fx-paper px-4 py-3">
+          <div key={p.rotulo} className="relative min-w-0 border-fx-line px-3.5 py-2.5 [&:not(:first-child)]:border-l">
             <p className={`${rotuloCls} text-text-tertiary`}>
               {p.rotulo}
               <FixfyHintIcon text={p.nota} placement="top-start" />
             </p>
-            <p className="mt-1 text-[24px] font-bold leading-none tabular-nums text-text-primary">{p.valor}</p>
-            {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-[11px] top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full bg-card text-fx-mute lg:block" /> : null}
+            <p className="mt-1.5 text-[20px] font-semibold leading-none tabular-nums text-text-primary">{p.valor}</p>
+            {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full border border-fx-line bg-card p-0.5 text-fx-mute lg:block" /> : null}
           </div>
         ))}
-        <div className="min-w-0 rounded-lg border border-fx-coral/40 bg-fx-coral-50 px-4 py-3">
+        <div className="min-w-0 border-l border-fx-line bg-fx-coral-50 px-3.5 py-2.5">
           <p className={`${rotuloCls} text-fx-coral-p`}>
             Conversion
             <FixfyHintIcon text={`Leads of the month that became customers.${f ? `\n\n${f.convertidos} of ${f.leads} leads` : ""}`} placement="top-start" />
           </p>
-          <p className="mt-1 text-[24px] font-bold leading-none tabular-nums text-text-primary">{f ? `${f.conversao}%` : loading ? "—" : "0%"}</p>
+          <p className="mt-1.5 text-[20px] font-semibold leading-none tabular-nums text-fx-coral-p">{f ? `${f.conversao}%` : loading ? "—" : "0%"}</p>
         </div>
       </div>
     </SectionCard>

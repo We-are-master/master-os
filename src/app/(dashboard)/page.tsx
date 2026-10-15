@@ -20,6 +20,7 @@ import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
 import { LiveBoard } from "@/components/pulse/live-board";
 import { TopAccounts } from "@/components/pulse/top-accounts";
+import { PulseStrip } from "@/components/pulse/pulse-strip";
 
 const CeoFinancialDashboard = dynamic(
   () =>
@@ -40,8 +41,8 @@ function PulseInner() {
     <PageTransition>
       <PulseCurrencyProvider>
       <div className="pulse-dark">
-        {/* Colado no header e mais denso (dono, 12/10/2026), mesmo recuo da tela de Leads. */}
-        <div className="-mt-2 space-y-4 sm:-mt-3 lg:-mt-4">
+        {/* Mesmo respiro das outras telas (15/10/2026): a margem negativa colava o título na busca. */}
+        <div className="space-y-3">
           <PulseHead
             firstName={firstName}
             ceoMode={ceoMode}
@@ -53,10 +54,19 @@ function PulseInner() {
           ) : (
             <PulseCeoProvider>
               <MonthGoal />
-              <LiveOperations />
+              {/* Faixas (15/10/2026): cada grupo de números numa peça só, com divisórias, em vez de 16 cartões soltos. */}
+              <PulseStrip title="Operations" hint="Jobs right now, by stage.">
+                <LiveOperations />
+              </PulseStrip>
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr]">
+                <PulseStrip title="This month" hint="Revenue, costs and margin for the selected period.">
+                  <Financials />
+                </PulseStrip>
+                <PulseStrip title="To receive" hint="Unpaid invoices: what is open, what is overdue and what platforms pay on their own cycle.">
+                  <MoneyReceivable />
+                </PulseStrip>
+              </div>
               <MonthFunnel />
-              <Financials />
-              <MoneyReceivable />
               <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
                 <TodaysFlow />
                 <AlertsFeed />
