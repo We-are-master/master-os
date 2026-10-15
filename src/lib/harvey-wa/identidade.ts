@@ -31,6 +31,13 @@ async function candidatos<T extends { phone: string | null }>(sb: SupabaseClient
   return ((data ?? []) as unknown as T[]).filter((r) => chaveDoTelefone(r.phone) === chave);
 }
 
+/** Os ids de cliente no OS com este telefone (formatos soltos, 10 últimos dígitos). */
+export async function clientesPeloTelefone(sb: SupabaseClient, telefone: string | null): Promise<string[]> {
+  const chave = chaveDoTelefone(telefone);
+  if (!chave) return [];
+  return (await candidatos<{ id: string; phone: string | null }>(sb, "clients", "id, phone", chave)).map((c) => c.id);
+}
+
 export async function quemE(sb: SupabaseClient, telefone: string | null): Promise<Identidade> {
   const chave = chaveDoTelefone(telefone);
   if (!chave) return { tipo: "novo" };

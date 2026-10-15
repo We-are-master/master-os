@@ -28,6 +28,7 @@ import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { resolveJobMatchServiceType } from "@/lib/zendesk-job-ingest";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { updateTicket, addTicketTags } from "@/lib/zendesk";
+import { precisaDeAcao } from "@/lib/fila-de-acao";
 
 const TETO_JOBS_POR_CICLO = 30;
 /** Depois disso a oferta abre para a categoria inteira. */
@@ -256,6 +257,7 @@ export async function varrerOfertas(): Promise<ResultadoVarredura> {
                 `(offered to the exact service, then to the whole category). ` +
                 `Decide: improve the partner pay, assign by hand, or cancel.`,
             );
+            await precisaDeAcao(tk, `${job.reference} has no partner after ${Math.floor(horasParado)}h of auto assign: raise the pay, assign by hand or cancel`);
           }
         } catch (e) {
           console.error(`[ofertas] encalhe falhou ${job.reference}:`, e);

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { ehDaReguaAntiga, emailDoPasso, passosFeitos, proximoPasso } from "./followup-leads";
+import { destinoDoLead, ehDaReguaAntiga, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, type PedidoDoOs } from "./followup-leads";
 
 // Horários em BST (UTC+1): "2026-10-14T09:00:00Z" é 10h em Londres.
 const d = (iso: string) => new Date(iso);
@@ -57,6 +57,50 @@ describe("régua do follow-up de lead", () => {
       assert.ok(!t.includes("—"), `passo ${p}`);
       assert.ok(t.startsWith("Hi Ann,") && t.endsWith("Thank you,") && !t.includes("Fixfy Team"), `passo ${p}`);
       assert.ok(t.split("\n").length > 5, `passo ${p}`);
+    }
+  });
+});
+
+describe("trava: lead que já tem pedido no OS", () => {
+  const primeiro = new Date("2026-10-14T09:00:00Z");
+  const p = (o: Partial<PedidoDoOs>): PedidoDoOs => ({ reference: "JOB-1", status: "scheduled", ticketId: null, criadoEm: "2026-10-14T12:00:00Z", ...o });
+
+  it("sem job nem quote, segue a régua", () => {
+    assert.deepEqual(destinoDoLead({ jobs: [], quotes: [], primeiro, ticketDoLead: 10 }), { acao: "seguir" });
+  });
+
+  it("job vivo vence quote aberta", () => {
+    const d = destinoDoLead({ jobs: [p({ ticketId: "20" })], quotes: [p({ reference: "QT-1", status: "bidding" })], primeiro, ticketDoLead: 10 });
+    assert.equal(d.acao, "job");
+    assert.equal(d.acao === "job" && d.mesmoTicket, false);
+  });
+
+  it("job cancelado ou antigo não conta", () => {
+    assert.equal(destinoDoLead({ jobs: [p({ status: "cancelled" })], quotes: [], primeiro, ticketDoLead: 10 }).acao, "seguir");
+    assert.equal(destinoDoLead({ jobs: [p({ criadoEm: "2026-08-01T12:00:00Z" })], quotes: [], primeiro, ticketDoLead: 10 }).acao, "seguir");
+  });
+
+  it("quote aberta leva o status dela; rejeitada não conta", () => {
+    const d = destinoDoLead({ jobs: [], quotes: [p({ reference: "QT-2", status: "awaiting_customer", ticketId: "10" })], primeiro, ticketDoLead: 10 });
+    assert.equal(d.acao, "quote");
+    if (d.acao === "quote") {
+      assert.equal(d.statusId, 5688280626847);
+      assert.equal(d.mesmoTicket, true);
+    }
+    assert.equal(destinoDoLead({ jobs: [], quotes: [p({ status: "rejected" })], primeiro, ticketDoLead: 10 }).acao, "seguir");
+    const b = destinoDoLead({ jobs: [], quotes: [p({ status: "bidding" })], primeiro, ticketDoLead: 10 });
+    assert.equal(b.acao === "quote" && b.statusId, 5688282472223);
+  });
+
+  it("a nota aponta o job e não promete nada ao cliente", () => {
+    const d = destinoDoLead({ jobs: [p({ reference: "JOB-9", ticketId: "55" })], quotes: [], primeiro, ticketDoLead: 10 });
+    assert.notEqual(d.acao, "seguir");
+    if (d.acao !== "seguir") {
+      const n = notaDoPedidoExistente(d, (id) => `https://x.zendesk.com/agent/tickets/${id}`);
+      assert.match(n, /JOB-9/);
+      assert.match(n, /agent\/tickets\/55/);
+      assert.match(n, /duplicate/);
+      assert.match(n, /Nothing was sent to the customer/);
     }
   });
 });

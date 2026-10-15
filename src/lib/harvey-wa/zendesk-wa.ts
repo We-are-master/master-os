@@ -14,7 +14,8 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
-import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
+import { ticketAntesDoPreco } from "./preco-da-equipe";
 import type { Identidade } from "./identidade";
 import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
 import { lerFichaDoLead, notaDoMerge } from "@/lib/um-ticket/resumo-do-lead";
@@ -500,6 +501,34 @@ export async function ticketParaEtapa(telefone: string | null, statusId: number)
   if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, null].includes(t.custom_status_id)) return "";
   await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: statusId } } });
   return `ticket ${ticket} → ${statusId === ZD_STATUS_TO_CALL ? "To Call" : statusId === ZD_STATUS_COMPLAINT ? "Complaint" : "Needs Quote"}`;
+}
+
+/**
+ * A equipe deu o preço no chat (dono, 15/10/2026): o ticket que ainda estava antes do
+ * preço (Lead, Open, New, Needs Quote, In Conversation) vai para 🟠 Approval, Reply
+ * Status 🟢 e nota interna. O Action Required sai por fila-de-acao.ts (quem chama).
+ * Devolve "" quando não mexeu (ticket já adiante no funil, ou sem ticket editável).
+ */
+export async function ticketParaAprovacao(telefone: string | null, quem: string, achado: { preco: number; outros: number[] }): Promise<{ ticket: number | null; linha: string }> {
+  if (!telefone || !isZendeskConfigured()) return { ticket: null, linha: "" };
+  const ticket = await ticketPeloTelefone(telefone);
+  if (!ticket) return { ticket: null, linha: "" };
+  const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null; support_type?: string; status: string } }>(`tickets/${ticket}.json`);
+  if (t.support_type === "ai_agent" || ["solved", "closed"].includes(t.status)) return { ticket, linha: "" };
+  if (!ticketAntesDoPreco(t.custom_status_id, [ZD_STATUS_LEAD, ZD_STATUS_OPEN, ZD_STATUS_NEW, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_WHATSAPP])) return { ticket, linha: "" };
+  const libras = (v: number) => `£${v.toFixed(2).replace(/\.00$/, "")}`;
+  const outros = achado.outros.length ? ` (also in the message: ${achado.outros.map(libras).join(", ")})` : "";
+  await zendeskApi(`tickets/${ticket}.json`, {
+    method: "PUT",
+    body: {
+      ticket: {
+        custom_status_id: ZD_STATUS_AWAITING_APPROVAL,
+        custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],
+        comment: { public: false, body: `Price given in chat by ${quem}: ${libras(achado.preco)}${outros}. Moved to Approval.` },
+      },
+    },
+  });
+  return { ticket, linha: `ticket ${ticket} → Approval (${libras(achado.preco)})` };
 }
 
 /** Leonardo, diretor de operações: dono da Needs Attention (dono, 15/10/2026). */

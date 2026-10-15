@@ -15,6 +15,9 @@
  *                         lance revisado);
  *     other             → fica como está: o trigger do Zendesk já põe o ticket
  *                         em Action Required quando o parceiro responde.
+ *   Fila de ação (fila-de-acao.ts): lance gravado tira o Action Required (o
+ *   rascunho segue sozinho); resposta e preço novo em quote já precificada põem,
+ *   com a próxima ação na nota.
  *
  * Trava de idempotência: o id do evento da side conversation vai para
  * `quote_partner_messages` (migration 329) depois que a ação deu certo.
@@ -30,6 +33,7 @@ import { chamarModeloJson, lerMarcaDeEspera, type ChamadaAoModelo } from "@/lib/
 import { buildBidNotesJson } from "@/lib/quote-bid-payload";
 import { gravarLanceDoParceiro } from "@/lib/quotes/gravar-lance";
 import { registrarDecisao } from "@/lib/harvey-wa/diario";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 
 /** Mesma idade máxima da varredura de lances: quote velha não entra. */
 const IDADE_MAXIMA_DIAS = 14;
@@ -322,6 +326,7 @@ export async function lerLancesPorEmail(
               "",
               "Not applied: the quote is already priced. A person decides whether to re-quote the customer.",
             ].filter((l) => l !== null).join("\n"));
+            await precisaDeAcao(ticketId, `${nome} gave a new price by email on ${q.reference} (${libras(lida.total!)}): decide whether to re-quote the customer`);
             r.respostas++;
           } else if (passo === "gravar_lance") {
             const { data: antes } = await supabase.from("quote_bids").select("id, bid_amount").eq("quote_id", q.id).eq("partner_id", parceiro.id).maybeSingle();
@@ -348,6 +353,8 @@ export async function lerLancesPorEmail(
               `Saved as their bid in the OS, so it goes through the normal draft. Partner wrote: "${m.texto.slice(0, 500)}"`,
             ].filter((l) => l !== null).join("\n"));
             r.lances++;
+            // O trigger do Zendesk pôs Action Required ao chegar o e-mail; o lance já está no OS e segue para o rascunho.
+            await acaoFeita(ticketId);
             await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Read ${antes ? "a revised bid" : "a bid"} of ${libras(lida.total!)} from ${nome} in their email and saved it`, regra: "partner bid by email in the side conversation" }, supabase);
           } else if (passo === "nota_resposta") {
             await postarNotaInterna(ticketId, [
@@ -356,6 +363,7 @@ export async function lerLancesPorEmail(
               lida.resposta ? `In short: ${lida.resposta}` : null,
               `Partner wrote: "${m.texto.slice(0, 800)}"`,
             ].filter((l) => l !== null).join("\n"));
+            await precisaDeAcao(ticketId, `${nome} answered by email on ${q.reference}: read the answer and decide the next step`);
             r.respostas++;
           } else {
             r.outras++;

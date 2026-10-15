@@ -38,6 +38,7 @@ import { syncJobFinanceServer } from "@/lib/sync-job-finance-server";
 import { getZendeskTicketId, isZendeskConfigured, zendeskApi } from "@/lib/zendesk";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { ZD_STATUS_COMPLAINT } from "@/lib/zendesk-statuses";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import type { Account, Invoice, Job } from "@/types/database";
 
 export const FINAL_CHECK_AUTO_ON = () => process.env.FINAL_CHECK_AUTO?.trim() === "1";
@@ -80,6 +81,14 @@ async function notaInterna(job: Job, corpo: string): Promise<boolean> {
     console.error("[final-check-auto] nota no ticket falhou", job.reference, e);
     return false;
   }
+}
+
+/** Action Required no ticket do job (fila-de-acao.ts). Sem ticket, nada. */
+async function filaDoJob(job: Job, proximaAcao: string | null): Promise<void> {
+  const ticketId = getZendeskTicketId(job);
+  if (!ticketId) return;
+  const r = proximaAcao ? await precisaDeAcao(ticketId, proximaAcao) : await acaoFeita(ticketId);
+  if (!r.ok) console.warn("[final-check-auto] Action Required", job.reference, r.linha);
 }
 
 async function registrar(admin: SupabaseClient, job: Job, novo: string, metadata: Record<string, unknown>): Promise<void> {
@@ -250,6 +259,7 @@ async function executar(
       job,
       `Final check left for the team: ${decisao.motivo}. Report submitted ${enviado}. Review the job and use Finish work when it is right.`,
     );
+    await filaDoJob(job, `Final check on ${job.reference}: ${decisao.motivo}. Review the job and use Finish work`);
     await registrar(admin, job, marca, { origem: opts.origem, motivo: decisao.motivo, nota_no_ticket: nota });
     return { feito: "equipe", codigo: decisao.codigo, motivo: decisao.motivo, notaNoTicket: nota };
   }
@@ -265,12 +275,14 @@ async function aprovar(
   // 1. Cartão salvo (conta que paga no cartão): cobra o restante ANTES de sair de final check,
   //    como o modal. Recusado segue para Awaiting payment com o chip "Card declined".
   let cartao: string | undefined;
+  let cartaoRecusado = false;
   const j = job as Job & { stripe_payment_method_id?: string | null; card_charge_status?: string | null; card_charge_hold?: boolean | null };
   if (j.stripe_payment_method_id && j.card_charge_status !== "charged" && !j.card_charge_hold) {
     const r = await chargeJobBalanceOnSavedCard(admin, job.id, { actorId: null });
     if (r.status === "charged") cartao = `£${r.amountGbp.toFixed(2)} charged to the saved card`;
     else if (r.status === "refused" || r.status === "requires_action") {
       cartao = `card declined for £${r.amountGbp.toFixed(2)} (${r.reason})`;
+      cartaoRecusado = true;
       const quando =
         r.status === "refused" && r.retryAt
           ? `Next automatic try: ${dataLondres(r.retryAt)}.`
@@ -287,6 +299,7 @@ async function aprovar(
   if (!fatura.ok) {
     const motivo = `could not prepare the invoice (${fatura.reason})`;
     const nota = await notaInterna(job, `Final check left for the team: ${motivo}. Report submitted ${ctx.enviado}.`);
+    await filaDoJob(job, `Final check on ${job.reference}: ${motivo}. Fix the invoice and use Finish work`);
     await registrar(admin, job, "held:invoice", { origem: ctx.origem, motivo, nota_no_ticket: nota });
     return { feito: "equipe", codigo: "invoice", motivo, notaNoTicket: nota };
   }
@@ -369,6 +382,12 @@ async function aprovar(
       : `paid in full, job ${depois.status === "completed" ? "closed" : depois.status}`,
   );
   const nota = await notaInterna(job, `${partes.join(", ")}.`);
+  // Aprovado: a ação de final check acabou. Cartão recusado ou e-mail que não saiu continuam com a gente.
+  const pendente = [
+    cartaoRecusado && saldo > EPS ? `card declined for the £${saldo.toFixed(2)} balance: chase payment by link` : null,
+    email.ok ? null : "final email not sent: send it from the job",
+  ].filter(Boolean);
+  await filaDoJob(job, pendente.length ? `${job.reference}: ${pendente.join("; ")}` : null);
   await registrar(admin, job, depois.status ?? "awaiting_payment", {
     origem: ctx.origem,
     saldo,

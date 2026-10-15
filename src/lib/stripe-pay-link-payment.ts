@@ -8,6 +8,7 @@ import {
 } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 import { isJobPaymentsDeletedAtMissing, isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { jobPagoSemAcao } from "@/lib/fila-de-acao";
 
 const EPS = 0.02;
 
@@ -90,6 +91,8 @@ export async function applyOsPayLinkPayment(
     }
     await maybeCompleteAwaitingPaymentJob(admin, job.id);
     await syncInvoiceCollectionStagesForJob(admin, job.id);
+    // Job fechado: tira o Action Required do ticket (nada mais a cobrar).
+    await jobPagoSemAcao(admin, { jobId: job.id });
   }
 
   return fullyPaid;
