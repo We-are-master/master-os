@@ -143,7 +143,8 @@ export async function sendInvoiceEmail(
   admin: SupabaseClient,
   invoiceId: string,
   options: {
-    userId: string;
+    /** null = envio do sistema (POST /api/jobs): o histórico fica sem usuário, com `userName` dizendo quem foi. */
+    userId: string | null;
     userName: string;
     requestPercent?: number;
     jobId?: string | null;
