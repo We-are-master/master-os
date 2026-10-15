@@ -3,9 +3,10 @@ import { billingReferenceCandidates } from "@/lib/billing-reference";
 import { requireStripe } from "@/lib/stripe";
 import { accountPaysByCard, CARD_ON_FILE_ON } from "@/lib/stripe-card-charge";
 import { createServiceClient } from "@/lib/supabase/service";
-import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { depositAmountFromPercent } from "@/lib/quote-deposit";
-import { valorFixoDoLink } from "@/lib/pay-link-amount";
+import { saldoDoLinkDePagamento, valorFixoDoLink } from "@/lib/pay-link-amount";
+import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
+import { isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
 import { customerBalanceCap, loadJobPromotionAmount } from "@/lib/agent-model/promotion";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +82,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       }
     }
 
-    let balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
     /**
      * Promoção da Fixfy (mig 313) nunca é cobrada do cliente.
      *
@@ -90,19 +90,36 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
      * promoção no job, o link nunca passa de preço + extras − promoção − o que
      * já foi pago.
      */
-    if (jobId && jobPrice) {
-      const promotion = await loadJobPromotionAmount(admin, jobId);
-      if (promotion > 0) {
-        const cap = customerBalanceCap({
-          clientPrice: jobPrice.client_price,
-          extrasAmount: jobPrice.extras_amount,
-          promotionAmount: promotion,
-          amountPaid: Number(inv.amount_paid ?? 0),
-        });
-        balance = Math.min(balance, cap);
-      }
+    const promotion = jobId && jobPrice ? await loadJobPromotionAmount(admin, jobId) : 0;
+    const [faturasDoJob, pagoNoJob] = jobId
+      ? await Promise.all([
+          countJobInvoices(admin, inv.job_reference!.trim()),
+          sumJobCustomerPayments(admin, jobId),
+        ])
+      : [0, null];
+
+    // Rede de segurança contra fatura com `amount` abaixo do job (RCP-2026-917, 14/10/2026):
+    // fatura única do job cobra o total do job menos o que já entrou, nunca "pago" antes disso.
+    let balance = saldoDoLinkDePagamento({
+      valorFatura: Number(inv.amount ?? 0),
+      pagoFatura: Number(inv.amount_paid ?? 0),
+      faturaPaga: inv.status === "paid",
+      totalDoJob: jobPrice
+        ? Number(jobPrice.client_price ?? 0) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion)
+        : null,
+      pagoNoJob,
+      faturaUnicaDoJob: faturasDoJob === 1,
+    });
+    if (jobPrice && promotion > 0) {
+      const cap = customerBalanceCap({
+        clientPrice: jobPrice.client_price,
+        extrasAmount: jobPrice.extras_amount,
+        promotionAmount: promotion,
+        amountPaid: Math.max(Number(inv.amount_paid ?? 0), pagoNoJob ?? 0),
+      });
+      balance = Math.min(balance, cap);
     }
-    if (inv.status === "paid" || balance <= EPS) {
+    if (balance <= EPS) {
       return NextResponse.redirect(`${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`, 303);
     }
 
@@ -212,6 +229,41 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     }
     return htmlMessage("Something went wrong", "We could not start the payment. Please try again or contact Fixfy.", 500);
   }
+}
+
+type AdminClient = ReturnType<typeof createServiceClient>;
+
+/** Faturas vivas do job que dividem o total (cancelada e lote semanal não contam). */
+async function countJobInvoices(admin: AdminClient, jobReference: string): Promise<number> {
+  const { data, error } = await admin
+    .from("invoices")
+    .select("id, status, invoice_kind")
+    .eq("job_reference", jobReference)
+    .is("deleted_at", null);
+  if (error) {
+    console.error("Pay link: job invoices read failed", jobReference, error);
+    return 0;
+  }
+  return ((data ?? []) as { status?: string | null; invoice_kind?: string | null }[]).filter(
+    (r) => r.status !== "cancelled" && r.invoice_kind !== "weekly_batch",
+  ).length;
+}
+
+/** Pagamentos de cliente no razão do job; null quando não deu para ler (aí vale só a fatura). */
+async function sumJobCustomerPayments(admin: AdminClient, jobId: string): Promise<number | null> {
+  type Row = { type: string; amount: number; note?: string | null };
+  const base = () =>
+    admin.from("job_payments").select("type, amount, note").eq("job_id", jobId).in("type", ["customer_deposit", "customer_final"]);
+  let { data, error } = await base().is("deleted_at", null);
+  if (error && isJobPaymentsDeletedAtMissing(error)) ({ data, error } = await base());
+  if (error) {
+    console.error("Pay link: job payments read failed", jobId, error);
+    return null;
+  }
+  const total = ((data ?? []) as Row[])
+    .filter((p) => !isLegacyMisclassifiedCustomerPayment(p))
+    .reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  return Math.round(total * 100) / 100;
 }
 
 function htmlMessage(title: string, body: string, status: number): NextResponse {

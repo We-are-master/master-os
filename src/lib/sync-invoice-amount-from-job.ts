@@ -13,13 +13,32 @@ const EPS = 0.02;
  * Target `invoices.amount` for a row linked to this job after job-side totals change
  * (extras, CCZ/parking → extras_amount, deposit/final schedule, hourly collections).
  */
-export function linkedInvoiceTargetAmount(job: Job, inv: Invoice): number | null {
+export function linkedInvoiceTargetAmount(
+  job: Job,
+  inv: Invoice,
+  opts?: { faturaUnicaDoJob?: boolean },
+): number | null {
   if (inv.status === "cancelled") return null;
   if (inv.invoice_kind === "weekly_batch") return null;
 
   const billable = jobCustomerBillableRevenueForCollections(job);
   const scheduled = customerScheduledTotal(job);
   const fullTotal = Math.round(Math.max(0, Math.max(billable, scheduled)) * 100) / 100;
+
+  /**
+   * Fatura única do job é o job inteiro, qualquer que seja o `invoice_kind` gravado.
+   *
+   * O sinal na criação do job (PR #750) grava `customer_deposit` / `customer_final_payment`
+   * (ex.: 90 / 90 num job de £180), e a fatura do job nasce como "final" pelos fallbacks
+   * (`createOrAppendJobInvoice`, e o insert legado troca "combined" por "final"). Aí qualquer
+   * edição do job rodava este bump e encolhia a fatura para a fatia do cronograma: RCP-2026-917
+   * ficou com amount = 90 depois do sinal de £90, e o link do saldo disse "pago" (14/10/2026).
+   * Fatia de sinal/final só faz sentido quando existe outra fatura cobrindo o resto (quote
+   * aceito cria as duas).
+   */
+  if (opts?.faturaUnicaDoJob) {
+    return fullTotal > EPS ? fullTotal : null;
+  }
 
   const schedDep = Number(job.customer_deposit ?? 0);
   const schedFin = Number(job.customer_final_payment ?? 0);
@@ -37,6 +56,11 @@ export function linkedInvoiceTargetAmount(job: Job, inv: Invoice): number | null
   return fullTotal > EPS ? fullTotal : null;
 }
 
+/** Faturas do job que dividem o total entre si (cancelada e lote semanal ficam de fora). */
+export function faturasDoJobQueContam(linked: Pick<Invoice, "status" | "invoice_kind">[]): number {
+  return linked.filter((i) => i.status !== "cancelled" && i.invoice_kind !== "weekly_batch").length;
+}
+
 /**
  * After job billable totals change (e.g. on-site extra, CCZ/parking), bump linked non-batch invoice `amount`
  * to match the job (deposit / final / combined). Runs payment sync so balance due follows without changing
@@ -46,8 +70,9 @@ export async function bumpLinkedInvoiceAmountsToJobSchedule(job: Job): Promise<v
   if (!job.reference?.trim()) return;
 
   const linked = await listInvoicesLinkedToJob(job.reference, job.invoice_id);
+  const faturaUnicaDoJob = faturasDoJobQueContam(linked) === 1;
   for (const inv of linked) {
-    const target = linkedInvoiceTargetAmount(job, inv);
+    const target = linkedInvoiceTargetAmount(job, inv, { faturaUnicaDoJob });
     if (target == null) continue;
     const prev = Number(inv.amount ?? 0);
     if (Math.abs(prev - target) <= EPS) continue;
