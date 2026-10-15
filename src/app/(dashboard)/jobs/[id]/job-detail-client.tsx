@@ -45,6 +45,7 @@ import { Select } from "@/components/ui/select";
 import { TimeSelect } from "@/components/ui/time-select";
 import type { LucideIcon } from "lucide-react";
 import {
+  MessageSquareWarning,
   Building2,
   Calendar,
   Check,
@@ -264,6 +265,7 @@ import { invoicePayLinkForAmount } from "@/lib/pay-link-url";
 import { jobOnHoldPorReclamacao } from "@/lib/job-on-hold-reasons";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
 import { FillReportModal } from "@/components/jobs/fill-report-modal";
+import { LogComplaintModal } from "@/components/jobs/log-complaint-modal";
 import { StefaneReportButton } from "@/components/job-card/StefaneReportButton";
 import { JobZendeskLinkCard } from "@/components/jobs/job-zendesk-link-card";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -1362,6 +1364,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [partnerModalOpen, setPartnerModalOpen] = useState(false);
   const [cancelJobOpen, setCancelJobOpen] = useState(false);
   const [putOnHoldOpen, setPutOnHoldOpen] = useState(false);
+  const [logComplaintOpen, setLogComplaintOpen] = useState(false);
+  const [logComplaintSaving, setLogComplaintSaving] = useState(false);
   const [putOnHoldReason, setPutOnHoldReason] = useState("");
   const [putOnHoldComplaintDescription, setPutOnHoldComplaintDescription] = useState("");
   const [putOnHoldPreset, setPutOnHoldPreset] = useState<string | null>(null);
@@ -4481,17 +4485,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     }
   }, [profile?.id, profile?.full_name, customerPayments, partnerPayments]);
 
-  const confirmPutOnHold = useCallback(async () => {
-    if (!job) return;
-    const presetId = putOnHoldPreset?.trim() || "";
+  const confirmPutOnHold = useCallback(async (override?: { presetId: string; complaintDesc: string }) => {
+    if (!job) return null;
+    // Log complaint (15/10/2026) chama com o motivo e a descrição prontos; o modal de pausa usa o estado.
+    const presetId = override?.presetId ?? (putOnHoldPreset?.trim() || "");
     if (!presetId) {
       toast.error("Select an on-hold reason.");
-      return;
+      return null;
     }
-    const complaintDesc = putOnHoldComplaintDescription.trim();
+    const complaintDesc = (override?.complaintDesc ?? putOnHoldComplaintDescription).trim();
     if (jobOnHoldComplaintDescriptionRequired(presetId) && !complaintDesc) {
       toast.error("Add a complaint description for the partner.");
-      return;
+      return null;
     }
     const reason = buildJobOnHoldReasonText(
       presetId,
@@ -4500,11 +4505,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     ).trim();
     if (!reason) {
       toast.error("Add a short reason for on hold.");
-      return;
+      return null;
     }
     if (presetId === "other" && !putOnHoldReason.trim()) {
       toast.error("Add details for Other.");
-      return;
+      return null;
     }
     setPutOnHoldSaving(true);
     try {
@@ -4544,10 +4549,36 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           console.error("hold linked invoices failed", e);
         }
       }
+      return updated ?? null;
     } finally {
       setPutOnHoldSaving(false);
     }
   }, [job, putOnHoldReason, putOnHoldComplaintDescription, putOnHoldPreset, jobOnHoldPresets, handleStatusChange, profile?.id, profile?.full_name]);
+
+  /** Log complaint: pausa como reclamação e, se vierem fotos do cliente, põe no journal. */
+  const confirmLogComplaint = useCallback(
+    async (input: { description: string; photos: File[]; partnerSeesPhotos: boolean }) => {
+      if (!job) return;
+      setLogComplaintSaving(true);
+      try {
+        const updated = await confirmPutOnHold({ presetId: "complaint", complaintDesc: input.description });
+        if (!updated) return;
+        if (input.photos.length > 0) {
+          const form = new FormData();
+          form.set("body", "Photos from the client.");
+          form.set("visible", input.partnerSeesPhotos ? "1" : "0");
+          input.photos.forEach((f) => form.append("photos[]", f));
+          const res = await fetch(`/api/jobs/${job.id}/complaint-messages`, { method: "POST", body: form });
+          if (!res.ok) toast.error("Complaint logged, but the photos did not upload. Add them in the journal.");
+        }
+        toast.success("Complaint logged. The partner was emailed.");
+        setLogComplaintOpen(false);
+      } finally {
+        setLogComplaintSaving(false);
+      }
+    },
+    [job, confirmPutOnHold],
+  );
 
   const openResumeJobModal = useCallback(() => {
     if (!job || job.status !== "on_hold") return;
@@ -7373,6 +7404,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               );
             })}
+            {job.status !== "cancelled" && job.status !== "deleted" && job.status !== "on_hold" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 border-red-700/35 px-2.5 text-xs text-red-800 hover:bg-red-50 dark:text-red-200 dark:hover:bg-red-950/40"
+                icon={<MessageSquareWarning className="h-3.5 w-3.5" />}
+                onClick={() => setLogComplaintOpen(true)}
+              >
+                Log complaint
+              </Button>
+            ) : null}
                 <JobActionsMenu
                   groups={[
                     {
@@ -10163,6 +10205,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         }
       />
 
+
+      <LogComplaintModal
+        open={logComplaintOpen}
+        reference={job.reference}
+        saving={logComplaintSaving}
+        onClose={() => setLogComplaintOpen(false)}
+        onConfirm={(input) => void confirmLogComplaint(input)}
+      />
 
       <Modal
         open={putOnHoldOpen}

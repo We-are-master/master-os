@@ -374,29 +374,25 @@ export function Financials() {
     return {
       variant: "default" as const,
       topRight: <StatusDot color="bg-fx-green" />,
+      // Só a barra (15/10/2026): "40% of R$ 333.5k" e "to go" saíram do card; o número
+      // da meta fica no tooltip da barra e no "!" do card.
       sub: (
-        <div className="flex flex-col gap-1">
+        <div
+          className="mt-1 h-1 w-full overflow-hidden rounded-full bg-fx-line/80"
+          role="progressbar"
+          aria-valuenow={barPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Revenue ${pct}% of period goal`}
+          title={`${pct}% of ${goalLabel} · ${pillLabel}`}
+        >
           <div
-            className="h-1 w-full overflow-hidden rounded-full bg-fx-line/80"
-            role="progressbar"
-            aria-valuenow={barPct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Revenue ${pct}% of period goal`}
-          >
-            <div
-              className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barClass)}
-              style={{ width: `${barPct}%` }}
-            />
-          </div>
-          {/* Uma linha só (15/10/2026): em real os valores quebravam em duas. */}
-          <p className="m-0 flex flex-wrap items-center justify-between gap-x-2 text-[11px] tabular-nums [&>span]:whitespace-nowrap">
-            <span className="text-text-tertiary">{pct}% of {goalLabel}</span>
-            <span className={cn("font-medium", revenueGoal.status === "above" ? "text-fx-green" : revenueGoal.status === "on_track" ? "text-fx-amber" : "text-fx-red")}>{pillLabel}</span>
-          </p>
+            className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barClass)}
+            style={{ width: `${barPct}%` }}
+          />
         </div>
       ),
-      dica: `${gapLabel}${wdPart}`,
+      dica: `${gapLabel} · ${pillLabel}${wdPart}`,
     };
   }, [loading, revenueGoal]);
 
