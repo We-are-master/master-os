@@ -795,7 +795,8 @@ async function ciclo(): Promise<void> {
     if (rl.analisados > 0) {
       console.log(
         `[harvey] lances (${rl.armado ? "ARMADO" : "ensaio"}): ${rl.analisados} quote(s), ` +
-          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s)`,
+          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s), ` +
+          `${rl.perguntasDeEscopo} pergunta(s) de escopo, ${rl.escopoParaGente} escopo(s) para gente`,
       );
       for (const d of rl.detalhes) console.log(`[harvey]   ${d}`);
     }
