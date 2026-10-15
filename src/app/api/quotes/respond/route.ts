@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id",
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2",
       )
       .eq("id", quoteId)
       .single();
@@ -148,6 +149,10 @@ export async function POST(req: NextRequest) {
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
+
+    // Job do aceite já com o nome do parceiro e a data proposta no lance (15/10/2026).
+    const parceiroNoAceite = await nomeDoParceiroNoAceite(supabase, quote);
+    const dataNoAceite = dataDoJobNoAceite(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null });
 
     const qClientId = (quote as { client_id?: string | null }).client_id?.trim() ?? "";
     const acceptBilling = await resolveNominalBillingParty(supabase, {
@@ -206,7 +211,8 @@ export async function POST(req: NextRequest) {
         client_name: quote.client_name ?? "",
         property_address: quote.property_address ?? "Address to be confirmed",
         partner_id: quote.partner_id ?? null,
-        partner_name: quote.partner_name ?? null,
+        partner_name: parceiroNoAceite,
+        scheduled_date: dataNoAceite,
         quote_id: quoteId,
         status: hasPartner ? "scheduled" : "unassigned",
         progress: 0,
@@ -433,7 +439,8 @@ export async function POST(req: NextRequest) {
       client_name: quote.client_name ?? "",
       property_address: quote.property_address ?? "Address to be confirmed",
       partner_id: quote.partner_id ?? null,
-      partner_name: quote.partner_name ?? null,
+      partner_name: parceiroNoAceite,
+      scheduled_date: dataNoAceite,
       quote_id: quoteId,
       status: hasPartnerNoDep ? "scheduled" : "unassigned",
       progress: 0,
