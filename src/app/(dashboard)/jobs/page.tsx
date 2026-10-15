@@ -2948,7 +2948,7 @@ function JobsPageContent() {
           >
             {/* Só o avatar da conta e o nome (15/10/2026); endereço, telefone e scope ficam no hover. */}
             <div className="flex items-center gap-2 min-w-0">
-              <Avatar name={item.client_name} size="sm" className="!h-[27px] !w-[27px] shrink-0 text-[10px]" src={logo} />
+              <Avatar name={item.client_name} size="xs" className="shrink-0" src={logo} />
               <p className="m-0 min-w-0 truncate text-[13px] font-medium text-text-primary">{item.client_name}</p>
             </div>
           </HoverPreview>
@@ -2963,31 +2963,34 @@ function JobsPageContent() {
       sortable: true,
       sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
-        // Uma linha: data e janela de chegada, mais o chip relativo (15/10/2026).
+        /**
+         * Uma linha (15/10/2026). O chip SUBSTITUI a data quando ela diz menos que ele:
+         * hoje, amanhã, em 2 dias, atrasado (data passada e job ainda não feito) ou no
+         * local. Fora disso, a data. A janela de chegada vem sempre depois.
+         */
         const detail = formatJobScheduleLine(item);
         const ag = compactJobSchedule(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
         if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
+        const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
+        const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
+        const chip: { texto: string; cls: string } | null = isOnsiteInProgress
+          ? { texto: "On site", cls: "bg-[var(--info-light)] text-[var(--info,#2563eb)]" }
+          : atrasado
+            ? { texto: "Late", cls: "bg-[var(--danger-light,#fee2e2)] text-[var(--bad,#dc2626)]" }
+            : ag.relative === "Today"
+              ? { texto: "Today", cls: "bg-[var(--success-light)] text-[var(--ok)]" }
+              : ag.relative === "Tomorrow" || ag.relative === "In 2 days"
+                ? { texto: ag.relative, cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
+                : null;
         return (
-          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? undefined}>
-            <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? `${ag.date}${ag.time ? ` · ${ag.time}` : ""}`}>
+            {chip ? (
+              <span className={cn("inline-flex h-[22px] items-center rounded-md px-2 text-[11px] font-medium", chip.cls)}>{chip.texto}</span>
+            ) : (
+              <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
+            )}
             {ag.time ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
-            {isOnsiteInProgress ? (
-              <span className="rounded-md bg-[var(--info-light)] px-1.5 text-[10.5px] font-medium leading-[18px] text-[var(--info,#2563eb)]">On site</span>
-            ) : ag.relative ? (
-              <span
-                className={cn(
-                  "rounded-md px-1.5 text-[10.5px] font-medium leading-[18px]",
-                  ag.relativeTone === "today"
-                    ? "bg-[var(--success-light)] text-[var(--ok)]"
-                    : ag.relativeTone === "past"
-                      ? "bg-[var(--warning-light)] text-[var(--warn-ink)]"
-                      : "bg-surface-hover text-text-secondary",
-                )}
-              >
-                {ag.relative}
-              </span>
-            ) : null}
           </div>
         );
       },
@@ -3049,7 +3052,7 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true} className={onHoldBadge?.className}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={onHoldBadge?.className}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
@@ -3082,7 +3085,7 @@ function JobsPageContent() {
         return (
           <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot} className={onHoldBadge?.className}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} size="sm" className={onHoldBadge?.className}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
