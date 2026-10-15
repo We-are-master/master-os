@@ -18,7 +18,7 @@ import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, ticketDoWhatsApp, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice } from "@/types/database";
-import { umTicketEmail, umTicketWhatsAppLigado } from "@/lib/um-ticket/flags";
+import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 
@@ -350,10 +350,13 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
   let resendId: string | undefined;
   let ticketUsado: string | number | undefined = zdTicketId ?? undefined;
 
-  // Ticket de WhatsApp ligado ao job (ONE_TICKET_WA_LINKED_ON): a janela de 24 h decide
-  // entre o comentário público (WhatsApp) e a conversa lateral por e-mail no mesmo ticket.
-  if (useZendesk && umTicketWhatsAppLigado() && (await ticketDoWhatsApp(zdTicketId!))) {
+  // Ticket de WhatsApp ligado ao job (dono, 15/10/2026: "fica tudo no mesmo ticket na side"):
+  // o e-mail final sai SEMPRE como conversa lateral por e-mail desse ticket. Antes, sem a chave
+  // ONE_TICKET_WA_LINKED_ON, virava comentário público, ou seja, HTML no WhatsApp do cliente.
+  let soEmail = false;
+  if (useZendesk && (await ticketDoWhatsApp(zdTicketId!))) {
     achado = { tipo: "ticket", id: Number(zdTicketId), origem: "job", canal: "whatsapp", status: "open", candidatos: [], b2b: false, email: emailTo, telefone: null };
+    soEmail = true;
   }
 
   if (useZendesk && !achado) {
@@ -386,6 +389,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
         assunto: emailSubject,
         html,
         anexos: attachments,
+        soEmail,
       });
       channel = "zendesk";
       ticketUsado = r.ticketId;
