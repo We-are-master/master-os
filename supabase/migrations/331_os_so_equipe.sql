@@ -220,7 +220,7 @@ CREATE TRIGGER profiles_guard_privileges
 -- tabelas pelo service role, menos as exceções abaixo.
 -- =============================================================================
 
-CREATE TEMP TABLE _fixfy_pulou (tabela text) ON COMMIT DROP;
+CREATE TEMP TABLE IF NOT EXISTS _fixfy_pulou (tabela text);
 
 CREATE OR REPLACE FUNCTION public._fixfy_is_owner(t text)
 RETURNS boolean
@@ -341,7 +341,8 @@ CREATE POLICY clients_insert_staff ON public.clients
 DROP FUNCTION public._fixfy_lock_table(text, text);
 DROP FUNCTION public._fixfy_is_owner(text);
 
--- Tabelas que ficaram de fora por serem de outro dono (resolver à parte).
-SELECT tabela AS pulou_por_ser_de_outro_dono FROM _fixfy_pulou ORDER BY 1;
-
 COMMIT;
+
+-- Tabelas que ficaram de fora por serem de outro dono (resolver à parte).
+-- Depois do COMMIT para o SQL editor mostrar este resultado.
+SELECT DISTINCT tabela AS pulou_por_ser_de_outro_dono FROM _fixfy_pulou ORDER BY 1;
