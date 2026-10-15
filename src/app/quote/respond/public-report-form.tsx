@@ -35,7 +35,7 @@ interface PublicReportFormProps {
 }
 
 function fieldInputClass(): string {
-  return "w-full rounded-lg border px-3 py-2.5 text-[14px] text-[#0A0A1F] placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/25 focus:border-[#ED4B00]";
+  return "w-full rounded-lg border px-3 py-2.5 text-[14px] text-text-primary placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-text-primary/20 focus:border-text-primary";
 }
 
 export default function PublicReportForm({
@@ -231,7 +231,7 @@ export default function PublicReportForm({
       return (
         <div
           key={`${slot}-${i}`}
-          className="relative flex h-20 flex-col items-center justify-center rounded-lg border bg-[#F7F7FB] p-2"
+          className="relative flex h-20 flex-col items-center justify-center rounded-lg border bg-surface-secondary p-2"
           style={{ borderColor: FIXFY_BORDER }}
         >
           <FileText className="h-6 w-6" style={{ color: FIXFY_NAVY }} />
@@ -299,7 +299,7 @@ export default function PublicReportForm({
             ) : null}
           </div>
           <label
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors hover:border-[#ED4B00]/50 hover:bg-[#FFF7F3]"
+            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors hover:border-text-primary hover:bg-[#FFF7F3]"
             style={{ borderColor: "#F5CFB8", background: "#FFFBF8" }}
           >
             <div

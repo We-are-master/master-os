@@ -35,7 +35,7 @@ export function DashboardDateToolbar({ trailing, footnote }: DashboardDateToolba
   } = useDashboardDateRange();
 
   return (
-    <div className="rounded-2xl border border-border-light bg-[#FAFAFB] px-4 py-3 space-y-2.5">
+    <div className="rounded-2xl border border-border-light bg-surface-secondary px-4 py-3 space-y-2.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">
           {PERIOD_PILLS.map((pill) => (

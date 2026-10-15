@@ -16,6 +16,7 @@ import {
   type SelfBillDueResolveContext,
 } from "@/lib/partner-payout-schedule";
 import { getWeekBoundsForDate } from "@/lib/self-bill-period";
+import { partnerInstalmentsMirroringClient } from "@/lib/self-bill-payment-plan";
 import { resolveJobCompletionYmd, type JobCompletionAnchorInput } from "@/lib/job-completion-anchor";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
 import {
@@ -522,6 +523,25 @@ export async function refreshSelfBillPayoutState(
   selfBillId: string,
   client?: SupabaseClient,
 ): Promise<void> {
+  await refreshSelfBillTotalsAndStatus(selfBillId, client);
+  /**
+   * Self-bill próprio de job parcelado (mig 326): valor mudou, as parcelas
+   * acompanham. Leitura barata e só age quando há `dedicated_job_id`.
+   */
+  const supabase = client ?? getSupabase();
+  const { data } = await supabase.from("self_bills").select("dedicated_job_id").eq("id", selfBillId).maybeSingle();
+  const jobId = (data as { dedicated_job_id?: string | null } | null)?.dedicated_job_id;
+  if (jobId) {
+    await mirrorClientInstalmentsOnDedicatedSelfBill({ id: jobId }, selfBillId, supabase).catch((e) => {
+      console.error("mirrorClientInstalmentsOnDedicatedSelfBill after refresh:", e);
+    });
+  }
+}
+
+async function refreshSelfBillTotalsAndStatus(
+  selfBillId: string,
+  client?: SupabaseClient,
+): Promise<void> {
   const supabase = client ?? getSupabase();
   const before = client
     ? ((await supabase.from("self_bills").select("*").eq("id", selfBillId).maybeSingle()).data as SelfBill | null)
@@ -531,6 +551,38 @@ export async function refreshSelfBillPayoutState(
   if (before.status === "paid") return;
   /** Manual office cancel / reject must not be reopened by linked jobs until user explicitly reopens. */
   if (SELF_BILL_TERMINAL_STATUSES.includes(before.status)) return;
+
+  /**
+   * Job parcelado com datas combinadas (dono, 15/10/2026): o self-bill próprio já
+   * nasce pronto, com o valor combinado com o parceiro, e cada parcela sai na data
+   * dela. Não espera a conclusão como o balde da quinzena. Job cancelado ou
+   * arquivado segue a regra normal abaixo (void).
+   */
+  if (before.dedicated_job_id && before.payment_plan_active) {
+    const { data: jd } = await supabase
+      .from("jobs")
+      .select("partner_cost, materials_cost, status, deleted_at, partner_cancelled_at")
+      .eq("id", before.dedicated_job_id)
+      .maybeSingle();
+    const j = jd as { partner_cost?: number | null; materials_cost?: number | null; status?: string; deleted_at?: string | null; partner_cancelled_at?: string | null } | null;
+    if (j && !j.deleted_at && j.status !== "cancelled" && !j.partner_cancelled_at) {
+      const custo = Math.round((Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0)) * 100) / 100;
+      const pronto = ["ready_to_pay", "awaiting_payment", "pending_review", "audit_required"].includes(before.status);
+      const { error: upErr } = await supabase
+        .from("self_bills")
+        .update({
+          jobs_count: 1,
+          job_value: Math.round(Number(j.partner_cost ?? 0) * 100) / 100,
+          materials: Math.round(Number(j.materials_cost ?? 0) * 100) / 100,
+          net_payout: custo,
+          ...(pronto ? {} : { status: "ready_to_pay" }),
+          ...(before.approved_at ? {} : { approved_at: new Date().toISOString() }),
+        })
+        .eq("id", selfBillId);
+      if (upErr) throw upErr;
+      return;
+    }
+  }
 
   const prevNet = Number(before.net_payout) || 0;
   const prevOriginalSnapshot = before.original_net_payout;
@@ -901,8 +953,13 @@ export type EnsureWeeklySelfBillOptions = {
   };
 };
 
+/** Calendário de pagamento do Setup, guardado por 1 minuto: não muda a cada clique (15/10/2026). */
+let orgDueCtxCache: { at: number; ctx: SelfBillDueResolveContext } | null = null;
+
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   const visitScope = options?.visit ?? null;
+  /** Job parcelado (mig 326): documento próprio, fora do balde da quinzena. */
+  const dedicated = !visitScope && job.partner_paid_in_instalments === true;
   if (!visitScope && !job.partner_id?.trim()) return null;
   if (visitScope && !visitScope.partnerId.trim()) return null;
   /**
@@ -974,6 +1031,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    * Ninguém passava `dueCtx`, então a leitura do Setup vem para cá.
    */
   let dueCtx = options?.dueCtx ?? null;
+  if (!dueCtx && orgDueCtxCache && Date.now() - orgDueCtxCache.at < 60_000) dueCtx = orgDueCtxCache.ctx;
   if (!dueCtx) {
     try {
       const { data: cs } = await supabase
@@ -986,6 +1044,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         orgStandardTerms: resolveOrgPartnerPayoutStandardTerms(setup),
         orgReferenceYmd: normalizePartnerPayoutReferenceYmd(setup?.partner_payout_reference_ymd),
       };
+      orgDueCtxCache = { at: Date.now(), ctx: dueCtx };
     } catch {
       dueCtx = null;
     }
@@ -1021,12 +1080,13 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    */
   /** Documento já fechado no corte que ainda recebe o job (ver "pagamento ainda não passou"). */
   let fechadoQueAindaRecebe: string | undefined;
-  if (!visitScope) {
+  if (!visitScope && !dedicated) {
     const { data: fechados } = await supabase
       .from("self_bills")
       .select("id, status, due_date")
       .eq("partner_id", partnerId)
       .eq("week_start", weekStart)
+      .is("dedicated_job_id", null)
       .not("status", "in", `(${[...SELF_BILL_REUSABLE_STATUSES, ...SELF_BILL_TERMINAL_STATUSES].join(",")})`)
       .order("created_at", { ascending: true });
     const linhasFechadas = (fechados ?? []) as { id: string; status: string; due_date: string | null }[];
@@ -1078,6 +1138,18 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         )
       : null;
 
+  if (dedicated) {
+    return ensureDedicatedSelfBillForJob(job, {
+      supabase,
+      partnerId,
+      weekStart,
+      weekEnd,
+      weekLabel,
+      cadence,
+      dueDate,
+    });
+  }
+
   /**
    * A busca é pelo balde ABERTO, não por "uma linha qualquer deste período".
    *
@@ -1096,6 +1168,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     .select("id, status")
     .eq("partner_id", partnerId)
     .eq("week_start", weekStart)
+    .is("dedicated_job_id", null)
     .in("status", REUSAVEIS)
     .order("created_at", { ascending: true })
     .limit(1)
@@ -1190,6 +1263,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
             .select("id, status")
             .eq("partner_id", partnerId)
             .eq("week_start", weekStart)
+            .is("dedicated_job_id", null)
             .in("status", REUSAVEIS)
             .order("created_at", { ascending: true })
             .limit(1)
@@ -1203,6 +1277,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
           .select("id, status")
           .eq("partner_id", partnerId)
           .eq("week_start", weekStart)
+        .is("dedicated_job_id", null)
           .in("status", REUSAVEIS)
           .order("created_at", { ascending: true })
           .limit(1)
@@ -1226,6 +1301,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
             .select("id, status")
             .eq("partner_id", partnerId)
             .eq("week_start", weekStart)
+            .is("dedicated_job_id", null)
             .limit(1)
             .maybeSingle();
           const terminalId = (terminal as { id: string } | null)?.id;
@@ -1270,6 +1346,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         .select("id, created_at, status")
         .eq("partner_id", partnerId)
         .eq("week_start", weekStart)
+        .is("dedicated_job_id", null)
         .order("created_at", { ascending: true });
       /**
        * Só concorre quem ainda aceita trabalho. Filtrar por
@@ -1310,6 +1387,245 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
     console.error("refreshSelfBillPayoutState after weekly self-bill link:", e);
   });
   return sbId;
+}
+
+/** Linha na Command history do job (audit_logs do job). Nunca derruba quem chamou. */
+async function historicoDoJob(
+  supabase: SupabaseClient,
+  jobId: string,
+  title: string,
+  detail: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const { data } = await supabase.from("jobs").select("reference").eq("id", jobId).maybeSingle();
+    await supabase.from("audit_logs").insert({
+      entity_type: "job",
+      entity_id: jobId,
+      entity_ref: (data as { reference?: string } | null)?.reference ?? null,
+      action: "note",
+      field_name: "instalments",
+      metadata: { title, detail, ...(extra ?? {}) },
+    });
+  } catch {
+    console.error("historicoDoJob: audit insert failed");
+  }
+}
+
+function dataCurta(ymd: string): string {
+  return new Date(`${ymd.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" });
+}
+
+/**
+ * Self-bill PRÓPRIO do job parcelado (mig 326, dono 15/10/2026).
+ *
+ * O cliente paga o job em parcelas numa fatura só; o parceiro recebe na mesma
+ * proporção e nas mesmas datas, e por isso o job não pode dividir documento com
+ * os outros da quinzena: as parcelas são do job, não do balde. O documento leva
+ * o período do job (fecha junto com a quinzena, igual aos outros), e o
+ * `due_date` passa a ser o da próxima parcela, que é o que o Money Out lê.
+ */
+async function ensureDedicatedSelfBillForJob(
+  job: Job,
+  ctx: {
+    supabase: SupabaseClient;
+    partnerId: string;
+    weekStart: string;
+    weekEnd: string;
+    weekLabel: string;
+    cadence: ReturnType<typeof partnerPayoutCadenceFromTerms>;
+    dueDate: string | null;
+  },
+): Promise<string> {
+  const { supabase } = ctx;
+  const FECHADOS = SELF_BILL_TERMINAL_STATUSES.concat(["paid"] as SelfBillStatus[]);
+  const { data: existente, error: selErr } = await supabase
+    .from("self_bills")
+    .select("id, partner_id, status")
+    .eq("dedicated_job_id", job.id)
+    .not("status", "in", `(${FECHADOS.join(",")})`)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (selErr) throw selErr;
+  let sbId = (existente as { id: string; partner_id: string | null } | null)?.id;
+
+  // Trocou o parceiro: o documento é do parceiro antigo e o job sai dele.
+  if (sbId && ((existente as { partner_id: string | null }).partner_id ?? "").trim() !== ctx.partnerId) {
+    await supabase.from("self_bills").update({ dedicated_job_id: null }).eq("id", sbId);
+    await supabase.from("jobs").update({ self_bill_id: null }).eq("id", job.id);
+    await refreshSelfBillPayoutState(sbId, supabase).catch(() => undefined);
+    sbId = undefined;
+  }
+
+  if (!sbId) {
+    const ref = await nextSelfBillRef(supabase, ctx.weekLabel, job.reference);
+    const { data: ins, error: insErr } = await supabase
+      .from("self_bills")
+      .insert({
+        reference: ref,
+        partner_id: ctx.partnerId,
+        partner_name: job.partner_name?.trim() || "Partner",
+        bill_origin: "partner",
+        dedicated_job_id: job.id,
+        period: ctx.weekStart.slice(0, 7),
+        week_start: ctx.weekStart,
+        week_end: ctx.weekEnd,
+        week_label: ctx.weekLabel,
+        jobs_count: 0,
+        job_value: 0,
+        materials: 0,
+        commission: 0,
+        net_payout: 0,
+        status: "accumulating",
+        payment_cadence: ctx.cadence,
+        ...(ctx.dueDate ? { due_date: ctx.dueDate } : {}),
+      })
+      .select("id")
+      .single();
+    if (insErr) {
+      // Corrida com outra criação do mesmo job: o índice da mig 326 garante um só.
+      const { data: race } = await supabase
+        .from("self_bills")
+        .select("id")
+        .eq("dedicated_job_id", job.id)
+        .not("status", "in", `(${FECHADOS.join(",")})`)
+        .limit(1)
+        .maybeSingle();
+      sbId = (race as { id: string } | null)?.id;
+      if (!sbId) throw insErr;
+    } else {
+      sbId = (ins as { id: string }).id;
+      await historicoDoJob(
+        supabase,
+        job.id,
+        `Partner self-bill ${ref} opened for this job`,
+        `${job.partner_name?.trim() || "The partner"} is paid in instalments on a self-bill of its own, outside the fortnight run.`,
+        { self_bill_id: sbId },
+      );
+    }
+  }
+
+  const { error: linkErr } = await supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
+  if (linkErr) throw linkErr;
+  await refreshSelfBillPayoutState(sbId, supabase).catch((e) => {
+    console.error("refreshSelfBillPayoutState after dedicated self-bill link:", e);
+  });
+  return sbId;
+}
+
+/**
+ * Copia as parcelas da fatura do job para o self-bill próprio: mesma data,
+ * mesma proporção sobre o que o parceiro recebe. Roda a cada vínculo, então
+ * parceiro escolhido depois e valor mudado depois também acompanham. Com
+ * parcela do parceiro já paga, não mexe: dali em diante é ajuste na mão.
+ */
+export async function mirrorClientInstalmentsOnDedicatedSelfBill(
+  job: Pick<Job, "id"> & { invoice_id?: string | null },
+  selfBillId: string,
+  client?: SupabaseClient,
+): Promise<boolean> {
+  const supabase = client ?? getSupabase();
+  let invoiceId = job.invoice_id?.trim() || null;
+  if (!invoiceId) {
+    const { data } = await supabase.from("jobs").select("invoice_id").eq("id", job.id).maybeSingle();
+    invoiceId = ((data as { invoice_id?: string | null } | null)?.invoice_id ?? "").trim() || null;
+  }
+  if (!invoiceId) return false;
+  const { data: cli, error: cliErr } = await supabase
+    .from("invoice_payment_installments")
+    .select("amount, due_date, status")
+    .eq("invoice_id", invoiceId)
+    .order("sequence", { ascending: true });
+  if (cliErr) throw cliErr;
+  const clientRows = ((cli ?? []) as { amount: number; due_date: string; status: string }[]).filter(
+    (r) => r.status !== "cancelled",
+  );
+  if (clientRows.length === 0) return false;
+
+  const { data: sb, error: sbErr } = await supabase
+    .from("self_bills")
+    .select("net_payout, dedicated_job_id, status, approved_at")
+    .eq("id", selfBillId)
+    .maybeSingle();
+  if (sbErr) throw sbErr;
+  const row = sb as { net_payout: number | null; dedicated_job_id: string | null; status?: string; approved_at?: string | null } | null;
+  if (!row?.dedicated_job_id) return false;
+  // O total do parceiro é o combinado no job, não o "já concluído" do balde.
+  const { data: jc } = await supabase.from("jobs").select("partner_cost, materials_cost").eq("id", row.dedicated_job_id).maybeSingle();
+  const combinado =
+    Math.round((Number((jc as { partner_cost?: number } | null)?.partner_cost ?? 0) + Number((jc as { materials_cost?: number } | null)?.materials_cost ?? 0)) * 100) / 100;
+  row.net_payout = combinado > 0 ? combinado : Number(row.net_payout ?? 0);
+  const drafts = partnerInstalmentsMirroringClient(clientRows, Number(row.net_payout ?? 0));
+  if (drafts.length === 0) return false;
+
+  const { data: atuais, error: atErr } = await supabase
+    .from("self_bill_payment_installments")
+    .select("amount, due_date, status")
+    .eq("self_bill_id", selfBillId)
+    .order("sequence", { ascending: true });
+  if (atErr) throw atErr;
+  const linhas = (atuais ?? []) as { amount: number; due_date: string; status: string }[];
+  if (linhas.some((r) => r.status === "paid")) return false;
+  /**
+   * Parceiro já tem parcelas (combinadas na mão ou espelhadas antes): as DATAS e a
+   * divisão ficam; se o valor do parceiro mudou, as parcelas acompanham na mesma
+   * proporção. Só o plano novo copia o do cliente.
+   */
+  if (linhas.length > 0) {
+    const net = Math.round(Number(row.net_payout ?? 0) * 100) / 100;
+    const soma = Math.round(linhas.reduce((t, r) => t + Number(r.amount), 0) * 100) / 100;
+    if (net <= 0 || Math.abs(soma - net) < 0.01) return true;
+    const escaladas = partnerInstalmentsMirroringClient(linhas, net);
+    for (const [i, d] of escaladas.entries()) {
+      await supabase
+        .from("self_bill_payment_installments")
+        .update({ amount: d.amount })
+        .eq("self_bill_id", selfBillId)
+        .eq("sequence", i + 1);
+    }
+    await historicoDoJob(
+      supabase,
+      job.id,
+      "Partner instalments updated to the new amount",
+      `${escaladas.map((d) => `£${d.amount.toFixed(2)} on ${dataCurta(d.due_date)}`).join(" · ")}. Same dates and split.`,
+      { self_bill_id: selfBillId },
+    );
+    return true;
+  }
+
+  const { error: delErr } = await supabase.from("self_bill_payment_installments").delete().eq("self_bill_id", selfBillId);
+  if (delErr) throw delErr;
+  const { error: insErr } = await supabase.from("self_bill_payment_installments").insert(
+    drafts.map((d, i) => ({
+      self_bill_id: selfBillId,
+      sequence: i + 1,
+      amount: d.amount,
+      due_date: d.due_date,
+      status: "pending",
+    })),
+  );
+  if (insErr) throw insErr;
+  const pronto = ["ready_to_pay", "awaiting_payment", "pending_review", "audit_required"].includes(row.status ?? "");
+  const { error: upErr } = await supabase
+    .from("self_bills")
+    .update({
+      payment_plan_active: true,
+      due_date: drafts.find((d) => d.due_date >= new Date().toISOString().slice(0, 10))?.due_date ?? drafts[0]!.due_date,
+      net_payout: row.net_payout,
+      ...(pronto ? {} : { status: "ready_to_pay" }),
+      ...(row.approved_at ? {} : { approved_at: new Date().toISOString() }),
+    })
+    .eq("id", selfBillId);
+  if (upErr) throw upErr;
+  await historicoDoJob(
+    supabase,
+    job.id,
+    `Partner paid in ${drafts.length} instalments`,
+    `${drafts.map((d) => `£${d.amount.toFixed(2)} on ${dataCurta(d.due_date)}`).join(" · ")}. Same split and dates as the client; each one is released on its date.`,
+    { self_bill_id: selfBillId },
+  );
+  return true;
 }
 
 /**
@@ -1545,7 +1861,9 @@ export async function syncSelfBillAfterJobChange(job: Job): Promise<void> {
  * quando moveu.
  */
 export async function relinkSelfBillIfMisplaced(job: Job, client?: SupabaseClient): Promise<string | null> {
-  if (!job.self_bill_id?.trim() || !job.partner_id?.trim() || !canLinkJobToSelfBill(job)) return null;
+  // Job ainda não concluído também muda de documento (parceiro trocado, data remarcada):
+  // ele já mora no draft do parceiro desde a atribuição.
+  if (!job.self_bill_id?.trim() || !job.partner_id?.trim() || !(canLinkJobToSelfBill(job) || canDraftSelfBillForJob(job))) return null;
   const supabase = client ?? getSupabase();
   const { data: sbRow } = await supabase
     .from("self_bills")
@@ -1556,7 +1874,9 @@ export async function relinkSelfBillIfMisplaced(job: Job, client?: SupabaseClien
   if (!sb || !SELF_BILL_REUSABLE_STATUSES.has(sb.status)) return null;
   const anchorYmd = jobSelfBillPeriodAnchorYmd(job);
   const parceiroCerto = (sb.partner_id ?? "").trim() === job.partner_id.trim();
+  // Job parcelado: o documento é dele, a quinzena não decide nada.
   const quinzenaCerta =
+    job.partner_paid_in_instalments === true ||
     !anchorYmd || !sb.week_start || !sb.week_end || (anchorYmd >= sb.week_start.slice(0, 10) && anchorYmd <= sb.week_end.slice(0, 10));
   if (parceiroCerto && quinzenaCerta) return null;
 
@@ -1862,4 +2182,42 @@ export async function listJobsLinkedToSelfBillIds(selfBillIds: string[]): Promis
     out.push(...rows);
   }
   return out;
+}
+
+/**
+ * Liga ou desliga o parcelado do parceiro num job (mig 326) e muda o job de
+ * documento: ligado vai para o self-bill próprio com as parcelas do cliente;
+ * desligado volta para o balde da quinzena. O documento que perdeu o job é
+ * recalculado.
+ */
+export async function setJobPartnerInstalments(jobId: string, on: boolean, client?: SupabaseClient): Promise<string | null> {
+  const supabase = client ?? getSupabase();
+  const { data, error } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+  if (error) throw error;
+  const job = data as Job | null;
+  if (!job) return null;
+  const antigo = job.self_bill_id?.trim() || null;
+  if ((job.partner_paid_in_instalments === true) !== on) {
+    const { error: upErr } = await supabase.from("jobs").update({ partner_paid_in_instalments: on }).eq("id", jobId);
+    if (upErr) throw upErr;
+    if (!on) {
+      await historicoDoJob(
+        supabase,
+        jobId,
+        "Instalments removed",
+        "Client plan removed. The partner goes back to the fortnight self-bill.",
+      );
+    }
+  }
+  if (!job.partner_id?.trim()) return null;
+  if (!on && antigo) await supabase.from("jobs").update({ self_bill_id: null }).eq("id", jobId);
+  const novo = await ensureWeeklySelfBillForJob(
+    { ...job, partner_paid_in_instalments: on, self_bill_id: on ? job.self_bill_id : undefined },
+    { client: supabase },
+  );
+  if (antigo && antigo !== novo) {
+    if (!on) await supabase.from("self_bill_payment_installments").delete().eq("self_bill_id", antigo).neq("status", "paid");
+    await refreshSelfBillPayoutState(antigo, supabase).catch(() => undefined);
+  }
+  return novo;
 }

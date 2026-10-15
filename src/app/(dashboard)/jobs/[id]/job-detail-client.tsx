@@ -12,6 +12,9 @@ import { parseISO } from "date-fns/parseISO";
 import { PageTransition } from "@/components/layout/page-transition";
 import { JobDocumentsPanel } from "@/components/jobs/job-documents-panel";
 import { Button } from "@/components/ui/button";
+import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
+import { PaymentDetailHover } from "@/components/finance/payment-detail-hover";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Badge } from "@/components/ui/badge";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
@@ -52,6 +55,12 @@ import {
   ClipboardCheck,
   Search,
   Copy,
+  Wallet,
+  MinusCircle,
+  Percent,
+  Send,
+  UserRoundCog,
+  CalendarPlus,
   CreditCard,
   FileText,
   HardHat,
@@ -81,9 +90,10 @@ import {
   Timer,
   X,
   Pencil,
-  MoreVertical,
   XCircle,
   UserX, Layers, Undo2,
+  MapPin,
+  History,
 } from "lucide-react";
 import { postgrestFullErrorText } from "@/lib/supabase-schema-compat";
 import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage } from "@/lib/utils";
@@ -103,6 +113,8 @@ import {
   selfBillJobPayoutStateLabel,
   syncSelfBillAfterJobChange,
   updateSelfBill,
+  setJobPartnerInstalments,
+  refreshSelfBillPayoutState,
 } from "@/services/self-bills";
 import { listJobPayments, deleteJobPayment } from "@/services/job-payments";
 import { listAssignableUsers, type AssignableUser } from "@/services/profiles";
@@ -146,6 +158,7 @@ import type {
   Partner,
   QuoteLineItem,
   SelfBill,
+  AuditLog,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
 import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
@@ -200,6 +213,8 @@ import {
 } from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel";
+import { JobComplaintJournal } from "@/components/jobs/job-complaint-journal";
+import { listInstallmentsForInvoice } from "@/services/invoice-payment-plan";
 import { JobRefundModal } from "@/components/jobs/job-refund-modal";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { notifyAssignedPartnerAboutJob, shouldNotifyPartnerForJobPatch } from "@/lib/notify-partner-job-push";
@@ -326,11 +341,11 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
+  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
+  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
 };
@@ -409,17 +424,17 @@ function getStatusColors(
   if (s === "on_hold") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
-      topBadgeClass: "bg-[#fef3c7] text-[#92400e] border border-[#d97706]",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
+      topBadgeClass: "bg-warning-light text-[var(--warn-ink)] border border-warning",
       completedAllSteps: false,
     };
   }
   if (s === "awaiting_payment") {
     return {
       healthBarClass: "bg-[#d97706]",
-      activeStepDotClass: "bg-[#fef3c7] border-[#d97706] text-[#d97706]",
-      activeStepLabelClass: "text-[#d97706] font-semibold",
+      activeStepDotClass: "bg-warning-light border-warning text-[var(--warn-ink)]",
+      activeStepLabelClass: "text-[var(--warn-ink)] font-semibold",
       topBadgeClass: "",
       completedAllSteps: false,
     };
@@ -474,14 +489,15 @@ function buildJobDetailStatusContext(
   opts?: { forcedPaidBySystemOwner?: boolean },
 ): JobDetailStatusContext | null {
   if (job.status === "on_hold") {
-    const reason = job.on_hold_reason?.trim() || "No reason recorded";
+    // Reclamação: o chip diz só "Complaint"; o texto e a conversa ficam na aba Complaint.
+    const reason = jobOnHoldPorReclamacao(job) ? "Complaint" : job.on_hold_reason?.trim() || "No reason recorded";
     const since = formatJobStatusContextTimestamp(job.on_hold_at);
     const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
     const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
     return {
       chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
       primary: reason,
-      secondary: since ?? undefined,
+      secondary: jobOnHoldPorReclamacao(job) ? undefined : since ?? undefined,
       title,
     };
   }
@@ -604,13 +620,13 @@ const selfBillStatusConfig: Record<
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
 > = {
   draft: { label: "Draft", variant: "default" },
-  accumulating: { label: "Open Week", variant: "default" },
-  pending_review: { label: "Approve Report", variant: "primary" },
-  needs_attention: { label: "Needs Attention", variant: "danger" },
-  awaiting_payment: { label: "Awaiting Payment", variant: "warning" },
-  ready_to_pay: { label: "Ready To Pay", variant: "info" },
+  accumulating: { label: "Open week", variant: "default" },
+  pending_review: { label: "Approve report", variant: "primary" },
+  needs_attention: { label: "Needs attention", variant: "danger" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
   paid: { label: "Paid", variant: "success" },
-  audit_required: { label: "Audit Required", variant: "danger" },
+  audit_required: { label: "Audit required", variant: "danger" },
   rejected: { label: "Rejected", variant: "default" },
 };
 
@@ -745,10 +761,10 @@ function JobDetailSelfBillPanel({
 /** Six-stage pipeline shown on job detail (matches ops mental model). */
 const JOB_FLOW_STEPS: readonly { label: string; statuses: readonly Job["status"][]; icon: LucideIcon }[] = [
   { label: "Booked", statuses: ["unassigned", "auto_assigning", "scheduled", "late"], icon: Calendar },
-  { label: "On Site", statuses: ["in_progress"], icon: HardHat },
-  { label: "On Hold", statuses: ["on_hold"], icon: PauseCircle },
-  { label: "Final Checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
-  { label: "Awaiting Payment", statuses: ["awaiting_payment"], icon: CreditCard },
+  { label: "On site", statuses: ["in_progress"], icon: HardHat },
+  { label: "On hold", statuses: ["on_hold"], icon: PauseCircle },
+  { label: "Final checks", statuses: ["final_check", "need_attention"], icon: ClipboardCheck },
+  { label: "Awaiting payment", statuses: ["awaiting_payment"], icon: CreditCard },
   { label: "Completed", statuses: ["completed"], icon: CheckCircle2 },
 ];
 
@@ -1034,44 +1050,84 @@ function FixedValuesConfirmPreview({
   );
 }
 
-/** Schedule tab — CCZ / Parking toggles share the same off-state (light gray container + track). */
-function accessFeeToggleButtonClass(active: boolean, disabled?: boolean) {
-  return cn(
-    "mt-1.5 flex w-full max-w-[13rem] items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors",
-    active
-      ? "border-emerald-500 bg-emerald-50 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30"
-      : "border-[#E4E4E8] bg-[#F5F5F7] hover:border-[#D4D4DA] dark:border-[#2f3440] dark:bg-[#1e2430] dark:hover:border-[#3a4252]",
-    disabled && "cursor-not-allowed opacity-50",
+/** Uma linha do extrato do Finance summary: rótulo, detalhe e valor com sinal. */
+function FinLedgerRow({
+  label,
+  meta,
+  amount,
+  tone = "plain",
+  strong,
+  onRemove,
+}: {
+  label: React.ReactNode;
+  meta?: React.ReactNode;
+  amount: string;
+  tone?: "plain" | "in" | "out" | "muted";
+  strong?: boolean;
+  onRemove?: () => void;
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-2 py-1.5", strong && "border-t border-border pt-2")}>
+      <div className="min-w-0">
+        <p className={cn("m-0 text-[12px] leading-snug", strong ? "font-semibold text-text-primary" : "text-text-primary")}>{label}</p>
+        {meta ? <p className="m-0 truncate text-[11px] leading-snug text-text-tertiary">{meta}</p> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <span
+          className={cn(
+            "text-[12px] tabular-nums",
+            strong ? "font-semibold" : "font-medium",
+            tone === "in" && "text-[var(--ok)]",
+            tone === "out" && "text-[var(--bad)]",
+            tone === "muted" && "text-text-tertiary",
+            tone === "plain" && "text-text-primary",
+          )}
+        >
+          {amount}
+        </span>
+        {onRemove ? (
+          <button type="button" onClick={onRemove} aria-label="Remove payment" className="text-text-tertiary transition-colors hover:text-red-500">
+            <X className="h-3 w-3" />
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-function accessFeeToggleTrackClass(active: boolean) {
-  return cn(
-    "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors",
-    active ? "bg-emerald-600" : "bg-[#D4D4DA] dark:bg-stone-600",
+/** Faixa no pé de cada lado: quanto já entrou/saiu e quanto falta, sem ambiguidade. */
+function FinBalanceBanner({ total, paid, due, paidVerb, dueText }: { total: number; paid: number; due: number; paidVerb: string; dueText: string }) {
+  const settled = due <= 0.02 && total > 0.02;
+  const nothing = paid <= 0.02 && due > 0.02;
+  return (
+    <div
+      className={cn(
+        "mt-1.5 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-[12px]",
+        settled ? "bg-[var(--success-light)] text-[var(--ok-ink)]" : "bg-[var(--warning-light)] text-[var(--warn-ink)]",
+      )}
+    >
+      <span className="min-w-0 font-medium">
+        {settled
+          ? `${paidVerb} in full`
+          : nothing
+            ? `Nothing ${paidVerb.toLowerCase()} yet`
+            : `${formatCurrencyPrecise(paid)} ${paidVerb.toLowerCase()} · ${dueText}`}
+      </span>
+      <span className="shrink-0 font-semibold tabular-nums">{settled ? formatCurrencyPrecise(total) : formatCurrencyPrecise(due)}</span>
+    </div>
   );
 }
 
-function accessFeeToggleThumbClass(active: boolean) {
-  return cn(
-    "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-transform dark:bg-[#d8dee9]",
-    active ? "translate-x-[14px]" : "translate-x-[2px]",
-  );
-}
-
-function accessFeeToggleLabelClass(active: boolean) {
-  return cn("text-[10px] font-medium", active ? "text-emerald-700 dark:text-emerald-300" : "text-text-tertiary");
-}
-
-function accessFeeCardClass(active: boolean) {
-  return cn(
-    "min-w-0 rounded-[10px] p-[12px_14px] transition-colors",
-    active ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-white",
-  );
-}
-
-function accessFeeCardBorderStyle(active: boolean): React.CSSProperties {
-  return { border: active ? "0.5px solid #10B981" : "0.5px solid #E4E4E8" };
+function finPaymentMethodLabel(method: string | null | undefined, side: "client" | "partner"): string {
+  if (side === "partner") {
+    if (method === "bank_transfer") return "Paid by bank transfer";
+    if (method === "cash") return "Paid in cash";
+    return "Partner payout";
+  }
+  if (method === "stripe") return "Paid by card · Stripe";
+  if (method === "bank_transfer") return "Bank transfer received";
+  if (method === "cash") return "Cash received";
+  return "Payment received";
 }
 
 function hourlyRatesFromCatalogService(
@@ -1445,10 +1501,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     customer_deposit: "",
     customer_final_payment: "",
   });
-  const [jobMoreMenuOpen, setJobMoreMenuOpen] = useState(false);
-  const jobMoreMenuRef = useRef<HTMLDivElement>(null);
-  const [requestPaymentMenuOpen, setRequestPaymentMenuOpen] = useState(false);
-  const requestPaymentMenuRef = useRef<HTMLDivElement>(null);
   const [requestPaymentInitialPercent, setRequestPaymentInitialPercent] = useState(100);
   /** Bumped from header ⋮ → opens Add visit on Visits tab. */
   const [visitOpenCreateSignal, setVisitOpenCreateSignal] = useState(0);
@@ -1469,6 +1521,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [qrPartnerCost, setQrPartnerCost] = useState("");
   const [savingFin, setSavingFin] = useState(false);
   const [jobTypeEditOpen, setJobTypeEditOpen] = useState(false);
+  const [jobEditMenuOpen, setJobEditMenuOpen] = useState(false);
+  /** Command history aberta por padrão, com os 3 últimos; fecha e abre no título. */
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyReload, setHistoryReload] = useState(0);
+  const jobEditMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!jobEditMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (jobEditMenuRef.current && !jobEditMenuRef.current.contains(e.target as Node)) setJobEditMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [jobEditMenuOpen]);
   const [jobTypeEditTarget, setJobTypeEditTarget] = useState<"fixed" | "hourly">("fixed");
   const [jobAssignmentEditMode, setJobAssignmentEditMode] = useState<"manual" | "auto">("manual");
   const [jobTypeEditCatalogId, setJobTypeEditCatalogId] = useState("");
@@ -1553,24 +1618,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     jobRef.current = job;
   }, [job]);
 
-  useEffect(() => {
-    if (!jobMoreMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = jobMoreMenuRef.current;
-      if (el && !el.contains(e.target as Node)) setJobMoreMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [jobMoreMenuOpen]);
-  useEffect(() => {
-    if (!requestPaymentMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const el = requestPaymentMenuRef.current;
-      if (el && !el.contains(e.target as Node)) setRequestPaymentMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [requestPaymentMenuOpen]);
   useEffect(() => {
     if (!job?.id) return;
     setClientExtrasUiValue(Math.max(0, Number(job.extras_amount ?? 0)));
@@ -4845,7 +4892,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const openQuickReschedule = useCallback(() => {
     if (!job) return;
-    setJobMoreMenuOpen(false);
     const usesSlots = isOneOffScheduleUi;
     if (job.scheduled_start_at) {
       const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
@@ -5838,6 +5884,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         });
       }
 
+      /**
+       * Velocidade (15/10/2026): os documentos do job são lidos JUNTO com o salvamento, não
+       * depois. A referência não muda; se o salvamento mudar o self-bill do job (relink),
+       * a leitura é refeita abaixo.
+       */
+      const wantsSelfBillEarly = !!current.partner_id?.trim();
+      const docsAntes = { invoiceId: current.invoice_id ?? null, selfBillId: current.self_bill_id ?? null };
+      const linkedDocsPromise = Promise.all([
+        listInvoicesLinkedToJob(current.reference, current.invoice_id),
+        wantsSelfBillEarly
+          ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
+          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+      ]);
+      linkedDocsPromise.catch(() => {});
+
       const afterBatch = await handleJobUpdate(current.id, mergedApprovalPatch, {
         notifyPartner: false,
         silent: true,
@@ -5847,10 +5908,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         throw new Error("Could not save approval and billing on the job.");
       }
       current = afterBatch;
-      /** Downstream payout-state refresh — does not feed any read below; fire-and-forget to keep the critical path lean. */
-      if (current.self_bill_id) {
-        void syncSelfBillAfterJobChange(current).catch(() => {});
-      }
+      // A sincronização do self-bill roda uma vez só, depois da mudança de status (abaixo).
 
       /**
        * Cliente que paga no cartão (Fase 0, dono 09/10/2026): cobra o restante no cartão
@@ -5902,12 +5960,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ? approvalPartnerDueYmd.trim()
           : approvalComputedPartnerDue;
 
-      const [linked, linkedSelfBills] = await Promise.all([
-        listInvoicesLinkedToJob(current.reference, current.invoice_id),
-        wantsSelfBill
-          ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
-          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
-      ]);
+      const mudouDocs =
+        (current.invoice_id ?? null) !== docsAntes.invoiceId || (current.self_bill_id ?? null) !== docsAntes.selfBillId || wantsSelfBill !== wantsSelfBillEarly;
+      const [linked, linkedSelfBills] = mudouDocs
+        ? await Promise.all([
+            listInvoicesLinkedToJob(current.reference, current.invoice_id),
+            wantsSelfBill
+              ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
+              : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+          ])
+        : await linkedDocsPromise;
 
       // Default path is internal; optional client email runs when `completionDelivery === "email"`.
       let primaryInvoiceId = current.invoice_id ?? null;
@@ -5974,16 +6036,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let invoiceFinalized = false;
       let selfBillFinalized = false;
       try {
-        if (draftInvoiceId) {
-          await finalizeDocument("invoice", draftInvoiceId, {
-            amount: Math.max(0, customerDue),
-            status: finalInvoiceStatus,
-            paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
-            collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
-            due_date: invoiceDueYmd,
-          });
-          invoiceFinalized = true;
-        }
+        // Fatura e self-bill são independentes: finalizam juntos (15/10/2026).
+        const invoiceFinalizePromise = draftInvoiceId
+          ? finalizeDocument("invoice", draftInvoiceId, {
+              amount: Math.max(0, customerDue),
+              status: finalInvoiceStatus,
+              paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
+              collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
+              due_date: invoiceDueYmd,
+            }).then(() => {
+              invoiceFinalized = true;
+            })
+          : Promise.resolve();
         /**
          * Aprovar UM job não fecha mais o documento da quinzena (dono, 09/10/2026: um
          * documento por parceiro por quinzena). Antes, a aprovação passava a self-bill
@@ -5991,10 +6055,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
          * documento (a F&V chegou a 5 na quinzena 28/09 a 11/10). Quem fecha é o corte
          * (finance-promover). Aqui só o vencimento é acertado quando o documento segue aberto.
          */
-        if (draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating") {
-          await finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd });
-          selfBillFinalized = true;
-        }
+        const selfBillFinalizePromise =
+          draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating"
+            ? finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd }).then(() => {
+                selfBillFinalized = true;
+              })
+            : Promise.resolve();
+        const resultados = await Promise.allSettled([invoiceFinalizePromise, selfBillFinalizePromise]);
+        const falha = resultados.find((r) => r.status === "rejected");
+        if (falha) throw (falha as PromiseRejectedResult).reason;
       } catch (error) {
         if (invoiceFinalized && draftInvoiceId) {
           try {
@@ -6058,26 +6127,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       if (completionDelivery === "email") {
         const wantInv = includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice;
         const wantRep = includeReportInEmail && accountEmailPolicy.canIncludeReport;
-        try {
-          const res = await fetch(`/api/jobs/${current.id}/final-review-email`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ includeInvoice: wantInv, includeReport: wantRep }),
+        // O modal fecha já; o e-mail segue em segundo plano e avisa quando terminar (15/10/2026).
+        toast.success(`${approvalToast} Sending the client email…`);
+        const jobIdEmail = current.id;
+        void fetch(`/api/jobs/${jobIdEmail}/final-review-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ includeInvoice: wantInv, includeReport: wantRep }),
+        })
+          .then(async (res) => {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok) {
+              toast.error(data.error ?? "The job is finalised, but the client email could not be sent.", { duration: 10000 });
+            } else {
+              toast.success("Client email sent.");
+            }
+          })
+          .catch(() => {
+            toast.error("The job is finalised, but the client email could not be sent.", { duration: 10000 });
           });
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          if (!res.ok) {
-            toast.success(approvalToast);
-            toast.error(
-              data.error ?? "The job is finalised, but the client email could not be sent.",
-              { duration: 10000 },
-            );
-          } else {
-            toast.success(`${approvalToast} Client email sent.`);
-          }
-        } catch {
-          toast.success(approvalToast);
-          toast.error("The job is finalised, but the client email could not be sent.", { duration: 10000 });
-        }
       } else {
         toast.success(approvalToast);
       }
@@ -6473,9 +6541,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         extrasNetOfAccessAndMaterials,
         Math.round(clientExtraTypeTotals.extra * 100) / 100,
       );
-  const clientExtraTotalDisplay = Math.round(
-    (clientExtraPlainDisplay + clientExtraCczDisplay + clientExtraParkingDisplay + clientExtraMaterialsDisplay) * 100,
-  ) / 100;
   const partnerExtraUnifiedAmount = partnerItemizedExtras
     ? Math.round(partnerExtraEntriesSignedTotal * 100) / 100
     : Math.max(partnerExtraLine, Math.round(partnerExtraEntriesSignedTotal * 100) / 100);
@@ -7154,14 +7219,62 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     </div>
   );
 
+  /** Nota interna: grava no job (internal_notes, como sempre) e na Command history. */
+  const publishInternalNote = async () => {
+    if (!job || !internalNoteDraft.trim()) return;
+    const note = internalNoteDraft.trim();
+    const stamp = new Date().toISOString();
+    const author = profile?.full_name?.trim() || profile?.email?.trim() || "User";
+    const line = `[${stamp}] ${author}: ${note}`;
+    const prev = (job.internal_notes ?? "").trim();
+    const combined = prev ? `${prev}\n\n${line}` : line;
+    setSavingInternalNote(true);
+    try {
+      const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
+      if (updated) {
+        await logAudit({
+          entityType: "job",
+          entityId: job.id,
+          entityRef: job.reference,
+          action: "note",
+          fieldName: "internal_note",
+          newValue: note,
+          userId: profile?.id,
+          userName: profile?.full_name,
+          metadata: { source: "command_history", at: stamp },
+        }).catch(() => {});
+        setInternalNoteDraft("");
+        setHistoryReload((n) => n + 1);
+        setHistoryOpen(true);
+      }
+    } finally {
+      setSavingInternalNote(false);
+    }
+  };
+
+  /** Notas antigas que só existem no texto do job (antes do audit): entram na linha do tempo. */
+  const legacyNoteLogs: AuditLog[] = internalNotesEntries
+    .filter((e) => e.iso)
+    .map((e, i) => ({
+      id: `legacy-note-${i}-${e.iso}`,
+      entity_type: "job",
+      entity_id: job?.id ?? "",
+      action: "note",
+      field_name: "internal_note",
+      new_value: e.text,
+      user_name: e.author,
+      created_at: e.iso,
+      metadata: { legacy: true },
+    }));
+
   return (
     <PageTransition>
-      <div className="w-full bg-[#fdfdfd] py-4 px-4 dark:bg-[#0f1115] sm:px-5">
-        <div className="mx-auto w-full max-w-[1280px] overflow-hidden rounded-lg border border-border bg-card">
+      <div className="w-full pb-4">
+        <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-sm">
           <div className={cn("h-[3px] w-full shrink-0", healthBarColorClass)} aria-hidden />
 
           {/* ── TOP BAR ── */}
-          <div className="border-b border-border-light px-4 py-4">
+          <div className="border-b border-border-light px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Button
@@ -7180,13 +7293,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   variant="outline"
                   size="sm"
                   loading={refreshingJob}
-                  className="h-7 w-7 shrink-0 rounded-full p-0"
+                  className="h-8 w-8 shrink-0 p-0"
                   icon={<RefreshCw className="h-3.5 w-3.5" />}
                   onClick={() => void refreshJobFinance()}
                   title="Reload job, payments, and documents from the server"
                   aria-label="Refresh job"
                 />
-                <h1 className="text-lg font-bold text-text-primary tabular-nums">{job.reference}</h1>
+                <h1 className="m-0 font-display text-[20px] font-bold leading-none tracking-tight text-text-primary tabular-nums">{job.reference}</h1>
                 <ZendeskTicketBadge
                   source={job.external_source}
                   ref={job.external_ref}
@@ -7194,7 +7307,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
                 />
                 <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-                  <Badge variant={config.variant} dot={config.dot} size="sm" className={statusColors.topBadgeClass || undefined}>
+                  <Badge variant={config.variant} dot={config.dot} size="sm" className={cn(statusColors.topBadgeClass || undefined, onHoldBadge?.className)}>
                     {config.label}
                   </Badge>
                   <JobScheduleTimingChip job={job} />
@@ -7260,82 +7373,211 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 </Button>
               );
             })}
-                <div className="relative" ref={jobMoreMenuRef}>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 w-8 shrink-0 p-0"
-                    aria-label="More job actions"
-                    aria-expanded={jobMoreMenuOpen}
-                    aria-haspopup="menu"
-                    onClick={() => setJobMoreMenuOpen((o) => !o)}
-                    icon={<MoreVertical className="h-3.5 w-3.5" />}
-                  />
-                  {jobMoreMenuOpen ? (
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full z-50 mt-1 min-w-[12.5rem] rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
-                    >
-                      {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            setDetailTab(0);
-                            setVisitOpenCreateSignal((k) => k + 1);
-                          }}
-                        >
-                          <Plus className="h-3.5 w-3.5 shrink-0" />
-                          Add visit
-                        </button>
-                      ) : null}
-                      {job.status !== "cancelled" &&
-                      job.status !== "deleted" &&
-                      job.status !== "completed" ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            openFinalReview();
-                          }}
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          Finish
-                        </button>
-                      ) : null}
-                      {job.status !== "cancelled" && job.status !== "deleted" ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                          onClick={() => void openQuickReschedule()}
-                        >
-                          <Calendar className="h-3.5 w-3.5 shrink-0" />
-                          Reschedule
-                        </button>
-                      ) : null}
-                      {showCancelInJobMoreMenu ? (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                          onClick={() => {
-                            setJobMoreMenuOpen(false);
-                            setCancelJobOpen(true);
-                          }}
-                        >
-                          <XCircle className="h-3.5 w-3.5 shrink-0" />
-                          Cancel job
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+                <JobActionsMenu
+                  groups={[
+                    {
+                      key: "client",
+                      label: "Client payment",
+                      icon: Wallet,
+                      items: [
+                        ...(isAdmin
+                          ? [{
+                              key: "client_pay",
+                              label: "Record payment received",
+                              hint: "Bank, cash or card already taken",
+                              icon: Plus,
+                              disabled: job.status === "cancelled" || job.status === "deleted",
+                              onSelect: () => {
+                                setMoneyDrawerInitialExtraType(undefined);
+                                setMoneyDrawerFlow("client_pay");
+                                setMoneyDrawerOpen(true);
+                              },
+                            }]
+                          : []),
+                        ...(!clientPaidInFull
+                          ? [
+                              {
+                                key: "request_email",
+                                label: "Request payment by email",
+                                hint: "Invoice PDF with a Stripe link",
+                                icon: Mail,
+                                disabled: !invoiceSendGate.ok || financeBillingLoading || loadingInvoices || jobInvoices.length === 0,
+                                title: invoiceSendGate.ok ? "No invoice on this job yet" : invoiceSendGate.reason,
+                                onSelect: () => void handleOpenRequestPaymentModal({ initialPercent: 100 }),
+                              },
+                              {
+                                key: "copy_link",
+                                label: "Copy pay link",
+                                hint: "Full open balance",
+                                icon: Copy,
+                                disabled: !(primaryInvoiceForBadge ?? jobInvoices[0])?.reference,
+                                title: "No invoice linked to this job yet",
+                                onSelect: () => {
+                                  const inv = primaryInvoiceForBadge ?? jobInvoices[0];
+                                  if (inv?.reference) void copyInvoicePayLink(inv.reference);
+                                },
+                              },
+                              {
+                                key: "partial",
+                                label: "Request part of the balance",
+                                hint: "Pick a %, then copy or email",
+                                icon: Percent,
+                                disabled: loadingInvoices || jobInvoices.length === 0,
+                                title: "No invoice linked to this job yet",
+                                onSelect: () => void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true }),
+                              },
+                            ]
+                          : []),
+                        {
+                          key: "client_extra",
+                          label: "Add extra charge",
+                          hint: "Raises what the client pays",
+                          icon: Plus,
+                          disabled: job.status === "cancelled" || job.status === "deleted",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Labour");
+                            setMoneyDrawerFlow("client_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "client_discount",
+                          label: "Add discount",
+                          icon: MinusCircle,
+                          disabled: job.status === "cancelled" || job.status === "deleted",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Discount — labour");
+                            setMoneyDrawerFlow("client_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        ...(isAdmin && customerPaidTotal > 0.02
+                          ? [{
+                              key: "refund",
+                              label: "Refund client",
+                              hint: "Back to the card, or record a bank transfer",
+                              icon: Undo2,
+                              danger: true,
+                              onSelect: () => setRefundOpen(true),
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "partner",
+                      label: "Partner",
+                      icon: HardHat,
+                      items: [
+                        ...(isAdmin
+                          ? [{
+                              key: "partner_pay",
+                              label: "Record partner payment",
+                              hint: "Money already paid to the partner",
+                              icon: Send,
+                              disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                              title: "Assign a partner first",
+                              onSelect: () => {
+                                setMoneyDrawerFlow("partner_pay");
+                                setMoneyDrawerOpen(true);
+                              },
+                            }]
+                          : []),
+                        {
+                          key: "partner_extra",
+                          label: "Add partner extra",
+                          hint: "Raises what the partner gets",
+                          icon: Plus,
+                          disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                          title: "Assign a partner first",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Labour");
+                            setMoneyDrawerFlow("partner_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "partner_deduction",
+                          label: "Add deduction",
+                          icon: MinusCircle,
+                          disabled: !job.partner_id?.trim() || job.status === "cancelled",
+                          title: "Assign a partner first",
+                          onSelect: () => {
+                            setMoneyDrawerInitialExtraType("Discount — labour");
+                            setMoneyDrawerFlow("partner_extra");
+                            setMoneyDrawerOpen(true);
+                          },
+                        },
+                        {
+                          key: "partner_swap",
+                          label: job.partner_id ? "Swap partner" : "Assign partner",
+                          icon: UserRoundCog,
+                          disabled: signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign,
+                          onSelect: () => setPartnerModalOpen(true),
+                        },
+                        ...(job.partner_id?.trim()
+                          ? [{
+                              key: "partner_resend",
+                              label: "Resend job email",
+                              icon: Mail,
+                              disabled: signingOffPartner || savingPartner || resendingPartnerEmail,
+                              onSelect: () => void handleResendPartnerEmail(),
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "schedule",
+                      label: "Schedule",
+                      icon: Calendar,
+                      items: [
+                        ...(canOpenQuickReschedule
+                          ? [{
+                              key: "reschedule",
+                              label: "Reschedule",
+                              icon: Calendar,
+                              onSelect: () => void openQuickReschedule(),
+                            }]
+                          : []),
+                        ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED
+                          ? [{
+                              key: "add_visit",
+                              label: "Add visit",
+                              icon: CalendarPlus,
+                              onSelect: () => {
+                                setDetailTab(1);
+                                setVisitOpenCreateSignal((k) => k + 1);
+                              },
+                            }]
+                          : []),
+                      ],
+                    },
+                    {
+                      key: "job",
+                      label: "Job",
+                      icon: Briefcase,
+                      items: [
+                        ...(job.status !== "cancelled" && job.status !== "deleted" && job.status !== "completed"
+                          ? [{
+                              key: "finish",
+                              label: "Finish",
+                              hint: "Review report and send invoice",
+                              icon: CheckCircle2,
+                              onSelect: () => openFinalReview(),
+                            }]
+                          : []),
+                        ...(showCancelInJobMoreMenu
+                          ? [{
+                              key: "cancel",
+                              label: "Cancel job",
+                              icon: XCircle,
+                              danger: true,
+                              onSelect: () => setCancelJobOpen(true),
+                            }]
+                          : []),
+                      ],
+                    },
+                  ]}
+                />
                 <Button
                   type="button"
                   variant="outline"
@@ -7368,7 +7610,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   {canReverseStage ? (
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#ddd] bg-transparent px-2.5 py-1 text-xs text-[#888] transition-colors hover:border-[#d97706] hover:bg-[#fef3c7] hover:text-[#d97706]"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-transparent px-2.5 py-1 text-xs text-text-tertiary transition-colors hover:border-warning hover:bg-warning-light hover:text-[var(--warn-ink)]"
                       onClick={() => {
                         if (!previousStageStatus) return;
                         void handleStatusChange(job, previousStageStatus);
@@ -7381,6 +7623,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Sem tempo nenhum ("Not started · 0s") o chip não diz nada: some. */}
+                  {progressTimerSubline === "Not started" ? null : (
                   <div
                     className={cn(
                       "inline-flex max-w-[11rem] items-center gap-1 rounded-md border border-border-light bg-card/80 px-1.5 py-0.5",
@@ -7406,6 +7650,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       </button>
                     ) : null}
                   </div>
+                  )}
                   {progressTimerPausedBadge ? (
                     <Badge variant="warning" size="sm" className="h-5 px-1 text-[9px]">
                       Paused
@@ -7549,39 +7794,110 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       const JobTypeIcon = getJobTypeIcon(job.title ?? "");
                       const typePillClass = getJobTypePillClass(job.title ?? "");
                       return job.title?.trim() ? (
-                        <div className="inline-flex min-w-0 items-center gap-1.5">
-                          <p className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}>
-                            <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
-                            {job.title.trim()}
-                          </p>
-                          <button
-                            type="button"
-                            className="flex h-[22px] w-[22px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                            disabled={job.status === "cancelled"}
-                            onClick={openJobBillingTypeEdit}
-                            title="Edit type of work, pricing & assignment"
+                        <div className="flex min-w-0 flex-nowrap items-center gap-1.5 [&>*]:shrink-0 [&>*]:whitespace-nowrap">
+                          <p
+                            className={cn("inline-flex min-w-0 !shrink items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}
+                            title={job.title.trim()}
                           >
-                            <Pencil className="h-3 w-3" />
-                          </button>
+                            <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
+                            <span className="truncate">{job.title.trim()}</span>
+                          </p>
+                          {!isHousekeepJobDetail ? (
+                            <>
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  job.job_type === "hourly" && "border-[#7c3aed]/40 bg-[#f5f3ff] text-[#5b21b6]",
+                                )}
+                              >
+                                {job.job_type === "hourly" ? <Clock className="h-3 w-3 shrink-0" /> : <Lock className="h-3 w-3 shrink-0" />}
+                                {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
+                              </span>
+                              {job.catalog_band_label?.trim() ? (
+                                <span className={"inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
+                              ) : null}
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  jobScheduleKindLabel === "Recurring" && "border-primary/35 bg-primary/10 text-primary",
+                                )}
+                              >
+                                {jobScheduleKindLabel === "Recurring" ? "Recurring" : "One-off"}
+                              </span>
+                              {jobPartnerListKind(job) === "auto_assign" ? (
+                                <Badge variant="info" dot size="sm" className="h-6 text-[11px] font-semibold normal-case">
+                                  Auto assign
+                                </Badge>
+                              ) : null}
+                            </>
+                          ) : null}
+                          <div className="relative" ref={jobEditMenuRef}>
+                            <button
+                              type="button"
+                              className={cn(
+                                "flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary",
+                                (jobEditMenuOpen || clientEditAccordionOpen) && "border-primary/35 bg-primary-light/60 text-primary",
+                              )}
+                              disabled={job.status === "cancelled"}
+                              onClick={() => setJobEditMenuOpen((o) => !o)}
+                              title="Edit job"
+                              aria-label="Edit job"
+                              aria-haspopup="menu"
+                              aria-expanded={jobEditMenuOpen}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            {jobEditMenuOpen ? (
+                              <div
+                                role="menu"
+                                className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border-light bg-card p-1 shadow-lg dark:border-border"
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                  onClick={() => {
+                                    setJobEditMenuOpen(false);
+                                    openJobBillingTypeEdit();
+                                  }}
+                                >
+                                  <Briefcase className="h-4 w-4 shrink-0 text-text-secondary" />
+                                  Service, price and assignment
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                  onClick={() => {
+                                    setJobEditMenuOpen(false);
+                                    setClientEditAccordionOpen((o) => !o);
+                                  }}
+                                >
+                                  <UserRoundCog className="h-4 w-4 shrink-0 text-text-secondary" />
+                                  {clientEditAccordionOpen ? "Close client and address" : "Client and address"}
+                                </button>
+                                {canOpenQuickReschedule ? (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-text-primary hover:bg-surface-hover"
+                                    onClick={() => {
+                                      setJobEditMenuOpen(false);
+                                      void openQuickReschedule();
+                                    }}
+                                  >
+                                    <Calendar className="h-4 w-4 shrink-0 text-text-secondary" />
+                                    Date and arrival
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ) : (
                         <p className="text-sm font-medium text-text-tertiary">No service title</p>
                       );
                     })()}
-                    <button
-                      type="button"
-                      onClick={() => setClientEditAccordionOpen((o) => !o)}
-                      className={cn(
-                        "inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-hover px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary",
-                        clientEditAccordionOpen && "border-primary/35 bg-primary-light/60 text-primary dark:bg-primary/15",
-                      )}
-                      disabled={job.status === "cancelled"}
-                      title="Edit client & address"
-                      aria-expanded={clientEditAccordionOpen}
-                    >
-                      <Pencil className="h-3 w-3 shrink-0" aria-hidden />
-                      Edit
-                    </button>
                   </div>
                   <div>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -7626,7 +7942,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1 text-xs leading-snug text-text-tertiary line-clamp-4">{job.property_address}</p>
+                    {job.property_address?.trim() ? (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.property_address.trim())}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open in Google Maps"
+                        className="mt-1 inline-flex items-start gap-1 text-xs leading-snug text-text-tertiary underline-offset-2 hover:text-primary hover:underline"
+                      >
+                        <MapPin className="mt-px h-3 w-3 shrink-0" aria-hidden />
+                        <span className="line-clamp-4">{job.property_address}</span>
+                      </a>
+                    ) : null}
                     {jobHeaderContact && (jobHeaderContact.phone || jobHeaderContact.email) ? (
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-snug">
                         {jobHeaderContact.phone ? (() => {
@@ -7720,93 +8047,134 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     const nextIsExtra = !!nextVisit && nextVisit.visitIndex > 1;
                     return (
                       <div className="border-t border-[#e8e5e0] py-2.5 dark:border-[#2b313d]">
-                        <div className="mt-1.5 flex items-center gap-2 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Calendar className="h-[13px] w-[13px] text-[#aaa] dark:text-[#7f899a]" />
-                          <span>
-                            {displayDate ? formatDate(displayDate) : "Not set"}{" "}
-                            <span className="text-[#9a9a9a] dark:text-[#909aac]">visit date</span>
-                          </span>
+                        <div className="mt-1 grid grid-cols-3 overflow-hidden rounded-lg border border-border bg-surface-secondary">
+                          {[
+                            {
+                              key: "start",
+                              icon: Calendar,
+                              label: "Visit",
+                              value: displayDate ? formatDate(displayDate) : "Not set",
+                            },
+                            {
+                              key: "finish",
+                              icon: CalendarPlus,
+                              label: "Expected finish",
+                              value: scheduleFinishDisplayYmd ? formatDate(scheduleFinishDisplayYmd) : "Not set",
+                            },
+                            {
+                              key: "arrival",
+                              icon: Clock,
+                              label: "Arrival",
+                              value: arrivalDisplay
+                                ? arrivalDisplay
+                                : startIso
+                                  ? `${formatHourMinuteAmPm(new Date(startIso))} · ${windowLabel} window`
+                                  : "Not set",
+                            },
+                          ].map((cell, i) => (
+                            <div
+                              key={cell.key}
+                              className={cn(
+                                "min-w-0 px-3 py-2",
+                                i > 0 && "border-l border-border",
+                              )}
+                            >
+                              <p className="flex items-center gap-1 text-[11px] text-text-tertiary">
+                                <cell.icon className="h-3 w-3 shrink-0" aria-hidden />
+                                {cell.label}
+                              </p>
+                              <p className="mt-0.5 truncate text-[13px] font-semibold text-text-primary" title={cell.value}>
+                                {cell.value}
+                              </p>
+                            </div>
+                          ))}
                         </div>
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
-                            onClick={() => setDetailTab(0)}
-                            className="mt-1.5 flex items-center gap-2 text-sm text-[#444] transition-colors hover:text-primary dark:text-[#d2d8e2]"
-                            title="Open the Visits tab"
+                            onClick={() => setDetailTab(1)}
+                            className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
+                            title="Open the visits tab"
                           >
-                            <Layers className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
+                            <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
                               <span className="font-medium">Next: visit {nextVisit.visitIndex}</span>
                               {nextVisit.scheduledDate ? ` · ${formatDate(nextVisit.scheduledDate)}` : ""}
                               {nextVisit.partnerName ? (
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {nextVisit.partnerName}</span>
+                                <span className="text-text-tertiary dark:text-text-tertiary"> · {nextVisit.partnerName}</span>
                               ) : null}
                             </span>
                           </button>
                         ) : null}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-[#444] dark:text-[#d2d8e2]">
-                          <Clock className="h-[13px] w-[13px] shrink-0 text-[#aaa] dark:text-[#7f899a]" />
-                          <span>
-                            {arrivalDisplay ? (
-                              <span className="font-medium">Arrival: {arrivalDisplay}</span>
-                            ) : startIso ? (
-                              <>
-                                {formatHourMinuteAmPm(new Date(startIso))}
-                                <span className="text-[#9a9a9a] dark:text-[#909aac]"> · {windowLabel} window</span>
-                              </>
-                            ) : (
-                              "Not set"
-                            )}
-                          </span>
-                        </div>
                       </div>
                     );
                   })()}
                   {!isHousekeepJobDetail ? (
                     <>
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            "inline-flex items-start gap-1.5 rounded-full border-[1.5px] px-3 py-1 text-[10px] sm:text-[11px] font-bold leading-snug max-w-[13rem]",
-                            job.job_type === "hourly"
-                              ? "border-[#7c3aed] bg-[#f5f3ff] text-[#5b21b6]"
-                              : "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]",
-                          )}
-                        >
-                          {job.job_type === "hourly" ? <Clock className="h-[11px] w-[11px] shrink-0 mt-0.5" /> : <Lock className="h-[11px] w-[11px] shrink-0 mt-0.5" />}
-                          {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
-                        </span>
-                        {job.catalog_band_label?.trim() ? (
-                          <span className="inline-flex items-center rounded-full border border-border bg-surface-hover px-2.5 py-0.5 text-[10px] font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]">
-                            {job.catalog_band_label.trim()}
-                          </span>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-border bg-surface-hover text-text-tertiary transition-colors hover:border-primary/35 hover:bg-primary-light/60 hover:text-primary dark:border-[#2f3440] dark:bg-[#1a202a] dark:hover:border-primary/45 dark:hover:bg-primary/15 dark:hover:text-primary"
-                          disabled={job.status === "cancelled"}
-                          onClick={openJobBillingTypeEdit}
-                          title="Edit pricing & assignment"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <span className="mx-1 h-4 border-l border-[#e8e5e0] dark:border-[#2f3440]" />
-                        <span
-                          className={cn(
-                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                            jobScheduleKindLabel === "Recurring"
-                              ? "border-primary/35 bg-primary/10 text-primary"
-                              : "border-border bg-surface-hover text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
-                          )}
-                        >
-                          {jobScheduleKindLabel}
-                        </span>
-                        {jobPartnerListKind(job) === "auto_assign" ? (
-                          <Badge variant="info" dot size="sm" className="h-5 text-[10px] font-semibold normal-case">
-                            Auto assign
-                          </Badge>
-                        ) : null}
-                      </div>
+                        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-surface-secondary">
+                          {[
+                            {
+                              key: "ccz",
+                              label: "CCZ",
+                              on: effectiveCustomerInCcz,
+                              fee: accessFees.cczFeeGbp,
+                              disabled: job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz),
+                              onToggle: () => {
+                                if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
+                                else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
+                              },
+                              hint: cczParkingFieldTooltipText,
+                            },
+                            {
+                              key: "parking",
+                              label: "Parking",
+                              on: job.has_free_parking === false,
+                              fee: accessFees.parkingFeeGbp,
+                              disabled: job.status === "cancelled" || savingAccessFees,
+                              onToggle: () => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) }),
+                              hint: null,
+                            },
+                          ].map((t, i) => (
+                            <button
+                              key={t.key}
+                              type="button"
+                              role="switch"
+                              aria-checked={t.on}
+                              aria-label={`${t.label} fee`}
+                              disabled={t.disabled}
+                              title={t.hint ?? undefined}
+                              onClick={t.onToggle}
+                              className={cn(
+                                "flex h-9 min-w-0 items-center gap-2 px-3 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-55",
+                                i > 0 && "border-l border-border",
+                              )}
+                            >
+                              <span className="text-[12px] font-medium text-text-tertiary">{t.label}</span>
+                              <span
+                                className={cn(
+                                  "ml-auto text-[12px] font-semibold tabular-nums",
+                                  t.on ? "text-[var(--ok)]" : "text-text-tertiary",
+                                )}
+                              >
+                                {t.on ? `+${formatCurrency(t.fee)}` : "No fee"}
+                              </span>
+                              <span
+                                className={cn(
+                                  "relative h-4 w-7 shrink-0 rounded-full transition-colors",
+                                  t.on ? "bg-[var(--ok)]" : "bg-[var(--line-2)]",
+                                )}
+                                aria-hidden
+                              >
+                                <span
+                                  className={cn(
+                                    "absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform",
+                                    t.on && "translate-x-3",
+                                  )}
+                                />
+                              </span>
+                            </button>
+                          ))}
+                        </div>
                       {job.job_type === "hourly" && hourlyTimeEditOpen ? (
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
                           <Input
@@ -7953,232 +8321,17 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </div>
                 </div>
               ) : null}
-              <div
-                className="p-[18px] space-y-[14px]"
-                style={{ background: "#FAFAFB", borderTop: "0.5px solid #E4E4E8" }}
-              >
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p
-                    className="text-[10px] font-medium uppercase"
-                    style={{ color: "#020040", letterSpacing: "0.6px" }}
-                  >
-                    Schedule
-                  </p>
-                  {canOpenQuickReschedule ? (
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      icon={<Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-                      className="w-full shrink-0 flex-nowrap [&>span]:whitespace-nowrap sm:w-auto"
-                      onClick={() => void openQuickReschedule()}
-                    >
-                      Reschedule
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[10px] font-medium uppercase"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      Start date
-                    </p>
-                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                      {scheduleStartDisplayYmd ? formatDate(scheduleStartDisplayYmd) : "—"}
-                    </p>
-                  </div>
-                  <div
-                    className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                    style={{ border: "0.5px solid #E4E4E8" }}
-                  >
-                    <p
-                      className="text-[10px] font-medium uppercase"
-                      style={{ color: "#020040", letterSpacing: "0.6px" }}
-                    >
-                      Expected finish
-                    </p>
-                    <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                      {scheduleFinishDisplayYmd ? formatDate(scheduleFinishDisplayYmd) : "—"}
-                    </p>
-                  </div>
-                  {isOneOffScheduleUi ? (
-                    <div
-                      className="min-w-0 bg-white rounded-[10px] p-[12px_14px] sm:col-span-2"
-                      style={{ border: "0.5px solid #E4E4E8" }}
-                    >
-                      <p
-                        className="mb-2 text-[10px] font-medium uppercase"
-                        style={{ color: "#020040", letterSpacing: "0.6px" }}
-                      >
-                        Arrival Time
-                      </p>
-                      <ArrivalSlotPicker
-                        readOnly
-                        hideLabel
-                        arrivalFrom={scheduleTime}
-                        arrivalWindowMins={scheduleWindowMins}
-                        onPick={() => {}}
-                      />
-                      {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
-                        useArrivalSlots: isOneOffScheduleUi,
-                      }) ? (
-                        <p className="mt-1.5 text-[10px] font-medium text-text-secondary">
-                          {jobModalClientArrivalPreview(scheduleDate, scheduleTime, scheduleWindowMins, {
-                            useArrivalSlots: isOneOffScheduleUi,
-                          })}
-                        </p>
-                      ) : (
-                        <p className="mt-1.5 text-[10px] text-text-tertiary">—</p>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <div
-                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                        style={{ border: "0.5px solid #E4E4E8" }}
-                      >
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{ color: "#020040", letterSpacing: "0.6px" }}
-                        >
-                          Arrival Time
-                        </p>
-                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                          {scheduleTime.trim()
-                            ? (() => {
-                                const iso = scheduleStartDisplayYmd
-                                  ? ukWallClockToUtcIso(scheduleStartDisplayYmd, scheduleTime.trim())
-                                  : "";
-                                return iso ? formatHourMinuteAmPm(new Date(iso)) : scheduleTime.trim();
-                              })()
-                            : "—"}
-                        </p>
-                      </div>
-                      <div
-                        className="min-w-0 bg-white rounded-[10px] p-[12px_14px]"
-                        style={{ border: "0.5px solid #E4E4E8" }}
-                      >
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{ color: "#020040", letterSpacing: "0.6px" }}
-                        >
-                          Window
-                        </p>
-                        <p className="mt-[6px] flex h-8 items-center text-[13px] text-text-primary">
-                          {(() => {
-                            const wm = scheduleWindowMins.trim();
-                            const n = wm ? Number(wm) : NaN;
-                            if (!Number.isFinite(n) || n <= 0) return "—";
-                            return (
-                              ARRIVAL_WINDOW_OPTIONS.find((opt) => opt.value === wm)?.label ??
-                              `${Math.round(n / 60)}h`
-                            );
-                          })()}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-                {!isHousekeepJobDetail ? (
-                  <div className="grid grid-cols-1 gap-[14px] sm:grid-cols-2">
-                    <div
-                      className={accessFeeCardClass(effectiveCustomerInCcz)}
-                      style={accessFeeCardBorderStyle(effectiveCustomerInCcz)}
-                    >
-                      <div className="flex items-center gap-1">
-                        <p
-                          className="text-[10px] font-medium uppercase"
-                          style={{
-                            color: effectiveCustomerInCcz ? "#0F6E56" : "#020040",
-                            letterSpacing: "0.6px",
-                          }}
-                        >
-                          CCZ
-                        </p>
-                          <span className="group relative shrink-0">
-                            <span
-                              tabIndex={0}
-                              className="inline-flex cursor-help rounded p-px text-text-tertiary outline-none hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-primary/25"
-                              aria-label="Congestion charge zone details"
-                            >
-                              <Info className="h-3 w-3" aria-hidden />
-                            </span>
-                            <span
-                              role="tooltip"
-                              className="pointer-events-none invisible absolute bottom-full left-0 z-[60] mb-1 w-44 whitespace-pre-wrap rounded bg-[#1a1a1a] px-2 py-1 text-[10px] leading-snug text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-                            >
-                              {cczParkingFieldTooltipText}
-                            </span>
-                          </span>
-                      </div>
-                      <button
-                          type="button"
-                          disabled={
-                            job.status === "cancelled" || savingAccessFees || (!cczEligibleAddress && !job.in_ccz)
-                          }
-                          onClick={() => {
-                            if (cczEligibleAddress) void saveAccessFeeFlags({ in_ccz: !Boolean(job.in_ccz) });
-                            else if (job.in_ccz) void saveAccessFeeFlags({ in_ccz: false });
-                          }}
-                      className={accessFeeToggleButtonClass(
-                            effectiveCustomerInCcz,
-                            !cczEligibleAddress && !job.in_ccz,
-                          )}
-                      >
-                          <span className={accessFeeToggleTrackClass(effectiveCustomerInCcz)}>
-                            <span className={accessFeeToggleThumbClass(effectiveCustomerInCcz)} />
-                          </span>
-                          <span className={accessFeeToggleLabelClass(effectiveCustomerInCcz)}>
-                            {effectiveCustomerInCcz ? `+${formatCurrency(accessFees.cczFeeGbp)}` : "No fee"}
-                          </span>
-                      </button>
-                    </div>
-                    <div
-                      className={accessFeeCardClass(job.has_free_parking === false)}
-                      style={accessFeeCardBorderStyle(job.has_free_parking === false)}
-                    >
-                      <p
-                        className="text-[10px] font-medium uppercase"
-                        style={{
-                          color: job.has_free_parking === false ? "#0F6E56" : "#020040",
-                          letterSpacing: "0.6px",
-                        }}
-                      >
-                        Parking
-                      </p>
-                      <button
-                          type="button"
-                          disabled={job.status === "cancelled" || savingAccessFees}
-                          onClick={() => void saveAccessFeeFlags({ has_free_parking: !Boolean(job.has_free_parking) })}
-                          className={accessFeeToggleButtonClass(job.has_free_parking === false)}
-                      >
-                          <span className={accessFeeToggleTrackClass(job.has_free_parking === false)}>
-                            <span className={accessFeeToggleThumbClass(job.has_free_parking === false)} />
-                          </span>
-                          <span className={accessFeeToggleLabelClass(job.has_free_parking === false)}>
-                            {job.has_free_parking === false ? `+${formatCurrency(accessFees.parkingFeeGbp)}` : "No fee"}
-                          </span>
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
             </div>
 
             {/* Scope / photos / reports / financial — tabbed */}
-            <div className="overflow-hidden rounded-xl border border-border-light bg-[#fdfdfd] shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
-              <div className="flex flex-wrap border-b border-border-light bg-[#fdfdfd] dark:border-[#2b313d] dark:bg-[#141922]">
+            <div className="overflow-hidden rounded-xl border border-border-light bg-surface-secondary shadow-sm dark:border-[#2b313d] dark:bg-[#141922]">
+              <div className="flex flex-wrap border-b border-border-light bg-surface-secondary dark:border-[#2b313d] dark:bg-[#141922]">
                 {(
                   [
                     { label: "Details", index: 0 as const },
+                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 1 as const }] : []),
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
-                    { label: "Notes", index: 4 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
                     ...(canManageJobs ? [{ label: "Setup", index: 5 as const }] : []),
                   ] as const
@@ -8198,7 +8351,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </button>
                 ))}
               </div>
-              <div className="p-3 space-y-3 bg-[#fdfdfd] dark:bg-[#161c26]">
+              <div className="p-3 space-y-3 bg-surface-secondary dark:bg-[#161c26]">
               {detailTab === 0 ? (
               <div className="space-y-3">
               <div className="space-y-1.5 border-t border-border pt-2">
@@ -8500,8 +8653,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   </>
                 )}
               </div>
+              </div>
+              ) : null}
+
+              {/* Sempre montada (só escondida): o "Add visit" do menu manda um sinal
+                  que a aba lê ao montar; remontar a cada troca reabriria o formulário. */}
               {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                <div className="pt-2 border-t border-border">
+                <div hidden={detailTab !== 1}>
                   <VisitsTab
                     job={job}
                     openCreateSignal={visitOpenCreateSignal}
@@ -8535,8 +8693,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     }}
                   />
                 </div>
-              ) : null}
-              </div>
               ) : null}
 
               {detailTab === 2 && job ? <JobDocumentsPanel job={job} onUpdate={handleJobUpdate} /> : null}
@@ -8713,81 +8869,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </>
             ) : null}
 
-            {detailTab === 4 ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Notes</p>
-                <textarea
-                  value={internalNoteDraft}
-                  onChange={(e) => setInternalNoteDraft(e.target.value)}
-                  rows={3}
-                  placeholder="Add an internal note…"
-                  className={cn(JOB_DETAIL_MULTILINE_FIELD_CLASS, "min-h-[86px]")}
-                />
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    loading={savingInternalNote}
-                    disabled={!internalNoteDraft.trim()}
-                    onClick={async () => {
-                      if (!job || !internalNoteDraft.trim()) return;
-                      const note = internalNoteDraft.trim();
-                      const stamp = new Date().toISOString();
-                      const author = profile?.full_name?.trim() || profile?.email?.trim() || "User";
-                      const line = `[${stamp}] ${author}: ${note}`;
-                      const prev = (job.internal_notes ?? "").trim();
-                      const combined = prev ? `${prev}\n\n${line}` : line;
-                      setSavingInternalNote(true);
-                      try {
-                        const updated = await handleJobUpdate(job.id, { internal_notes: combined }, { silent: true, notifyPartner: false });
-                        if (updated) {
-                          void logAudit({
-                            entityType: "job",
-                            entityId: job.id,
-                            entityRef: job.reference,
-                            action: "note",
-                            fieldName: "internal_note",
-                            newValue: note,
-                            userId: profile?.id,
-                            userName: profile?.full_name,
-                            metadata: { source: "job_notes_tab", at: stamp },
-                          }).catch(() => {});
-                          setInternalNoteDraft("");
-                          toast.success("Note saved");
-                        }
-                      } finally {
-                        setSavingInternalNote(false);
-                      }
-                    }}
-                  >
-                    Save note
-                  </Button>
-                </div>
-              </div>
-              <div className="rounded-xl border border-border-light bg-card p-3 space-y-2">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Archived notes</p>
-                {internalNotesEntries.length === 0 ? (
-                  <p className="text-xs text-text-tertiary">No internal notes yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {internalNotesEntries.map((entry, idx) => (
-                      <div key={`${entry.iso}-${idx}`} className="rounded-lg border border-border-light bg-surface-hover/30 px-2.5 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-semibold text-text-primary">{entry.author}</p>
-                          <p className="text-[10px] text-text-tertiary">
-                            {entry.iso ? new Date(entry.iso).toLocaleString() : "—"}
-                          </p>
-                        </div>
-                        <p className="mt-1 whitespace-pre-wrap text-xs text-text-secondary">{entry.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            ) : null}
 
             {/*
               A aba da reclamação: o que o cliente disse, e o que o parceiro
@@ -8797,34 +8878,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               conseguia ler a história de uma vez.
             */}
             {detailTab === 6 && job ? (
-              <div className="space-y-4 p-4">
-                <div className="rounded-xl border border-red-300/60 bg-red-50/50 p-4 space-y-2 dark:border-red-500/30 dark:bg-red-500/5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-text-primary">What the customer reported</h3>
-                    {job.on_hold_at ? (
-                      <span className="ml-auto text-xs text-text-tertiary">
-                        On hold since {new Date(job.on_hold_at).toLocaleDateString("en-GB", {
-                          day: "2-digit", month: "short", year: "numeric",
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
-                    {job.on_hold_complaint_description?.trim() ||
-                      job.on_hold_reason?.trim() ||
-                      "No description was recorded."}
-                  </p>
-                </div>
-
-                {/* A resposta do parceiro, ou o silêncio dele, que também é informação. */}
-                <JobOnHoldSubmissionCard jobId={job.id} />
-
-                {job.status === "on_hold" && !job.on_hold_submission_at ? (
-                  <div className="rounded-xl border border-border-light bg-surface p-4 text-sm text-text-secondary">
-                    Waiting on the partner. They answer from the partner portal, where the job sits
-                    under <span className="font-medium text-text-primary">Action required</span>.
-                  </div>
-                ) : null}
+              <div className="p-4">
+                <JobComplaintJournal job={job} zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null} />
               </div>
             ) : null}
 
@@ -9019,9 +9074,67 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border-light bg-card p-2 space-y-2">
-              <p className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wide">Command history</p>
-              <AuditTimeline entityType="job" entityId={job.id} deferUntilVisible />
+            {/* Mesmo cabeçalho do Billing documents: linha em cima, ícone e título. */}
+            <div className="flex flex-col gap-3 border-t border-border-light pt-4 dark:border-[#2f3642]">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((v) => !v)}
+                aria-expanded={historyOpen}
+                className="m-0 flex w-full items-center gap-1.5 text-left text-[12px] font-semibold text-text-primary"
+              >
+                <History className="h-3.5 w-3.5 text-primary" aria-hidden />
+                History
+                <FixfyHintIcon text="Everything done on this job: status, dates, money, messages and instalments. Latest first." />
+                <ChevronDown
+                  className={cn("ml-auto h-3.5 w-3.5 text-text-tertiary transition-transform", !historyOpen && "-rotate-90")}
+                  aria-hidden
+                />
+              </button>
+              {historyOpen ? (
+                <>
+                  <div className="rounded-xl border border-border bg-card px-3 py-2.5">
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--nav-bg,#020040)] text-[12px] font-semibold text-white">
+                        {(profile?.full_name?.trim() || "U").charAt(0).toUpperCase()}
+                      </span>
+                      <textarea
+                        value={internalNoteDraft}
+                        onChange={(e) => setInternalNoteDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            void publishInternalNote();
+                          }
+                        }}
+                        rows={2}
+                        placeholder="Write a note for the team"
+                        className="min-h-[44px] w-full resize-y border-0 bg-transparent p-0 pt-1.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+                      />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-border-light pt-2">
+                      <span className="text-[11px] text-text-tertiary">Only the team sees notes.</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 px-3 text-xs"
+                        loading={savingInternalNote}
+                        disabled={!internalNoteDraft.trim()}
+                        onClick={() => void publishInternalNote()}
+                      >
+                        Post
+                      </Button>
+                    </div>
+                  </div>
+                  <AuditTimeline
+                    entityType="job"
+                    entityId={job.id}
+                    deferUntilVisible
+                    previewCount={3}
+                    reloadKey={historyReload}
+                    extraLogs={legacyNoteLogs}
+                  />
+                </>
+              ) : null}
             </div>
 
           </div>
@@ -9120,32 +9233,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       Auto assign
                     </Button>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
-                    className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
-                    onClick={() => setPartnerModalOpen(true)}
-                  >
-                    {job.partner_id ? "Swap" : "Assign"}
-                  </Button>
-                  {job.partner_id?.trim() ? (
+                  {!job.partner_id ? (
                     <Button
                       size="sm"
                       variant="outline"
-                      icon={<Mail className="h-3.5 w-3.5" aria-hidden />}
-                      loading={resendingPartnerEmail}
-                      disabled={
-                        signingOffPartner ||
-                        savingPartner ||
-                        dispatchingAutoAssign ||
-                        cancellingAutoAssign ||
-                        resendingPartnerEmail
-                      }
-                      className="h-auto min-w-0 w-full gap-1.5 rounded-md border-border-light px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-surface-hover"
-                      onClick={() => void handleResendPartnerEmail()}
+                      disabled={signingOffPartner || dispatchingAutoAssign || cancellingAutoAssign}
+                      className="h-auto min-w-0 w-full rounded-md border-primary/35 bg-primary-light/70 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light dark:border-primary/45 dark:bg-primary/10 dark:hover:bg-primary/15"
+                      onClick={() => setPartnerModalOpen(true)}
                     >
-                      Resend email
+                      Assign
                     </Button>
                   ) : null}
                 </div>
@@ -9213,10 +9309,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* CLIENT cash in */}
-              <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-2 shadow-sm dark:border-emerald-500/25 dark:bg-emerald-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+              <div className="rounded-lg border border-border bg-card p-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash in — client</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Income</span>
                     <Badge variant={amountDue > 0.02 ? "warning" : "success"} size="sm" className="h-5 text-[10px]">
                       {amountDue > 0.02 ? "Pending" : "Settled"}
                     </Badge>
@@ -9228,198 +9324,56 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     {formatCurrency(billableRevenue)}
                   </span>
                 </div>
-                <div className="space-y-1.5 text-xs">
-                  <div
-                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
-                    title="Base client price at the start of this job (field client_price). Extras are tracked below."
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Base price</span>
-                    </div>
-                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                      {formatCurrency(Math.max(0, Number(job.client_price ?? 0)))}
-                    </span>
-                  </div>
-                  {extraVisitsCount > 0 ? (
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-                      <span className="text-text-primary">
-                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
-                      </span>
-                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                        {extraVisitsClient > 0.005 ? `+${formatCurrency(extraVisitsClient)}` : formatCurrency(0)}
-                      </span>
-                    </div>
+                <div className="divide-y divide-border/60">
+                  <FinLedgerRow label="Base price" amount={formatCurrency(Math.max(0, Number(job.client_price ?? 0)))} />
+                  {extraVisitsCount > 0 && extraVisitsClient > 0.005 ? (
+                    <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsClient)}`} />
                   ) : null}
-                  {(job.customer_deposit ?? 0) > 0 && (
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-text-primary">Upfront deposit</span>
-                        <Badge variant={job.customer_deposit_paid ? "success" : "warning"} size="sm" className="h-5 text-xs">{job.customer_deposit_paid ? "Paid" : "Pending"}</Badge>
-                      </div>
-                      <span className="font-semibold tabular-nums">{formatCurrency(job.customer_deposit ?? 0)}</span>
-                    </div>
-                  )}
-                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <div className="flex items-center gap-1.5">
-                      <JobCardHint
-                        title="View all client extras"
-                        onClick={() => openFinanceHub("client")}
-                        className="focus:ring-emerald-400"
+                  {clientExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(clientExtraPlainDisplay)}`} /> : null}
+                  {clientExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(clientExtraCczDisplay)}`} /> : null}
+                  {clientExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(clientExtraParkingDisplay)}`} /> : null}
+                  {clientExtraMaterialsDisplay > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(clientExtraMaterialsDisplay)}`} /> : null}
+                  <FinLedgerRow label="Client pays" amount={formatCurrency(billableRevenue)} strong />
+                  {(job.customer_deposit ?? 0) > 0 && !customerPayments.some((cp) => cp.type === "customer_deposit") ? (
+                    <FinLedgerRow
+                      label="Deposit asked"
+                      meta={job.customer_deposit_paid ? "Marked paid" : "Not paid yet"}
+                      amount={formatCurrency(job.customer_deposit ?? 0)}
+                      tone="muted"
+                    />
+                  ) : null}
+                  {customerPayments.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note).replace(/ · req [A-Za-z0-9-]+$/, "");
+                    const isRefund = Number(p.amount) < 0;
+                    const scheduleTag = isRefund ? "Refund" : p.type === "customer_deposit" ? "Deposit" : "Balance";
+                    return (
+                      <FinLedgerRow
+                        key={p.id}
+                        label={
+                          <PaymentDetailHover payment={p}>
+                            {isRefund ? `Refunded${p.payment_method === "stripe" ? " to card · Stripe" : ""}` : finPaymentMethodLabel(p.payment_method, "client")}
+                          </PaymentDetailHover>
+                        }
+                        meta={[formatBritishDate(p.payment_date), ledgerTag ?? scheduleTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        amount={isRefund ? `+${formatCurrencyPrecise(Math.abs(Number(p.amount)))}` : formatCurrencyPrecise(-Number(p.amount))}
+                        tone={isRefund ? "out" : "in"}
+                        onRemove={isAdmin ? () => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type }) : undefined}
                       />
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    </div>
-                    <div className="py-1">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-text-secondary">Total Extras</span>
-                        <span className={cn("font-semibold tabular-nums", clientExtraTotalDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                          {clientExtraTotalDisplay > 0.02 ? `+${formatCurrency(clientExtraTotalDisplay)}` : formatCurrency(0)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Labour</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraPlainDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraPlainDisplay > 0.02 ? `+${formatCurrency(clientExtraPlainDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">CCZ</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraCczDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraCczDisplay > 0.02 ? `+${formatCurrency(clientExtraCczDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Parking</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraParkingDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraParkingDisplay > 0.02 ? `+${formatCurrency(clientExtraParkingDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className={cn("font-semibold tabular-nums", clientExtraMaterialsDisplay > 0.02 ? "text-emerald-700" : "text-text-tertiary")}>
-                        {clientExtraMaterialsDisplay > 0.02 ? `+${formatCurrency(clientExtraMaterialsDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Payment history: always show header so empty state is visible */}
-                  <div className="mt-1 space-y-0.5">
-                    <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Payment history</p>
-                    {customerPayments.length === 0 ? (
-                      <p className="text-[10px] text-text-tertiary pl-0.5">No payments recorded yet.</p>
-                    ) : null}
-                    {customerPayments.map((p) => {
-                      const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                      const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note).replace(/ · req [A-Za-z0-9-]+$/, "");
-                      const isRefund = Number(p.amount) < 0;
-                      const scheduleTag = isRefund ? "Refund" : p.type === "customer_deposit" ? "Scheduled deposit" : "Final balance";
-                      return (
-                      <div key={p.id} className="flex items-start justify-between gap-1.5 rounded-md bg-surface-hover/40 px-2 py-1.5">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] font-semibold text-text-tertiary uppercase">
-                              {ledgerTag ?? scheduleTag}
-                            </span>
-                            {isRefund ? <Badge variant="danger" size="sm">Refunded</Badge> : <Badge variant="success" size="sm">Received</Badge>}
-                            {p.payment_method && (
-                              <span className="text-[10px] text-text-tertiary">
-                                ·{" "}
-                                {p.payment_method === "bank_transfer"
-                                  ? "Bank"
-                                  : p.payment_method === "cash"
-                                    ? "Cash"
-                                    : p.payment_method === "stripe"
-                                      ? "Stripe"
-                                      : p.payment_method}
-                              </span>
-                            )}
-                            <span className="text-[10px] text-text-tertiary">
-                              · {formatBritishDate(p.payment_date)}
-                            </span>
-                          </div>
-                          {ledgerTag ? (
-                            <p className="text-[10px] text-text-tertiary truncate pl-0.5">{scheduleTag}</p>
-                          ) : null}
-                          {p.bank_reference && <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>}
-                          {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400" title="Reduces amount due">
-                            {formatCurrencyPrecise(-Number(p.amount))}
-                          </span>
-                          {isAdmin && (
-                            <button onClick={() => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })} className="text-text-tertiary hover:text-red-500 transition-colors">
-                              <X className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border-light pt-1.5 text-xs dark:border-[#2f3642]">
-                    <span className={`font-semibold ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
-                      {amountDue > 0.02 ? "Amount due" : "Fully collected"}
-                    </span>
-                    <span className={`font-bold tabular-nums ${amountDue > 0.02 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>
-                      {amountDue > 0.02 ? formatCurrency(amountDue) : formatCurrency(0)}
-                    </span>
-                  </div>
+                    );
+                  })}
                 </div>
-                <div className="mt-2 flex w-full flex-col gap-2">
-                  {isAdmin ? (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm"
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-4 w-4 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType(undefined);
-                        setMoneyDrawerFlow("client_pay");
-                        setMoneyDrawerOpen(true);
-                      }}
-                      title="Records money received from the client. Reduces amount due only — use Add extra charge or Add a discount for line-item adjustments."
-                    >
-                      Record Received Payment
-                    </Button>
-                  ) : null}
-                  <div className="flex w-full flex-nowrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Labour");
-                        setMoneyDrawerFlow("client_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add extra charge
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-emerald-300/90 bg-emerald-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-500/35 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={job.status === "cancelled" || job.status === "deleted"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Discount — labour");
-                        setMoneyDrawerFlow("client_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add a discount
-                    </Button>
-                  </div>
-                </div>
+                <FinBalanceBanner
+                  total={billableRevenue}
+                  paid={customerPaidTotal}
+                  due={Math.max(0, amountDue)}
+                  paidVerb="Received"
+                  dueText="still to pay"
+                />
                 {(() => {
-                  if (!showsJobPaymentPlan) return null;
+                  // Avulso também mostra: o plano do cliente numa fatura só (mig 326).
                   const primaryInv =
                     (job.invoice_id ? jobInvoices.find((i) => i.id === job.invoice_id) : undefined) ??
                     jobInvoices[0];
@@ -9428,11 +9382,26 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div className="mt-2">
                       <JobPaymentPlanPanel
                         kind="client"
+                        jobId={job.id}
+                        jobRef={job.reference}
                         entityId={primaryInv.id}
                         totalAmount={Number(primaryInv.amount ?? billableRevenue)}
                         amountPaid={customerPaidTotal}
                         canEdit={primaryInv.status !== "paid"}
-                        onUpdated={refreshJobFinance}
+                        onUpdated={async () => {
+                          // Avulso: plano do cliente liga/desliga o parcelado do parceiro, que espelha as parcelas.
+                          if (!isRecurringSeriesJob && (job.job_kind ?? "one_off") === "one_off") {
+                            const temPlano = (await listInstallmentsForInvoice(primaryInv.id)).some((i) => i.status !== "cancelled");
+                            const ligado = job.partner_paid_in_instalments === true;
+                            try {
+                              if (temPlano !== ligado) await setJobPartnerInstalments(job.id, temPlano);
+                              else if (ligado && job.self_bill_id) await refreshSelfBillPayoutState(job.self_bill_id);
+                            } catch (e) {
+                              toast.error(getErrorMessage(e, "Partner instalments could not be updated"));
+                            }
+                          }
+                          await refreshJobFinance();
+                        }}
                       />
                     </div>
                   );
@@ -9440,10 +9409,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* Cash out (partner payout) */}
-              <div className="rounded-lg border border-rose-200/80 bg-rose-50/45 p-2 shadow-sm dark:border-rose-500/25 dark:bg-rose-950/20">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1.5 text-xs">
+              <div className="rounded-lg border border-border bg-card p-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 pb-1 text-xs">
                   <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Cash out — partner</span>
+                    <span className="text-[12px] font-semibold text-text-primary">Expenses</span>
                     <Badge
                       variant={
                         partnerUsesClawbackUi
@@ -9479,158 +9448,44 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     self-bill follow-up.
                   </p>
                 ) : null}
-                <div className="space-y-2 text-xs">
-                  <div
-                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 dark:border-[#2f3642] dark:bg-[#101621]"
-                    title="Subcontract labour agreed at the start of this job. Stays locked — extras and materials are tracked below."
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-text-primary">Base pay</span>
-                    </div>
-                    <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                      {formatCurrency(partnerInitialBalance)}
-                    </span>
-                  </div>
-                  {extraVisitsCount > 0 ? (
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 rounded-md border border-border-light/70 bg-background/60 px-2 py-1.5 text-xs dark:border-[#2f3642] dark:bg-[#101621]">
-                      <span className="text-text-primary">
-                        Visits <span className="text-text-tertiary">· {extraVisitsCount} extra</span>
-                      </span>
-                      <span className="font-semibold tabular-nums text-text-primary shrink-0">
-                        {extraVisitsPartner > 0.005 ? `+${formatCurrency(extraVisitsPartner)}` : formatCurrency(0)}
-                      </span>
-                    </div>
+                <div className="divide-y divide-border/60">
+                  <FinLedgerRow label="Base pay" amount={formatCurrency(partnerInitialBalance)} />
+                  {extraVisitsCount > 0 && extraVisitsPartner > 0.005 ? (
+                    <FinLedgerRow label={`Extra visits · ${extraVisitsCount}`} amount={`+${formatCurrency(extraVisitsPartner)}`} />
                   ) : null}
-                  <div className="space-y-1 rounded-md border border-border-light/80 bg-muted/30 p-2 dark:border-[#323a46] dark:bg-[#1a212d]">
-                    <div className="flex items-center gap-1.5">
-                      <JobCardHint
-                        title="View all partner extras"
-                        onClick={() => openFinanceHub("partner")}
-                        className="focus:ring-rose-400"
+                  {partnerExtraPlainDisplay > 0.02 ? <FinLedgerRow label="Extra labour" amount={`+${formatCurrency(partnerExtraPlainDisplay)}`} /> : null}
+                  {partnerExtraCczDisplay > 0.02 ? <FinLedgerRow label="CCZ" amount={`+${formatCurrency(partnerExtraCczDisplay)}`} /> : null}
+                  {partnerExtraParkingDisplay > 0.02 ? <FinLedgerRow label="Parking" amount={`+${formatCurrency(partnerExtraParkingDisplay)}`} /> : null}
+                  {partnerMaterialsLine > 0.02 ? <FinLedgerRow label="Materials" amount={`+${formatCurrency(partnerMaterialsLine)}`} /> : null}
+                  {hasPartnerDeductions
+                    ? partnerNonMaterialsDeductionEntries.map((entry) => (
+                        <FinLedgerRow
+                          key={entry.id}
+                          label={`Deduction · ${entry.extraType}`}
+                          amount={formatSignedCurrency(extraHistorySignedAmount(entry))}
+                          tone="in"
+                        />
+                      ))
+                    : null}
+                  <FinLedgerRow label="Partner gets" amount={formatCurrencyPrecise(partnerCashOutSummaryAmount)} strong />
+                  {partnerPayoutLedgerRows.map((p) => {
+                    const ledgerTag = parseJobPaymentLedgerLabel(p.note);
+                    const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
+                    return (
+                      <FinLedgerRow
+                        key={p.id}
+                        label={<PaymentDetailHover payment={p}>{finPaymentMethodLabel(p.payment_method, "partner")}</PaymentDetailHover>}
+                        meta={[formatBritishDate(p.payment_date), ledgerTag, p.bank_reference ? `Ref ${p.bank_reference}` : "", noteRest]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        amount={formatCurrencyPrecise(-Number(p.amount))}
+                        tone="out"
+                        onRemove={isAdmin ? () => setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type }) : undefined}
                       />
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Extras</p>
-                    </div>
-                    <div className="py-1">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-text-secondary">Total Extras</span>
-                        <span className={cn("font-semibold tabular-nums", partnerExtraTotalDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                          {partnerExtraTotalDisplay > 0.02 ? `+${formatCurrency(partnerExtraTotalDisplay)}` : formatCurrency(0)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Labour</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraPlainDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraPlainDisplay > 0.02 ? `+${formatCurrency(partnerExtraPlainDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">CCZ</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraCczDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraCczDisplay > 0.02 ? `+${formatCurrency(partnerExtraCczDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Parking</span>
-                      <span className={cn("font-semibold tabular-nums", partnerExtraParkingDisplay > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerExtraParkingDisplay > 0.02 ? `+${formatCurrency(partnerExtraParkingDisplay)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                    {hasPartnerDeductions ? (
-                      <div className="space-y-1 border-t border-border-light/70 pt-2 mt-1 dark:border-[#323a46]">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Deductions</p>
-                        <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                          <span className="text-text-secondary">Total deductions</span>
-                          <span className="font-semibold tabular-nums text-emerald-700">
-                            {formatSignedCurrency(partnerDeductionsTotal)}
-                          </span>
-                        </div>
-                        {partnerNonMaterialsDeductionEntries.map((entry) => (
-                          <div key={entry.id} className="flex items-center justify-between gap-2 py-0.5 text-xs pl-1">
-                            <span className="text-text-tertiary truncate">{entry.extraType}</span>
-                            <span className="font-semibold tabular-nums text-emerald-700 shrink-0">
-                              {formatSignedCurrency(extraHistorySignedAmount(entry))}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="flex items-center justify-between gap-2 py-1 text-xs">
-                      <span className="text-text-secondary">Materials</span>
-                      <span className={cn("font-semibold tabular-nums", partnerMaterialsLine > 0.02 ? "text-rose-700" : "text-text-tertiary")}>
-                        {partnerMaterialsLine > 0.02 ? `+${formatCurrency(partnerMaterialsLine)}` : formatCurrency(0)}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Partner payment history: always show header when there is a partner cost so empty state is visible */}
-                  {partnerCashOutTotal > 0.02 || partnerUsesClawbackUi ? (
-                    <div className="mt-1 space-y-2">
-                      <div className="space-y-1">
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">Payment history</p>
-                        {partnerPayoutLedgerRows.length === 0 && partnerLegacyCostAsPayoutRows.length === 0 ? (
-                          <p className="text-[10px] text-text-tertiary pl-0.5">No payouts recorded yet.</p>
-                        ) : null}
-                        {partnerPayoutLedgerRows.map((p) => {
-                            const ledgerTag = parseJobPaymentLedgerLabel(p.note);
-                            const noteRest = jobPaymentNoteWithoutLedgerPrefix(p.note);
-                            const primaryLabel = ledgerTag ?? "Partner payout";
-                            return (
-                              <div
-                                key={p.id}
-                                className="flex items-start justify-between gap-2 rounded-lg bg-surface-hover/40 px-2.5 py-2"
-                              >
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-[10px] font-semibold text-text-tertiary uppercase">{primaryLabel}</span>
-                                    <Badge variant="outline" size="sm">
-                                      Paid
-                                    </Badge>
-                                    {p.payment_method && (
-                                      <span className="text-[10px] text-text-tertiary">
-                                        {p.payment_method === "bank_transfer"
-                                          ? "Bank"
-                                          : p.payment_method === "cash"
-                                            ? "Cash"
-                                            : p.payment_method === "other"
-                                              ? "Other"
-                                              : p.payment_method}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] text-text-tertiary">
-                                      ·{" "}
-                                      {formatBritishDate(p.payment_date)}
-                                    </span>
-                                  </div>
-                                  {ledgerTag ? (
-                                    <p className="text-[10px] text-text-tertiary truncate pl-0.5">Cash out</p>
-                                  ) : null}
-                                  {p.bank_reference && (
-                                    <p className="text-[10px] text-text-tertiary truncate">Ref: {p.bank_reference}</p>
-                                  )}
-                                  {noteRest ? <p className="text-[10px] text-text-tertiary truncate">{noteRest}</p> : null}
-                                </div>
-                                <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
-                                  <span
-                                    className="text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-300"
-                                    title="Reduces amount due only"
-                                  >
-                                    {formatCurrencyPrecise(-Number(p.amount))}
-                                  </span>
-                                  {isAdmin && (
-                                    <button
-                                      onClick={() =>
-                                        setDeletePaymentTarget({ id: p.id, amount: Number(p.amount), type: p.type })
-                                      }
-                                      className="text-text-tertiary hover:text-red-500 transition-colors"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                      </div>
+                    );
+                  })}
+                </div>
+                  <div className="mt-1">
                       {partnerLegacyCostAsPayoutRows.length > 0 ? (
                         <div className="space-y-1">
                           <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide pt-1">
@@ -9678,92 +9533,24 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                           })}
                         </div>
                       ) : null}
-                    </div>
-                  ) : null}
-                  {(partnerCashOutTotal > 0.02 || partnerUsesClawbackUi) ? (
-                    <div className="flex items-center justify-between pt-1.5 border-t border-border-light dark:border-[#2f3642]">
-                      <span
-                        className={`text-xs font-semibold ${
-                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
-                        }`}
-                      >
-                        {partnerUsesClawbackUi
-                          ? partnerClawbackOwed > 0.02
-                            ? "Outstanding clawback"
-                            : "No clawback recorded"
-                          : partnerPayRemaining > 0
-                            ? "Amount due"
-                            : "Fully paid out"}
-                      </span>
-                      <span
-                        className={`text-sm font-bold tabular-nums ${
-                          (partnerUsesClawbackUi ? partnerClawbackOwed > 0.02 : partnerPayRemaining > 0) ? "text-amber-600" : "text-emerald-600"
-                        }`}
-                      >
-                        {partnerUsesClawbackUi
-                          ? partnerClawbackOwed > 0.02
-                            ? formatCurrencyPrecise(-partnerClawbackOwed)
-                            : formatCurrencyPrecise(0)
-                          : partnerPayRemaining > 0
-                            ? formatCurrency(partnerPayRemaining)
-                            : formatCurrency(0)}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-2 flex w-full flex-col gap-2">
-                  {isAdmin ? (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      className="min-h-[2.75rem] w-full rounded-lg px-3 text-sm font-semibold shadow-sm dark:bg-[#020040]"
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-4 w-4 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerFlow("partner_pay");
-                        setMoneyDrawerOpen(true);
-                      }}
-                      title='Records real money paid to partner (not an extra labour line). Choose "Deposit pass-through" or "Advance" if paying ahead of the labour cap.'
-                    >
-                      Record partner payment
-                    </Button>
-                  ) : null}
-                  <div className="flex w-full flex-nowrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Labour");
-                        setMoneyDrawerFlow("partner_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add extra charge
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={cn(
-                        "min-h-[2.5rem] min-w-0 flex-1 !flex-nowrap whitespace-nowrap rounded-lg border-rose-300/90 bg-rose-50 px-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 shadow-sm hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-100 dark:hover:bg-rose-950/45 [&_span]:whitespace-nowrap",
-                      )}
-                      disabled={!job.partner_id?.trim() || job.status === "cancelled"}
-                      icon={<Plus className="h-3.5 w-3.5 shrink-0" />}
-                      onClick={() => {
-                        setMoneyDrawerInitialExtraType("Discount — labour");
-                        setMoneyDrawerFlow("partner_extra");
-                        setMoneyDrawerOpen(true);
-                      }}
-                    >
-                      Add deduction
-                    </Button>
                   </div>
-                </div>
-                {showsJobPaymentPlan &&
+                {partnerCashOutTotal > 0.02 && !partnerUsesClawbackUi ? (
+                  <FinBalanceBanner
+                    total={partnerCashOutSummaryAmount}
+                    paid={partnerPaidTotal}
+                    due={Math.max(0, partnerPayRemaining)}
+                    paidVerb="Paid"
+                    dueText="still to pay the partner"
+                  />
+                ) : null}
+                {partnerUsesClawbackUi ? (
+                  <div className="mt-1.5 flex items-center justify-between gap-2 rounded-lg bg-[var(--warning-light)] px-2.5 py-2 text-[12px] text-[var(--warn-ink)]">
+                    <span className="font-medium">{partnerClawbackOwed > 0.02 ? "Partner owes us (clawback)" : "No clawback recorded"}</span>
+                    <span className="font-semibold tabular-nums">{formatCurrencyPrecise(partnerClawbackOwed > 0.02 ? -partnerClawbackOwed : 0)}</span>
+                  </div>
+                ) : null}
+                {/* Parceiro: série, ou avulso parcelado (self-bill próprio). No balde da quinzena, plano dividiria o balde inteiro. */}
+                {(showsJobPaymentPlan || job.partner_paid_in_instalments === true) &&
                 job.self_bill_id?.trim() &&
                 job.partner_id?.trim() &&
                 job.status !== "cancelled" ? (
@@ -9773,7 +9560,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       entityId={job.self_bill_id}
                       totalAmount={Math.max(0, Number(jobSelfBill?.net_payout ?? partnerCashOutTotal))}
                       amountPaid={partnerPaidTotal}
-                      canEdit={!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status)}
+                      canEdit={
+                        job.partner_paid_in_instalments !== true &&
+                        (!jobSelfBill || !["paid", "payout_sent"].includes(jobSelfBill.status))
+                      }
                       onUpdated={refreshJobFinance}
                     />
                   </div>
@@ -9828,12 +9618,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
 
               {/* Fully paid */}
-              {job.customer_final_paid && (
-                <div className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 dark:bg-emerald-950/30">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                  <p className="text-xs font-medium text-emerald-700">Job fully paid</p>
+              {/* Uma fonte só: o que foi lançado. A marca do job sozinha não diz que entrou dinheiro. */}
+              {amountDue <= 0.02 && customerPaidTotal > 0.02 ? (
+                <div className="flex items-center gap-1.5 rounded-lg bg-[var(--success-light)] px-2.5 py-2 text-[12px] font-medium text-[var(--ok-ink)]">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  Job fully paid
                 </div>
-              )}
+              ) : job.customer_final_paid ? (
+                <div className="flex items-center gap-1.5 rounded-lg bg-[var(--warning-light)] px-2.5 py-2 text-[12px] font-medium text-[var(--warn-ink)]">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Marked as paid, but no payment is recorded
+                  <FixfyHintIcon text="The job is flagged as paid, yet no payment line exists. Record the payment received (Actions › Client payment) so the numbers match, or the flag is wrong." />
+                </div>
+              ) : null}
               {markedPaidBy ? (
                 <div className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 dark:border-sky-500/35 dark:bg-sky-950/20">
                   <p className="text-[11px] font-medium text-sky-800 dark:text-sky-200">Marked as paid by {markedPaidBy}</p>
@@ -9842,27 +9639,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             </div>
 
             {/* Billing documents — client invoice vs partner self-bill */}
-            <div className="space-y-3 border-t border-border-light pt-3 dark:border-[#2f3642]">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-text-primary flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
-                    Billing documents
-                  </p>
-                  <p className="text-[10px] text-text-tertiary mt-0.5 leading-snug">
-                    Invoice the client · Self-bill the partner
-                  </p>
-                </div>
-              </div>
+            <div className="space-y-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
+              <p className="m-0 flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
+                <FileText className="h-3.5 w-3.5 text-primary" aria-hidden />
+                Billing documents
+                <FixfyHintIcon text="Invoice the client. Self-bill the partner." />
+              </p>
 
-            <div className="rounded-xl border-2 border-emerald-200/90 bg-gradient-to-br from-emerald-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-emerald-500/30 dark:from-emerald-950/35 dark:to-[#141922]">
-              <div className="flex items-center gap-2 border-b border-emerald-200/60 pb-2 dark:border-emerald-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm dark:bg-emerald-700">
+            <div className="rounded-xl border border-border bg-card p-2.5 space-y-2 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--success-light)] text-[var(--ok)]">
                   <Building2 className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-bold uppercase tracking-wide text-emerald-900 dark:text-emerald-100">Client invoice</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="m-0 text-[12px] font-semibold text-text-primary">Client invoice</p>
                     {invoiceLifecycleBadge ? (
                       <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", invoiceLifecycleBadge.className)}>
                         {invoiceLifecycleBadge.label}
@@ -9872,10 +9663,20 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         Not created
                       </span>
                     )}
+                    <FixfyHintIcon
+                      text={[
+                        "Money in. We invoice the client.",
+                        financeBillingContact
+                          ? `Billing goes to: ${financeBillingContact.mode === "account" ? "this account" : "the end customer"}.`
+                          : "",
+                        showEndCustomerBillingHint
+                          ? `End customer billing uses the client email, not Finance > Billing email. Edit ${job.client_name?.trim() || "this client"} under Accounts > Clients.`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n")}
+                    />
                   </div>
-                  <p className="text-[10px] text-emerald-800/80 dark:text-emerald-200/70 leading-snug mt-0.5">
-                    Money in · We invoice the <strong className="font-semibold">client</strong>
-                  </p>
                 </div>
               </div>
               <div className="space-y-2">
@@ -10068,7 +9869,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 )}
               </div>
 
-              <div className="border-t border-emerald-200/60 pt-3 dark:border-emerald-500/20 space-y-2">
+              <div className="space-y-1">
                 {financeBillingLoading ? (
                   <p className="text-[11px] leading-snug text-text-tertiary">Loading billing contact…</p>
                 ) : financeBillingLoadError ? (
@@ -10082,16 +9883,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       ({financeBillingContact.mode === "account" ? "This account" : "End customer"})
                     </span>
                   </p>
-                ) : financeBillingContact ? (
-                  <p className="text-[11px] leading-snug text-text-tertiary">
-                    Billing: {financeBillingContact.mode === "account" ? "This account" : "End customer"}
-                  </p>
-                ) : null}
-                {showEndCustomerBillingHint ? (
-                  <p className="text-[11px] leading-snug text-text-tertiary">
-                    End customer billing uses the client email — not Finance → Billing Email. Edit{" "}
-                    {job.client_name?.trim() || "this client"} under Accounts → Clients or /clients.
-                  </p>
                 ) : null}
                 {showHeaderBillingMismatch ? (
                   <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">
@@ -10099,118 +9890,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     email is on the client linked to this job, or retry after saving in /clients.
                   </p>
                 ) : null}
-                {!clientPaidInFull ? (
-                  <>
-                    <div className="relative" ref={requestPaymentMenuRef}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="primary"
-                        className="w-full min-h-[2.5rem] font-semibold shadow-sm"
-                        icon={<Mail className="h-3.5 w-3.5" />}
-                        loading={sendingInvoiceEmail}
-                        disabled={sendingInvoiceEmail || loadingInvoices || jobInvoices.length === 0}
-                        aria-expanded={requestPaymentMenuOpen}
-                        aria-haspopup="menu"
-                        title="Request payment: email the invoice or share a Stripe pay link"
-                        onClick={() => setRequestPaymentMenuOpen((o) => !o)}
-                      >
-                        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                          Request payment
-                          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", requestPaymentMenuOpen && "rotate-180")} />
-                        </span>
-                      </Button>
-                      {requestPaymentMenuOpen ? (
-                        <div
-                          role="menu"
-                          className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-border-light bg-card py-1 shadow-lg dark:border-border"
-                        >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={!invoiceSendGate.ok || financeBillingLoading}
-                            title={invoiceSendGate.ok ? "Choose % and email the invoice PDF with a Stripe pay link" : invoiceSendGate.reason}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              void handleOpenRequestPaymentModal({ initialPercent: 100 });
-                            }}
-                          >
-                            <Mail className="h-3.5 w-3.5 shrink-0" />
-                            Send via email
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            title="Copy a Stripe link charging the full open balance"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              const inv = primaryInvoiceForBadge ?? jobInvoices[0];
-                              if (!inv?.reference) {
-                                toast.error("No invoice linked to this job yet.");
-                                return;
-                              }
-                              void copyInvoicePayLink(inv.reference);
-                            }}
-                          >
-                            <Copy className="h-3.5 w-3.5 shrink-0" />
-                            Copy pay link
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            title="Pick a % of the balance, then copy the link or email it"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-text-primary hover:bg-surface-hover"
-                            onClick={() => {
-                              setRequestPaymentMenuOpen(false);
-                              void handleOpenRequestPaymentModal({ initialPercent: 50, allowWithoutEmail: true });
-                            }}
-                          >
-                            <CreditCard className="h-3.5 w-3.5 shrink-0" />
-                            Partial amount…
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    {!invoiceSendGate.ok && !financeBillingLoading ? (
-                      <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
-                    ) : null}
-                  </>
-                ) : null}
-                {isAdmin && customerPaidTotal > 0.02 ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="w-full min-h-[2.25rem]"
-                    icon={<Undo2 className="h-3.5 w-3.5" />}
-                    title="Give money back to the customer: to the card through Stripe, or record a bank transfer"
-                    onClick={() => setRefundOpen(true)}
-                  >
-                    Refund customer
-                  </Button>
+                {!clientPaidInFull && !invoiceSendGate.ok && !financeBillingLoading ? (
+                  <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">{invoiceSendGate.reason}</p>
                 ) : null}
               </div>
             </div>
 
-            <div className="rounded-xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/90 to-white p-3 space-y-2.5 shadow-sm dark:border-rose-500/30 dark:from-rose-950/35 dark:to-[#141922]">
-              <div className="flex items-center gap-2 border-b border-rose-200/60 pb-2 dark:border-rose-500/20">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040] text-white shadow-sm">
+            <div className="rounded-xl border border-border bg-card p-2.5 space-y-2 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary text-white">
                   <HardHat className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-bold uppercase tracking-wide text-rose-900 dark:text-rose-100">Partner self-bill</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="m-0 text-[12px] font-semibold text-text-primary">Partner self-bill</p>
                     {selfBillLifecycleBadge ? (
                       <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold", selfBillLifecycleBadge.className)}>
                         {selfBillLifecycleBadge.label}
                       </span>
                     ) : null}
+                    <FixfyHintIcon text="Money out. We pay the partner through the self-bill." />
                   </div>
-                  <p className="text-[10px] text-rose-800/80 dark:text-rose-200/70 leading-snug mt-0.5">
-                    Money out · We pay the <strong className="font-semibold">partner</strong>
-                  </p>
                 </div>
                 {job.partner_id?.trim() ? (
                   <Button
@@ -10218,13 +9918,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     size="sm"
                     variant="outline"
                     loading={refreshingJob || loadingSelfBill}
-                    className="h-7 shrink-0 text-[10px] px-2"
-                    icon={<RefreshCw className="h-3 w-3" />}
+                    className="h-7 w-7 shrink-0 p-0"
+                    icon={<RefreshCw className="h-3.5 w-3.5" />}
                     onClick={() => void refreshJobFinance().then(() => toast.success("Partner finance synced"))}
-                    title="Reload job finance and recalculate self-bill totals from the server"
-                  >
-                    Sync
-                  </Button>
+                    title="Sync: reload job finance and recalculate self-bill totals"
+                    aria-label="Sync partner finance"
+                  />
                 ) : null}
               </div>
               {!job.partner_id?.trim() ? (
@@ -10705,7 +10404,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <>
                     <div>
                       <TimeSelect
-                        label="Arrival Time"
+                        label="Arrival time"
                         value={resumeArrivalTime}
                         disabled={resumeSaving}
                         onChange={(v) => setResumeArrivalTime(v)}
@@ -10798,7 +10497,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "manual"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -10812,7 +10511,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(
                     "text-left rounded-lg border px-2.5 py-2 text-sm transition-colors min-w-0",
                     jobAssignmentEditMode === "auto"
-                      ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                      ? "border-success bg-success-light text-success"
                       : "border-border bg-card text-text-secondary",
                   )}
                 >
@@ -11331,7 +11030,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 className={cn(
                   "inline-flex min-h-9 min-w-0 flex-1 shrink items-center justify-center rounded-full border-[1.5px] px-2 py-2 text-xs font-bold transition-colors",
                   partnerAssignRateType === "fixed"
-                    ? "border-[#333] bg-[#f4f2ef] text-[#1a1a1a] dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
+                    ? "border-[#333] bg-surface-secondary text-text-primary dark:border-[#6b7280] dark:bg-[#1f2631] dark:text-[#e5e7eb]"
                     : "border-border-light bg-card text-text-tertiary hover:border-[#333]/60 hover:text-text-primary",
                 )}
               >
@@ -11656,7 +11355,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       className={cn(
                         "flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
                         active
-                          ? "border-[#1DB87A] bg-[#ecfff6] text-[#157a55] dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                          ? "border-success bg-success-light text-success dark:border-emerald-500/50 dark:bg-emerald-950/30 dark:text-emerald-200"
                           : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                       )}
                     >
@@ -11669,7 +11368,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <span
                         className={cn(
                           "flex-shrink-0 h-5 w-9 rounded-full border p-0.5 transition-colors",
-                          active ? "border-[#1DB87A] bg-[#1DB87A]" : "border-border bg-border-light",
+                          active ? "border-success bg-success" : "border-border bg-border-light",
                         )}
                       >
                         <span
@@ -11913,7 +11612,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               <>
                 <div>
                   <TimeSelect
-                    label="Arrival Time"
+                    label="Arrival time"
                     value={qrTime}
                     disabled={quickRescheduleSaving}
                     onChange={(v) => setQrTime(v)}

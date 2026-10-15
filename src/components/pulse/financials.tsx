@@ -366,17 +366,14 @@ export function Financials() {
         ? ` · ${revenueGoal.workingDaysInPeriod} working day${revenueGoal.workingDaysInPeriod === 1 ? "" : "s"}`
         : "";
 
+    // Receita é número neutro; quem diz se está atrás é a barra e a linha de baixo (15/10/2026).
     return {
-      variant,
-      topRight: (
-        <Pill tone={revenueGoal.status === "above" ? "ok" : revenueGoal.status === "on_track" ? "warn" : "bad"}>
-          {pillLabel}
-        </Pill>
-      ),
+      variant: "default" as const,
+      topRight: <StatusDot color="bg-fx-green" />,
       sub: (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <div
-            className="h-1.5 w-full overflow-hidden rounded-full bg-fx-line/80"
+            className="h-1 w-full overflow-hidden rounded-full bg-fx-line/80"
             role="progressbar"
             aria-valuenow={barPct}
             aria-valuemin={0}
@@ -388,6 +385,10 @@ export function Financials() {
               style={{ width: `${barPct}%` }}
             />
           </div>
+          <p className="m-0 flex items-center justify-between gap-2 text-[11px] tabular-nums">
+            <span className="text-text-tertiary">{pct}% of {goalLabel}</span>
+            <span className={cn("font-medium", revenueGoal.status === "above" ? "text-fx-green" : revenueGoal.status === "on_track" ? "text-fx-amber" : "text-fx-red")}>{pillLabel}</span>
+          </p>
         </div>
       ),
       dica: `${gapLabel}${wdPart}`,

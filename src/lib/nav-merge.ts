@@ -31,6 +31,17 @@ export function mergeNewNavItems(
 
   const findGroup = (label: string) => result.find((g) => g.label === label);
 
+  // Item que o código mudou de grupo (Schedule foi para baixo do Pulse em
+  // 15/10/2026): a cópia salva no grupo antigo sai, senão aparece duas vezes.
+  const grupoCanonico = new Map<string, string>();
+  canonical.forEach((g) => g.items.forEach((i) => grupoCanonico.set(i.href, g.label)));
+  for (const g of result) {
+    g.items = g.items.filter((i) => {
+      const certo = grupoCanonico.get(i.href);
+      return !certo || certo === g.label;
+    });
+  }
+
   for (const cGroup of canonical) {
     let match = findGroup(cGroup.label);
     if (!match) {

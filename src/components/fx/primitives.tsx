@@ -1,4 +1,3 @@
-import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
@@ -22,7 +21,7 @@ export function LiveIndicator({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-2 font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] text-fx-coral",
+        "inline-flex items-center gap-2 text-[11px] font-medium text-fx-mute",
         className,
       )}
     >
@@ -34,15 +33,16 @@ export function LiveIndicator({
 
 type PillTone = "neutral" | "ok" | "warn" | "bad" | "coral" | "info" | "violet" | "ghost";
 
+/** UNO chip tones: colour is state; coral, violet and ghost fall back to neutral. */
 const PILL_TONE: Record<PillTone, string> = {
-  neutral: "bg-fx-paper-2 text-fx-slate",
-  ok: "bg-fx-green-50 text-fx-green",
-  warn: "bg-fx-amber-50 text-fx-amber",
-  bad: "bg-fx-red-50 text-fx-red",
-  coral: "bg-fx-coral-50 text-fx-coral-p",
-  info: "bg-fx-blue-50 text-fx-blue",
-  violet: "bg-[#EDE7F6] text-[#5B21B6] dark:bg-violet-950/60 dark:text-violet-100",
-  ghost: "bg-transparent border border-fx-line text-fx-slate",
+  neutral: "bg-surface-tertiary text-text-primary",
+  ok: "bg-success-light text-[var(--ok-ink)]",
+  warn: "bg-warning-light text-[var(--warn-ink)]",
+  bad: "bg-danger-light text-[var(--bad-ink)]",
+  coral: "bg-surface-tertiary text-text-primary",
+  info: "bg-info-light text-[var(--info-ink)]",
+  violet: "bg-surface-tertiary text-text-primary",
+  ghost: "bg-surface-tertiary text-text-primary",
 };
 
 export function Pill({
@@ -59,7 +59,7 @@ export function Pill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] whitespace-nowrap",
+        "inline-flex items-center gap-[5px] px-2 py-[2px] rounded-[6px] text-[11px] font-medium leading-[1.45] whitespace-nowrap",
         PILL_TONE[tone],
         className,
       )}
@@ -86,22 +86,19 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <div
-      className={cn(
-        "bg-card border border-fx-line rounded-xl shadow-fx-1 overflow-hidden",
-        className,
-      )}
-    >
+    // VOS UNO Insights card (`ins-card`): soft gradient panel, shallow two-layer
+    // shadow, head 12/600 in text-secondary (sub in 11 text-tertiary), body 4/14/12.
+    <div className={cn("ins-card overflow-hidden", className)}>
       {(title || subtitle || actions) && (
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-fx-line">
+        <div className="flex items-start justify-between gap-2.5 px-3.5 pt-3">
           <div className="min-w-0">
-            {title && <div className="text-[14px] font-semibold text-text-primary leading-tight">{title}</div>}
-            {subtitle && <div className="fx-kk mt-1.5 min-w-0 truncate">{subtitle}</div>}
+            {title && <div className="truncate text-[12px] font-semibold text-text-secondary">{title}</div>}
+            {subtitle && <div className="mt-0.5 min-w-0 truncate text-[11px] text-text-tertiary">{subtitle}</div>}
           </div>
-          {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+          {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
         </div>
       )}
-      <div className={cn("px-5 py-4", bodyClassName)}>{children}</div>
+      <div className={cn("px-3.5 pb-3 pt-2", bodyClassName)}>{children}</div>
     </div>
   );
 }
@@ -142,57 +139,60 @@ export function KpiCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-card px-4 py-4 transition-colors",
-        variant === "default" && "border-fx-line hover:border-fx-line-2",
-        variant === "coral" &&
-          "border-fx-coral/25 bg-gradient-to-b from-card to-fx-coral-50/30 dark:border-fx-coral/38 dark:bg-fx-coral-50 dark:[background-image:none]",
-        variant === "alert" &&
-          "border-fx-red/25 bg-gradient-to-b from-card to-fx-red-50/40 dark:border-fx-red/40 dark:bg-fx-red-50 dark:[background-image:none]",
+        // VOS UNO Insights metric card: same shell for every variant; only the number takes status colour.
+        "ins-card relative overflow-hidden px-3.5 pb-2.5 pt-2.5",
+        // Detalhe abre no clique do cartão (15/10/2026); o "(i)" ao lado do "!" saiu.
+        onShowDetails && "cursor-pointer transition-colors hover:bg-surface-hover/60",
       )}
+      {...(onShowDetails
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            title: detailsLabel,
+            "aria-label": `${label}: ${detailsLabel}`,
+            onClick: onShowDetails,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onShowDetails();
+              }
+            },
+          }
+        : {})}
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="fx-kk inline-flex items-center gap-1.5">
+        <span className="inline-flex min-w-0 items-center gap-[5px] text-[12px] font-semibold text-text-secondary">
           {label}
           {hint && <FixfyHintIcon text={hint} placement="top-start" />}
           {countBesideHint != null && countBesideHint !== "" ? (
-            <span className="font-mono text-[11.5px] font-semibold tabular-nums text-fx-coral-p leading-none">
+            <span className="text-[11px] font-semibold tabular-nums text-text-tertiary leading-none">
               {countBesideHint}
             </span>
           ) : null}
-          {onShowDetails && (
-            <button
-              type="button"
-              onClick={onShowDetails}
-              aria-label={detailsLabel}
-              title={detailsLabel}
-              className="inline-flex h-4 w-4 items-center justify-center rounded-full text-fx-mute hover:bg-fx-paper hover:text-text-primary transition-colors"
-            >
-              <Info className="h-3 w-3" />
-            </button>
-          )}
+
         </span>
         {topRight}
       </div>
       {countAbove != null && countAbove !== "" && countBesideHint == null ? (
-        <div className="mt-2 font-mono text-[11.5px] text-fx-mute tabular-nums leading-none">{countAbove}</div>
+        <div className="mt-2 text-[11px] text-fx-mute tabular-nums leading-none">{countAbove}</div>
       ) : null}
       <div
         className={cn(
-          "font-medium tabular-nums tracking-[-0.02em] leading-[1.1] text-[24px]",
-          countAbove != null && countAbove !== "" && countBesideHint == null ? "mt-1" : "mt-2",
-          variant === "coral" && "text-fx-coral-p",
+          "ins-v font-semibold tabular-nums tracking-[-0.03em] leading-[1.1] text-[20px]",
+          countAbove != null && countAbove !== "" && countBesideHint == null ? "mt-1" : "mt-1.5",
+          variant === "coral" && "text-text-primary",
           variant === "alert" && "text-fx-red",
           variant === "default" && "text-text-primary",
         )}
       >
         {value}
       </div>
-      {sub && <div className="mt-1.5 font-mono text-[11.5px] text-fx-mute">{sub}</div>}
+      {sub && <div className="mt-1.5 text-[11px] text-fx-mute">{sub}</div>}
       {trend && (
         <div
           className={cn(
-            "absolute top-3.5 right-4 font-mono text-[11px] flex items-center gap-1",
-            trendDirection === "down" ? "text-fx-red" : "text-fx-green",
+            "absolute top-3 right-3.5 inline-flex items-center gap-1 rounded-[6px] px-2 py-[2px] text-[11px] font-medium",
+            trendDirection === "down" ? "bg-danger-light text-[var(--bad-ink)]" : "bg-success-light text-[var(--ok-ink)]",
           )}
         >
           {trend}
@@ -204,11 +204,11 @@ export function KpiCard({
 
 type Tone = "coral" | "blue" | "green" | "navy" | "neutral";
 const AVATAR_TONE: Record<Tone, string> = {
-  coral: "bg-fx-coral-50 text-fx-coral-p",
-  blue: "bg-fx-blue-50 text-fx-blue",
-  green: "bg-fx-green-50 text-fx-green",
-  navy: "bg-fx-navy/10 text-fx-navy",
-  neutral: "bg-fx-paper-2 text-fx-slate",
+  coral: "bg-surface-tertiary text-text-secondary",
+  blue: "bg-surface-tertiary text-text-secondary",
+  green: "bg-surface-tertiary text-text-secondary",
+  navy: "bg-surface-tertiary text-text-secondary",
+  neutral: "bg-surface-tertiary text-text-secondary",
 };
 
 export function FxAvatar({
@@ -225,7 +225,7 @@ export function FxAvatar({
   src?: string | null;
   alt?: string;
 }) {
-  const sizing = size === "md" ? "h-7 w-7 text-[11px]" : "h-[22px] w-[22px] text-[9.5px]";
+  const sizing = size === "md" ? "h-7 w-7 text-[11px]" : "h-[22px] w-[22px] text-[11px]";
 
   if (src) {
     return (

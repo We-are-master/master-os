@@ -5,7 +5,7 @@
  */
 
 import Link from "next/link";
-import { PageHeader } from "@/components/layout/page-header";
+import { SettingsTabsBar } from "@/components/settings/settings-tabs-bar";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -54,10 +54,12 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
   const view = (await searchParams).view === "rules" ? "rules" : "agents";
   if (view === "rules") {
     return (
-      <div className="space-y-6 p-6">
-        <PageHeader title="Agents" subtitle="The AI agents working for Fixfy and the rules they follow.">
+      <div className="space-y-6">
+        <SettingsTabsBar active="agents" />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="m-0 text-[13px] text-text-tertiary">The AI agents working for Fixfy and the rules they follow.</p>
           <Toggle view="rules" />
-        </PageHeader>
+        </div>
         <RulesView />
       </div>
     );
@@ -79,10 +81,12 @@ export default async function AgentsPage({ searchParams }: { searchParams: Promi
 
   return (
     <PageTransition>
-      <div className="space-y-6 p-6">
-        <PageHeader title="Agents" subtitle="The AI agents working for Fixfy. Open one to see what it knows and change how it decides.">
+      <div className="space-y-6">
+        <SettingsTabsBar active="agents" />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="m-0 text-[13px] text-text-tertiary">The AI agents working for Fixfy. Open one to see what it knows and change how it decides.</p>
           <Toggle view="agents" />
-        </PageHeader>
+        </div>
         <div className="overflow-x-auto rounded-xl border border-border-light">
           <table className="w-full min-w-[960px] text-sm">
             <thead className="bg-surface-secondary text-left text-xs text-text-tertiary">

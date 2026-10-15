@@ -822,7 +822,7 @@ export function ServiceCatalogTab() {
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-[12rem]">
           <Select
-            label="Display Icon"
+            label="Display icon"
             value={form.display_icon_key}
             onChange={(e) => {
               setCatalogIconLocked(true);
@@ -881,7 +881,7 @@ export function ServiceCatalogTab() {
       {form.pricing_structure === "single" ? (
         <>
           <Select
-            label="Charge Type"
+            label="Charge type"
             value={form.pricing_mode}
             onChange={(e) => setForm((f) => ({ ...f, pricing_mode: e.target.value as CatalogPricingMode }))}
             options={[
@@ -1406,7 +1406,7 @@ export function ServiceCatalogTab() {
         </>
       )}
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Catalog Service" subtitle="Defaults only — each request/quote can override.">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New catalog service" subtitle="Defaults only — each request/quote can override.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
           {FormFields}
           <div className="flex justify-end gap-2 pt-2">
@@ -1420,7 +1420,7 @@ export function ServiceCatalogTab() {
         </form>
       </Modal>
 
-      <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit Service" subtitle={editRow?.name}>
+      <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit service" subtitle={editRow?.name}>
         <form onSubmit={handleUpdate} className="px-6 py-5 space-y-4">
           {FormFields}
           <div className="flex justify-end gap-2 pt-2">

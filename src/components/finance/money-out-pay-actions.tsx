@@ -53,7 +53,7 @@ export function MoneyOutPayActions({
   const menuItems: MenuItemDef[] = [
     {
       icon: <Calendar className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />,
-      label: "Schedule Payment",
+      label: "Schedule payment",
       onClick: onSchedulePayment,
     },
   ];

@@ -151,44 +151,44 @@ export default function PublicBidForm({
     }
   };
 
-  const inputClass = "w-full rounded-md border border-[#D8D8DD] px-3 py-2 text-[14px]";
-  const labelClass = "block text-[13px] font-medium text-[#020040]";
-  const sectionTitle = "text-[11px] font-semibold uppercase tracking-wide text-[#6B6B70]";
+  const inputClass = "w-full rounded-md border border-[var(--line-2)] px-3 py-2 text-[14px]";
+  const labelClass = "block text-[13px] font-medium text-text-primary";
+  const sectionTitle = "text-[11px] font-semibold uppercase tracking-wide text-text-tertiary";
 
   return (
     <div className="space-y-5">
-      <header className="space-y-1 pb-2 border-b border-[#E4E4E8]">
-        <p className="text-[11px] uppercase tracking-wide text-[#6B6B70]">Submit bid</p>
-        <h2 className="text-[20px] font-semibold text-[#020040]">{quoteTitle}</h2>
-        <p className="text-[12px] text-[#6B6B70]">
+      <header className="space-y-1 pb-2 border-b border-border">
+        <p className="text-[11px] uppercase tracking-wide text-text-tertiary">Submit bid</p>
+        <h2 className="text-[20px] font-semibold text-text-primary">{quoteTitle}</h2>
+        <p className="text-[12px] text-text-tertiary">
           {propertyAddress ?? ""} · {quoteReference}
         </p>
         {partnerName ? (
-          <p className="text-[11px] text-[#6B6B70]">
+          <p className="text-[11px] text-text-tertiary">
             Bidding as <strong>{partnerName}</strong>
           </p>
         ) : null}
       </header>
 
-      <div className="rounded-md bg-[#F7F7FB] border border-[#E4E4EC] px-3 py-2 text-[12px] text-[#3A3A55]">
+      <div className="rounded-md bg-surface-secondary border border-border px-3 py-2 text-[12px] text-text-secondary">
         All fields marked required must be completed — labour, materials (can be £0), and two different start dates.
       </div>
 
       {scope?.trim() ? (
-        <section className="rounded-md bg-[#F7F7FB] border border-[#E4E4EC] p-3">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B6B70] mb-1">Scope</p>
-          <p className="text-[13px] text-[#3A3A55] whitespace-pre-wrap">{scope.trim()}</p>
+        <section className="rounded-md bg-surface-secondary border border-border p-3">
+          <p className="text-[10px] uppercase tracking-wide text-text-tertiary mb-1">Scope</p>
+          <p className="text-[13px] text-text-secondary whitespace-pre-wrap">{scope.trim()}</p>
         </section>
       ) : null}
 
       {photoUrls.length > 0 ? (
-        <section className="rounded-md bg-[#F7F7FB] border border-[#E4E4EC] p-3">
+        <section className="rounded-md bg-surface-secondary border border-border p-3">
           <PublicPhotoGallery urls={photoUrls} />
         </section>
       ) : null}
 
       {existingBid ? (
-        <div className="rounded-md bg-[#FFF8F3] border border-[#F5CFB8] px-3 py-2 text-[12px] text-[#7A3D00]">
+        <div className="rounded-md bg-[var(--pick-bg)] border border-[var(--line-2)] px-3 py-2 text-[12px] text-[var(--warn-ink)]">
           You previously bid £{existingBid.amount.toFixed(2)}. Update your figures below.
         </div>
       ) : null}
@@ -264,7 +264,7 @@ export default function PublicBidForm({
           </div>
         </div>
 
-        <div className="space-y-3 border-t border-[#E4E4E8] pt-4">
+        <div className="space-y-3 border-t border-border pt-4">
           <p className={sectionTitle}>Materials (required)</p>
           <div className="flex gap-2">
             {(["unit", "bulk"] as const).map((mode) => (
@@ -307,7 +307,7 @@ export default function PublicBidForm({
           </div>
         </div>
 
-        <div className="space-y-3 border-t border-[#E4E4E8] pt-4">
+        <div className="space-y-3 border-t border-border pt-4">
           <p className={sectionTitle}>Available start dates (required)</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -332,9 +332,9 @@ export default function PublicBidForm({
         </div>
 
         <div className="rounded-md bg-[#F0F4FF] border border-[#D8DDF5] px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B6B70]">Your bid total</p>
-          <p className="text-[22px] font-bold text-[#020040] tabular-nums">£{bidTotal.toFixed(2)}</p>
-          <p className="text-[11px] text-[#6B6B70] mt-0.5">
+          <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Your bid total</p>
+          <p className="text-[22px] font-bold text-text-primary tabular-nums">£{bidTotal.toFixed(2)}</p>
+          <p className="text-[11px] text-text-tertiary mt-0.5">
             Labour £{computedLabourCost.toFixed(2)} + Materials £{computedMaterialsCost.toFixed(2)}
           </p>
         </div>
@@ -352,7 +352,7 @@ export default function PublicBidForm({
       </section>
 
       {error ? (
-        <div className="rounded-md bg-[#FFF1EB] border border-[#F5CFB8] p-3 text-[12px] text-[#7A3D00]">
+        <div className="rounded-md bg-[var(--pick-bg)] border border-[var(--line-2)] p-3 text-[12px] text-[var(--warn-ink)]">
           {error}
         </div>
       ) : null}

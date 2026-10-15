@@ -1,8 +1,9 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Briefcase, Check, ChevronDown, FileText } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CheckCheck, ChevronDown, FileText } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { displayBillingReference } from "@/lib/billing-reference";
 import type { AttentionAccountGroup } from "@/lib/billing-standalone-metrics";
@@ -106,7 +107,7 @@ function MoneyInReadyListInner({
 
         return (
           <div key={group.accountKey}>
-            <div className="bl-ledger-partner flex items-center gap-2 px-5 py-2.5">
+            <div className="bl-ledger-partner flex items-center gap-2 px-4 py-1.5">
               {groupSelectableIds.length > 0 ? (
                 <input
                   type="checkbox"
@@ -130,16 +131,16 @@ function MoneyInReadyListInner({
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 shrink-0 text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 truncate text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                       {group.maxDaysLate > 0 ? ` · ${group.maxDaysLate}d late` : ""}
                       {group.nextExpectedPayYmd
@@ -173,13 +174,15 @@ function MoneyInReadyListInner({
                     <div
                       key={row.invoice.id}
                       className={cn(
-                        "bl-ledger-row flex flex-wrap items-center gap-3 px-5 py-3",
+                        "bl-ledger-row flex cursor-pointer items-center gap-2 py-1.5 pl-4 pr-4 hover:bg-surface-hover",
                         rowIdx % 2 === 1 && "bl-ledger-row--alt",
                       )}
+                      onClick={() => onOpenInvoice(row.invoice)}
                     >
                       {canSelect ? (
                         <input
                           type="checkbox"
+                          onClick={(e) => e.stopPropagation()}
                           checked={selectedInvoiceIds.has(row.invoice.id)}
                           onChange={(e) =>
                             onToggleInvoiceSelection([row.invoice.id], e.target.checked)
@@ -192,78 +195,69 @@ function MoneyInReadyListInner({
                       )}
                       <span
                         className={cn(
-                          "h-8 w-1 rounded-full",
+                          "h-5 w-1 shrink-0 rounded-full",
                           row.daysLate > 0 ? "bg-red-500" : "bg-amber-400",
                         )}
                       />
-                      <div className="min-w-0 flex-1">
-                        {/* Quem e o que foi feito em cima; documento e datas embaixo.
-                            Saiu do rodape a referencia do job (o RCP ja identifica
-                            a cobranca) e a data de emissao (quem cobra quer saber
-                            quando o trabalho foi feito e quando o dinheiro entra,
-                            nao quando o papel foi gerado). */}
-                        <p className="text-sm font-semibold text-[#020040]">
-                          {row.clientName}
-                          {job?.title?.trim() ? ` - ${job.title.trim()}` : ""}
-                        </p>
-                        <p className="text-xs text-text-secondary">
+                      <div className="flex min-w-0 flex-1 items-baseline gap-1.5 whitespace-nowrap">
+                        <span className="shrink-0 text-[13px] font-semibold text-text-primary">
                           {displayBillingReference(row.invoice.reference)}
-                          {jobDateYmd ? ` · Job ${formatDate(jobDateYmd)}` : ""}
-                          {row.expectedPayYmd
-                            ? ` · Due ${formatDate(row.expectedPayYmd)}`
-                            : ""}
-                        </p>
+                        </span>
+                        {job && jobRef ? (
+                          <a
+                            href={`/jobs/${job.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="shrink-0 text-[12px] font-medium text-primary underline-offset-2 hover:underline"
+                            title={`Open ${jobRef}${jobDateYmd ? ` · ${formatDate(jobDateYmd)}` : ""}`}
+                          >
+                            · {jobRef}
+                          </a>
+                        ) : null}
+                        <span className="truncate text-[12px] text-text-tertiary">· {row.clientName}</span>
                       </div>
+                      {job?.status ? (
+                        <Badge variant={jobStatusBadgeVariant(job.status)} size="sm" marker className="shrink-0">
+                          {jobStatusLabel(job.status)}
+                        </Badge>
+                      ) : null}
                       <span
                         className={cn(
-                          "text-xs font-medium",
-                          row.daysLate > 0 ? "text-red-600" : "text-text-secondary",
+                          "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
+                          row.daysLate > 0 ? "font-medium text-[var(--bad)]" : "text-text-secondary",
                         )}
                       >
                         {row.paymentPlanLabel
                           ? row.paymentPlanLabel
                           : row.daysLate > 0
                             ? `${row.daysLate}d late`
-                            : "Due soon"}
+                            : row.expectedPayYmd
+                              ? `Due ${new Date(`${row.expectedPayYmd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}`
+                              : "Due soon"}
                       </span>
-                      <span className="text-sm font-semibold tabular-nums">
+                      <span className="w-24 shrink-0 text-right text-[13px] font-semibold tabular-nums text-text-primary">
                         {formatCurrency(row.balanceDue)}
                       </span>
-                      <div className="flex gap-1">
-                        {job ? (
-                          <button
-                            type="button"
-                            title={`Open ${jobRef}${jobDateYmd ? ` · ${formatDate(jobDateYmd)}` : ""}`}
-                            className="rounded border border-border-light p-1 hover:bg-surface-hover"
-                            onClick={() =>
-                              window.open(`/jobs/${job.id}`, "_blank", "noopener,noreferrer")
-                            }
-                          >
-                            <Briefcase className="h-3.5 w-3.5 text-text-secondary" />
-                          </button>
-                        ) : null}
+                      <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         {canSelect ? (
                           <button
                             type="button"
                             title="Mark as received"
-                            className="rounded border border-border-light p-1 hover:bg-emerald-50"
+                            aria-label="Mark as received"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
                             onClick={() => onMarkReceived(row.invoice.id)}
                           >
-                            <Check className="h-3.5 w-3.5 text-emerald-700" />
+                            <CheckCheck className="h-3.5 w-3.5" />
                           </button>
                         ) : null}
-                        <Button
-                          variant="ghost"
-                          size="sm"
+                        <button
+                          type="button"
                           title="View PDF"
-                          icon={<FileText className="h-3.5 w-3.5" />}
+                          aria-label="View PDF"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface-hover"
                           onClick={() => openInvoicePdf(row.invoice.id)}
                         >
-                          PDF
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => onOpenInvoice(row.invoice)}>
-                          Open
-                        </Button>
+                          <FileText className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
                   );

@@ -28,7 +28,8 @@ import {
 } from "@/services/self-bill-payment-plan";
 import { validateInstallmentsSum, paymentPlanProgressLabel, validateOpenInstallmentsSum, paidInstallmentsTotal } from "@/lib/invoice-payment-plan";
 import { selfBillPaymentPlanProgressLabel } from "@/lib/self-bill-payment-plan";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
+import { logAudit } from "@/services/audit";
 import { getSupabase } from "@/services/base";
 import type { Invoice, InvoicePaymentInstallment, SelfBillPaymentInstallment } from "@/types/database";
 
@@ -40,6 +41,9 @@ type Props =
       amountPaid: number;
       canEdit: boolean;
       onUpdated?: () => void | Promise<void>;
+      /** Job dono da fatura: as mudanças do plano vão para a Command history dele. */
+      jobId?: string;
+      jobRef?: string;
     }
   | {
       kind: "partner";
@@ -59,6 +63,50 @@ export function JobPaymentPlanPanel(props: Props) {
   const [rows, setRows] = useState<PaymentPlanEditorRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [matching, setMatching] = useState(false);
+  /** Cliente: cobrar cada parcela sozinho na data (invoices.instalments_auto_charge, mig 326). */
+  const [autoCharge, setAutoCharge] = useState<boolean | null>(null);
+
+  const historico = useCallback(
+    async (title: string, detail: string) => {
+      if (props.kind !== "client" || !props.jobId) return;
+      await logAudit({
+        entityType: "job",
+        entityId: props.jobId,
+        entityRef: props.jobRef,
+        action: "note",
+        fieldName: "instalments",
+        metadata: { title, detail },
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [props.kind, props.kind === "client" ? props.jobId : undefined, props.kind === "client" ? props.jobRef : undefined],
+  );
+
+  useEffect(() => {
+    if (props.kind !== "client") return;
+    void getSupabase()
+      .from("invoices")
+      .select("instalments_auto_charge")
+      .eq("id", props.entityId)
+      .maybeSingle()
+      .then(({ data }) => setAutoCharge((data as { instalments_auto_charge?: boolean } | null)?.instalments_auto_charge === true));
+  }, [props.kind, props.entityId]);
+
+  const toggleAutoCharge = async () => {
+    if (props.kind !== "client" || autoCharge === null) return;
+    const next = !autoCharge;
+    setAutoCharge(next);
+    const { error } = await getSupabase().from("invoices").update({ instalments_auto_charge: next }).eq("id", props.entityId);
+    if (error) {
+      setAutoCharge(!next);
+      toast.error(error.message);
+      return;
+    }
+    await historico(
+      next ? "Automatic instalment charging on" : "Automatic instalment charging off",
+      next ? "Each instalment is emailed to the client with a pay link on its date." : "Instalments are no longer requested automatically.",
+    );
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,6 +190,12 @@ export function JobPaymentPlanPanel(props: Props) {
               : await updatePaymentPlan(props.entityId, props.totalAmount, openDrafts)
             : await createPaymentPlan(props.entityId, props.totalAmount, openDrafts);
         setInstallments(updated);
+        await historico(
+          installments.length > 0 ? "Client instalments changed" : `Client pays in ${updated.length} instalments`,
+          (updated as InvoicePaymentInstallment[])
+            .map((i) => `£${Number(i.amount).toFixed(2)} on ${formatDate(i.due_date)}${i.status === "paid" ? " (paid)" : ""}`)
+            .join(" · "),
+        );
       } else {
         const updated =
           installments.length > 0
@@ -198,6 +252,7 @@ export function JobPaymentPlanPanel(props: Props) {
     try {
       if (props.kind === "client") {
         await cancelPaymentPlan(props.entityId);
+        await historico("Client instalments removed", "The invoice goes back to a single payment.");
       } else {
         await cancelSelfBillPaymentPlan(props.entityId);
       }
@@ -234,6 +289,19 @@ export function JobPaymentPlanPanel(props: Props) {
           <span className="font-semibold tabular-nums text-text-secondary">{formatCurrency(props.amountPaid)}</span>
         </span>
       </div>
+
+      {props.kind === "client" && installments.length > 0 && autoCharge !== null ? (
+        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-medium text-text-primary">
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5"
+            checked={autoCharge}
+            disabled={!props.canEdit}
+            onChange={() => void toggleAutoCharge()}
+          />
+          Charge each instalment automatically
+        </label>
+      ) : null}
 
       {editorOpen ? (
         <div className="space-y-1.5 pt-0.5">

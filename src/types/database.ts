@@ -642,6 +642,8 @@ export interface Job {
   customer_final_payment: number;
   customer_final_paid: boolean;
   self_bill_id?: string;
+  /** Mig 326: parceiro recebe em parcelas, num self-bill próprio do job. */
+  partner_paid_in_instalments?: boolean;
   invoice_id?: string;
   scope?: string;
   /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
@@ -1001,6 +1003,12 @@ export interface Account {
   bu_id?: string | null;
   total_revenue: number;
   active_jobs: number;
+  /** WhatsApp ao cliente final: confirmação, remarcação e véspera (mig 259). NULL = nunca decidido, tratado como desligado. */
+  client_confirmation_whatsapp?: boolean | null;
+  /** WhatsApp de feedback no dia seguinte para clientes desta conta (mig 325). */
+  client_feedback_whatsapp?: boolean | null;
+  /** Lembretes de fatura vencida nos dias 1, 3, 4 e 7 (mig 320). */
+  overdue_reminders?: boolean | null;
   /** Default client cancellation fee (£) for jobs under this account — office may override each cancel. */
   default_client_cancel_fee_gbp?: number | null;
   /** Subset of `service_catalog` rows this account may use (Service rates, job scope). */
@@ -1116,6 +1124,8 @@ export interface SelfBill {
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
   /** True when self_bill_payment_installments define payout schedule (mig 235). */
+  /** Mig 326: self-bill próprio de um job parcelado (fora do balde da quinzena). */
+  dedicated_job_id?: string | null;
   payment_plan_active?: boolean;
   /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
   email_sent_at?: string | null;

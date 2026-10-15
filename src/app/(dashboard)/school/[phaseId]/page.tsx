@@ -28,7 +28,7 @@ export default function SchoolPhasePage() {
     return (
       <PageTransition>
         <p className="text-text-secondary">Phase not found.</p>
-        <Link href="/school" className="text-[#E94A02] text-sm font-medium">
+        <Link href="/school" className="text-text-primary text-sm font-medium">
           Back to Fixfy School
         </Link>
       </PageTransition>
@@ -54,8 +54,8 @@ export default function SchoolPhasePage() {
         </div>
 
         <div className="space-y-1">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-[#E94A02]">{phase.subtitle}</p>
-          <h1 className="text-2xl font-bold text-text-primary m-0">{phase.title}</h1>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-text-primary">{phase.subtitle}</p>
+          <h1 className="m-0 font-display text-[20px] font-semibold leading-[1.3] tracking-[-0.02em] text-text-primary">{phase.title}</h1>
           <p className="text-sm text-text-secondary m-0 mt-2 leading-relaxed">{phase.description}</p>
         </div>
 
@@ -66,7 +66,7 @@ export default function SchoolPhasePage() {
             <p className="text-xs text-text-tertiary mt-1">
               Pass the previous phase quiz to unlock.
             </p>
-            <Link href="/school" className="text-[#E94A02] text-sm font-medium mt-4 inline-block">
+            <Link href="/school" className="text-text-primary text-sm font-medium mt-4 inline-block">
               Back to overview
             </Link>
           </div>
@@ -91,7 +91,7 @@ export default function SchoolPhasePage() {
                   href="/school/fixfy-os/guide.html"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[#E94A02] font-medium hover:underline"
+                  className="text-text-primary font-medium hover:underline"
                 >
                   Open full guide
                 </a>

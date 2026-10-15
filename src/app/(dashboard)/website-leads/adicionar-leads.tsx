@@ -60,7 +60,7 @@ export function AdicionarLead({ canais, aberto, fechar, pronto }: { canais: Cana
   return (
     <Modal open={aberto} onClose={fechar} title="Add lead" subtitle="A lead that reached us outside the website booking" size="lg">
       <form onSubmit={salvar} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="sm:col-span-2"><span className={ROTULO}>Name</span><input className={CAMPO} value={f.name ?? ""} onChange={muda("name")} placeholder="Jane Smith" /></label>
+        <label className="sm:col-span-2"><span className={ROTULO}>Name</span><input className={CAMPO} value={f.name ?? ""} onChange={muda("name")} placeholder="Jane smith" /></label>
         <label><span className={ROTULO}>Email</span><input className={CAMPO} type="email" value={f.email ?? ""} onChange={muda("email")} placeholder="jane@example.com" /></label>
         <label><span className={ROTULO}>Phone</span><input className={CAMPO} value={f.phone ?? ""} onChange={muda("phone")} placeholder="07700 900123" /></label>
         <label>
@@ -175,7 +175,7 @@ export function ImportarLeads({ canais, aberto, fechar, pronto }: { canais: Cana
             <a
               href="/templates/leads-import-template.csv"
               download
-              className="inline-flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm dark:border-border dark:bg-card dark:text-text-primary"
+              className="inline-flex items-center gap-1.5 rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm dark:border-border dark:bg-card dark:text-text-primary"
             >
               <Download className="h-3.5 w-3.5" /> Download template
             </a>

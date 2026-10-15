@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogAddonChargeOption } from "@/lib/catalog-line-pricing";
-import { Drawer } from "@/components/ui/drawer";
+import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, type SelectOptionGroup } from "@/components/ui/select";
@@ -792,12 +792,11 @@ export function JobMoneyDrawer({
   ];
 
   return (
-    <Drawer
+    <Modal
       open={open && !!flow}
       onClose={onClose}
       title={flowTitle(flow, isPartnerExtraFlow ? undefined : extraType)}
-      width="w-[min(100vw,400px)]"
-      className="bg-surface"
+      size="md"
       footer={
         isClientStripe ? (
           <div className="px-5 py-4">
@@ -1248,6 +1247,6 @@ export function JobMoneyDrawer({
           </>
         )}
       </form>
-    </Drawer>
+    </Modal>
   );
 }

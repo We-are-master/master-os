@@ -49,7 +49,7 @@ export function DateWindowToolbar({
           >
             <Calendar className="h-[17px] w-[17px] sm:h-[18px] sm:w-[18px]" strokeWidth={2} aria-hidden />
           </span>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#6B6B70]">{label}</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">{label}</p>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div
@@ -67,8 +67,8 @@ export function DateWindowToolbar({
                   className={cn(
                     "rounded-[6px] px-3 py-[5px] text-[11px] font-medium transition-colors shrink-0",
                     active
-                      ? "bg-[#ED4B00] text-white shadow-sm"
-                      : "bg-transparent text-[#020040] hover:bg-surface-hover",
+                      ? "bg-primary text-white shadow-sm"
+                      : "bg-transparent text-text-primary hover:bg-surface-hover",
                   )}
                 >
                   {chipLabel}

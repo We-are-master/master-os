@@ -35,7 +35,7 @@ export function SchoolLanguageSwitcher({ className, variant = "inline" }: Props)
               "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-all",
               variant === "hero"
                 ? active
-                  ? "bg-white text-[#020034] shadow-sm"
+                  ? "bg-white text-text-primary shadow-sm"
                   : "text-white/70 hover:text-white hover:bg-white/10"
                 : active
                   ? "bg-card text-text-primary shadow-sm"

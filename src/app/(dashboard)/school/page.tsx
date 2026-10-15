@@ -26,7 +26,7 @@ export default function FixfySchoolPage() {
         <SchoolHero progress={progress} overallPercent={overallPercent} />
 
         {continueId && !loading && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E94A02]/25 bg-[#FFF4ED]/60 dark:bg-[#2a1508]/40 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-text-primary bg-[#FFF4ED]/60 dark:bg-[#2a1508]/40 px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-text-primary m-0">Continue where you left off</p>
               <p className="text-xs text-text-tertiary m-0 mt-0.5">Pick up your next lesson and earn XP.</p>

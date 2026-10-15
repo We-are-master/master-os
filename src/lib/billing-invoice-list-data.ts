@@ -236,7 +236,10 @@ export function isInvoiceCollectible(
    *
    * Fatura sem job (avulsa) não entra nesta regra: não há entrega para esperar.
    */
-  if (job && !DELIVERED_JOB_STATUSES.has(job.status) && inv.invoice_kind !== "deposit") {
+  // Parcelas combinadas (dono, 15/10/2026) seguem a regra do depósito: vencem durante
+  // a obra, então entram no a receber antes da entrega (RCP-2026-916, JOB-9708).
+  const parcelado = Boolean((inv as Invoice & { payment_plan_active?: boolean }).payment_plan_active);
+  if (job && !DELIVERED_JOB_STATUSES.has(job.status) && inv.invoice_kind !== "deposit" && !parcelado) {
     return false;
   }
 

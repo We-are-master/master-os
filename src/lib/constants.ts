@@ -23,16 +23,16 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Learn",
     items: [
-      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "NEW" },
+      { label: "Fixfy School", href: "/school", icon: "graduation-cap", badge: "New" },
     ],
   },
   {
     label: "Overview",
     items: [
       { label: "Pulse", href: "/", icon: "grid-2x2", permission: "dashboard" },
-      { label: "Live View", href: "/schedule", icon: "calendar", permission: "jobs" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
+      { label: "Live view", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
-      { label: "Agents", href: "/agents", icon: "bot", permission: "dashboard" },
     ],
   },
   {
@@ -45,7 +45,6 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Leads", href: "/crm", icon: "kanban", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {
@@ -66,7 +65,6 @@ export const NAVIGATION: NavGroup[] = [
       // O motor de preço (Catalog/Labour/Materials/Quote) mora em Settings →
       // Services; este atalho existe porque cotar é rotina de Finance (dono,
       // 17/08/2026), e /services redireciona pra lá.
-      { label: "Services", href: "/services", icon: "wrench", permission: "service_catalog" },
       // Payouts (/payout) hidden for now — billing + expenses cover partner payments.
     ],
   },

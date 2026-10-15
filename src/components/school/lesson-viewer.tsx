@@ -61,7 +61,7 @@ export function LessonViewer({ lessonId }: Props) {
     return (
       <div className="text-center py-16">
         <p className="text-text-secondary">Lesson not found.</p>
-        <Link href="/school" className="text-[#E94A02] text-sm font-medium mt-2 inline-block">
+        <Link href="/school" className="text-text-primary text-sm font-medium mt-2 inline-block">
           Back to Fixfy School
         </Link>
       </div>
@@ -155,7 +155,7 @@ function LessonContent({ lesson }: { lesson: SchoolLesson }) {
             href={lesson.assetPath}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[#E94A02] font-medium inline-flex items-center gap-1"
+            className="text-text-primary font-medium inline-flex items-center gap-1"
           >
             Open in new tab
             <ExternalLink className="h-3 w-3" />

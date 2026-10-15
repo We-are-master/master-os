@@ -106,7 +106,9 @@ export async function repairSelfBillPaymentPlanActiveFlag(
   const supabase = client ?? getSupabase();
   const installments = await listInstallmentsForSelfBill(selfBillId);
   if (installments.length === 0) return false;
-  const firstDue = installments[0]!.due_date?.slice(0, 10);
+  // Vencimento = próxima parcela em aberto. A 1ª já paga não pode voltar a ser o
+  // vencimento (15/10/2026: SB-14541 virou "atrasado desde 12/10" ao abrir o job).
+  const firstDue = (nextOpenSelfBillInstallment(installments) ?? installments[0])!.due_date?.slice(0, 10);
   const patch: { payment_plan_active: boolean; due_date?: string } = { payment_plan_active: true };
   if (firstDue && /^\d{4}-\d{2}-\d{2}$/.test(firstDue)) patch.due_date = firstDue;
   const { error } = await supabase.from("self_bills").update(patch).eq("id", selfBillId);
@@ -329,8 +331,11 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
   for (const inst of active) {
     const amt = Math.round(Number(inst.amount ?? 0) * 100) / 100;
     const shouldBePaid = remaining + PAYMENT_PLAN_EPS >= amt;
+    // Parcela coberta consome o valor, já marcada ou não. Antes só a pendente
+    // descontava, e uma parcela que já vinha paga deixava o valor dela "sobrando"
+    // para pagar a seguinte (15/10/2026: 2ª parcela da RCP-2026-916 virou paga sozinha).
+    if (shouldBePaid) remaining = Math.round((remaining - amt) * 100) / 100;
     if (shouldBePaid && inst.status === "pending") {
-      remaining = Math.round((remaining - amt) * 100) / 100;
       await supabase
         .from("self_bill_payment_installments")
         .update({ status: "paid", paid_at: now })
@@ -345,7 +350,9 @@ export async function syncSelfBillPaymentPlanFromPartnerPaid(
 
   const refreshed = await listInstallmentsForSelfBill(selfBillId);
   const next = nextOpenSelfBillInstallment(refreshed);
-  const allPaid = amountPaid + PAYMENT_PLAN_EPS >= netPayout;
+  // Documento ainda sem valor (job em andamento) nunca está "todo pago": sem esta
+  // guarda, qualquer pagamento > 0 fechava o self-bill como pago.
+  const allPaid = netPayout > PAYMENT_PLAN_EPS && amountPaid + PAYMENT_PLAN_EPS >= netPayout && !next;
   const patch: Record<string, unknown> = {};
   if (next) patch.due_date = next.due_date.slice(0, 10);
   if (allPaid && sb.status !== "paid") patch.status = "paid";
@@ -393,3 +400,4 @@ export async function applySelfBillWiseInstallmentPayment(
   const { error: sbErr } = await supabase.from("self_bills").update(update).eq("id", selfBillId);
   if (sbErr) throw sbErr;
 }
+

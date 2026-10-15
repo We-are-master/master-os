@@ -24,7 +24,7 @@ const PAGE_PERMISSIONS: { key: PermissionKey; label: string; hint?: string }[] =
   { key: "leads", label: "Leads" },
   { key: "quotes", label: "Quotes" },
   { key: "requests", label: "Requests", hint: "Reachable by direct link only" },
-  { key: "accounts", label: "Accounts & Clients" },
+  { key: "accounts", label: "Accounts & clients" },
   { key: "partners", label: "Partners" },
   { key: "finance", label: "Finance", hint: "Billing, expenses, payroll" },
   { key: "service_catalog", label: "Services & pricing" },

@@ -78,12 +78,12 @@ export function QuoteBidLinksModal({ open, onClose, quoteId, quoteReference }: Q
     >
       <div className="px-1 pb-1 space-y-3">
         {loading ? (
-          <div className="flex items-center justify-center py-10 text-[#6B6B70]">
+          <div className="flex items-center justify-center py-10 text-text-tertiary">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             <span className="text-[13px]">Loading invited partners…</span>
           </div>
         ) : error ? (
-          <div className="rounded-md bg-[#FFF1EB] border border-[#F5CFB8] p-3 text-[12px] text-[#7A3D00]">
+          <div className="rounded-md bg-[var(--pick-bg)] border border-[var(--line-2)] p-3 text-[12px] text-[var(--warn-ink)]">
             {error}
           </div>
         ) : items.length === 0 ? (

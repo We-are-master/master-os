@@ -1286,7 +1286,7 @@ export function InvoicesFinanceClient() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Open balance</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">
                 {formatCurrency(openBalanceKpi.amount)}
               </p>
               <p className="text-[11px] text-text-secondary" title="Awaiting payment + overdue">
@@ -1294,24 +1294,24 @@ export function InvoicesFinanceClient() {
                 {openBalanceKpi.countInvoices === 1 ? "" : "s"}
               </p>
             </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-primary/8 text-text-primary">
               <Receipt className="h-4 w-4" aria-hidden />
             </div>
           </div>
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Awaiting payment</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(awaitingPaymentKpi.sum)}</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">{formatCurrency(awaitingPaymentKpi.sum)}</p>
               <p className="text-[11px] text-text-secondary">{awaitingPaymentKpi.count} invoice{awaitingPaymentKpi.count === 1 ? "" : "s"}</p>
             </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-primary/8 text-text-primary">
               <Clock className="h-4 w-4" aria-hidden />
             </div>
           </div>
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Collected</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(kpis.collectedTotal)}</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">{formatCurrency(kpis.collectedTotal)}</p>
               <p className="text-[11px] text-text-secondary">{kpis.collectedInvoiceCount} invoice{kpis.collectedInvoiceCount === 1 ? "" : "s"} partially paid</p>
             </div>
             <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
@@ -1336,7 +1336,7 @@ export function InvoicesFinanceClient() {
               <p
                 className={cn(
                   "text-[20px] font-bold tabular-nums leading-tight",
-                  kpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-[#020040]",
+                  kpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-text-primary",
                 )}
               >
                 {formatCurrency(kpis.overdueAmount)}
@@ -1368,7 +1368,7 @@ export function InvoicesFinanceClient() {
             className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3"
             style={{ backgroundColor: "#FFF8F3", borderWidth: 0.5, borderColor: "#F5CFB8" }}
           >
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#ED4B00]/12 text-[#ED4B00] text-sm font-bold">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--pick-bg)] text-text-primary text-sm font-bold">
               !
             </div>
             <p className="text-sm text-text-secondary flex-1 min-w-0">
@@ -1451,7 +1451,7 @@ export function InvoicesFinanceClient() {
                 </div>
                 <div className="text-right">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Due</p>
-                  <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(tabSummary.due)}</p>
+                  <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(tabSummary.due)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Paid</p>
@@ -1459,7 +1459,7 @@ export function InvoicesFinanceClient() {
                 </div>
                 <div className="text-right">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
-                  <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">{formatCurrency(tabSummary.total)}</p>
+                  <p className="text-sm font-semibold tabular-nums text-text-primary dark:text-text-primary">{formatCurrency(tabSummary.total)}</p>
                 </div>
               </div>
 
@@ -1481,7 +1481,7 @@ export function InvoicesFinanceClient() {
                           return { ...prev, [group.key]: !wasOpen };
                         })
                       }
-                      className="w-full px-[14px] py-2.5 text-left bg-[#FAFAFB] border-b border-border-light flex items-center justify-between gap-3"
+                      className="w-full px-[14px] py-2.5 text-left bg-surface-secondary border-b border-border-light flex items-center justify-between gap-3"
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3">
                         {accountLogo ? (
@@ -1501,7 +1501,7 @@ export function InvoicesFinanceClient() {
                           </div>
                         )}
                         <div className="min-w-0">
-                          <p className="text-[13px] font-medium text-[#020040] truncate">{group.accountName}</p>
+                          <p className="text-[13px] font-medium text-text-primary truncate">{group.accountName}</p>
                           <p className="text-[10px] text-text-tertiary">
                             {group.awaitingInvoiceCount} awaiting · {group.overdueInvoiceCount} overdue
                           </p>
@@ -1510,7 +1510,7 @@ export function InvoicesFinanceClient() {
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-1">
                         <div className="text-right">
                           <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Due</p>
-                          <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(group.totalDue)}</p>
+                          <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(group.totalDue)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Paid</p>
@@ -1520,7 +1520,7 @@ export function InvoicesFinanceClient() {
                         </div>
                         <div className="text-right">
                           <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Total</p>
-                          <p className="text-sm font-semibold tabular-nums text-[#020040]">{formatCurrency(group.totalAmount)}</p>
+                          <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(group.totalAmount)}</p>
                         </div>
                         {open ? (
                           <ChevronUp className="h-4 w-4 text-text-tertiary shrink-0" aria-hidden />
@@ -1560,7 +1560,7 @@ export function InvoicesFinanceClient() {
                             inv.status === "audit_required";
                           const expYmd = invoiceExpectedDateYmd(inv);
                           const iconBtnClass =
-                            "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] border-[0.5px] border-[#D8D8DD] bg-white p-0 transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+                            "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] border-[0.5px] border-[var(--line-2)] bg-white p-0 transition-colors hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
                           const actionIcons =
                             inv.status === "draft" ? (
                               <>
@@ -1573,7 +1573,7 @@ export function InvoicesFinanceClient() {
                                     void handleStatusChange(inv, "pending");
                                   }}
                                 >
-                                  <Send className="h-3.5 w-3.5 text-[#020040]" strokeWidth={2} aria-hidden />
+                                  <Send className="h-3.5 w-3.5 text-text-primary" strokeWidth={2} aria-hidden />
                                 </button>
                                 <button
                                   type="button"
@@ -1584,7 +1584,7 @@ export function InvoicesFinanceClient() {
                                     setSelectedInvoice(inv);
                                   }}
                                 >
-                                  <PenLine className="h-3.5 w-3.5 text-[#020040]" aria-hidden />
+                                  <PenLine className="h-3.5 w-3.5 text-text-primary" aria-hidden />
                                 </button>
                               </>
                             ) : showQuick ? (
@@ -1609,7 +1609,7 @@ export function InvoicesFinanceClient() {
                                     setSelectedInvoice(inv);
                                   }}
                                 >
-                                  <PenLine className="h-3.5 w-3.5 text-[#020040]" aria-hidden />
+                                  <PenLine className="h-3.5 w-3.5 text-text-primary" aria-hidden />
                                 </button>
                               </>
                             ) : null;
@@ -1627,7 +1627,7 @@ export function InvoicesFinanceClient() {
                               }}
                               className={cn(
                                 "w-full px-3 py-1.5 text-left transition-colors cursor-pointer hover:bg-surface-hover/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:px-4",
-                                rowIndex % 2 === 1 ? "bg-[#F5F5F7] dark:bg-white/[0.04]" : "bg-white dark:bg-transparent",
+                                rowIndex % 2 === 1 ? "bg-surface-secondary dark:bg-white/[0.04]" : "bg-white dark:bg-transparent",
                               )}
                             >
                               <>
@@ -1834,7 +1834,7 @@ export function InvoicesFinanceClient() {
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-border-light bg-[#020040] px-5 py-3 shadow-xl">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-border-light bg-primary px-5 py-3 shadow-xl">
           <span className="text-sm font-semibold text-white/80 tabular-nums">
             {selectedIds.size} selected
           </span>
@@ -2824,7 +2824,7 @@ export function InvoiceDetailDrawer({
                     onClick={() => setTab(tb.id)}
                     className={cn(
                       "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-left text-sm transition-colors",
-                      tab === tb.id ? "font-semibold text-[#ED4B00]" : "font-medium text-text-secondary",
+                      tab === tb.id ? "font-semibold text-text-primary" : "font-medium text-text-secondary",
                     )}
                   >
                     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -2835,7 +2835,7 @@ export function InvoiceDetailDrawer({
                         </span>
                       ) : null}
                     </span>
-                    {tab === tb.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ED4B00]" /> : null}
+                    {tab === tb.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" /> : null}
                   </button>
                 ))}
               </div>
@@ -3022,24 +3022,24 @@ export function InvoiceDetailDrawer({
                   <div className="rounded-t-[10px] border border-border border-b-0 bg-card">
                     <div className="grid grid-cols-3 divide-x divide-border">
                       <div className="px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B7280]">TOTAL PRICE</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">TOTAL PRICE</p>
                         <p className="mt-1 text-[14px] font-semibold text-text-primary tabular-nums leading-tight">
                           {formatCurrency(invoice.amount).replace(/\.\d{2}$/, '')}
-                          <span className="text-[10px] font-medium text-[#9CA3AF]">{formatCurrency(invoice.amount).slice(-3)}</span>
+                          <span className="text-[10px] font-medium text-text-tertiary">{formatCurrency(invoice.amount).slice(-3)}</span>
                         </p>
                       </div>
                       <div className="px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6B7280]">YOUR COST</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">YOUR COST</p>
                         <p className="mt-1 text-[14px] font-semibold text-text-primary tabular-nums leading-tight">
                           {formatCurrency(partnerCostValue).replace(/\.\d{2}$/, '')}
-                          <span className="text-[10px] font-medium text-[#9CA3AF]">{formatCurrency(partnerCostValue).slice(-3)}</span>
+                          <span className="text-[10px] font-medium text-text-tertiary">{formatCurrency(partnerCostValue).slice(-3)}</span>
                         </p>
                       </div>
-                      <div className="bg-[#EFF7F3] px-3 py-2.5">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-[#0F6E56]">MARGIN %</p>
-                        <p className="mt-1 text-[14px] font-semibold text-[#0F6E56] tabular-nums leading-tight">
+                      <div className="bg-success-light px-3 py-2.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-success">MARGIN %</p>
+                        <p className="mt-1 text-[14px] font-semibold text-success tabular-nums leading-tight">
                           {formatCurrency(feeAmountValue).replace(/\.\d{2}$/, '')}
-                          <span className="text-[10px] font-medium text-[#0F6E56]/70">{formatCurrency(feeAmountValue).slice(-3)}</span>
+                          <span className="text-[10px] font-medium text-success/70">{formatCurrency(feeAmountValue).slice(-3)}</span>
                           {" · "}
                           <span className="text-[12px] font-semibold">{marginPct}%</span>
                         </p>
@@ -3097,7 +3097,7 @@ export function InvoiceDetailDrawer({
                         <div className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-[#3C3489]" />
                           <p className="text-[13px] font-semibold text-text-primary">Partner cost</p>
-                          <span className="rounded-[3px] bg-[#F3F4F6] px-[6px] py-[1px] text-[10px] font-semibold text-[#6B7280]">
+                          <span className="rounded-[3px] bg-[#F3F4F6] px-[6px] py-[1px] text-[10px] font-semibold text-text-tertiary">
                             [{partnerVatRegistered ? "inc VAT" : "no VAT"}]
                           </span>
                         </div>
@@ -3126,7 +3126,7 @@ export function InvoiceDetailDrawer({
                         <div className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                           <p className="text-[13px] font-semibold text-text-primary">Fixfy fee</p>
-                          <span className="rounded-[3px] bg-[#FEF3C7] px-[6px] py-[1px] text-[10px] font-semibold text-[#78350F]">
+                          <span className="rounded-[3px] bg-warning-light px-[6px] py-[1px] text-[10px] font-semibold text-[#78350F]">
                             [inc VAT]
                           </span>
                         </div>
@@ -3142,11 +3142,11 @@ export function InvoiceDetailDrawer({
                     </div>
                     <div className="flex items-center justify-between border-b border-border bg-card px-3 py-2.5">
                       <p className="text-[11px] text-text-secondary">
-                        VAT 20% <span className="text-[#9CA3AF]">· on Fixfy fee only</span>
+                        VAT 20% <span className="text-text-tertiary">· on Fixfy fee only</span>
                       </p>
                       <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(breakdownVat)}</p>
                     </div>
-                    <div className="flex items-center justify-between bg-[#020040] px-3 py-2.5">
+                    <div className="flex items-center justify-between bg-primary px-3 py-2.5">
                       <p className="text-[13px] font-semibold text-white">Customer charged</p>
                       <p className="text-[15px] font-semibold text-white tabular-nums">{formatCurrency(breakdownCharged)}</p>
                     </div>
@@ -3188,8 +3188,8 @@ export function InvoiceDetailDrawer({
                         "flex items-center justify-between rounded-md px-2 py-1 -mx-2",
                         hasDueBalance ? "bg-[#FEF5F3]" : ""
                       )}>
-                        <span className={cn("font-semibold", hasDueBalance ? "text-[#A32D2D]" : "text-text-primary")}>Due</span>
-                        <span className={cn("font-semibold tabular-nums", hasDueBalance ? "text-[#A32D2D]" : "text-emerald-700")}>
+                        <span className={cn("font-semibold", hasDueBalance ? "text-danger" : "text-text-primary")}>Due</span>
+                        <span className={cn("font-semibold tabular-nums", hasDueBalance ? "text-danger" : "text-emerald-700")}>
                           {formatCurrency(effectiveBalance)}
                         </span>
                       </div>
@@ -3264,32 +3264,32 @@ export function InvoiceDetailDrawer({
                     <>
                       {/* Hero totals — client vs partner side-by-side */}
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-[10px] border border-[#020040]/25 bg-[#020040]/5 px-3 py-2.5 dark:bg-[#020040]/20">
+                        <div className="rounded-[10px] border border-primary/25 bg-primary/5 px-3 py-2.5 dark:bg-primary/20">
                           <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">Client still owes</p>
-                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-[#020040] dark:text-sky-300">
+                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-text-primary dark:text-sky-300">
                             {formatCurrency(clientOutstanding)}
                           </p>
                           <p className="text-[10px] text-text-tertiary tabular-nums">
                             {formatCurrency(clientPaid)} paid of {formatCurrency(clientBillable)}
                           </p>
-                          <div className="mt-1.5 h-1 rounded-full bg-[#020040]/15">
+                          <div className="mt-1.5 h-1 rounded-full bg-primary/15">
                             <div
-                              className="h-1 rounded-full bg-[#020040] dark:bg-sky-400"
+                              className="h-1 rounded-full bg-primary dark:bg-sky-400"
                               style={{ width: `${clientProgress}%` }}
                             />
                           </div>
                         </div>
-                        <div className="rounded-[10px] border border-[#ED4B00]/25 bg-[#ED4B00]/5 px-3 py-2.5">
+                        <div className="rounded-[10px] border border-text-primary bg-[var(--pick-bg)] px-3 py-2.5">
                           <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">Partner still to receive</p>
-                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-[#ED4B00]">
+                          <p className="mt-0.5 text-[18px] font-bold tabular-nums text-text-primary">
                             {formatCurrency(partnerOutstanding)}
                           </p>
                           <p className="text-[10px] text-text-tertiary tabular-nums">
                             {formatCurrency(partnerPaid)} paid of {formatCurrency(partnerGross)}
                           </p>
-                          <div className="mt-1.5 h-1 rounded-full bg-[#ED4B00]/15">
+                          <div className="mt-1.5 h-1 rounded-full bg-[var(--pick-bg)]">
                             <div
-                              className="h-1 rounded-full bg-[#ED4B00]"
+                              className="h-1 rounded-full bg-primary"
                               style={{ width: `${partnerProgress}%` }}
                             />
                           </div>
@@ -3297,8 +3297,8 @@ export function InvoiceDetailDrawer({
                       </div>
 
                       {/* Client breakdown */}
-                      <div className="overflow-hidden rounded-[10px] border border-[#020040]/25">
-                        <div className="bg-[#020040] px-3 py-2 flex items-center justify-between">
+                      <div className="overflow-hidden rounded-[10px] border border-primary/25">
+                        <div className="bg-primary px-3 py-2 flex items-center justify-between">
                           <p className="text-[11px] font-semibold text-white uppercase tracking-[0.4px]">
                             Client — {linkedJob.client_name}
                           </p>
@@ -3319,9 +3319,9 @@ export function InvoiceDetailDrawer({
                               {clientExtras > 0.005 ? `+${formatCurrency(clientExtras)}` : formatCurrency(0)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between bg-[#020040]/5 px-3 py-2 dark:bg-[#020040]/20">
+                          <div className="flex items-center justify-between bg-primary/5 px-3 py-2 dark:bg-primary/20">
                             <span className="text-[11px] font-semibold text-text-primary">Total billable</span>
-                            <span className="text-[13px] font-bold text-[#020040] dark:text-sky-300 tabular-nums">
+                            <span className="text-[13px] font-bold text-text-primary dark:text-sky-300 tabular-nums">
                               {formatCurrency(clientBillable)}
                             </span>
                           </div>
@@ -3341,8 +3341,8 @@ export function InvoiceDetailDrawer({
                       </div>
 
                       {/* Partner breakdown */}
-                      <div className="overflow-hidden rounded-[10px] border border-[#ED4B00]/25">
-                        <div className="bg-[#ED4B00] px-3 py-2 flex items-center justify-between">
+                      <div className="overflow-hidden rounded-[10px] border border-text-primary">
+                        <div className="bg-primary px-3 py-2 flex items-center justify-between">
                           <p className="text-[11px] font-semibold text-white uppercase tracking-[0.4px]">
                             Partner — {linkedJob.partner_name?.trim() || "Unassigned"}
                           </p>
@@ -3377,9 +3377,9 @@ export function InvoiceDetailDrawer({
                               {materials > 0.005 ? `+${formatCurrency(materials)}` : formatCurrency(0)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between bg-[#ED4B00]/5 px-3 py-2">
+                          <div className="flex items-center justify-between bg-[var(--pick-bg)] px-3 py-2">
                             <span className="text-[11px] font-semibold text-text-primary">Total cash-out</span>
-                            <span className="text-[13px] font-bold text-[#ED4B00] tabular-nums">
+                            <span className="text-[13px] font-bold text-text-primary tabular-nums">
                               {formatCurrency(partnerGross)}
                             </span>
                           </div>
@@ -3707,8 +3707,8 @@ export function InvoiceDetailDrawer({
                     {[
                       { label: "Job amount", value: formatCurrency(linkedJob.client_price), color: "text-text-primary" },
                       { label: "Total cost", value: formatCurrency(linkedJobTotalCost), color: "text-text-primary" },
-                      { label: "Margin", value: formatCurrency(linkedJobMarginAmount), color: linkedJobMarginAmount >= 0 ? "text-[#0F6E56]" : "text-red-500" },
-                      { label: "Margin %", value: `${linkedJob.margin_percent.toFixed(1)}%`, color: linkedJob.margin_percent >= 0 ? "text-[#0F6E56]" : "text-red-500" },
+                      { label: "Margin", value: formatCurrency(linkedJobMarginAmount), color: linkedJobMarginAmount >= 0 ? "text-success" : "text-red-500" },
+                      { label: "Margin %", value: `${linkedJob.margin_percent.toFixed(1)}%`, color: linkedJob.margin_percent >= 0 ? "text-success" : "text-red-500" },
                     ].map((kpi) => (
                       <div key={kpi.label} className="rounded-[8px] border border-border bg-card px-2.5 py-2">
                         <p className="text-[9px] uppercase tracking-[0.4px] text-text-tertiary">{kpi.label}</p>
@@ -3748,7 +3748,7 @@ export function InvoiceDetailDrawer({
                       </div>
                       <div className="flex justify-between items-center bg-card px-3 py-2.5">
                         <span className="text-[12px] font-semibold text-text-primary">Gross margin</span>
-                        <span className={`text-[12px] font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-[#0F6E56]" : "text-red-500"}`}>
+                        <span className={`text-[12px] font-bold tabular-nums ${linkedJobMarginPct >= 0 ? "text-success" : "text-red-500"}`}>
                           {formatCurrency(linkedJobMarginAmount)}{" "}
                           <span className="text-[10px] font-semibold">({linkedJobMarginPct.toFixed(1)}%)</span>
                         </span>
@@ -3788,7 +3788,7 @@ export function InvoiceDetailDrawer({
                     </div>
                     <div className="flex items-center justify-between px-3 py-2.5">
                       <span className="text-[11px] text-text-secondary">Difference</span>
-                      <span className={`text-[13px] font-bold tabular-nums ${invoice.amount >= linkedJob.client_price ? "text-[#0F6E56]" : "text-amber-600"}`}>
+                      <span className={`text-[13px] font-bold tabular-nums ${invoice.amount >= linkedJob.client_price ? "text-success" : "text-amber-600"}`}>
                         {formatCurrency(invoice.amount - linkedJob.client_price)}
                       </span>
                     </div>
@@ -3885,8 +3885,8 @@ export function InvoiceDetailDrawer({
             <div>
               <p className="mb-2 text-[11px] uppercase tracking-[0.5px] text-text-secondary">Timeline</p>
               <div className="space-y-0">
-                <TimelineStep done label="Invoice Created" date={formatDate(invoice.created_at)} />
-                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to Client" date={formatDate(invoice.created_at)} />
+                <TimelineStep done label="Invoice created" date={formatDate(invoice.created_at)} />
+                <TimelineStep done={invoice.status !== "cancelled"} label="Sent to client" date={formatDate(invoice.created_at)} />
                 <TimelineStep
                   done={invoice.status === "paid"}
                   active={

@@ -68,7 +68,7 @@ const TYPE_META: Record<
   TypeGroupKey,
   { label: string; icon: typeof Users; accentBg: string; accentFg: string }
 > = {
-  partner: { label: "Partners", icon: Users, accentBg: "bg-[#020040]/8", accentFg: "text-[#020040]" },
+  partner: { label: "Partners", icon: Users, accentBg: "bg-primary/8", accentFg: "text-text-primary" },
   workforce: { label: "Workforce", icon: Briefcase, accentBg: "bg-emerald-500/15", accentFg: "text-emerald-600" },
   bill: { label: "Bills", icon: Receipt, accentBg: "bg-amber-500/15", accentFg: "text-amber-600" },
 };
@@ -344,7 +344,7 @@ export default function PayRunPage() {
     <PageTransition>
       <div className="space-y-4 px-1 sm:px-0">
         <PageHeader
-          title="Pay Run"
+          title="Pay run"
           subtitle={rangeLabel}
           infoTooltip="Pay the previous week(s). Partners, workforce, and bills in one place. Default shows last week — add more weeks if you're catching up."
         >
@@ -431,14 +431,14 @@ export default function PayRunPage() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Due in range</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">
                 {formatCurrency(kpis.dueAmount)}
               </p>
               <p className="text-[11px] text-text-secondary">
                 {kpis.dueCount} pending · {weeksInRange.length} week{weeksInRange.length === 1 ? "" : "s"}
               </p>
             </div>
-            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+            <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-primary/8 text-text-primary">
               <DollarSign className="h-4 w-4" aria-hidden />
             </div>
           </div>
@@ -460,7 +460,7 @@ export default function PayRunPage() {
               <p
                 className={cn(
                   "text-[20px] font-bold tabular-nums leading-tight",
-                  kpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-[#020040]",
+                  kpis.overdueAmount > 0.02 ? "text-red-600 dark:text-red-400" : "text-text-primary",
                 )}
               >
                 {formatCurrency(kpis.overdueAmount)}
@@ -488,7 +488,7 @@ export default function PayRunPage() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Paid in range</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">
                 {formatCurrency(kpis.paidAmount)}
               </p>
               <p className="text-[11px] text-text-secondary">
@@ -564,7 +564,7 @@ export default function PayRunPage() {
               return (
                 <div key={week.weekStart} className="rounded-xl border border-border-light bg-card overflow-hidden">
                   {/* Week header */}
-                  <div className="flex flex-col gap-2 border-b border-border-light bg-[#FAFAFB] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-2 border-b border-border-light bg-surface-secondary px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-2 min-w-0">
                       <button
                         type="button"
@@ -593,7 +593,7 @@ export default function PayRunPage() {
                         </p>
                       </div>
                     </div>
-                    <p className="text-sm font-bold tabular-nums text-[#020040] sm:pr-1">
+                    <p className="text-sm font-bold tabular-nums text-text-primary sm:pr-1">
                       {formatCurrency(weekTotal)}
                     </p>
                   </div>
@@ -674,7 +674,7 @@ export default function PayRunPage() {
                                       key={row.id}
                                       className={cn(
                                         "flex flex-col gap-1.5 border-t border-border-light px-3 py-2 sm:flex-row sm:items-center sm:gap-3",
-                                        isZebra && "bg-[#F5F5F7] dark:bg-white/[0.04]",
+                                        isZebra && "bg-surface-secondary dark:bg-white/[0.04]",
                                         !isPending && "opacity-70",
                                       )}
                                     >
@@ -724,7 +724,7 @@ export default function PayRunPage() {
 
         {/* Sticky selection footer */}
         {selectedIds.size > 0 ? (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-border-light bg-[#020040] px-4 py-2.5 shadow-xl">
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-border-light bg-primary px-4 py-2.5 shadow-xl">
             <p className="text-xs font-medium text-white">
               {selectedIds.size} selected ·{" "}
               <span className="tabular-nums font-semibold">
@@ -740,7 +740,7 @@ export default function PayRunPage() {
               disabled={paying}
               icon={paying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               onClick={handlePaySelected}
-              className="bg-white text-[#020040] hover:bg-white/90"
+              className="bg-white text-text-primary hover:bg-white/90"
             >
               Mark paid
             </Button>

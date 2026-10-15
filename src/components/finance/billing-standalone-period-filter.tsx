@@ -46,7 +46,7 @@ export function BillingStandalonePeriodFilter({ value, onChange, className }: Pr
           className={cn(
             "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
             value.mode === "all"
-              ? "bg-[#020040] text-white"
+              ? "bg-primary text-white"
               : "text-text-secondary hover:bg-surface-hover",
           )}
         >
@@ -63,7 +63,7 @@ export function BillingStandalonePeriodFilter({ value, onChange, className }: Pr
           className={cn(
             "inline-flex items-center justify-center rounded-md px-2 py-1.5 text-xs font-semibold transition-colors",
             isCustom
-              ? "bg-[#020040] text-white"
+              ? "bg-primary text-white"
               : "text-text-secondary hover:bg-surface-hover",
           )}
         >
@@ -74,8 +74,8 @@ export function BillingStandalonePeriodFilter({ value, onChange, className }: Pr
       {overflowOpen ? (
         <div className="absolute right-0 top-full z-50 mt-1.5 w-[260px] rounded-xl border border-border-light bg-white shadow-lg p-3 space-y-2.5">
           <p className="text-[11px] text-text-secondary leading-snug">
-            Filter invoices by <strong className="text-[#020040]">due date</strong> and self-bills by{" "}
-            <strong className="text-[#020040]">pay work period</strong> (inclusive).
+            Filter invoices by <strong className="text-text-primary">due date</strong> and self-bills by{" "}
+            <strong className="text-text-primary">pay work period</strong> (inclusive).
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -84,7 +84,7 @@ export function BillingStandalonePeriodFilter({ value, onChange, className }: Pr
                 type="date"
                 value={value.customFrom ?? ""}
                 onChange={(e) => onChange({ ...value, mode: "custom", customFrom: e.target.value })}
-                className="h-8 w-full rounded-md border border-border-light px-2 text-xs outline-none focus:border-[#ED4B00]"
+                className="h-8 w-full rounded-md border border-border-light px-2 text-xs outline-none focus:border-text-primary"
               />
             </div>
             <div>
@@ -93,7 +93,7 @@ export function BillingStandalonePeriodFilter({ value, onChange, className }: Pr
                 type="date"
                 value={value.customTo ?? ""}
                 onChange={(e) => onChange({ ...value, mode: "custom", customTo: e.target.value })}
-                className="h-8 w-full rounded-md border border-border-light px-2 text-xs outline-none focus:border-[#ED4B00]"
+                className="h-8 w-full rounded-md border border-border-light px-2 text-xs outline-none focus:border-text-primary"
               />
             </div>
           </div>

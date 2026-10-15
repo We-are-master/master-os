@@ -321,7 +321,7 @@ export function buildProjectionRunwayWeekBreakdown(
           id: slice.installmentId,
           kind: "invoice",
           label: inv.client_name?.trim() || "Invoice",
-          detail: `${slice.detail ?? inv.job_reference?.trim() ?? "—"} · ${invoiceStatusLabel(inv)} · installment`,
+          detail: `${slice.detail ?? inv.job_reference?.trim() ?? "—"} · ${invoiceStatusLabel(inv)} · instalment`,
           dueYmd: slice.dueYmd,
           amount: roundMoney(slice.amount),
         });
@@ -364,7 +364,7 @@ export function buildProjectionRunwayWeekBreakdown(
 
   const plBreakdown = buildCashflowWeekBreakdown(weekStart, args);
   for (const line of plBreakdown.outLines) {
-    if (line.kind === "self_bill") {
+    if (line.kind === "self_bill" || line.kind === "payroll") {
       outLines.push(line);
     } else {
       outLines.push({ ...line, detail: line.detail ? `${line.detail} · Admin` : "Admin" });
@@ -487,4 +487,107 @@ export function buildRunwayWeekBreakdown(
   if (view === "pl") return buildCashflowWeekBreakdown(weekStart, args);
   if (view === "accrual") return buildAccrualRunwayWeekBreakdown(weekStart, args);
   return buildCashRunwayWeekBreakdown(weekStart, args);
+}
+
+/**
+ * O período inteiro (semana ou quinzena) em quatro listas, para o modal do
+ * runway (dono, 15/10/2026): o que ENTROU (pagamentos de cliente na data) e o
+ * que VAI ENTRAR (faturas e jobs em aberto com vencimento no período; fatura
+ * parcelada entra só com a parcela que vence nele), o que SAIU (self-bill e
+ * conta pagos no período) e o que VAI SAIR (self-bills, workforce, contas e
+ * folha com vencimento no período; parcelado, só a parcela do período).
+ */
+export type RunwayPeriodDetail = {
+  startYmd: string;
+  endYmd: string;
+  received: CashflowBreakdownLine[];
+  expectedIn: CashflowBreakdownLine[];
+  paidOut: CashflowBreakdownLine[];
+  dueOut: CashflowBreakdownLine[];
+};
+
+export function buildRunwayPeriodDetail(startYmd: string, weeks: number, args: BuildRunwayWeeklyArgs): RunwayPeriodDetail {
+  const received: CashflowBreakdownLine[] = [];
+  const expectedIn: CashflowBreakdownLine[] = [];
+  const paidOut: CashflowBreakdownLine[] = [];
+  const dueOut: CashflowBreakdownLine[] = [];
+  const endYmd = addDaysYmd(startYmd, weeks * 7 - 1);
+  const noPeriodo = (ymd: string) => ymd >= startYmd && ymd <= endYmd;
+  const jobsById = new Map(Object.values(args.jobsByRef).map((j) => [j.id, j]));
+  const refByJobId = new Map(Object.entries(args.jobsByRef).map(([ref, j]) => [j.id, ref]));
+
+  for (const row of args.customerPaymentRows ?? []) {
+    if (!noPeriodo(row.paymentDate) || row.amount <= 0.02) continue;
+    const job = jobsById.get(row.jobId);
+    received.push({
+      id: `pay-${row.id}`,
+      kind: "invoice",
+      label: job?.client_name?.trim() || job?.title?.trim() || "Customer payment",
+      detail: [refByJobId.get(row.jobId), row.type.replace(/^customer_/, "").replace(/_/g, " ")].filter(Boolean).join(" · "),
+      dueYmd: row.paymentDate,
+      amount: roundMoney(row.amount),
+    });
+  }
+
+  for (const sb of args.selfBills) {
+    const pd = (sb.wise_paid_at ?? sb.paid_at ?? "").trim().slice(0, 10);
+    if (sb.status !== "paid" && !sb.wise_paid_at) continue;
+    if (!pd || !noPeriodo(pd)) continue;
+    const amount = roundMoney(Number(sb.net_payout ?? 0));
+    if (amount <= 0.02) continue;
+    paidOut.push({
+      id: `paid-${sb.id}`,
+      kind: sb.bill_origin === "internal" ? "payroll" : "self_bill",
+      label: sb.partner_name?.trim() || (sb.bill_origin === "internal" ? "Workforce" : "Partner"),
+      detail: sb.reference?.trim() || undefined,
+      dueYmd: pd,
+      amount,
+    });
+  }
+  // Parcela de parceiro já paga (documento ainda aberto): conta no dia em que saiu.
+  for (const sb of args.selfBills) {
+    if (sb.status === "paid" || sb.wise_paid_at) continue;
+    for (const inst of args.installmentsBySelfBillId?.[sb.id] ?? []) {
+      if (inst.status !== "paid") continue;
+      const pd = (inst.paid_at ?? inst.due_date ?? "").slice(0, 10);
+      if (!pd || !noPeriodo(pd)) continue;
+      const amount = roundMoney(Number(inst.amount ?? 0));
+      if (amount <= 0.02) continue;
+      paidOut.push({
+        id: `paid-inst-${inst.id}`,
+        kind: sb.bill_origin === "internal" ? "payroll" : "self_bill",
+        label: sb.partner_name?.trim() || "Partner",
+        detail: [sb.reference?.trim(), "instalment"].filter(Boolean).join(" · "),
+        dueYmd: pd,
+        amount,
+      });
+    }
+  }
+  for (const bill of args.bills ?? []) {
+    if (bill.status !== "paid") continue;
+    const pd = bill.paid_at?.trim().slice(0, 10) ?? "";
+    if (!pd || !noPeriodo(pd)) continue;
+    const amount = roundMoney(Number(bill.amount ?? 0));
+    if (amount <= 0.02) continue;
+    paidOut.push({ id: `paid-${bill.id}`, kind: "expense", label: bill.description?.trim() || "Expense", dueYmd: pd, amount });
+  }
+
+  for (let w = 0; w < weeks; w++) {
+    const proj = buildProjectionRunwayWeekBreakdown(addDaysYmd(startYmd, w * 7), args);
+    expectedIn.push(...proj.inLines);
+    dueOut.push(
+      ...proj.outLines.map((l) => ({ ...l, detail: l.detail?.replace(/ · Admin$/, "") || undefined })),
+    );
+  }
+
+  const porData = (a: CashflowBreakdownLine, b: CashflowBreakdownLine) =>
+    a.dueYmd.localeCompare(b.dueYmd) || b.amount - a.amount;
+  return {
+    startYmd,
+    endYmd,
+    received: received.sort(porData),
+    expectedIn: expectedIn.sort(porData),
+    paidOut: paidOut.sort(porData),
+    dueOut: dueOut.sort(porData),
+  };
 }

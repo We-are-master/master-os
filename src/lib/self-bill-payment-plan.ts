@@ -192,3 +192,27 @@ export function countPaidSelfBillInstallmentsByAmount(
   }
   return count;
 }
+
+/**
+ * Parcelas do parceiro espelhando as do cliente (job parcelado, mig 326):
+ * mesma data e mesma proporção de cada parcela sobre o total do cliente. A
+ * última fica com o arredondamento para a soma bater no centavo.
+ */
+export function partnerInstalmentsMirroringClient(
+  clientInstalments: { amount: number; due_date: string }[],
+  partnerTotal: number,
+): PaymentPlanInstallmentDraft[] {
+  const rows = clientInstalments.filter((r) => Number(r.amount) > 0 && r.due_date);
+  const clientTotal = rows.reduce((s, r) => s + Number(r.amount), 0);
+  const total = Math.round(Number(partnerTotal) * 100) / 100;
+  if (rows.length === 0 || clientTotal <= 0 || total <= 0) return [];
+  let acc = 0;
+  return rows.map((r, i) => {
+    const amount =
+      i === rows.length - 1
+        ? Math.round((total - acc) * 100) / 100
+        : Math.round(((total * Number(r.amount)) / clientTotal) * 100) / 100;
+    acc += amount;
+    return { amount, due_date: r.due_date.slice(0, 10) };
+  });
+}

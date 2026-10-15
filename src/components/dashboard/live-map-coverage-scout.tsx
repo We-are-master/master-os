@@ -127,7 +127,7 @@ export function LiveMapCoverageScout({
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-1.5", showAreaSearch && "w-[min(620px,100%)]")}>
-      <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 rounded-xl border border-[#E4E4E8] bg-white/95 px-2 py-2 shadow-md backdrop-blur-sm">
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-1.5 rounded-xl border border-border bg-white/95 px-2 py-2 shadow-md backdrop-blur-sm">
         {showAreaSearch ? (
           <div className="min-w-0 flex-1 basis-[180px]">
             <AddressAutocomplete
@@ -135,7 +135,7 @@ export function LiveMapCoverageScout({
               onChange={setAddressQuery}
               onSelect={handleAddressSelect}
               placeholder="Postcode or address"
-              fieldClassName="!h-9 !rounded-lg !text-[12px] !pl-9 !pr-8 border-[#D8D8DD] bg-[#FAFAFB] focus:ring-[#ED4B00]/25 focus:border-[#ED4B00]/50"
+              fieldClassName="!h-9 !rounded-lg !text-[12px] !pl-9 !pr-8 border-[var(--line-2)] bg-surface-secondary focus:ring-text-primary/20 focus:border-text-primary"
               className="w-full"
             />
           </div>
@@ -165,7 +165,7 @@ export function LiveMapCoverageScout({
             onClick={handleClear}
             title="Clear area search"
             aria-label="Clear area search"
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D8D8DD] bg-white text-[#64748B] hover:text-[#020040]"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--line-2)] bg-white text-text-tertiary hover:text-text-primary"
           >
             <X className="h-3.5 w-3.5" aria-hidden />
           </button>
@@ -179,7 +179,7 @@ export function LiveMapCoverageScout({
               aria-label="Scout radius"
               value={search.radiusMiles}
               onChange={(e) => setRadius(Number(e.target.value))}
-              className="h-7 appearance-none rounded-lg border border-[#D8D8DD] bg-white/95 py-0 pl-2 pr-6 text-[11px] font-semibold text-[#020040] shadow-sm outline-none focus:border-[#ED4B00]/40 focus:ring-2 focus:ring-[#ED4B00]/20"
+              className="h-7 appearance-none rounded-lg border border-[var(--line-2)] bg-white/95 py-0 pl-2 pr-6 text-[11px] font-semibold text-text-primary shadow-sm outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/20"
             >
               {SERVICE_RADIUS_MILE_OPTIONS.map((mi) => (
                 <option key={mi} value={mi}>
@@ -188,7 +188,7 @@ export function LiveMapCoverageScout({
               ))}
             </select>
             <ChevronDown
-              className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
+              className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-text-tertiary"
               aria-hidden
             />
           </div>
@@ -196,13 +196,13 @@ export function LiveMapCoverageScout({
             <button
               type="button"
               onClick={() => setListOpen((v) => !v)}
-              className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-[#ED4B00]/25 bg-[#FFF7F3] px-2.5 py-1.5 text-[11px] font-semibold text-[#020040] hover:bg-[#FFEDE4]"
+              className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-text-primary bg-[#FFF7F3] px-2.5 py-1.5 text-[11px] font-semibold text-text-primary hover:bg-[#FFEDE4]"
             >
-              <span className="inline-flex items-center gap-1 text-[#ED4B00]">
+              <span className="inline-flex items-center gap-1 text-text-primary">
                 <Sparkles className="h-3 w-3 shrink-0" aria-hidden />
                 {totalCount} {tradeLabel} partner{totalCount === 1 ? "" : "s"} in {areaLabel}
               </span>
-              <span className="text-[#64748B] font-medium">
+              <span className="text-text-tertiary font-medium">
                 · {radiusLabel} mi radius
               </span>
               {onlineCount > 0 ? (
@@ -210,7 +210,7 @@ export function LiveMapCoverageScout({
                   {onlineCount} online
                 </Pill>
               ) : (
-                <span className="text-[#64748B] font-medium">· none online right now</span>
+                <span className="text-text-tertiary font-medium">· none online right now</span>
               )}
             </button>
           ) : (
@@ -219,16 +219,16 @@ export function LiveMapCoverageScout({
                 Partners available: 0
               </Pill>
               <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-[#FCD34D]/60 bg-gradient-to-r from-[#FFFBEB] to-[#FFF7ED] px-2.5 py-1.5 shadow-sm">
-                <Megaphone className="h-3.5 w-3.5 text-[#D97706] shrink-0" aria-hidden />
+                <Megaphone className="h-3.5 w-3.5 text-[var(--warn-ink)] shrink-0" aria-hidden />
                 <div className="min-w-0">
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-[#B45309]">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--warn-ink)]">
                     Time to recruit!
                   </p>
-                  <p className="text-[10.5px] font-medium text-[#92400E]">
+                  <p className="text-[10.5px] font-medium text-[var(--warn-ink)]">
                     No {tradeLabel} coverage at {areaLabel} ({radiusLabel} mi) — grow the network here.
                   </p>
                 </div>
-                <UserPlus className="h-3.5 w-3.5 text-[#ED4B00] shrink-0 opacity-80" aria-hidden />
+                <UserPlus className="h-3.5 w-3.5 text-text-primary shrink-0 opacity-80" aria-hidden />
               </div>
             </div>
           )}
@@ -236,7 +236,7 @@ export function LiveMapCoverageScout({
       ) : null}
 
       {showAreaSearch && search && listOpen && totalCount > 0 ? (
-        <div className="max-h-40 overflow-y-auto rounded-xl border border-[#E4E4E8] bg-white/98 shadow-md backdrop-blur-sm">
+        <div className="max-h-40 overflow-y-auto rounded-xl border border-border bg-white/98 shadow-md backdrop-blur-sm">
           <ul className="divide-y divide-[#F0F0F4]">
             {search.matches.map(({ partner, coverageSummary, isOnlineNow }) => (
               <li
@@ -244,10 +244,10 @@ export function LiveMapCoverageScout({
                 className="flex items-start justify-between gap-2 px-3 py-2 text-[11px]"
               >
                 <div className="min-w-0">
-                  <p className="font-semibold text-[#020040] truncate">
+                  <p className="font-semibold text-text-primary truncate">
                     {partner.company_name?.trim() || partner.contact_name || "Partner"}
                   </p>
-                  <p className="text-[#64748B] truncate">
+                  <p className="text-text-tertiary truncate">
                     {formatPartnerTradeCoverageLine(
                       partner,
                       catalogServices,
@@ -310,8 +310,8 @@ function ScoutSelect({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={cn(
-          "h-9 w-full appearance-none rounded-lg border border-[#D8D8DD] bg-[#FAFAFB] py-1.5 pl-2.5 pr-7 text-[11px] font-medium text-[#020040] outline-none focus:border-[#ED4B00]/40 focus:ring-2 focus:ring-[#ED4B00]/20",
-          highlighted && "border-[#ED4B00]/35 bg-[#FFF9F6] font-semibold",
+          "h-9 w-full appearance-none rounded-lg border border-[var(--line-2)] bg-surface-secondary py-1.5 pl-2.5 pr-7 text-[11px] font-medium text-text-primary outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/20",
+          highlighted && "border-text-primary bg-[#FFF9F6] font-semibold",
         )}
       >
         {options.map((o) => (
@@ -321,7 +321,7 @@ function ScoutSelect({
         ))}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-[#64748B]"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-text-tertiary"
         aria-hidden
       />
     </div>

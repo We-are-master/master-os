@@ -129,40 +129,33 @@ export function JobModalScheduleFields({
 
   return (
     <>
-      {/* Primary toggle: One-Off / Recurring */}
-      <div className="flex flex-wrap items-stretch gap-1.5 min-w-0">
-        <KindTab
-          label="One-Off"
-          description="One day only"
-          active={isOneOff}
-          onClick={() => setKind("one_off")}
-        />
-        <KindTab
-          label="Recurring"
-          description="Spans days or repeats"
-          active={isMultiple}
-          onClick={() => {
-            // First click on Recurring → default to Spans days.
-            if (!isMultiple) setKind("multi_day");
-          }}
-        />
-      </div>
-
-      {/* Secondary toggle (only when Multiple is active) */}
+      {/* Recurring: o tipo e o "como" em dropdowns; os campos abrem embaixo. */}
       {isMultiple ? (
-        <div className="flex flex-wrap items-stretch gap-1.5 -mt-1 pl-3 border-l-2 border-primary/30 min-w-0">
-          <SubKindTab
-            label="Spans days"
-            description="Mon → Fri (continuous)"
-            active={isMultiDay}
-            onClick={() => setKind("multi_day")}
-          />
-          <SubKindTab
-            label="Repeats"
-            description="Every Tuesday, monthly, …"
-            active={isRecurring}
-            onClick={() => setKind("recurring")}
-          />
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0">
+              <Select
+                id="job-kind-select"
+                label="Type"
+                value={isOneOff ? "one_off" : "recurring"}
+                onChange={(e) => setKind(e.target.value === "one_off" ? "one_off" : isMultiple ? jobKind : "multi_day")}
+                options={[
+                  { value: "one_off", label: "One-off" },
+                  { value: "recurring", label: "Recurring" },
+                ]}
+              />
+          </div>
+          <div className="min-w-0">
+            <Select
+              id="job-kind-how"
+              label="How"
+              value={isRecurring ? "recurring" : "multi_day"}
+              onChange={(e) => setKind(e.target.value === "recurring" ? "recurring" : "multi_day")}
+              options={[
+                { value: "multi_day", label: "Spans days (Mon → Fri)" },
+                { value: "recurring", label: "Repeats (every Tue, monthly…)" },
+              ]}
+            />
+          </div>
         </div>
       ) : null}
 
@@ -171,31 +164,39 @@ export function JobModalScheduleFields({
         <>
           <div
             className={cn(
-              "flex min-w-0 flex-col gap-2",
-              !hideArrivalSlot && "sm:flex-row sm:items-end sm:gap-3",
+              "grid min-w-0 grid-cols-1 items-end gap-3",
+              hideArrivalSlot ? "sm:grid-cols-2" : "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]",
             )}
           >
-            <div
-              className={cn(
-                "min-w-0",
-                !hideArrivalSlot && "w-full shrink-0 sm:w-[9.5rem]",
-              )}
-            >
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            <div className="min-w-0">
+              <Select
+                id="job-kind-select"
+                label="Type"
+                value={isOneOff ? "one_off" : "recurring"}
+                onChange={(e) => setKind(e.target.value === "one_off" ? "one_off" : isMultiple ? jobKind : "multi_day")}
+                options={[
+                  { value: "one_off", label: "One-off" },
+                  { value: "recurring", label: "Recurring" },
+                ]}
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
                 Start Date{startDateRequired ? " *" : ""}
               </label>
               <Input
                 type="date"
                 value={scheduledDate}
                 onChange={(e) => onChange("scheduled_date", e.target.value)}
-                className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+                className={`w-full ${requiredFieldClassName ?? ""}`.trim()}
               />
               {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
             </div>
             {!hideArrivalSlot ? (
-              <div className="min-w-0 w-full flex-1">
+              <div className="min-w-0">
                 <ArrivalSlotPicker
                   rowLayout
+                  labelHint="Clients and partners see this slot as the arrival window. Late status is still based on the window end."
                   arrivalFrom={arrivalFrom}
                   arrivalWindowMins={arrivalWindowMins}
                   onPick={(from, mins) => {
@@ -207,16 +208,13 @@ export function JobModalScheduleFields({
             ) : null}
           </div>
           {preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null}
-          <p className="text-[10px] text-text-tertiary -mt-1">
-            Clients and partners see this slot as the arrival window. Late status is still based on the window end.
-          </p>
         </>
       ) : isMultiDay ? (
         <>
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="min-w-0">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
                   Start Date *
                 </label>
                 <Input
@@ -227,7 +225,7 @@ export function JobModalScheduleFields({
                     onChange("scheduled_date", v);
                     if (v && endDate && endDate < v) onChange("end_date", v);
                   }}
-                  className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+                  className={`w-full ${requiredFieldClassName ?? ""}`.trim()}
                 />
                 {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
               </div>
@@ -240,7 +238,7 @@ export function JobModalScheduleFields({
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="min-w-0">
-                <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
                   End Date *
                 </label>
                 <Input
@@ -255,7 +253,7 @@ export function JobModalScheduleFields({
                     if (min && v && v < min) return;
                     onChange("end_date", v);
                   }}
-                  className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+                  className={`w-full ${requiredFieldClassName ?? ""}`.trim()}
                 />
               </div>
               <TimeSelect
@@ -266,9 +264,9 @@ export function JobModalScheduleFields({
               />
             </div>
           </div>
-          <p className="text-[10px] text-text-tertiary -mt-1">
-            Multi-day jobs render as a continuous bar in the calendar. Start time = arrival on day one;
-            end time = wrap-up on the last day. No arrival window — the partner app shows the multi-day range directly.
+          <p className="-mt-1 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+            How multi-day jobs show
+            <FixfyHintIcon text="Multi-day jobs show as one continuous bar in the calendar. Start time is the arrival on day one; end time is the wrap-up on the last day. No arrival window: the partner app shows the whole range." />
           </p>
         </>
       ) : (
@@ -341,7 +339,7 @@ function RecurringFormFields({
         {/* Row 1 — when it starts + how often */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="min-w-0">
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
               Start Date *
             </label>
             <Input
@@ -359,7 +357,7 @@ function RecurringFormFields({
                   onRecurrenceChange({ end_date: v });
                 }
               }}
-              className={`h-10 w-full ${requiredFieldClassName ?? ""}`.trim()}
+              className={`w-full ${requiredFieldClassName ?? ""}`.trim()}
             />
             {startDateFooter ? <div className="mt-1">{startDateFooter}</div> : null}
           </div>
@@ -397,10 +395,10 @@ function RecurringFormFields({
               ]}
             />
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
+              <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
                 Every
               </label>
-              <div className="flex h-10 items-center gap-2">
+              <div className="flex h-[var(--field-h,38px)] items-center gap-2">
                 <Input
                   type="number"
                   min={1}
@@ -410,7 +408,7 @@ function RecurringFormFields({
                     const n = Math.max(1, Number(e.target.value) || 1);
                     onRecurrenceChange({ interval: n });
                   }}
-                  className={`h-10 w-20 shrink-0 ${requiredFieldClassName ?? ""}`.trim()}
+                  className={`w-20 shrink-0 ${requiredFieldClassName ?? ""}`.trim()}
                 />
                 <span className="text-xs text-text-secondary">
                   {recurrence.pattern === "daily" && (recurrence.interval === 1 ? "day" : "days")}
@@ -446,7 +444,7 @@ function RecurringFormFields({
         {/* Weekdays — full width when weekly */}
         {recurrence.pattern === "weekly" ? (
           <div className="rounded-lg border border-border-light bg-surface-hover/20 px-3 py-2.5">
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
+            <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">
               On these weekdays
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -511,7 +509,7 @@ function RecurringFormFields({
               onChange={(e) => onRecurrenceChange({ max_occurrences: e.target.value })}
               disabled={recurrence.end_mode !== "count"}
               onClick={() => onRecurrenceChange({ end_mode: "count" })}
-              className="h-9 w-16 shrink-0"
+              className="w-16 shrink-0"
             />
             <span className="text-xs text-text-secondary">visits</span>
           </label>
@@ -550,7 +548,7 @@ function RecurringFormFields({
                 if (min && v && v < min) return;
                 onRecurrenceChange({ end_date: v, end_mode: "until" });
               }}
-              className="h-9 min-w-0 flex-1"
+              className="min-w-0 flex-1"
             />
           </label>
         </div>
@@ -620,69 +618,15 @@ function RecurringFormFields({
         </p>
       </div>
 
-      <p className="text-[10px] text-text-tertiary -mt-1">
-        Each occurrence becomes its own job in the schedule. The first 90 days
-        are generated immediately; the rest are filled in by the daily cron.
+      <p className="-mt-1 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+        How repeats are created
+        <FixfyHintIcon text="Each occurrence becomes its own job in the schedule. The first 90 days are created straight away; the rest are added by the daily run." />
       </p>
     </>
   );
 }
 
-function KindTab({
-  label, description, active, disabled, onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={cn(
-        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2.5 py-1.5 text-left transition-colors",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : disabled
-            ? "border-border-light bg-surface-hover/40 text-text-tertiary opacity-60 cursor-not-allowed"
-            : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
-      )}
-    >
-      <span className="block text-xs font-semibold leading-tight">{label}</span>
-      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
-    </button>
-  );
-}
 
-function SubKindTab({
-  label, description, active, onClick,
-}: {
-  label: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "min-w-0 flex-1 basis-[calc(50%-0.375rem)] rounded-md border px-2 py-1 text-left transition-colors",
-        active
-          ? "border-primary bg-primary/10 text-primary"
-          : "border-border-light bg-card text-text-secondary hover:border-primary/40 hover:text-text-primary",
-      )}
-    >
-      <span className="block text-[11px] font-semibold leading-tight">{label}</span>
-      <span className="block text-[10px] leading-tight opacity-80">{description}</span>
-    </button>
-  );
-}
 
 /** Re-export for parents that maintain their own form state. */
 export type { JobRecurrenceByday } from "@/types/database";
