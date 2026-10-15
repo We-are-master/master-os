@@ -2989,7 +2989,8 @@ function JobsPageContent() {
             ) : (
               <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
             )}
-            {ag.time ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
+            {/* Com chip, ele ocupa a célula toda; data e horário ficam no hover (15/10/2026). */}
+            {ag.time && !chip ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
           </div>
         );
       },
@@ -3051,7 +3052,7 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={onHoldBadge?.className}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
               </div>
@@ -3072,7 +3073,7 @@ function JobsPageContent() {
           const variantTag = JOB_STATUS_BADGE_VARIANT[statusKey];
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={variantTag} dot>{lbl}</Badge>
+              <Badge variant={variantTag} dot className={LIST_CHIP_CLASS}>{lbl}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
@@ -3084,7 +3085,7 @@ function JobsPageContent() {
         return (
           <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot} size="sm" className={onHoldBadge?.className}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
                 <JobCardRefusedBadge job={item} />
             </div>
@@ -3150,7 +3151,7 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
-      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} />,
+      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} className={LIST_CHIP_CLASS} />,
     },
     {
       key: "actions",
@@ -4026,6 +4027,9 @@ const JOBS_KANBAN_DROP_STATUS: Record<string, Job["status"] | undefined> = {
   final_check: "final_check",
   awaiting_payment: "awaiting_payment",
 };
+
+/** Status e Payment da lista com a mesma largura (dono, 15/10/2026): o Payment é o padrão. */
+const LIST_CHIP_CLASS = "min-w-[112px] justify-center";
 
 export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
