@@ -629,7 +629,7 @@ export function buildCashflowWeekBreakdown(
           id: slice.installmentId,
           kind: "invoice",
           label: slice.label,
-          detail: slice.detail ? `${slice.detail} · installment` : "Installment",
+          detail: slice.detail ? `${slice.detail} · instalment` : "Instalment",
           dueYmd: slice.dueYmd,
           amount: roundMoney(slice.amount),
         });
@@ -664,7 +664,7 @@ export function buildCashflowWeekBreakdown(
           id: slice.installmentId,
           kind: "self_bill",
           label: slice.label,
-          detail: ref ? `${tierLabel} · ${ref} · installment` : `${tierLabel} · installment`,
+          detail: ref ? `${tierLabel} · ${ref} · instalment` : `${tierLabel} · instalment`,
           dueYmd: slice.dueYmd,
           amount: roundMoney(slice.amount),
         });
@@ -683,7 +683,8 @@ export function buildCashflowWeekBreakdown(
     const ref = sb.reference?.trim() || sb.week_label?.trim();
     outLines.push({
       id: sb.id,
-      kind: "self_bill",
+      // Workforce (self-bill interno) sai como folha, para não se misturar com parceiro.
+      kind: sb.bill_origin === "internal" ? "payroll" : "self_bill",
       label,
       detail: ref ? `${tierLabel} · ${ref}` : tierLabel,
       dueYmd,

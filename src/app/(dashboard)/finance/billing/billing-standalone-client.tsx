@@ -57,7 +57,7 @@ import {
   selfBillDueYmd,
   isSelfBillOverdue,
 } from "@/lib/billing-standalone-metrics";
-import {
+import { buildRunwayPeriodDetail,
   buildRunwayWeekBreakdown,
   buildRunwayWeekly,
   type RunwayViewMode,
@@ -1232,6 +1232,15 @@ function BillingStandaloneInner() {
     };
   }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView, runwayGranularity, cashflowDetailWeek]);
 
+  /** Período inteiro do modal: entrou, vai entrar, saiu e vai sair (dono, 15/10/2026). */
+  const cashflowDetailPeriod = useMemo(
+    () =>
+      cashflowDetailWeekStart
+        ? buildRunwayPeriodDetail(cashflowDetailWeekStart, runwayGranularity === "fortnight" ? 2 : 1, cashflowBuildArgs)
+        : null,
+    [cashflowDetailWeekStart, cashflowBuildArgs, runwayGranularity],
+  );
+
   const handleSaveRunwayOpeningBalance = useCallback(
     async (weekStart: string, amount: number) => {
       setSavingRunwayOpening(true);
@@ -2333,6 +2342,7 @@ function BillingStandaloneInner() {
           onClose={() => setCashflowDetailWeekStart(null)}
           view={runwayView}
           breakdown={cashflowDetailBreakdown}
+          detail={cashflowDetailPeriod}
           openingBalance={cashflowDetailWeek?.openingBalance}
           closingBalance={cashflowDetailWeek?.closingBalance}
           onSaveOpeningBalance={
