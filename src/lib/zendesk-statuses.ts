@@ -83,8 +83,9 @@ export const ZD_STATUS_COMPLAINT = Number(process.env.ZENDESK_STATUS_COMPLAINT_I
 
 // ─── WhatsApp (Harvey) ───────────────────────────────────────────────────────
 
-/** 🟩 WhatsApp — conversa de cliente no WhatsApp. Entra no ⚡ Action Required até
- *  a equipe mover para Quote, Bidding, Unassigned etc. (dono, 30/09/2026). */
+/** 💬 In Conversation (antigo 🟩 WhatsApp). Aposentado em 15/10/2026: tudo entra New/Open
+ *  e a equipe classifica (Lead, quote, job, complaint). Fica aqui só para reconhecer
+ *  tickets antigos que ainda estejam nele; nada novo deve receber este status. */
 export const ZD_STATUS_WHATSAPP = 5799929141919;
 
 /** 🟢 Partner — conversa de parceiro (grupo Partners), fora do Action Required. */
