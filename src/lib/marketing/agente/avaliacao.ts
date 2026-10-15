@@ -25,15 +25,15 @@ export const ASSUNTO_DA_AVALIACAO = "How did we do?";
 
 export function htmlDaAvaliacao(nome: string | undefined, saida: string): string {
   return renderCampanha({
-    preheader: "Honest answer welcome. And £20 off for a friend.",
+    preheader: "Your feedback, and £20 off for a friend.",
     etiqueta: "Thank you",
     selo: "Thank you",
     titulo: "Thanks for booking with us",
     nome,
     blocos: [
-      { tipo: "texto", html: "Victor here. I hope the job went the way you wanted." },
-      { tipo: "texto", html: "If anything was missed, just reply within 14 days of the job and we'll come back and put it right. This comes straight to me, and I read every one." },
-      { tipo: "texto", html: "If you were happy, two things help a small team like ours more than anything. A short Google review, so the next person knows what to expect. And passing us on: a friend who books with <strong>REFER20</strong> gets £20 off any booking of £100 or more." },
+      { tipo: "texto", html: "My name is Victor, and I look after operations at Fixfy. I hope the job was done exactly the way you wanted." },
+      { tipo: "texto", html: "If anything was missed, reply within 14 days of the job and we will come back and put it right. Your reply comes straight to me." },
+      { tipo: "texto", html: "If you were happy, two things help us more than anything. A short Google review, so the next person knows what to expect. And passing us on: a friend who books with <strong>REFER20</strong> gets £20 off any booking of £100 or more." },
     ],
     oferta: { codigo: "REFER20", valor: "£20 off", sobre: "for a friend, on bookings of £100 or more", validade: "31 March" },
     cta: { texto: "Leave a review", url: LINK_DO_GOOGLE },

@@ -29,7 +29,7 @@ export const LINK_DE_SAIDA = "{{{RESEND_UNSUBSCRIBE_URL}}}";
 export function remetente(): { from: string; reply_to: string } {
   return {
     // Voz do Victor (dono, 15/10/2026): sai no nome dele e a resposta cai na caixa dele.
-    from: process.env.MARKETING_AGENTE_FROM?.trim() || "Victor at Fixfy <victor@news.getfixfy.com>",
+    from: process.env.MARKETING_AGENTE_FROM?.trim() || "Victor Braz at Fixfy <victor@news.getfixfy.com>",
     reply_to: process.env.MARKETING_AGENTE_REPLY_TO?.trim() || "victor@getfixfy.com",
   };
 }

@@ -113,7 +113,7 @@ export const HORA_DO_WHATSAPP_RELAMPAGO = 15;
 const t = (html: string): Bloco => ({ tipo: "texto", html });
 const l = (titulo: string, itens: string[]): Bloco => ({ tipo: "lista", titulo, itens });
 
-const REGRAS = "The price you see is the total, fixed before you book, and if anything isn't right we come back within 14 days. The button below applies the code for you. It stops working Thursday at midnight, or after the first 25 bookings, whichever comes first. Any question, just reply.";
+const REGRAS = "The price you see is the total, fixed before you book, and if anything is not right we come back within 14 days. The button below applies the code for you. It ends on Thursday at midnight or after the first 25 bookings, whichever comes first. If you have any question, just reply.";
 
 export const RELAMPAGOS: Relampago[] = [
   {
@@ -126,11 +126,11 @@ export const RELAMPAGOS: Relampago[] = [
     maxUsos: 25,
     linha: "15% off any Fixfy booking, including a room painted from £450",
     email: {
-      assunto: "Quick one: 15% off painting, 36 hours",
+      assunto: "36 hours: 15% off painting",
       preheader: "PAINT15, until Thursday midnight. First 25 bookings.",
       titulo: "15% off, until Thursday midnight",
       blocos: [
-        t("I'll keep this short, because the offer is. Until <strong>Thursday at midnight</strong>, <strong>PAINT15</strong> takes <strong>15% off any Fixfy booking</strong>. Book now, pick whatever date suits you."),
+        t("This offer is short, so I will keep this brief. Until <strong>Thursday at midnight</strong>, <strong>PAINT15</strong> takes <strong>15% off any Fixfy booking</strong>. Book now, pick whatever date suits you."),
         l("Painting, before the 15%", [
           "Touch-ups (up to 3.5 hours): £215",
           "A room, walls, two coats: £450",
@@ -151,11 +151,11 @@ export const RELAMPAGOS: Relampago[] = [
     maxUsos: 25,
     linha: "15% off any Fixfy booking, including deep cleaning from £174",
     email: {
-      assunto: "Quick one: 15% off a deep clean, 36 hours",
+      assunto: "36 hours: 15% off a deep clean",
       preheader: "DEEP15, until Thursday midnight. First 25 bookings.",
       titulo: "The deep clean, 15% off for 36 hours",
       blocos: [
-        t("Windows shut, heating on. If there was ever a week for the clean that resets the whole flat, it's this one. Until <strong>Thursday at midnight</strong>, <strong>DEEP15</strong> takes <strong>15% off any Fixfy booking</strong>."),
+        t("Windows shut, heating on. This is the right week for the clean that resets the whole home. Until <strong>Thursday at midnight</strong>, <strong>DEEP15</strong> takes <strong>15% off any Fixfy booking</strong>."),
         l("What the deep clean reaches", [
           "Behind and under the fridge, washer and cooker",
           "Inside every cupboard and drawer",
@@ -177,7 +177,7 @@ export const RELAMPAGOS: Relampago[] = [
     maxUsos: 25,
     linha: "15% off any Fixfy booking, including a repairs half day (3.5 hours) at £180",
     email: {
-      assunto: "Quick one: 15% off your repairs list, 36 hours",
+      assunto: "36 hours: 15% off your repairs list",
       preheader: "FIX15, until Thursday midnight. First 25 bookings.",
       titulo: "The list, done in one visit",
       blocos: [
@@ -202,11 +202,11 @@ export const RELAMPAGOS: Relampago[] = [
     maxUsos: 25,
     linha: "15% off any Fixfy booking for December, including deep cleaning from £174",
     email: {
-      assunto: "Quick one: 15% off before Christmas, 36 hours",
+      assunto: "36 hours: 15% off before Christmas",
       preheader: "XMAS15, until Thursday midnight. First 25 bookings.",
       titulo: "Ready before everyone arrives",
       blocos: [
-        t("Every year the last two weeks of December go first. So here's a reason to lock yours in now: until <strong>Thursday at midnight</strong>, <strong>XMAS15</strong> takes <strong>15% off any Fixfy booking</strong>."),
+        t("Every year the last two weeks of December go first. So this is a good reason to secure yours now: until <strong>Thursday at midnight</strong>, <strong>XMAS15</strong> takes <strong>15% off any Fixfy booking</strong>."),
         l("What people book before Christmas", [
           "A deep clean, from £174",
           "The repairs list before the family arrives, half day £180",

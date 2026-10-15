@@ -213,7 +213,7 @@ ${preheaderOculto(opts.preheader)}
         <h1 class="h1-mobile" style="margin:0 0 20px; font-size:28px; line-height:35px; font-weight:800; letter-spacing:-0.02em; color:${CLIENT_BRAND.navy};">${escapeHtml(opts.titulo)}</h1>
         ${p(`Hi ${escapeHtml(opts.nome)},`)}
         ${opts.corpo}
-        <p style="margin:0 0 30px; font-size:16px; line-height:24px; color:${CLIENT_BRAND.ink}; font-weight:600;">Victor<br><span style="font-weight:400; font-size:14px; color:${CLIENT_BRAND.gray};">Founder, Fixfy</span></p>
+        <p style="margin:0 0 30px; font-size:16px; line-height:24px; color:${CLIENT_BRAND.ink}; font-weight:600;">Victor Braz<br><span style="font-weight:400; font-size:14px; color:${CLIENT_BRAND.gray};">Operations Director, Fixfy</span></p>
       </td></tr>
     </table>
     <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
@@ -237,7 +237,7 @@ function primeiroNome(d: ReservaAbandonada): string {
 
 function rodapeTexto(d: ReservaAbandonada): string {
   const ref = refDoTicket(d.ticketRef);
-  return `\n\nVictor\nFounder, Fixfy\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
+  return `\n\nVictor Braz\nOperations Director, Fixfy\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
 }
 
 // ---------------------------------------------------------------- os três
@@ -249,7 +249,7 @@ export function email1(d: ReservaAbandonada): EmailPronto {
   const subject = "You're almost there!";
   const preheader = `Finish your booking: ${d.service.name} · ${formatarLibras(d.price)} fixed price`;
   const corpo = [
-    p(`Victor here. I saw you started booking ${escapeHtml(d.service.withArticle)} and didn't quite finish, so I've kept your details saved. No need to start again.`),
+    p(`I noticed you started booking ${escapeHtml(d.service.withArticle)} and did not finish, so we have kept your details saved. There is no need to start again.`),
     cartaoDaReserva(d, false),
     p(`Your fixed price is <b style="color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</b>, and that's what you pay. Nothing gets added at checkout.`),
     p("Nothing's confirmed yet. You can pick up exactly where you left off."),
@@ -258,7 +258,7 @@ export function email1(d: ReservaAbandonada): EmailPronto {
   ].join("");
   const text = `Hi ${nome},
 
-Victor here. I saw you started booking ${d.service.withArticle} and didn't quite finish, so I've kept your details saved. No need to start again.
+I noticed you started booking ${d.service.withArticle} and did not finish, so we have kept your details saved. There is no need to start again.
 
 Your fixed price is ${formatarLibras(d.price)}, and that's what you pay. Nothing gets added at checkout.
 
@@ -288,7 +288,7 @@ export function email2(d: ReservaAbandonada): EmailPronto {
     { icone: "nohidden", texto: "No hidden charges" },
   ];
   const corpo = [
-    p("Just checking in. If you stopped because you wanted to know a bit more first, fair enough. Here's what you get with us:"),
+    p("If you paused because you wanted to know a little more first, here is what you can expect from us:"),
     listaComIcones(itens, base),
     p(garantia),
     p("Your details are still saved, so it's about a minute to finish."),
@@ -297,7 +297,7 @@ export function email2(d: ReservaAbandonada): EmailPronto {
   ].join("");
   const text = `Hi ${nome},
 
-Just checking in. If you stopped because you wanted to know a bit more first, fair enough. Here's what you get with us:
+If you paused because you wanted to know a little more first, here is what you can expect from us:
 
 - A clear fixed price, the total you pay
 - ${fotos}
@@ -333,7 +333,7 @@ export function email3(d: ReservaAbandonada): EmailPronto {
     ? `Your unique code is ${navy(escapeHtml(d.promo.code))}, and it has already been applied to your booking. The discount is valid until ${navy(escapeHtml(validade))}. After that time, the code will expire automatically.`
     : `We've applied code ${navy(escapeHtml(d.promo.code))} to your booking.`;
   const corpo = [
-    p(`Last one from me on this. I've put a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} on your saved ${escapeHtml(d.service.name)} booking, to make it an easy yes.`),
+    p(`This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
     cartaoDaReserva(d, true),
     p(`Original price: ${formatarLibras(d.price)}<br>Your discounted price: ${navy(formatarLibras(d.promo.discountedPrice))}`),
     caixaDoCodigo(d),
@@ -344,7 +344,7 @@ export function email3(d: ReservaAbandonada): EmailPronto {
   ].join("");
   const text = `Hi ${nome},
 
-Last one from me on this. I've put a ${unico ? "personal " : ""}${pct}% discount on your saved ${d.service.name} booking, to make it an easy yes.
+This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${pct}% discount to your saved ${d.service.name} booking.
 
 Original price: ${formatarLibras(d.price)}
 Your discounted price: ${formatarLibras(d.promo.discountedPrice)}

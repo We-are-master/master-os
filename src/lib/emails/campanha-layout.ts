@@ -59,10 +59,10 @@ export type CampanhaInput = {
 
 export type Assinatura = { nome: string; linha: string };
 
-/** Voz do Victor no B2C (dono, 15/10/2026): a resposta cai na caixa dele. */
+/** Voz do Victor no B2C (dono, 15/10/2026): Diretor de Operações, e a resposta cai na caixa dele. */
 export const ASSINATURA_DO_VICTOR: Assinatura = {
-  nome: "Victor",
-  linha: "Founder, Fixfy. Reply to this email and it comes straight to me.",
+  nome: "Victor Braz",
+  linha: "Operations Director, Fixfy. Reply to this email and I will get back to you personally.",
 };
 const ASSINATURA_PADRAO: Assinatura = { nome: "Leo at Fixfy", linha: "Reply to this email and a real person answers." };
 
