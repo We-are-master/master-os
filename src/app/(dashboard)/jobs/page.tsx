@@ -130,6 +130,7 @@ import {
   formatHourMinuteAmPm,
   jobFinishYmd,
   jobScheduleYmd,
+  compactJobSchedule,
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -2834,7 +2835,7 @@ function JobsPageContent() {
     },
     {
       key: "client_name",
-      label: "Client / property",
+      label: "Client",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
       sortable: true,
@@ -2942,12 +2943,10 @@ function JobsPageContent() {
               ) : null
             }
           >
-            <div className="flex items-start gap-2 min-w-0">
-              <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
-              <div className="min-w-0 leading-tight">
-                <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
-                <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
-              </div>
+            {/* Só o avatar da conta e o nome (15/10/2026); endereço, telefone e scope ficam no hover. */}
+            <div className="flex items-center gap-2 min-w-0">
+              <Avatar name={item.client_name} size="sm" className="shrink-0" src={logo} />
+              <p className="m-0 min-w-0 truncate text-[13px] font-medium text-text-primary">{item.client_name}</p>
             </div>
           </HoverPreview>
         );
@@ -2956,39 +2955,35 @@ function JobsPageContent() {
     {
       key: "schedule",
       label: "Schedule",
-      minWidth: "200px",
-      cellClassName: "min-w-[12.5rem] max-w-[16rem]",
+      minWidth: "190px",
+      cellClassName: "min-w-[11.5rem]",
       sortable: true,
       sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
-        const line = formatJobScheduleListLabel(item);
+        // Uma linha: data e janela de chegada, mais o chip relativo (15/10/2026).
         const detail = formatJobScheduleLine(item);
-        const secondaryLine = jobManagementScheduleSecondaryLine(item);
+        const ag = compactJobSchedule(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        const timingKind = getJobScheduleTimingKind(item);
-        const hasChip = Boolean(timingKind);
+        if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
         return (
-          // Bloco alinhado à esquerda (data, chegada e cronômetro começam na mesma
-          // margem) e centralizado na coluna, como o título "Schedule".
-          <div className="mx-auto flex w-fit min-w-0 max-w-full flex-col items-start text-left">
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-              {hasChip ? (
-                <JobScheduleTimingChip job={item} title={detail} />
-              ) : line ? (
-                <span
-                  className="text-[11px] text-text-secondary leading-snug whitespace-normal break-words"
-                  title={detail ?? undefined}
-                >
-                  {line}
-                </span>
-              ) : (
-                <span className="text-[11px] text-text-tertiary">—</span>
-              )}
-            </div>
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? undefined}>
+            <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
+            {ag.time ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
             {isOnsiteInProgress ? (
-              <ScheduleInProgressLiveSecondary job={item} />
-            ) : secondaryLine ? (
-              <p className="mt-0.5 text-[10px] text-text-tertiary leading-tight">{secondaryLine}</p>
+              <span className="rounded-md bg-[var(--info-light)] px-1.5 text-[10.5px] font-medium leading-[18px] text-[var(--info,#2563eb)]">On site</span>
+            ) : ag.relative ? (
+              <span
+                className={cn(
+                  "rounded-md px-1.5 text-[10.5px] font-medium leading-[18px]",
+                  ag.relativeTone === "today"
+                    ? "bg-[var(--success-light)] text-[var(--ok)]"
+                    : ag.relativeTone === "past"
+                      ? "bg-[var(--warning-light)] text-[var(--warn-ink)]"
+                      : "bg-surface-hover text-text-secondary",
+                )}
+              >
+                {ag.relative}
+              </span>
             ) : null}
           </div>
         );
