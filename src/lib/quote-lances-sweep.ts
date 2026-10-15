@@ -18,7 +18,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
-import { addTicketTags, getZendeskTicketSnapshot } from "@/lib/zendesk";
+import { assumirConversa, conversaDoTicket } from "@/lib/harvey-wa/controle";
+import { addTicketTags, getZendeskTicketSnapshot, zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
 
@@ -230,15 +231,48 @@ export async function varrerLancesParaRascunho(
       .eq("id", q.id);
     if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a quote não mudou — ${upErr.message}`);
     else {
-      void syncQuoteZendeskStatus(q.id, supabase).catch((err: unknown) =>
-        console.error("[lances] sync do status no Zendesk falhou:", err),
-      );
+      const aviso = await chamarEquipeParaOLance(supabase, q.id, Number(q.external_ref));
+      if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
     }
     r.rascunhados++;
     r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolha.precoAoCliente)}`);
   }
 
   return r;
+}
+
+/**
+ * Lance entrou: o ticket tem de aparecer na Action Required, venha de onde vier.
+ *
+ * Em 15/10/2026 três quotes com lance ficaram paradas sem ninguém ver. A
+ * QT-2026-1170 tinha preço no OS e o ticket continuou em Bidding: o sync do
+ * status era `void` depois da resposta, e na Vercel isso morre no meio. A
+ * QT-2026-1171 virou Quote Ready, mas o ticket ainda tinha `harvey_ai` (a
+ * conversa estava com o Harvey), e a Action Required ignora essa tag.
+ *
+ * Então, em ordem, cada passo sem derrubar o próximo:
+ *  1. o status do ticket acompanha a quote (com `await`);
+ *  2. se o Harvey segura a conversa do WhatsApp, ela passa para a equipe;
+ *  3. Reply Status 🔴 e sem `harvey_ai`: a view mostra o ticket.
+ * Devolve uma linha para o relatório quando algum passo falha.
+ */
+async function chamarEquipeParaOLance(supabase: SupabaseClient, quoteId: string, ticketId: number): Promise<string | null> {
+  const falhas: string[] = [];
+  await syncQuoteZendeskStatus(quoteId, supabase).catch((err: unknown) => falhas.push(`sync do status: ${String(err).slice(0, 120)}`));
+  if (!Number.isFinite(ticketId) || ticketId <= 0) return falhas.length ? falhas.join("; ") : null;
+  try {
+    const conversa = await conversaDoTicket(supabase, ticketId);
+    if (conversa?.estado === "harvey") await assumirConversa(supabase, conversa.conversation_id, "Team", "a partner bid (quote ready)");
+  } catch (err) {
+    falhas.push(`passar a conversa: ${String(err).slice(0, 120)}`);
+  }
+  try {
+    await zendeskApi(`tickets/${ticketId}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_awaiting" }] } } });
+    await zendeskApi(`tickets/${ticketId}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
+  } catch (err) {
+    falhas.push(`marcar o ticket: ${String(err).slice(0, 120)}`);
+  }
+  return falhas.length ? falhas.join("; ") : null;
 }
 
 /**
