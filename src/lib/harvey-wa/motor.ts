@@ -32,7 +32,7 @@ import { chamarSite } from "./site";
 import { pedirCotacao } from "./cotacao";
 import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
-import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 
 type EventoSc = {
   type: string;
@@ -220,7 +220,7 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
   // O Harvey passou para a equipe ("let me grab someone"): a última fala é dele, mas a vez
   // é NOSSA. Sem isto o ticket ficava 🟢 e voltava para a view Leads (Max, 08/10/2026).
   const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
-  const harveyPassou = est?.estado === "equipe" && ehDoHarvey(ultima);
+  const harveyPassou = est?.estado === "equipe" && ehOHarveyNoNomeDele(ultima);
   await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" || harveyPassou ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
 }
 
