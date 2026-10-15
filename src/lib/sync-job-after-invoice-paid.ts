@@ -124,9 +124,15 @@ export async function applyManualInvoicePaymentToJobLedger(
 
   if (!hasExistingSource && payAmt > EPS) {
     const paidDate = (inv.paid_date as string) || new Date().toISOString().split("T")[0];
+    /**
+     * Fatura de entrada paga à mão vira pagamento de ENTRADA (15/10/2026). Antes ia sempre
+     * como "customer_final": a sincronização usava esse valor para quitar também a fatura
+     * final, e o job aparecia todo pago com só a entrada no banco (achado no JOB-9733).
+     */
+    const ehEntrada = String((inv as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit";
     const paymentRow = {
       job_id: job.id,
-      type: "customer_final",
+      type: ehEntrada ? "customer_deposit" : "customer_final",
       amount: Math.round(payAmt * 100) / 100,
       payment_date: paidDate,
       note: `${sourceLabel} · ${(inv as { reference?: string }).reference ?? invoiceId}`,
