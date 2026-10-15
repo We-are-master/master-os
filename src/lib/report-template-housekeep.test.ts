@@ -39,7 +39,6 @@ test("toda limpeza da Housekeep cai no template por cômodo", () => {
 
 test("o que não é limpeza vai ao formulário de trade", () => {
   for (const [titulo, esperado] of [
-    ["Gardener", "gardener"],
     ["General Maintenance", "general"],
     ["Carpenter", "general"],
     ["Painter", "general"],
@@ -51,12 +50,15 @@ test("o que não é limpeza vai ao formulário de trade", () => {
   }
 });
 
-test("jardinagem ganha de limpeza quando as duas palavras aparecem", () => {
-  // "Garden clean up" tem as duas. A Housekeep trata jardinagem pelo formulário
-  // de trade, então gardener precisa ser avaliado primeiro; inverter a ordem
-  // mandaria todo jardim para o formulário por cômodo.
-  assert.equal(tpl("Garden clean up"), "gardener");
-  assert.equal(usesCleaningForm(tpl("Garden clean up")), false);
+test("a categoria do serviço decide antes da palavra (15/10/2026)", () => {
+  assert.equal(pickReportTemplate({ title: "Deep clean", categorySlug: "general-maintenance" }), "general");
+  assert.equal(pickReportTemplate({ title: "Painter", categorySlug: "cleaning" }), "cleaner");
+  assert.equal(pickReportTemplate({ title: "Anything", categorySlug: "certificates" }), "certificate");
+  // Sem categoria conhecida, vale a palavra.
+  assert.equal(pickReportTemplate({ title: "End of Tenancy Clean", categorySlug: null }), "cleaner");
+  // Jardinagem saiu: não existe mais formulário próprio.
+  assert.equal(pickReportTemplate({ title: "Garden clean up" }), "cleaner");
+  assert.equal(pickReportTemplate({ title: "Gardener" }), "general");
 });
 
 test("o template de limpeza é o único que pede foto por cômodo", () => {

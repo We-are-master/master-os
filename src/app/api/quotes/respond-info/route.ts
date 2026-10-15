@@ -1,3 +1,4 @@
+import { categoriaDoServico } from "@/lib/report-category";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
@@ -154,6 +155,8 @@ export async function GET(req: NextRequest) {
     id: string;
     reference: string;
     serviceType: string | null;
+    /** Categoria do serviço do job: decide o formulário do report. */
+    categorySlug: string | null;
     status: string;
     title: string | null;
     propertyAddress: string | null;
@@ -210,7 +213,7 @@ export async function GET(req: NextRequest) {
     // uses job.title (via pickReportTemplate) as the fallback.
     const { data: jobRow, error: jobLookupError } = await supabase
       .from("jobs")
-      .select("id, reference, status, title, property_address, partner_id, start_report_submitted, final_report_submitted")
+      .select("id, reference, status, title, property_address, partner_id, start_report_submitted, final_report_submitted, catalog_service_id")
       .eq("id", tokenJobId)
       .is("deleted_at", null)
       .maybeSingle();
@@ -222,6 +225,7 @@ export async function GET(req: NextRequest) {
         id:                    jobRow.id,
         reference:             jobRow.reference,
         serviceType:           quote.service_type ?? null,
+        categorySlug:          await categoriaDoServico(supabase, (jobRow as { catalog_service_id?: string | null }).catalog_service_id),
         status:                jobRow.status as string,
         title:                 (jobRow.title as string | null) ?? null,
         propertyAddress:       (jobRow.property_address as string | null) ?? null,

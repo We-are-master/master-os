@@ -8763,6 +8763,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 jobId={job.id}
                 jobReference={job.reference}
                 jobTitle={job.title}
+                catalogServiceId={job.catalog_service_id ?? null}
                 scheduledDate={job.scheduled_date ?? null}
                 startAlreadySubmitted={
                   !!job.start_report_submitted &&

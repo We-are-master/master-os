@@ -273,6 +273,7 @@ function QuoteRespondContent() {
             template={pickReportTemplate({
               serviceType: job.serviceType ?? summary.serviceType ?? null,
               title: job.title ?? summary.title,
+              categorySlug: (job as { categorySlug?: string | null }).categorySlug ?? null,
             })}
             onSubmitted={() =>
               setResult({

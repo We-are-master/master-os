@@ -22,6 +22,8 @@ import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft"
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { plannedPhotoShape } from "@/lib/report-submission";
 import { createSignedJobReportAssetUrl } from "@/services/job-reports";
+import { categoriaDoServico } from "@/lib/report-category";
+import { getSupabase } from "@/services/base";
 
 const NAVY = "#020040";
 const ORANGE = "#ED4B00";
@@ -36,6 +38,8 @@ interface FillReportModalProps {
   jobTitle: string | null;
   /** Optional: jobs carry the trade in the title, quotes carry it separately. */
   serviceType?: string | null;
+  /** Serviço do job no catálogo: a categoria dele escolhe o formulário (15/10/2026). */
+  catalogServiceId?: string | null;
   /** `YYYY-MM-DD` of the visit — anchors the clock times below. */
   scheduledDate: string | null;
   /** True when the partner already sent the arrival half from the app. */
@@ -92,6 +96,7 @@ export function FillReportModal({
   jobReference,
   jobTitle,
   serviceType = null,
+  catalogServiceId = null,
   scheduledDate,
   startAlreadySubmitted,
   onSubmitted,
@@ -101,9 +106,25 @@ export function FillReportModal({
   timerEndedAt = null,
 }: FillReportModalProps) {
   const isEdit = !!existingFinal;
+  const [categorySlug, setCategorySlug] = useState<string | null>(null);
+  useEffect(() => {
+    if (!catalogServiceId) return;
+    let vivo = true;
+    void categoriaDoServico(getSupabase(), catalogServiceId).then((slug) => {
+      if (vivo) setCategorySlug(slug);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [catalogServiceId]);
+  // Relatório já gravado mantém o formulário com que foi feito; senão vale a categoria do serviço.
+  const gravado = (existingFinal ?? existingStart)?.template;
   const template: ReportTemplate = useMemo(
-    () => pickReportTemplate({ serviceType, title: jobTitle }),
-    [serviceType, jobTitle],
+    () =>
+      typeof gravado === "string" && ["general", "gardener", "cleaner", "certificate"].includes(gravado)
+        ? (gravado as ReportTemplate)
+        : pickReportTemplate({ serviceType, title: jobTitle, categorySlug }),
+    [gravado, serviceType, jobTitle, categorySlug],
   );
   const spec = useMemo(() => fieldsForTemplate(template), [template]);
   const photoSlots = useMemo(() => photoSlotsForTemplate(template), [template]);
