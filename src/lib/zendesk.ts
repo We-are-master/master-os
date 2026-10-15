@@ -854,6 +854,8 @@ export interface SideConversationParams {
   toEmail: string;
   /** Optional recipient display name. */
   toName?: string | null;
+  /** E-mails extras que recebem a mesma mensagem (partners.job_cc_emails, mig 328). */
+  extraEmails?: string[];
   /**
    * Optional Zendesk user id of the recipient. When set, Zendesk threads the
    * side conv under that user's organisation view (mirrored from
@@ -918,7 +920,7 @@ export async function createSideConversation(
       subject: params.subject,
       body: params.bodyText ?? stripHtml(params.htmlBody),
       html_body: params.htmlBody,
-      to: [recipient],
+      to: [recipient, ...(params.extraEmails ?? []).filter((e) => e && e !== params.toEmail).map((email) => ({ email }))],
       ...(params.attachmentIds?.length ? { attachment_ids: params.attachmentIds } : {}),
     },
   };
@@ -965,6 +967,8 @@ export async function replyToSideConversation(params: {
   toEmail?: string;
   toName?: string;
   toUserId?: string | number | null;
+  /** E-mails extras do parceiro (mig 328). */
+  extraEmails?: string[];
 }): Promise<SideConversationResult> {
   if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured" };
@@ -985,7 +989,7 @@ export async function replyToSideConversation(params: {
       const n = Number(params.toUserId);
       if (Number.isFinite(n)) recipient.user_id = n;
     }
-    message.to = [recipient];
+    message.to = [recipient, ...(params.extraEmails ?? []).filter((e) => e && e !== params.toEmail).map((email) => ({ email }))];
   }
   if (params.attachmentIds?.length) message.attachment_ids = params.attachmentIds;
   const body = { message };

@@ -129,7 +129,7 @@ export async function notifyPartnerJobZendesk(
   // Look up partner email + push token in one go
   const { data: partnerRow } = await supabase
     .from("partners")
-    .select("id, contact_name, company_name, email, expo_push_token, auth_user_id, zendesk_user_id")
+    .select("*")
     .eq("id", recipientPartnerId)
     .maybeSingle();
   const partner = partnerRow as {
@@ -398,6 +398,10 @@ export async function notifyPartnerJobZendesk(
     error?: string;
     skipped?: string;
   } = { ok: false, error: "skipped" };
+  // Cópias que o parceiro pediu (mig 328): escritório, sócio. Mesma mensagem, mesmo fio.
+  const emailsExtras = ((partner as { job_cc_emails?: string[] | null }).job_cc_emails ?? [])
+    .map((e) => String(e).trim().toLowerCase())
+    .filter((e) => /.+@.+\..+/.test(e) && e !== String(partner.email ?? "").trim().toLowerCase());
   if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
@@ -410,6 +414,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
@@ -422,6 +427,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         htmlBody: email.html,
         bodyText: email.text,
         attachmentIds: anexosZendesk,
@@ -433,6 +439,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
@@ -467,6 +474,7 @@ export async function notifyPartnerJobZendesk(
       const { error: sendErr } = await new Resend(key).emails.send({
         from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
         to: [partner.email],
+        ...(emailsExtras.length ? { cc: emailsExtras } : {}),
         replyTo: "support@getfixfy.com",
         subject: email.subject,
         html: email.html,
