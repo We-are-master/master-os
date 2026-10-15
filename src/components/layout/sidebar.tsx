@@ -324,7 +324,7 @@ export function Sidebar() {
   const sidebarShell = (opts: { collapsed: boolean; showCollapse: boolean; onNavigate?: () => void }) => (
     <>
       {/* Logo numa caixa de 140 x 40 px (dono, 15/10/2026). */}
-      <div className={cn("flex h-14 items-center border-b border-nav-border px-4", opts.collapsed && "justify-center px-2")}>
+      <div className={cn("flex h-12 items-center border-b border-nav-border px-4", opts.collapsed && "justify-center px-2")}>
         <SidebarBrand collapsed={opts.collapsed} />
       </div>
 
