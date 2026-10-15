@@ -345,17 +345,17 @@ export function Financials() {
     let variant: "default" | "coral" | "alert";
 
     if (revenueGoal.status === "above") {
-      pillLabel = `+${formatGbp(revenueGoal.aheadOfGoal)} ahead`;
+      pillLabel = `+${formatGbpCompact(revenueGoal.aheadOfGoal)} ahead`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
       barClass = "bg-fx-coral";
       variant = "coral";
     } else if (revenueGoal.status === "on_track") {
-      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      pillLabel = `${formatGbpCompact(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% · almost there`;
       barClass = "bg-fx-amber";
       variant = "default";
     } else {
-      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      pillLabel = `${formatGbpCompact(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
       barClass = "bg-fx-red";
       variant = "alert";
@@ -385,7 +385,8 @@ export function Financials() {
               style={{ width: `${barPct}%` }}
             />
           </div>
-          <p className="m-0 flex items-center justify-between gap-2 text-[11px] tabular-nums">
+          {/* Uma linha só (15/10/2026): em real os valores quebravam em duas. */}
+          <p className="m-0 flex flex-wrap items-center justify-between gap-x-2 text-[11px] tabular-nums [&>span]:whitespace-nowrap">
             <span className="text-text-tertiary">{pct}% of {goalLabel}</span>
             <span className={cn("font-medium", revenueGoal.status === "above" ? "text-fx-green" : revenueGoal.status === "on_track" ? "text-fx-amber" : "text-fx-red")}>{pillLabel}</span>
           </p>
