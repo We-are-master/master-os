@@ -42,6 +42,7 @@ import { firstName } from "@/lib/agent/sales/lead-brief";
 import { ajustesDoHarvey, janelaAberta } from "./ajustes";
 import { externalIdDoLead, idDaIntegracaoWhatsApp } from "./primeiro-contato";
 import { scNotificacao } from "./sunshine";
+import { registrarDecisao } from "./diario";
 
 const H = 3_600_000;
 const TEMPLATE_CHECKIN = process.env.HARVEY_WA_LEAD_CHECKIN_TEMPLATE?.trim() || "quote_request_checkin";
@@ -259,6 +260,8 @@ async function seguirLead(l: Lead, out: ResultadoFollowup, aplicar: boolean, ago
     if (tags.has("lead_call") || tags.has("lead_replied")) {
       await zendeskApi(`tickets/${t.id}/tags.json`, { method: "DELETE", body: { tags: ["lead_call", "lead_replied"] } });
     }
+    // A bola está com o cliente: nada fica pendente com a equipe (não entra no brief).
+    await registrarDecisao({ origem: "followup", ticketId: t.id, decisao: `Lead follow-up step ${passo}: ${feito.length ? feito.join(", ") : "nothing to send"}${passo === 5 ? ", solved as no response" : ""}`, regra: "lead follow-up cadence (owner, 14/10/2026)", pendente: null });
   } catch (e) {
     out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 120) : "falhou"}`);
   }

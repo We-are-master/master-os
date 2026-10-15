@@ -22,6 +22,7 @@ import { assumirConversa, conversaDoTicket } from "@/lib/harvey-wa/controle";
 import { addTicketTags, getZendeskTicketSnapshot, replyToSideConversation, zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { escolherMelhorLance, MARGEM_PADRAO, type Escolha, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
+import { registrarDecisao } from "@/lib/harvey-wa/diario";
 import {
   ESCOPO_PRECISA_DE_GENTE, TAG_ESCOPO, escopoDoLance, htmlDaPergunta, lerMarcaDeEspera, lerRespostaDoParceiro,
   marcaDeEspera, notasComNovoValor, passoDepoisDaResposta, pedidoDoCliente, respostaDoParceiro, verificarEscopoDoLance,
@@ -204,6 +205,7 @@ export async function varrerLancesParaRascunho(
         .eq("id", q.id);
       r.silenciosas++;
       r.detalhes.push(`${q.reference}: ${Math.round(horas)}h sem lance — nota pro humano`);
+      await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No bids on ${q.reference} after ${Math.round(horas)}h from ${convidados} invited partner(s): asked the team to step in`, regra: `no bid within ${PRAZO_SEM_LANCE_HORAS}h of the first invite`, pendente: "Team: widen the trade, call a partner or tell the customer" }, supabase);
       continue;
     }
 
@@ -292,6 +294,7 @@ export async function varrerLancesParaRascunho(
     }
     r.rascunhados++;
     r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolhaFinal.precoAoCliente)}`);
+    if (!upErr) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Drafted ${q.reference} at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s))`, regra: `best bid after the ${JANELA_HORAS}h window, margin ${escolhaFinal.margem}%`, pendente: "Team: review the draft and send the quote" }, supabase);
   }
 
   return r;

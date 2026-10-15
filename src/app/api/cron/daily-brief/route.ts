@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { getZonedWallClock, hasLocalTimeReachedSchedule, isInTimeWindow } from "@/lib/wall-clock-tz";
 import { fetchOpsSnapshot, snapshotToPromptBlock } from "@/lib/master-brain-metrics";
 import { buildDailyBriefHtml, insightsTextToHtml } from "@/lib/daily-brief-email";
+import { montarSecaoAtencaoHtml } from "@/lib/brief-atencao";
+import { lerAtencao } from "@/lib/brief-atencao-leitura";
 import { isOpenAIConfigured, MASTER_BRAIN_SYSTEM_PROMPT, openaiChat } from "@/lib/openai-client";
 
 /**
@@ -120,6 +122,18 @@ export async function GET(req: NextRequest) {
 
   const sent: ("morning" | "evening")[] = [];
 
+  // Só a manhã leva "Where you need to step in" (views do Zendesk + quotes prontas + reclamações + diário do Harvey).
+  // Falha aqui não segura o brief: sai sem a seção.
+  let atencaoHtml = "";
+  if (kinds.includes("morning")) {
+    try {
+      const atencao = await lerAtencao(admin, now);
+      atencaoHtml = montarSecaoAtencaoHtml({ ...atencao, agora: now });
+    } catch (e) {
+      console.error("daily-brief atenção:", e);
+    }
+  }
+
   for (const kind of kinds) {
     let insightsHtml = "";
     if (isOpenAIConfigured()) {
@@ -141,7 +155,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const html = buildDailyBriefHtml({ companyName, kind, snapshot, insightsHtml });
+    const html = buildDailyBriefHtml({ companyName, kind, snapshot, insightsHtml, atencaoHtml: kind === "morning" ? atencaoHtml : "" });
     const subject = `${companyName} — ${kind === "morning" ? "Morning" : "End of day"} brief`;
 
     const { error: sendErr } = await resend.emails.send({
