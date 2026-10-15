@@ -1,5 +1,6 @@
 "use client";
 
+import { PartnerJobCcEmails } from "@/components/partners/partner-job-cc-emails";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import type { ListResult } from "@/services/base";
 import { formatBritishDate } from "@/lib/utils/date";
@@ -5860,6 +5861,7 @@ function PartnerDetailDrawer({
                   />
                 ) : partner.email}
               </div>
+              <PartnerJobCcEmails key={partner.id} partner={partner} canEdit={canManagePartners} />
               {editingOverview ? (
                 <div className="col-span-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-3 space-y-3">
                   <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">Partner type</p>

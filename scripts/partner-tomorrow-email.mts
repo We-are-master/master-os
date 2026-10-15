@@ -142,7 +142,7 @@ for (const [partnerId, lista] of porParceiro) {
 
   const { data: partnerRow } = await supabase
     .from("partners")
-    .select("id, company_name, contact_name, email, partner_address_latitude, partner_address_longitude")
+    .select("*")
     .eq("id", partnerId)
     .maybeSingle();
   const p = partnerRow as { company_name: string | null; contact_name: string | null; email: string | null; partner_address_latitude: number | null; partner_address_longitude: number | null } | null;
@@ -259,6 +259,10 @@ for (const [partnerId, lista] of porParceiro) {
     const { error } = await new Resend(resendKey!).emails.send({
       from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
       to: [p.email.trim()],
+      // Cópias que o parceiro pediu (mig 328).
+      ...(((p as { job_cc_emails?: string[] | null }).job_cc_emails ?? []).filter((e) => /.+@.+\..+/.test(e)).length
+        ? { cc: ((p as { job_cc_emails?: string[] | null }).job_cc_emails ?? []).filter((e) => /.+@.+\..+/.test(e)) }
+        : {}),
       // A resposta do parceiro vira ticket: o digest sai pelo Resend (vários
       // jobs, nenhum ticket para pendurar side conversation), mas a conversa
       // volta para o Zendesk, onde o time e o Harvey já trabalham.

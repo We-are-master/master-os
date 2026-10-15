@@ -58,6 +58,12 @@ export interface NotifyPartnerJobZendeskInput {
    * dono 24/08), mas a essa altura job.partner_id já é o novo ou null.
    */
   targetPartnerId?: string | null;
+  /**
+   * Reenvio só para estes e-mails (dono, 15/10/2026: confirmações da Top Freeze para o
+   * junaid@). Sem push, sem tocar na conversa do parceiro: abre uma conversa lateral nova
+   * no ticket do próprio job, só para eles.
+   */
+  onlyToEmails?: string[] | null;
 }
 
 /** Mirror of the JSON shape the API route returns, plus the HTTP status to use. */
@@ -129,7 +135,7 @@ export async function notifyPartnerJobZendesk(
   // Look up partner email + push token in one go
   const { data: partnerRow } = await supabase
     .from("partners")
-    .select("id, contact_name, company_name, email, expo_push_token, auth_user_id, zendesk_user_id")
+    .select("*")
     .eq("id", recipientPartnerId)
     .maybeSingle();
   const partner = partnerRow as {
@@ -339,7 +345,8 @@ export async function notifyPartnerJobZendesk(
   }
 
   // ─── Push notification ────────────────────────────────────────────
-  const pushResult = input.skipPush
+  const soPara = (input.onlyToEmails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => /.+@.+\..+/.test(e));
+  const pushResult = input.skipPush || soPara.length > 0
     ? { ok: false, tokens_sent: 0, error: "skipped_by_caller" as const }
     : await sendExpoPushToPartner(supabase, partner, {
         title: pushTitleFor(kind, effectiveStatusLabel),
@@ -398,7 +405,52 @@ export async function notifyPartnerJobZendesk(
     error?: string;
     skipped?: string;
   } = { ok: false, error: "skipped" };
-  if (zendeskTicketId && partnerEmailEnabled) {
+  // Cópias que o parceiro pediu (mig 328): escritório, sócio. Mesma mensagem, mesmo fio.
+  const emailsExtras = ((partner as { job_cc_emails?: string[] | null }).job_cc_emails ?? [])
+    .map((e) => String(e).trim().toLowerCase())
+    .filter((e) => /.+@.+\..+/.test(e) && e !== String(partner.email ?? "").trim().toLowerCase());
+  if (soPara.length > 0 && zendeskTicketId) {
+    const r = await createSideConversation({
+      ticketId: zendeskTicketId,
+      toEmail: soPara[0]!,
+      extraEmails: soPara.slice(1),
+      subject: email.subject,
+      htmlBody: email.html,
+      bodyText: email.text,
+      attachmentIds: anexosZendesk,
+    });
+    // Foto que o Zendesk não acha (JOB-9727, 15/10/2026): manda sem os anexos em vez de não mandar.
+    const final =
+      !r.ok && /attachment/i.test(String(r.error ?? ""))
+        ? await createSideConversation({
+            ticketId: zendeskTicketId,
+            toEmail: soPara[0]!,
+            extraEmails: soPara.slice(1),
+            subject: email.subject,
+            htmlBody: email.html,
+            bodyText: email.text,
+          })
+        : r;
+    zendeskResult = { ok: final.ok, side_conversation_id: final.id ?? null, error: final.error, skipped: "only_to" };
+  } else if (soPara.length > 0) {
+    try {
+      const key = process.env.RESEND_API_KEY?.trim();
+      if (!key) throw new Error("RESEND_API_KEY missing");
+      const { Resend } = await import("resend");
+      const { error: sendErr } = await new Resend(key).emails.send({
+        from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
+        to: soPara,
+        replyTo: "support@getfixfy.com",
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+      if (sendErr) throw new Error(sendErr.message ?? "send failed");
+      zendeskResult = { ok: true, skipped: "only_to_via_resend" };
+    } catch (err) {
+      zendeskResult = { ok: false, error: `only_to_resend: ${String(err).slice(0, 200)}` };
+    }
+  } else if (zendeskTicketId && partnerEmailEnabled) {
     if (!partner.email) {
       zendeskResult = { ok: false, error: "partner_has_no_email" };
     } else if (kind === "on_hold" || kind === "cancelled") {
@@ -410,6 +462,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
@@ -422,6 +475,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         htmlBody: email.html,
         bodyText: email.text,
         attachmentIds: anexosZendesk,
@@ -433,6 +487,7 @@ export async function notifyPartnerJobZendesk(
         toEmail:  partner.email,
         toName:   partner.contact_name || partner.company_name || undefined,
         toUserId: partner.zendesk_user_id ?? undefined,
+        extraEmails: emailsExtras,
         subject:  email.subject,
         htmlBody: email.html,
         bodyText: email.text,
@@ -467,6 +522,7 @@ export async function notifyPartnerJobZendesk(
       const { error: sendErr } = await new Resend(key).emails.send({
         from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
         to: [partner.email],
+        ...(emailsExtras.length ? { cc: emailsExtras } : {}),
         replyTo: "support@getfixfy.com",
         subject: email.subject,
         html: email.html,
