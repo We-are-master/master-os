@@ -192,8 +192,9 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
  * pagos pela data de pagamento da fatura.
  */
 export async function montarFunilDoPeriodo(sb: SupabaseClient, deIso: string, ateIso: string): Promise<PulseCeo["funil"]> {
-  const de = deIso.slice(0, 10);
-  const ate = ateIso.slice(0, 10);
+  // Dia de Londres: o "Today" começa 23h UTC da véspera e cortar o ISO puxava ontem.
+  const de = ymdDeLondres(new Date(deIso));
+  const ate = ymdDeLondres(new Date(ateIso));
   const [leads, { count: quotes }, { data: fechadosRaw }, { data: entreguesRaw }, { data: pagRaw }] = await Promise.all([
     leadsDoMes(sb, deIso, ateIso),
     sb.from("quotes").select("id", { count: "exact", head: true }).gte("created_at", deIso).lte("created_at", ateIso).is("deleted_at", null),
@@ -216,5 +217,56 @@ export async function montarFunilDoPeriodo(sb: SupabaseClient, deIso: string, at
     pagos: { n: pagos.length, valor: r2(pagos.reduce((t, v) => t + v, 0)) },
     conversao: leads.taxa,
     convertidos: leads.convertidos,
+  };
+}
+
+type Soma = { n: number; valor: number };
+
+/**
+ * A receber do Pulse por período (dono, 15/10/2026): Awaiting payment, Overdue e Paid,
+ * todos seguindo o filtro de data.
+ *   Awaiting payment = fatura em aberto com vencimento no período que ainda não venceu
+ *     (inclui plataforma passada da data, que paga no ciclo dela).
+ *   Overdue = em aberto, vencimento no período e já passado, de conta ou cliente direto.
+ *   Paid = data de pagamento no período.
+ * Sem período (`de`/`ate` nulos): todo o em aberto, e o pago do mês.
+ */
+export async function montarReceberDoPeriodo(
+  sb: SupabaseClient,
+  deIso: string | null,
+  ateIso: string | null,
+  agora = new Date(),
+): Promise<{ aguardando: Soma; vencido: Soma; pago: Soma }> {
+  const hoje = ymdDeLondres(agora);
+  const de = deIso ? ymdDeLondres(new Date(deIso)) : null;
+  const ate = ateIso ? ymdDeLondres(new Date(ateIso)) : null;
+  let qAberto = sb
+    .from("invoices")
+    .select("due_date, amount, amount_paid, source_account_id")
+    .is("deleted_at", null)
+    .in("status", ["pending", "overdue", "partially_paid", "awaiting_payment"]);
+  if (de) qAberto = qAberto.gte("due_date", de);
+  if (ate) qAberto = qAberto.lte("due_date", ate);
+  const pagoDe = de ?? `${hoje.slice(0, 8)}01`;
+  const pagoAte = ate ?? hoje;
+  const [{ data: abertas }, { data: pagas }, { data: contas }] = await Promise.all([
+    qAberto.limit(5000),
+    sb.from("invoices").select("amount, amount_paid").is("deleted_at", null).gte("paid_date", pagoDe).lte("paid_date", pagoAte).limit(5000),
+    sb.from("accounts").select("id").eq("overdue_reminders", false).is("deleted_at", null),
+  ]);
+  const plataformas = new Set(((contas ?? []) as Array<{ id: string }>).map((a) => a.id));
+  const linhas = ((abertas ?? []) as Array<{ due_date: string | null; amount: number | null; amount_paid: number | null; source_account_id: string | null }>)
+    .map((f) => ({ ...f, saldo: Number(f.amount ?? 0) - Number(f.amount_paid ?? 0) }))
+    .filter((f) => f.saldo > 0.02);
+  const vencida = (f: (typeof linhas)[number]) =>
+    Boolean(f.due_date && f.due_date.slice(0, 10) < hoje) && !(f.source_account_id && plataformas.has(f.source_account_id));
+  const soma = (l: Array<{ saldo: number }>): Soma => ({ n: l.length, valor: r2(l.reduce((t, f) => t + f.saldo, 0)) });
+  const pagos = ((pagas ?? []) as Array<{ amount: number | null; amount_paid: number | null }>).map((f) =>
+    Number(f.amount_paid ?? 0) > 0 ? Number(f.amount_paid) : Number(f.amount ?? 0),
+  );
+  return {
+    aguardando: soma(linhas.filter((f) => !vencida(f))),
+    vencido: soma(linhas.filter(vencida)),
+    pago: { n: pagos.length, valor: r2(pagos.reduce((t, v) => t + v, 0)) },
   };
 }

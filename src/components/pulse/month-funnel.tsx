@@ -50,7 +50,7 @@ export function MonthFunnel() {
     { rotulo: "Quotes", valor: f ? String(f.quotes) : "—", nota: `Quotes created (${mes}).` },
     { rotulo: "Jobs booked", valor: f ? String(f.fechados.n) : "—", nota: `Jobs created (${mes}).${f ? `\n\n${pulseMoney(f.fechados.valor)}` : ""}` },
     { rotulo: "Delivered", valor: f ? String(f.entregues.n) : "—", nota: `Jobs completed (${mes}).${f ? `\n\n${pulseMoney(f.entregues.valor)}` : ""}` },
-    { rotulo: "Paid", valor: f ? pulseMoney(f.pagos.valor) : "—", nota: `Money received (${mes}).${f ? `\n\n${f.pagos.n} invoice${f.pagos.n === 1 ? "" : "s"} paid` : ""}` },
+    { rotulo: "Sales", valor: f ? pulseMoney(f.fechados.valor) : "—", nota: `Value of the jobs booked (${mes}). Paid money lives in the Paid card.${f ? `\n\n${f.fechados.n} job${f.fechados.n === 1 ? "" : "s"}` : ""}` },
   ];
   const rotuloCls = "inline-flex items-center gap-[5px] text-[12px] font-semibold";
   return (
