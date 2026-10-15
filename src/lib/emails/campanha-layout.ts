@@ -17,7 +17,7 @@
  * não inverter as cores sozinho, e `<title>` vazio para o celular não repetir o
  * assunto dentro do corpo.
  *
- * O logo é sempre o oficial, servido do próprio OS: `/logos/fixfy-email-header.png`.
+ * O logo é sempre o oficial, servido do próprio OS: `/logos/fixfy-wordmark-white-trim.png`.
  */
 
 import { appBaseUrl } from "@/lib/app-base-url";
@@ -51,17 +51,35 @@ export type CampanhaInput = {
   unsubscribeUrl?: string;
   /** Linha extra no rodapé, quando a peça precisa explicar algo. */
   notaDoRodape?: string;
+  /** Selo laranja à direita do logo ("FIXFY CLUB", "36 HOURS ONLY"). Sem selo, só o logo. */
+  selo?: string;
 };
 
 /**
- * O logo ocupa a largura inteira do e-mail, e não um selo no meio da faixa.
- *
- * `fixfy-email-header.png` tem 600x88 e JÁ é a faixa navy com a marca branca
- * centralizada. O layout antigo mostrava essa imagem com 108px de largura, o
- * que encolhia a marca a um terço do tamanho dentro de uma faixa navy pintada
- * por cima. Mostrando em 600 a arte aparece no tamanho em que foi desenhada.
+ * Cabeçalho compacto (dono, 15/10/2026, versão C): faixa navy baixa com o logo
+ * branco à esquerda, o selo da peça em laranja à direita e uma frase curta
+ * embaixo, fechada por um fio laranja. A faixa antiga de 600x88 era uma imagem
+ * só; aqui o logo é o PNG branco e o resto é texto, então lê mesmo com imagem
+ * bloqueada.
  */
-const LOGO_LARGURA = 600;
+const LOGO_LARGURA = 118;
+const FONTE = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+function cabecalho(logo: string, selo?: string): string {
+  const pilula = selo?.trim()
+    ? `<span style="display:inline-block; font-family:${FONTE}; font-size:10px; line-height:12px; letter-spacing:0.14em; font-weight:800; text-transform:uppercase; color:#FFFFFF; background:${CLIENT_BRAND.orange}; border-radius:999px; padding:6px 11px;">${escapeHtml(selo.trim())}</span>`
+    : "";
+  return `<tr>
+        <td bgcolor="${CLIENT_BRAND.navy}" style="background:${CLIENT_BRAND.navy}; padding:18px 28px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td valign="middle"><img src="${logo}" alt="Fixfy" width="${LOGO_LARGURA}" style="display:block; width:${LOGO_LARGURA}px; height:auto; border:0;"></td>
+            <td valign="middle" align="right">${pilula}</td>
+          </tr></table>
+          <div style="font-family:${FONTE}; font-size:15px; line-height:21px; font-weight:700; color:#FFFFFF; margin-top:12px;">Your home, <span style="color:#FF7A3D;">sorted</span> by one team.</div>
+        </td>
+      </tr>
+      <tr><td bgcolor="${CLIENT_BRAND.orange}" style="background:${CLIENT_BRAND.orange}; height:4px; line-height:4px; font-size:0;">&nbsp;</td></tr>`;
+}
 
 function preheaderOculto(texto: string): string {
   return `<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:${CLIENT_BRAND.canvas}; opacity:0;">${escapeHtml(texto)}</div>`;
@@ -148,7 +166,7 @@ function renderBloco(b: Bloco): string {
 
 export function renderCampanha(input: CampanhaInput): string {
   const nome = input.nome?.trim() ? escapeHtml(input.nome.trim().split(/\s+/)[0]) : "there";
-  const logo = `${appBaseUrl()}/logos/fixfy-email-header.png`;
+  const logo = `${appBaseUrl()}/logos/fixfy-wordmark-white-trim.png`;
   const corpo = input.blocos.map(renderBloco).join("");
   const oferta = input.oferta ? caixaDaOferta(input.oferta) : "";
   const saida = input.unsubscribeUrl
@@ -185,11 +203,7 @@ ${preheaderOculto(input.preheader)}
   <tr><td align="center" style="padding:28px 16px 40px;">
     <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
 
-      <tr>
-        <td align="center" bgcolor="${CLIENT_BRAND.navy}" style="background:${CLIENT_BRAND.navy}; font-size:0; line-height:0;">
-          <img src="${logo}" alt="Fixfy" width="${LOGO_LARGURA}" style="display:block; width:100%; max-width:${LOGO_LARGURA}px; height:auto; border:0;">
-        </td>
-      </tr>
+      ${cabecalho(logo, input.selo)}
 
       <tr>
         <td class="px-mobile" style="padding:30px 40px 0;">

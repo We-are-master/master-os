@@ -35,8 +35,10 @@ export function remetente(): { from: string; reply_to: string } {
 
 export function htmlDoBroadcast(p: {
   preheader: string; etiqueta: string; titulo: string; blocos: Bloco[]; oferta?: OfertaNoEmail; cta: { texto: string; url: string };
+  selo?: string;
 }): string {
   return renderCampanha({
+    selo: "Fixfy Club",
     ...p,
     nome: NOME_DO_CONTATO,
     // Depoimento só entra quando for de cliente de verdade. Os da agenda eram texto de exemplo.

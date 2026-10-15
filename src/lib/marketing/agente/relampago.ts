@@ -105,6 +105,7 @@ export function htmlDoRelampago(r: Relampago): string {
   return htmlDoBroadcast({
     preheader: r.email.preheader,
     etiqueta: "36 hours only",
+    selo: "36 hours only",
     titulo: r.email.titulo,
     blocos: r.email.blocos,
     oferta: { codigo: r.codigo, valor: `${r.percentual}% off`, sobre: "any Fixfy service, applied for you at checkout", validade: "Thursday, midnight" },
