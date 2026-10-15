@@ -71,17 +71,18 @@ export function ehB2B(t: Pick<Ticket, "tags">): boolean {
 }
 
 export function textoDaCobranca(passo: 1 | 2 | 3, nome: string, b2b = false): string {
+  // Tom profissional, na voz de quem assina (o Leo): dono, 15/10/2026.
   if (b2b) {
     return {
-      1: `Hi ${nome},\n\nJust checking you received our quote. If you're happy to go ahead, reply with the date that suits you and we'll get it booked in.`,
-      2: `Hi ${nome},\n\nFollowing up on our quote. If anything in it needs adjusting, scope, timing or access, tell us and we'll send a revised version the same day.`,
-      3: `Hi ${nome},\n\nThis is our last follow-up on this quote. If we don't hear back in the next two days we'll close it on our side, and you can reopen it any time by replying to this email.`,
+      1: `Hi ${nome},\n\nI am following up on the quote we sent. Should you wish to proceed, please reply with your preferred date and we will confirm the booking.`,
+      2: `Hi ${nome},\n\nFollowing up on our quote. If any part of it needs adjusting, whether scope, timing or access, please let me know and we will issue a revised version the same day.`,
+      3: `Hi ${nome},\n\nThis is our final follow-up on this quote. If we do not hear back within the next two days, we will close it on our side. You can reopen it at any time by replying to this email.`,
     }[passo];
   }
   return {
-    1: `Hi ${nome},\n\nJust checking you received our quote. If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in. Any questions, just ask.`,
-    2: `Hi ${nome},\n\nFollowing up on our quote. If you'd like anything changed, the date, the scope or anything else, just tell us and we'll sort it.`,
-    3: `Hi ${nome},\n\nLast follow-up on our quote from us. If we don't hear back in the next two days we'll close it, and you can always message us again whenever you're ready.`,
+    1: `Hi ${nome},\n\nI wanted to follow up on the quote we sent you. If you would like to go ahead, please reply with a date that suits you and we will arrange the booking. If you have any questions, I will be happy to help.`,
+    2: `Hi ${nome},\n\nFollowing up on our quote. If you would like any changes to the scope or the timing, please let me know and I will send you a revised quote.`,
+    3: `Hi ${nome},\n\nThis is my final follow-up regarding our quote. If we do not hear from you within the next two days, we will close it on our side. You are welcome to get in touch again at any time.`,
   }[passo];
 }
 
@@ -98,7 +99,7 @@ export function motivoDeDesistencia(texto: string | null | undefined): "booked_e
 }
 
 const RESPOSTA_DE_FECHAMENTO = (nome: string) =>
-  `Hi ${nome},\n\nNo problem at all, thanks for letting us know. We'll close this quote on our side. If anything changes, just message us here.`;
+  `Hi ${nome},\n\nThank you for letting us know. We have closed this quote on our side. Should anything change, please do not hesitate to get in touch.`;
 
 async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
   await zendeskApi(`tickets/${t.id}.json`, {
