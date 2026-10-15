@@ -1,3 +1,4 @@
+-- Já aplicada em produção em 15/10/2026 (escrita como 329; renomeada para não repetir o número do main).
 -- Registro do caminho do report do parceiro (dono, 15/10/2026: "link quebrando").
 -- Cada abertura, foto enviada, recusa e envio fica aqui, para ver onde trava.
 create table if not exists public.report_link_events (

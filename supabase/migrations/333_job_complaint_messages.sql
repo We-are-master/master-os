@@ -1,3 +1,4 @@
+-- Já aplicada em produção em 15/10/2026 (escrita como 330; renomeada para seguir a 331 do main).
 -- Journal da reclamação (dono, 15/10/2026): conversa contínua entre o escritório e o
 -- parceiro sobre uma reclamação, com fotos, registrada no job. Aparece no journal da aba
 -- Complaint do OS e na gaveta do job no portal do parceiro.

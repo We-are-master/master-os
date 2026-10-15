@@ -1,5 +1,5 @@
 /**
- * Registro do caminho do report do parceiro (mig 329). Nunca derruba quem chama:
+ * Registro do caminho do report do parceiro (mig 332). Nunca derruba quem chama:
  * se a tabela ainda não existe ou a gravação falha, só vai para o console.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";

@@ -106,7 +106,7 @@ export function JobComplaintJournal({ job, zendeskSubdomain }: { job: Job; zende
   const [loading, setLoading] = useState(true);
   const [allOpen, setAllOpen] = useState(false);
   const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
-  /** Mensagens do journal (mig 330): escritório e parceiro, com fotos. */
+  /** Mensagens do journal (mig 333): escritório e parceiro, com fotos. */
   const [mensagens, setMensagens] = useState<MensagemDoJournal[]>([]);
   const [recarga, setRecarga] = useState(0);
   const [texto, setTexto] = useState("");

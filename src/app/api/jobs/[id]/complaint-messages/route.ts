@@ -20,7 +20,7 @@ type Linha = {
 };
 
 /**
- * Journal da reclamação (mig 330, 15/10/2026).
+ * Journal da reclamação (mig 333, 15/10/2026).
  *   GET  → mensagens do escritório e do parceiro, com as fotos assinadas
  *   POST (multipart: body, visible "1"/"0", photos[]) → mensagem do escritório
  */
