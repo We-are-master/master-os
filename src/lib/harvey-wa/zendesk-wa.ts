@@ -68,8 +68,9 @@ async function usuarioPeloTelefone(telefone: string): Promise<UsuarioZd | null> 
 }
 
 /**
- * Status do ticket da conversa: cliente 🟩 WhatsApp (Action Required), parceiro
- * 🟢 Partner. Só troca quando ninguém mexeu ainda (New, Open ou o próprio):
+ * Status do ticket da conversa: lead da régua 🎯 Lead, parceiro 🟢 Partner. Cliente
+ * que não é lead fica New/Open até a equipe classificar. Só troca quando ninguém mexeu
+ * ainda (New, Open, o antigo 💬 In Conversation ou o próprio):
  * ticket que a equipe já passou para Quote, Bidding, Job etc. fica como está.
  */
 async function statusDaConversa(ticket: number, alvo: number) {
@@ -259,7 +260,9 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
   let juntou = "";
   if (ticket) {
     await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
-    await statusDaConversa(ticket, ZD_STATUS_WHATSAPP);
+    // Dono, 15/10/2026: tudo entra New/Open e a equipe classifica (Lead, quote, job, complaint).
+    // O Harvey só classifica o que é lead da régua; 💬 In Conversation saiu de cena.
+    if (dados.ticketDoLead) await statusDaConversa(ticket, ZD_STATUS_LEAD);
     if (dados.ticketDoLead) juntou = await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
     if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
     if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
