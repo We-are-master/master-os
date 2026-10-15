@@ -14,7 +14,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { syncPartnerToZendesk } from "@/lib/zendesk-partner-sync";
-import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_PARTNER, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_COMPLAINT, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE } from "@/lib/zendesk-statuses";
 import type { Identidade } from "./identidade";
 import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
 import { lerFichaDoLead, notaDoMerge } from "@/lib/um-ticket/resumo-do-lead";
@@ -617,4 +617,59 @@ export async function ticketPeloTelefone(telefone: string | null): Promise<numbe
   if (!telefone || !isZendeskConfigured()) return null;
   const u = await usuarioPeloTelefone(telefone);
   return u ? ticketDaConversa(u.id) : null;
+}
+
+/**
+ * Cotação pedida no WhatsApp com o Harvey FICANDO na conversa (Fase 1, dono
+ * 15/10/2026): o ticket vai para 🟤 Bidding e a nota interna conta à equipe o
+ * que foi pedido, sem tirar a conversa dele.
+ *
+ * Com o Harvey atendendo, o ticket da conversa é "AI agent" (só leitura): a
+ * nota vai no ticket de trabalho (o do lead), e a troca de status no da
+ * conversa é tentativa. Cada passo falha sozinho, sem derrubar o outro.
+ */
+export async function cotacaoPedidaNoTicket(telefone: string | null, nota: string): Promise<string> {
+  if (!telefone || !isZendeskConfigured()) return "sem telefone ou Zendesk";
+  const { conversa, editavel } = await ticketDeTrabalho(telefone);
+  const alvos = [...new Set([...(conversa ? [conversa] : []), ...editavel])];
+  if (!alvos.length) return "sem ticket";
+  const feito: string[] = [];
+  for (const id of alvos) {
+    try {
+      const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null } }>(`tickets/${id}.json`);
+      // Só tira do funil de lead: ticket que já está em Quote, Job etc. fica como está.
+      const noFunil = [ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, ZD_STATUS_LEAD, ZD_STATUS_NEEDS_QUOTE, null].includes(t.custom_status_id);
+      const anota = editavel.includes(id);
+      if (!noFunil && !anota) continue;
+      await zendeskApi(`tickets/${id}.json`, {
+        method: "PUT",
+        body: { ticket: { ...(noFunil ? { custom_status_id: ZD_STATUS_BIDDING } : {}), ...(anota ? { comment: { public: false, body: nota } } : {}) } },
+      });
+      if (anota) await zendeskApi(`tickets/${id}/tags.json`, { method: "PUT", body: { tags: ["harvey_quote_requested"] } });
+      feito.push(`#${id}${noFunil ? " → Bidding" : ""}${anota ? " + nota" : ""}`);
+    } catch (e) {
+      feito.push(`#${id} falhou: ${e instanceof Error ? e.message.slice(0, 80) : e}`);
+    }
+  }
+  return feito.join(", ") || "nada a mudar";
+}
+
+/**
+ * Nota interna no ticket de uma quote, com reserva: se o ticket é o da conversa
+ * e o Harvey ainda está nele ("AI agent", recusa nota), escreve no ticket do
+ * lead da mesma pessoa. Sem nenhum, devolve o erro original.
+ */
+export function notaComReserva(postar: (ticketId: number, corpo: string) => Promise<void>): (ticketId: number, corpo: string) => Promise<void> {
+  return async (ticketId, corpo) => {
+    try {
+      await postar(ticketId, corpo);
+    } catch (erro) {
+      if ((await tipoDoTicket(ticketId).catch(() => "agent")) !== "ai_agent") throw erro;
+      const { ticket } = await zendeskApi<{ ticket: { requester_id: number | null } }>(`tickets/${ticketId}.json`);
+      const { user } = ticket?.requester_id ? await zendeskApi<{ user: { phone: string | null } }>(`users/${ticket.requester_id}.json`) : { user: null };
+      const ids = user?.phone ? await ticketsDoLeadPeloTelefone(user.phone) : [];
+      if (!ids.length) throw erro;
+      for (const id of ids) await postar(id, `(From WhatsApp ticket #${ticketId}, which Harvey is still handling.)\n\n${corpo}`);
+    }
+  };
 }

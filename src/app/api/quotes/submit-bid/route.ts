@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerBidToken } from "@/lib/quote-response-token";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { prepararPropostaDoLance } from "@/lib/quotes/lance-para-proposta";
+import { gravarLanceDoParceiro } from "@/lib/quotes/gravar-lance";
 import {
   buildBidNotesJson,
   normalizePartnerBidPayloadInput,
@@ -118,68 +118,22 @@ export async function POST(req: NextRequest) {
   const partnerName =
     (partner.company_name?.trim() || partner.contact_name?.trim()) ?? null;
 
-  const now = new Date().toISOString();
-  const { data: existing } = await supabase
-    .from("quote_bids")
-    .select("id")
-    .eq("quote_id", quoteId)
-    .eq("partner_id", partnerId)
-    .maybeSingle();
-
-  let bidId: string | null = null;
-  if (existing?.id) {
-    const { error: updErr } = await supabase
-      .from("quote_bids")
-      .update({
-        bid_amount: bidAmount,
-        job_type:   jobType,
-        notes,
-        status:     "submitted",
-        updated_at: now,
-      })
-      .eq("id", existing.id);
-    if (updErr) {
-      console.error("[submit-bid] update failed:", updErr);
-      return NextResponse.json({ error: "Could not save bid." }, { status: 500 });
-    }
-    bidId = existing.id;
-  } else {
-    const { data: inserted, error: insErr } = await supabase
-      .from("quote_bids")
-      .insert({
-        quote_id:    quoteId,
-        partner_id:  partnerId,
-        partner_name: partnerName,
-        bid_amount:  bidAmount,
-        job_type:    jobType,
-        notes,
-        status:      "submitted",
-        created_at:  now,
-        updated_at:  now,
-      })
-      .select("id")
-      .single();
-    if (insErr || !inserted) {
-      console.error("[submit-bid] insert failed:", insErr);
-      return NextResponse.json({ error: "Could not save bid." }, { status: 500 });
-    }
-    bidId = inserted.id;
+  // Mesmo caminho do lance que chega por e-mail (lances-por-email.ts): ver gravar-lance.ts.
+  const gravado = await gravarLanceDoParceiro(supabase, {
+    quoteId,
+    quoteReference: quote.reference,
+    partnerId,
+    partnerName,
+    bidAmount,
+    jobType,
+    notes,
+    origem: "public_partner_link",
+  });
+  if (!gravado.ok) {
+    console.error("[submit-bid] save failed:", gravado.error);
+    return NextResponse.json({ error: "Could not save bid." }, { status: 500 });
   }
-
-  void supabase.from("audit_logs").insert({
-    entity_type: "quote",
-    entity_id:   quoteId,
-    entity_ref:  quote.reference,
-    action:      "bid_submitted",
-    field_name:  "quote_bids",
-    new_value:   String(bidAmount),
-    metadata:    { source: "public_partner_link", partner_id: partnerId, job_type: jobType, bid_id: bidId },
-  }).then(({ error }) => { if (error) console.error("audit_logs (submit-bid)", error); });
-
-  // Fase 4: o lance vira proposta com margem (e sai sozinho quando pode). Nunca derruba o lance.
-  if (bidId) {
-    await prepararPropostaDoLance(supabase, quoteId, bidId).catch((e) => console.error("[submit-bid] proposta do lance:", e));
-  }
+  const bidId = gravado.bidId;
 
   return NextResponse.json({ ok: true, bidId, quoteReference: quote.reference });
 }

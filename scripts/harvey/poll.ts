@@ -785,18 +785,42 @@ async function ciclo(): Promise<void> {
     console.error(`[harvey] vigia de ofertas morreu: ${err}`);
   }
 
+  // Lance que o parceiro mandou por e-mail na side conversation vira lance de
+  // verdade ANTES da varredura de lances, para ela já rascunhar neste ciclo
+  // (lances-por-email.ts, Fase 1 15/10/2026). Mesma porta HARVEY_RASCUNHO_LANCE=1.
+  try {
+    const { lerLancesPorEmail } = await import("../../src/lib/lances-por-email");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const le = await lerLancesPorEmail(createServiceClient(), notaComReserva(postarNotaInterna));
+    if (le.lidas > 0 || le.detalhes.length) {
+      console.log(
+        `[harvey] lances por e-mail (${le.armado ? "ARMADO" : "ensaio"}): ${le.quotes} quote(s), ${le.lidas} e-mail(s) lido(s), ` +
+          `${le.lances} lance(s), ${le.respostas} resposta(s), ${le.outras} outra(s)`,
+      );
+      for (const d of le.detalhes) console.log(`[harvey]   ${d}`);
+    }
+  } catch (err) {
+    console.error(`[harvey] leitor de lances por e-mail morreu: ${err}`);
+  }
+
   // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
   // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
+  // Fase 1: quando é seguro, o preço sai sozinho para o cliente (HARVEY_QUOTE_AUTO_SEND=1).
   try {
     const { varrerLancesParaRascunho } = await import("../../src/lib/quote-lances-sweep");
     const { createServiceClient } = await import("../../src/lib/supabase/service");
-    const { postarNotaInterna: postar } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    // Ticket da conversa com o Harvey ainda nele ("AI agent") recusa nota: vai no ticket do lead.
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const postar = notaComReserva(postarNotaInterna);
     const rl = await varrerLancesParaRascunho(createServiceClient(), postar);
     if (rl.analisados > 0) {
       console.log(
         `[harvey] lances (${rl.armado ? "ARMADO" : "ensaio"}): ${rl.analisados} quote(s), ` +
           `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s), ` +
-          `${rl.perguntasDeEscopo} pergunta(s) de escopo, ${rl.escopoParaGente} escopo(s) para gente`,
+          `${rl.perguntasDeEscopo} pergunta(s) de escopo, ${rl.escopoParaGente} escopo(s) para gente, ${rl.enviadasSozinhas} enviada(s) sozinha(s)`,
       );
       for (const d of rl.detalhes) console.log(`[harvey]   ${d}`);
     }
