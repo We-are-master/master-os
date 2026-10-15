@@ -144,15 +144,14 @@ export function MonthGoal() {
             <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral" style={{ width: `${pctEntregue}%` }} />
           </div>
           {meta ? <span aria-hidden title="Where the month should be today" className="absolute -top-1 h-4 w-0.5 rounded-full bg-text-primary" style={{ left: `${pctHoje}%` }} /> : null}
-          {meta ? (
-            <p className="m-0 mt-1.5 text-[11px] text-text-tertiary tabular-nums">
-              <span className="font-semibold text-text-primary">{m(falta)}</span> to go
-            </p>
-          ) : null}
         </div>
 
         {meta ? (
           <div className="flex shrink-0 items-center gap-2.5">
+            {/* Tudo na mesma linha da barra (15/10/2026): falta, atraso e a porcentagem. */}
+            <span className="text-[12px] text-text-tertiary tabular-nums">
+              <span className="font-semibold text-text-primary">{m(falta)}</span> to go
+            </span>
             <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums ${atras > 0 ? "bg-fx-red-50 text-fx-red" : "bg-fx-green/10 text-fx-green"}`}>
               {atras > 0 ? `${m(atras)} behind today` : "On pace"}
             </span>

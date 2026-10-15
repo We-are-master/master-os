@@ -1,4 +1,3 @@
-import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 
@@ -142,7 +141,24 @@ export function KpiCard({
       className={cn(
         // VOS UNO Insights metric card: same shell for every variant; only the number takes status colour.
         "ins-card relative overflow-hidden px-3.5 pb-2.5 pt-2.5",
+        // Detalhe abre no clique do cartão (15/10/2026); o "(i)" ao lado do "!" saiu.
+        onShowDetails && "cursor-pointer transition-colors hover:bg-surface-hover/60",
       )}
+      {...(onShowDetails
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            title: detailsLabel,
+            "aria-label": `${label}: ${detailsLabel}`,
+            onClick: onShowDetails,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onShowDetails();
+              }
+            },
+          }
+        : {})}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="inline-flex min-w-0 items-center gap-[5px] text-[12px] font-semibold text-text-secondary">
@@ -153,17 +169,7 @@ export function KpiCard({
               {countBesideHint}
             </span>
           ) : null}
-          {onShowDetails && (
-            <button
-              type="button"
-              onClick={onShowDetails}
-              aria-label={detailsLabel}
-              title={detailsLabel}
-              className="inline-flex h-4 w-4 items-center justify-center rounded-full text-fx-mute hover:bg-fx-paper hover:text-text-primary transition-colors"
-            >
-              <Info className="h-3 w-3" />
-            </button>
-          )}
+
         </span>
         {topRight}
       </div>
