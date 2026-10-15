@@ -213,6 +213,7 @@ import {
 } from "@/lib/sync-invoices-on-job-hold";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { JobPaymentPlanPanel } from "@/components/finance/job-payment-plan-panel";
+import { JobComplaintJournal } from "@/components/jobs/job-complaint-journal";
 import { listInstallmentsForInvoice } from "@/services/invoice-payment-plan";
 import { JobRefundModal } from "@/components/jobs/job-refund-modal";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
@@ -488,14 +489,15 @@ function buildJobDetailStatusContext(
   opts?: { forcedPaidBySystemOwner?: boolean },
 ): JobDetailStatusContext | null {
   if (job.status === "on_hold") {
-    const reason = job.on_hold_reason?.trim() || "No reason recorded";
+    // Reclamação: o chip diz só "Complaint"; o texto e a conversa ficam na aba Complaint.
+    const reason = jobOnHoldPorReclamacao(job) ? "Complaint" : job.on_hold_reason?.trim() || "No reason recorded";
     const since = formatJobStatusContextTimestamp(job.on_hold_at);
     const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
     const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
     return {
       chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
       primary: reason,
-      secondary: since ?? undefined,
+      secondary: jobOnHoldPorReclamacao(job) ? undefined : since ?? undefined,
       title,
     };
   }
@@ -8855,34 +8857,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               conseguia ler a história de uma vez.
             */}
             {detailTab === 6 && job ? (
-              <div className="space-y-4 p-4">
-                <div className="rounded-xl border border-red-300/60 bg-red-50/50 p-4 space-y-2 dark:border-red-500/30 dark:bg-red-500/5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-text-primary">What the customer reported</h3>
-                    {job.on_hold_at ? (
-                      <span className="ml-auto text-xs text-text-tertiary">
-                        On hold since {new Date(job.on_hold_at).toLocaleDateString("en-GB", {
-                          day: "2-digit", month: "short", year: "numeric",
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
-                    {job.on_hold_complaint_description?.trim() ||
-                      job.on_hold_reason?.trim() ||
-                      "No description was recorded."}
-                  </p>
-                </div>
-
-                {/* A resposta do parceiro, ou o silêncio dele, que também é informação. */}
-                <JobOnHoldSubmissionCard jobId={job.id} />
-
-                {job.status === "on_hold" && !job.on_hold_submission_at ? (
-                  <div className="rounded-xl border border-border-light bg-surface p-4 text-sm text-text-secondary">
-                    Waiting on the partner. They answer from the partner portal, where the job sits
-                    under <span className="font-medium text-text-primary">Action required</span>.
-                  </div>
-                ) : null}
+              <div className="p-4">
+                <JobComplaintJournal job={job} zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null} />
               </div>
             ) : null}
 
