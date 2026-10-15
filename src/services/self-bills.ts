@@ -953,6 +953,9 @@ export type EnsureWeeklySelfBillOptions = {
   };
 };
 
+/** Calendário de pagamento do Setup, guardado por 1 minuto: não muda a cada clique (15/10/2026). */
+let orgDueCtxCache: { at: number; ctx: SelfBillDueResolveContext } | null = null;
+
 export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeeklySelfBillOptions): Promise<string | null> {
   const visitScope = options?.visit ?? null;
   /** Job parcelado (mig 326): documento próprio, fora do balde da quinzena. */
@@ -1028,6 +1031,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    * Ninguém passava `dueCtx`, então a leitura do Setup vem para cá.
    */
   let dueCtx = options?.dueCtx ?? null;
+  if (!dueCtx && orgDueCtxCache && Date.now() - orgDueCtxCache.at < 60_000) dueCtx = orgDueCtxCache.ctx;
   if (!dueCtx) {
     try {
       const { data: cs } = await supabase
@@ -1040,6 +1044,7 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
         orgStandardTerms: resolveOrgPartnerPayoutStandardTerms(setup),
         orgReferenceYmd: normalizePartnerPayoutReferenceYmd(setup?.partner_payout_reference_ymd),
       };
+      orgDueCtxCache = { at: Date.now(), ctx: dueCtx };
     } catch {
       dueCtx = null;
     }

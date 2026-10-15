@@ -5884,6 +5884,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         });
       }
 
+      /**
+       * Velocidade (15/10/2026): os documentos do job são lidos JUNTO com o salvamento, não
+       * depois. A referência não muda; se o salvamento mudar o self-bill do job (relink),
+       * a leitura é refeita abaixo.
+       */
+      const wantsSelfBillEarly = !!current.partner_id?.trim();
+      const docsAntes = { invoiceId: current.invoice_id ?? null, selfBillId: current.self_bill_id ?? null };
+      const linkedDocsPromise = Promise.all([
+        listInvoicesLinkedToJob(current.reference, current.invoice_id),
+        wantsSelfBillEarly
+          ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
+          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+      ]);
+      linkedDocsPromise.catch(() => {});
+
       const afterBatch = await handleJobUpdate(current.id, mergedApprovalPatch, {
         notifyPartner: false,
         silent: true,
@@ -5893,10 +5908,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         throw new Error("Could not save approval and billing on the job.");
       }
       current = afterBatch;
-      /** Downstream payout-state refresh — does not feed any read below; fire-and-forget to keep the critical path lean. */
-      if (current.self_bill_id) {
-        void syncSelfBillAfterJobChange(current).catch(() => {});
-      }
+      // A sincronização do self-bill roda uma vez só, depois da mudança de status (abaixo).
 
       /**
        * Cliente que paga no cartão (Fase 0, dono 09/10/2026): cobra o restante no cartão
@@ -5949,12 +5961,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ? approvalPartnerDueYmd.trim()
           : approvalComputedPartnerDue;
 
-      const [linked, linkedSelfBills] = await Promise.all([
-        listInvoicesLinkedToJob(current.reference, current.invoice_id),
-        wantsSelfBill
-          ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
-          : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
-      ]);
+      const mudouDocs =
+        (current.invoice_id ?? null) !== docsAntes.invoiceId || (current.self_bill_id ?? null) !== docsAntes.selfBillId || wantsSelfBill !== wantsSelfBillEarly;
+      const [linked, linkedSelfBills] = mudouDocs
+        ? await Promise.all([
+            listInvoicesLinkedToJob(current.reference, current.invoice_id),
+            wantsSelfBill
+              ? listSelfBillsLinkedToJob(current.reference, current.self_bill_id ?? null)
+              : Promise.resolve([] as Awaited<ReturnType<typeof listSelfBillsLinkedToJob>>),
+          ])
+        : await linkedDocsPromise;
 
       // Default path is internal; optional client email runs when `completionDelivery === "email"`.
       let primaryInvoiceId = current.invoice_id ?? null;
@@ -6021,16 +6037,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let invoiceFinalized = false;
       let selfBillFinalized = false;
       try {
-        if (draftInvoiceId) {
-          await finalizeDocument("invoice", draftInvoiceId, {
-            amount: Math.max(0, customerDue),
-            status: finalInvoiceStatus,
-            paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
-            collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
-            due_date: invoiceDueYmd,
-          });
-          invoiceFinalized = true;
-        }
+        // Fatura e self-bill são independentes: finalizam juntos (15/10/2026).
+        const invoiceFinalizePromise = draftInvoiceId
+          ? finalizeDocument("invoice", draftInvoiceId, {
+              amount: Math.max(0, customerDue),
+              status: finalInvoiceStatus,
+              paid_date: finalInvoiceStatus === "paid" ? new Date().toISOString().slice(0, 10) : undefined,
+              collection_stage: finalInvoiceStatus === "paid" ? "completed" : "awaiting_final",
+              due_date: invoiceDueYmd,
+            }).then(() => {
+              invoiceFinalized = true;
+            })
+          : Promise.resolve();
         /**
          * Aprovar UM job não fecha mais o documento da quinzena (dono, 09/10/2026: um
          * documento por parceiro por quinzena). Antes, a aprovação passava a self-bill
@@ -6038,10 +6056,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
          * documento (a F&V chegou a 5 na quinzena 28/09 a 11/10). Quem fecha é o corte
          * (finance-promover). Aqui só o vencimento é acertado quando o documento segue aberto.
          */
-        if (draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating") {
-          await finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd });
-          selfBillFinalized = true;
-        }
+        const selfBillFinalizePromise =
+          draftSelfBillId && partnerDueYmd && (selfBillRowForFinalize?.status ?? "accumulating") === "accumulating"
+            ? finalizeDocument("selfbill", draftSelfBillId, { status: "accumulating", due_date: partnerDueYmd }).then(() => {
+                selfBillFinalized = true;
+              })
+            : Promise.resolve();
+        const resultados = await Promise.allSettled([invoiceFinalizePromise, selfBillFinalizePromise]);
+        const falha = resultados.find((r) => r.status === "rejected");
+        if (falha) throw (falha as PromiseRejectedResult).reason;
       } catch (error) {
         if (invoiceFinalized && draftInvoiceId) {
           try {
@@ -6105,26 +6128,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       if (completionDelivery === "email") {
         const wantInv = includeInvoiceInEmail && accountEmailPolicy.canIncludeInvoice;
         const wantRep = includeReportInEmail && accountEmailPolicy.canIncludeReport;
-        try {
-          const res = await fetch(`/api/jobs/${current.id}/final-review-email`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ includeInvoice: wantInv, includeReport: wantRep }),
+        // O modal fecha já; o e-mail segue em segundo plano e avisa quando terminar (15/10/2026).
+        toast.success(`${approvalToast} Sending the client email…`);
+        const jobIdEmail = current.id;
+        void fetch(`/api/jobs/${jobIdEmail}/final-review-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ includeInvoice: wantInv, includeReport: wantRep }),
+        })
+          .then(async (res) => {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok) {
+              toast.error(data.error ?? "The job is finalised, but the client email could not be sent.", { duration: 10000 });
+            } else {
+              toast.success("Client email sent.");
+            }
+          })
+          .catch(() => {
+            toast.error("The job is finalised, but the client email could not be sent.", { duration: 10000 });
           });
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          if (!res.ok) {
-            toast.success(approvalToast);
-            toast.error(
-              data.error ?? "The job is finalised, but the client email could not be sent.",
-              { duration: 10000 },
-            );
-          } else {
-            toast.success(`${approvalToast} Client email sent.`);
-          }
-        } catch {
-          toast.success(approvalToast);
-          toast.error("The job is finalised, but the client email could not be sent.", { duration: 10000 });
-        }
       } else {
         toast.success(approvalToast);
       }

@@ -2131,7 +2131,7 @@ function JobsPageContent() {
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
         external_source: formData.external_source ?? null,
         external_ref:    formData.external_ref    ?? null,
-      });
+      }, { awaitSelfBill: Boolean(opts?.paymentPlanTemplate?.enabled) });
       if (opts?.pendingSitePhotos?.length) {
         try {
           await attachSitePhotosToJob(result.id, opts.pendingSitePhotos);

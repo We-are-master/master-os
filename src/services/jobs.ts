@@ -714,7 +714,16 @@ export async function ensureDraftInvoiceForJob(
 }
 
 export async function createJob(
-  input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
+  input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">,
+  opts?: {
+    /**
+     * Espera o vínculo do self-bill antes de devolver. Por padrão ele roda em segundo
+     * plano (15/10/2026): job novo ainda não paga nada, e ligar o self-bill custava
+     * umas 10 idas e voltas até o banco com a tela travada. Quem mexe no self-bill
+     * logo em seguida (plano de parcelas) pede para esperar.
+     */
+    awaitSelfBill?: boolean;
+  },
 ): Promise<Job> {
   const supabase = getSupabase();
 
@@ -901,7 +910,12 @@ export async function createJob(
     }
   })();
 
-  const [invoiceIdCreated, selfBillIdCreated] = await Promise.all([invoiceTask, selfBillTask]);
+  const esperarSelfBill = opts?.awaitSelfBill === true || typeof window === "undefined";
+  if (!esperarSelfBill) selfBillTask.catch(() => null);
+  const [invoiceIdCreated, selfBillIdCreated] = await Promise.all([
+    invoiceTask,
+    esperarSelfBill ? selfBillTask : Promise.resolve(job.self_bill_id ?? null),
+  ]);
 
   // `ensureWeeklySelfBillForJob` already writes `jobs.self_bill_id`; only the invoice FK needs linking here.
   if (invoiceIdCreated && !job.invoice_id) {
@@ -927,6 +941,11 @@ export async function createJob(
    */
   void (async () => {
   try {
+    // Vínculo do self-bill em segundo plano: a checagem espera por ele, senão as duas disputam.
+    if (!esperarSelfBill) {
+      const sbBg = await selfBillTask.catch(() => null);
+      if (sbBg && !job.self_bill_id) job = { ...job, self_bill_id: sbBg };
+    }
     // Every job should have a draft invoice (amount may be 0).
     {
       let invoiceId = job.invoice_id ?? null;
@@ -999,9 +1018,9 @@ export async function createJob(
     // Never block job creation at this stage; this pass is best-effort verification/relink.
     console.error("createJob financial docs verification failed:", e);
   }
+    await syncSelfBillAfterJobChange(job).catch(() => {});
   })();
 
-  void syncSelfBillAfterJobChange(job).catch(() => {});
   return job;
 }
 
