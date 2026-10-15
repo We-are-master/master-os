@@ -3586,7 +3586,7 @@ function JobsPageContent() {
               rowClassName={(j) =>
                 cn(
                   // Altura fixa (15/10/2026, padrão do vertex-saas): nada na célula muda a altura da linha.
-                  "h-[52px] [&>td]:py-0",
+                  "h-[44px] [&>td]:py-0",
                   isJobOnHoldComplaint(j)
                     ? COMPLAINT_ROW_CLASS
                     : j.status === "on_hold"
