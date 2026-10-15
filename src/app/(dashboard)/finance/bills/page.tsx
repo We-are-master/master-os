@@ -19,7 +19,6 @@ import {
   CalendarDays,
   Sunrise,
   TrendingUp,
-  X,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -28,7 +27,7 @@ import {
   listBills,
   createBill,
   updateBill,
-  markBillPaid,
+  deleteBillsByIds,
   archiveBillsByIds,
   listBillsInSameSeries,
 } from "@/services/bills";
@@ -52,10 +51,6 @@ type BillsPreset = "all" | "one_off" | "recurring" | "unpaid" | "paid" | "archiv
 
 function kpiEligible(b: Bill): boolean {
   return !b.archived_at && b.status !== "rejected";
-}
-
-function isDebitBill(b: Bill): boolean {
-  return b.category === "debit";
 }
 
 function billRowDisplayStatus(b: Bill): { label: string; variant: "default" | "success" } {
@@ -96,6 +91,9 @@ export default function BillsPage() {
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
   /** Per-row archive busy keys (for the X button) */
   const [archiveRowBusyKey, setArchiveRowBusyKey] = useState<string | null>(null);
+  /** Linhas marcadas: chave da linha → ids de todas as cobranças dela (série inteira). */
+  const [selectedRows, setSelectedRows] = useState<Record<string, string[]>>({});
+  const [deleting, setDeleting] = useState(false);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -319,16 +317,6 @@ export default function BillsPage() {
     return rows.sort((a, b) => a.title.localeCompare(b.title));
   }, [displayList, expandedSeries]);
 
-  const handleMarkPaid = async (bill: Bill) => {
-    try {
-      await markBillPaid(bill.id);
-      toast.success("Marked paid — updated in Pay Run and cost views for this line.");
-      load();
-    } catch {
-      toast.error("Failed to mark paid");
-    }
-  };
-
   const openEditBill = (bill: Bill, e?: MouseEvent) => {
     e?.stopPropagation();
     setEditing(bill);
@@ -510,16 +498,6 @@ export default function BillsPage() {
           Restore
         </Button>
       ) : null}
-      {!r.archived_at && isDebitBill(r) && r.status !== "paid" && (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="font-semibold"
-          onClick={() => void handleMarkPaid(r)}
-        >
-          Mark paid
-        </Button>
-      )}
       {canVoidBill(r) ? (
         <Button
           variant="ghost"
@@ -643,10 +621,65 @@ export default function BillsPage() {
             No bills for this filter.
           </p>
         ) : (
+          <div className="space-y-2">
+          {Object.keys(selectedRows).length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-[12px]">
+              <span className="font-semibold text-text-primary">
+                {Object.keys(selectedRows).length} selected
+              </span>
+              <span className="text-text-tertiary">
+                · {Object.values(selectedRows).reduce((t, ids) => t + ids.length, 0)} payments
+              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" onClick={() => setSelectedRows({})}>
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  loading={deleting}
+                  onClick={async () => {
+                    const ids = [...new Set(Object.values(selectedRows).flat())];
+                    if (
+                      !window.confirm(
+                        `Delete ${Object.keys(selectedRows).length} bill(s) and all ${ids.length} payment(s)? They disappear from Expenses, pay runs, the runway and KPIs. This cannot be undone.`,
+                      )
+                    )
+                      return;
+                    setDeleting(true);
+                    try {
+                      await deleteBillsByIds(ids);
+                      toast.success("Deleted");
+                      setSelectedRows({});
+                      load();
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to delete");
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <div className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[980px] border-collapse text-[12px]">
               <thead>
                 <tr className="bg-surface-secondary text-[11px] text-text-tertiary">
+                  <th className="w-8 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      checked={compactRows.length > 0 && compactRows.every((r) => selectedRows[r.key])}
+                      onChange={(e) =>
+                        setSelectedRows(
+                          e.target.checked ? Object.fromEntries(compactRows.map((r) => [r.key, r.allBillIds])) : {},
+                        )
+                      }
+                    />
+                  </th>
                   <th className="px-3 py-2 text-left font-medium">Bill</th>
                   <th className="px-3 py-2 text-left font-medium">Type</th>
                   <th className="px-3 py-2 text-left font-medium">Starts</th>
@@ -661,7 +694,25 @@ export default function BillsPage() {
               </thead>
               <tbody>
                 {compactRows.map((row) => (
-                  <tr key={row.key} className="border-t border-border/60 hover:bg-surface-hover">
+                  <tr
+                    key={row.key}
+                    className={cn("border-t border-border/60 hover:bg-surface-hover", selectedRows[row.key] && "bg-[var(--info-light)]/40")}
+                  >
+                    <td className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.title}`}
+                        checked={Boolean(selectedRows[row.key])}
+                        onChange={(e) =>
+                          setSelectedRows((prev) => {
+                            const n = { ...prev };
+                            if (e.target.checked) n[row.key] = row.allBillIds;
+                            else delete n[row.key];
+                            return n;
+                          })
+                        }
+                      />
+                    </td>
                     <td className="max-w-[260px] px-3 py-2">
                       <p className="m-0 truncate font-semibold text-text-primary" title={row.title}>{row.title}</p>
                     </td>
@@ -695,22 +746,13 @@ export default function BillsPage() {
                     <td className="px-2 py-1.5">
                       <div className="flex items-center justify-end gap-1">
                         {row.nextBill ? renderBillActions(row.nextBill) : null}
-                        <button
-                          type="button"
-                          onClick={() => void handleArchiveRow(row.key, row.title, row.isSeries, row.allBillIds)}
-                          disabled={archiveRowBusyKey === row.key}
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950/40"
-                          title={row.isSeries ? "Archive this bill and all its payments" : "Archive this bill"}
-                          aria-label={row.isSeries ? "Archive bill series" : "Archive bill"}
-                        >
-                          {archiveRowBusyKey === row.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-                        </button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         )}
 
