@@ -226,7 +226,7 @@ const FERRAMENTAS_CLIENTE = [
         type: "object",
         properties: {
           reason: { type: "string", description: "one line in English: what is needed and why" },
-          need: { type: "string", enum: ["call", "quote", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: a person has to price the job (electrical, gas, building work, anything outside the catalogue). other: complaint, bank transfer, existing booking, anything else" },
+          need: { type: "string", enum: ["call", "quote", "complaint", "booking", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: a person has to price the job (electrical, gas, building work, anything outside the catalogue). complaint: they are unhappy with a job, want a refund, or something went wrong. booking: about an existing booking (reschedule, cancel, who is coming, timing) or paying by bank transfer. other: anything else" },
           details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
           job: {
             type: "object",

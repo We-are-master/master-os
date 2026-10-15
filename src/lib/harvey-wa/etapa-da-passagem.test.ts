@@ -16,10 +16,17 @@ test("sem need, o motivo escrito decide", () => {
   assert.equal(etapaDaPassagem(undefined, "Gas hob ignition, team to take over"), "quote");
 });
 
-test("reclamação, transferência e reserva existente não mudam a etapa", () => {
+test("reclamação vira complaint; reserva existente e transferência vão para o Leo", () => {
+  assert.equal(etapaDaPassagem("complaint", "anything"), "complaint");
+  assert.equal(etapaDaPassagem("booking", "anything"), "booking");
+  assert.equal(etapaDaPassagem(undefined, "Customer is unhappy with the clean and wants a refund"), "complaint");
+  assert.equal(etapaDaPassagem("other", "Complaint: partner did not turn up"), "complaint");
+  assert.equal(etapaDaPassagem(undefined, "Wants to pay by bank transfer"), "booking");
+  assert.equal(etapaDaPassagem(undefined, "Wants to reschedule an existing booking"), "booking");
+});
+
+test("preocupação genérica e pedido de pessoa não mudam a etapa", () => {
   assert.equal(etapaDaPassagem(undefined, "Customer raised concern about recent reviews"), null);
-  assert.equal(etapaDaPassagem(undefined, "Wants to pay by bank transfer"), null);
-  assert.equal(etapaDaPassagem(undefined, "Wants to reschedule an existing booking"), null);
   assert.equal(etapaDaPassagem(undefined, "Harvey asked for a person"), null);
 });
 
