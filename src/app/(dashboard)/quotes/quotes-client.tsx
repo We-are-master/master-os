@@ -2279,11 +2279,34 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (totalVal > 0 && amt > totalVal) {
       amt = Math.round(totalVal * 100) / 100;
     }
-    setConvertRecordedDepositAmount(amt);
-    setConvertMarkDepositPaid(true);
-    setQuoteToConvert(q);
-    setDepositConfirmQuote(null);
-  }, [depositConfirmQuote, depositConfirmAmountStr]);
+    /**
+     * Cotação aceita pelo link já tem job e fatura de entrada (#800). Aí a entrada é marcada
+     * paga nesse job, no servidor, em vez de abrir o "criar job" (que duplicava o job).
+     */
+    void (async () => {
+      const res = await fetch(`/api/quotes/${q.id}/mark-deposit-paid`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amount: amt }),
+      });
+      const out = (await res.json().catch(() => ({}))) as { ok?: boolean; jobReference?: string; error?: string; message?: string };
+      if (res.ok && out.ok) {
+        toast.success(`Deposit marked as paid on ${out.jobReference}`);
+        setDepositConfirmQuote(null);
+        refreshWithKpis();
+        return;
+      }
+      if (out.error !== "no_job") {
+        toast.error(out.message ?? out.error ?? "Could not mark the deposit as paid");
+        return;
+      }
+      // Cotação antiga, sem job ainda: segue o caminho de sempre (criar o job).
+      setConvertRecordedDepositAmount(amt);
+      setConvertMarkDepositPaid(true);
+      setQuoteToConvert(q);
+      setDepositConfirmQuote(null);
+    })();
+  }, [depositConfirmQuote, depositConfirmAmountStr, refreshWithKpis]);
 
   /**
    * Drawer saves: update the open quote only. Do not refetch the quotes list here — that was chaining
@@ -3816,6 +3839,35 @@ function QuoteDetailDrawer({
     })();
     return () => { cancelled = true; };
   }, [quote.id, quote.client_id, quote.property_id, quote.source_account_id, quote.updated_at]);
+
+  /**
+   * Entrada padrão da conta no formulário (16/10/2026). Cotação ainda sem entrada e ainda não
+   * enviada mostra a da conta (`accounts.quote_deposit_percent`, 50% sem conta), a mesma que o
+   * envio grava. Antes o campo mostrava 0 e só no envio virava 50%.
+   */
+  useEffect(() => {
+    if (Number(quote.deposit_required ?? 0) > 0.01) return;
+    if (["awaiting_customer", "awaiting_payment", "converted_to_job", "rejected"].includes(String(quote.status))) return;
+    let cancelled = false;
+    const accountId = drawerAccountDraftId.trim();
+    void (async () => {
+      let pct = 50;
+      if (accountId) {
+        const { data, error } = await getSupabase()
+          .from("accounts")
+          .select("quote_deposit_percent")
+          .eq("id", accountId)
+          .maybeSingle();
+        if (error) return;
+        const v = (data as { quote_deposit_percent?: number | null } | null)?.quote_deposit_percent;
+        pct = v == null ? 50 : Number(v);
+      }
+      if (!cancelled) setDepositPercent(String(pct));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [quote.id, quote.status, quote.deposit_required, drawerAccountDraftId]);
 
   /** Keep manual-address draft aligned with what's currently stored when toggling to "No client". */
   useEffect(() => {
