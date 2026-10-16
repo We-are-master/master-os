@@ -226,6 +226,35 @@ export async function uploadAttachment(
   return token;
 }
 
+/**
+ * Anexo de SIDE CONVERSATION. Não é o mesmo upload do comentário: a side conversation
+ * só aceita o id que vem de `/tickets/side_conversations/attachments` (multipart). O token de
+ * `uploads.json` dava 422 "Attachment … was not found" e o e-mail caía na Resend, fora do
+ * ticket (dono, 16/10/2026: cobrança do JOB-9754 e fotos dos e-mails de job ao parceiro).
+ */
+export async function uploadSideConversationAttachment(
+  file: Buffer,
+  filename: string,
+  contentType = "application/octet-stream",
+): Promise<string> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+  const fd = new FormData();
+  fd.append("file", new Blob([new Uint8Array(file)], { type: contentType }), filename);
+  const res = await fetch(`${baseUrl()}/tickets/side_conversations/attachments`, {
+    method: "POST",
+    headers: { "Authorization": authHeader() },
+    body: fd,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Zendesk side conversation upload failed (${res.status}): ${text}`);
+  }
+  const json = (await res.json()) as { id?: string; attachment?: { id?: string } };
+  const id = json.attachment?.id ?? json.id;
+  if (!id) throw new Error("Zendesk side conversation upload returned no id");
+  return id;
+}
+
 interface UpdateTicketArgs {
   ticketId:        string | number;
   customStatusId?: number;

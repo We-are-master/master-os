@@ -8,13 +8,13 @@
  *
  * Dois canais, dois formatos:
  *
- *   Zendesk side conversation → token de upload (`uploadAttachment`)
+ *   Zendesk side conversation → id de anexo de side conversation (`uploadSideConversationAttachment`)
  *   Resend (job sem ticket)   → `{ filename, content }`
  *
  * Nada aqui derruba um envio. Um e-mail sem anexo continua levando o parceiro
  * à porta; um e-mail que não sai deixa o job sem ninguém.
  */
-import { isZendeskConfigured, uploadAttachment } from "@/lib/zendesk";
+import { isZendeskConfigured, uploadSideConversationAttachment } from "@/lib/zendesk";
 
 /** Teto por e-mail: o parceiro abre isto no celular, com dados móveis. */
 const MAX_ANEXOS = 6;
@@ -56,7 +56,8 @@ export async function tokensDoZendesk(fotos: readonly FotoBaixada[]): Promise<st
   const tokens = await Promise.all(
     fotos.map(async (f) => {
       try {
-        return await uploadAttachment(f.bytes, f.filename, f.contentType);
+        // Os três remetentes usam isto em side conversation: id de side conversation, não token de upload.
+        return await uploadSideConversationAttachment(f.bytes, f.filename, f.contentType);
       } catch (err) {
         console.error(`[fotos-anexadas] upload ao Zendesk falhou (${f.filename}):`, err);
         return null;
