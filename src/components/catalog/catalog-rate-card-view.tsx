@@ -113,19 +113,19 @@ export function CatalogRateCardView({ payload, content, className }: CatalogRate
             className="h-10 w-auto sm:h-12"
             fetchPriority="high"
           />
-          <p className="mt-10 text-[11px] font-bold uppercase tracking-[0.2em] text-text-primary">{hero.kicker}</p>
+          <p className="mt-10 text-[11px] font-bold uppercase tracking-[0.2em] text-[#ED4B00]">{hero.kicker}</p>
           <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
             {hero.titleLine1}
             <br />
             {hero.titleLine2}
             <br />
-            <em className="not-italic text-text-primary">{hero.titleEmphasis}</em>
+            <em className="not-italic text-[#ED4B00]">{hero.titleEmphasis}</em>
           </h1>
           <p className="mt-6 max-w-xl text-base leading-relaxed text-white/78 sm:text-lg">{hero.subtitle}</p>
           <div className="mt-10 flex flex-wrap gap-3">
             <a
               href="#prices"
-              className="inline-flex items-center rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ED4B00]/25 transition hover:bg-[#d44300]"
+              className="inline-flex items-center rounded-full bg-[#ED4B00] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ED4B00]/25 transition hover:bg-[#d44300]"
             >
               See rates ↓
             </a>
@@ -141,7 +141,7 @@ export function CatalogRateCardView({ payload, content, className }: CatalogRate
 
       <section id="about" className="bg-surface-secondary px-6 py-20 sm:px-10">
         <div className="mx-auto max-w-4xl">
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-text-primary">{about.kicker}</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#ED4B00]">{about.kicker}</p>
           <h2 className="mt-3 max-w-2xl text-3xl font-bold leading-tight tracking-tight text-text-primary sm:text-4xl">
             {about.title}
           </h2>
@@ -179,7 +179,7 @@ export function CatalogRateCardView({ payload, content, className }: CatalogRate
 
       <section id="prices" className="scroll-mt-4 px-6 py-20 sm:px-10">
         <div className="mx-auto max-w-4xl">
-          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-text-primary">{pricingIntro.kicker}</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#ED4B00]">{pricingIntro.kicker}</p>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-text-primary sm:text-4xl">{pricingIntro.title}</h2>
           <p className="mt-4 max-w-2xl text-base leading-relaxed text-text-secondary">{pricingIntro.lede}</p>
 
