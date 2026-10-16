@@ -20,12 +20,11 @@ export interface QuoteEmailOptions {
   agentModel?: boolean;
 }
 
-const DEFAULT_INTRO =
-  "Thanks for the request. Please find your quote below. To accept, simply reply to this email confirming and we'll schedule the work.";
+const DEFAULT_INTRO = "Thanks for the request. Please find your quote below.";
 
 /** Schedule A: o preço é do profissional, a Fixfy cota e agenda como agente dele. */
 const AGENT_INTRO =
-  "Thanks for the request. Here is the price for your job. The work is carried out by a vetted independent professional, and Fixfy arranges the booking as their agent. To accept, simply reply to this email.";
+  "Thanks for the request. Here is the price for your job. The work is carried out by a vetted independent professional, and Fixfy arranges the booking as their agent.";
 
 /** Schedule A: quem faz o trabalho e quem recebe o pagamento, curto. */
 function buildAgentNoticeBlock(): string {
@@ -155,6 +154,30 @@ function buildAcceptRejectBlock(acceptUrl?: string, rejectUrl?: string): string 
           </tr>`;
 }
 
+/**
+ * O quadro "How to accept" (16/10/2026). Antes dizia sempre "reply to this email",
+ * mesmo com o botão Accept logo acima, e nunca falava da entrada: o cliente só
+ * descobria o sinal depois de aceitar. Agora diz o que fazer e o que pagar agora.
+ */
+export function buildHowToAcceptText(args: {
+  hasAcceptButton: boolean;
+  total: number;
+  depositRequired?: number;
+}): string {
+  const total = Math.round((Number(args.total) || 0) * 100) / 100;
+  const deposit = Math.round((Number(args.depositRequired) || 0) * 100) / 100;
+  const passo = args.hasAcceptButton
+    ? "Tap Accept quote above."
+    : "Reply to this email to go ahead.";
+  const pagamento =
+    deposit > 0.02 && deposit < total - 0.02
+      ? ` A deposit of £${formatMoneyPlain(deposit)} secures the booking, and the balance of £${formatMoneyPlain(total - deposit)} is due when the job is done.`
+      : deposit > 0.02
+        ? ` Payment of £${formatMoneyPlain(deposit)} secures the booking.`
+        : "";
+  return `${passo}${pagamento} We'll then confirm the date and arrival window by email.`;
+}
+
 function replaceAll(template: string, key: string, value: string): string {
   return template.split(`{{${key}}}`).join(value);
 }
@@ -207,6 +230,17 @@ export function buildQuoteClientEmailHTML(
   html = replaceAll(html, "intro_message", intro);
   html = replaceAll(html, "agent_notice_block", agent ? buildAgentNoticeBlock() : "");
   html = replaceAll(html, "accept_reject_block", buildAcceptRejectBlock(acceptUrl, rejectUrl));
+  html = replaceAll(
+    html,
+    "how_to_accept",
+    escapeHtml(
+      buildHowToAcceptText({
+        hasAcceptButton: Boolean(acceptUrl && rejectUrl),
+        total: Number(data.totalValue) || 0,
+        depositRequired: data.depositRequired,
+      }),
+    ),
+  );
 
   return html;
 }

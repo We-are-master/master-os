@@ -21,6 +21,7 @@ import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
 import { umTicketEmail, umTicketWhatsAppLigado } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
+import { aplicarEntradaDaConta } from "@/lib/deposito-da-cotacao";
 
 function nowMs() {
   return performance.now();
@@ -205,6 +206,15 @@ export async function POST(req: NextRequest) {
         : Promise.resolve(null),
     ]);
     marks.push(["deps_fetch", nowMs() - tDeps]);
+
+    // Entrada pela conta (16/10/2026): cotação sem entrada ganha a da conta (50%, ou 0
+    // em quem paga na fatura), para o aceite já abrir o pagamento.
+    const entradaDaConta = await aplicarEntradaDaConta(
+      supabase,
+      quote as { id: string; total_value?: number | null; deposit_required?: number | null },
+      (docParty?.sourceAccountId ?? accountId ?? null) || null,
+    );
+    if (entradaDaConta) Object.assign(quote, entradaDaConta);
 
     let lineItemsForPdf = items;
     if (!lineItemsForPdf?.length && lineItemResult) {
