@@ -46,15 +46,15 @@ export function reminderCopy(stage: number, a: { name: string; reference: string
   const subject = final
     ? `Final reminder: invoice ${a.reference} is overdue`
     : stage === 1
-      ? `Friendly reminder: invoice ${a.reference} was due ${a.dueLabel}`
-      : `Reminder: invoice ${a.reference} is still open`;
+      ? `Payment reminder · ${a.reference} · due ${a.dueLabel}`
+      : `Payment outstanding · ${a.reference}`;
   const opening = final
     ? `This is a final reminder that invoice ${a.reference} for ${a.amount} (${a.jobLabel}) was due on ${a.dueLabel} and is still unpaid.`
     : stage === 1
-      ? `Just a friendly reminder that invoice ${a.reference} for ${a.amount} (${a.jobLabel}) was due on ${a.dueLabel}. If you've already paid, thank you, and please ignore this email.`
-      : `We haven't yet received payment for invoice ${a.reference} for ${a.amount} (${a.jobLabel}), due on ${a.dueLabel}. If it's already on its way, thank you.`;
+      ? `Our records show ${a.amount} outstanding on invoice ${a.reference} (${a.jobLabel}), due on ${a.dueLabel}. If you have already paid, please reply with the payment date and reference so we can check.`
+      : `Our records still show ${a.amount} outstanding on invoice ${a.reference} (${a.jobLabel}), due on ${a.dueLabel}. If payment is on its way, please reply with the payment date and reference.`;
   const closing = final
     ? "Please arrange payment today, or reply to this email if there's anything we need to resolve first."
-    : "If there's anything holding it up, just reply to this email and we'll sort it out.";
+    : "Please pay the outstanding balance using the details below, or reply if you need help with this invoice.";
   return { subject, opening, closing, final };
 }

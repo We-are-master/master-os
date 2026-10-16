@@ -53,7 +53,7 @@ export type InvoiceEmailOptions = {
 const PAID_INTRO =
   "We've received your payment for the work below. Thanks for choosing Fixfy.";
 const UNPAID_INTRO =
-  "Your job is complete. Please find your statement of charges below, with the payment details.";
+  "Your statement of charges is ready. Review the amount due and payment details below.";
 const PARTIAL_INTRO =
   "We've received a partial payment. The remaining balance is shown below.";
 
@@ -295,7 +295,7 @@ function buildPayNowBlock(paymentLinkUrl: string): string {
   return `
           <tr>
             <td class="px" style="padding:0 40px 28px 40px; text-align:center;">
-              <a href="${escapeHtml(paymentLinkUrl)}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:14px 32px;border-radius:8px;">Pay now</a>
+              <a href="${escapeHtml(paymentLinkUrl)}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:14px 32px;border-radius:8px;">Pay outstanding balance</a>
               <p style="margin:10px 0 0 0; font-size:12px; color:#9A9AA8;">Secure payment via Stripe</p>
             </td>
           </tr>`;
@@ -326,7 +326,7 @@ function buildBankDetailsBlock(heading = "Or pay by bank transfer"): string {
                     <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(heading)}</p>
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
                     </table>
-                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the statement reference as the payment reference so we can match it automatically.</p>
+                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the statement reference as the payment reference so we can match your payment to this statement.</p>
                   </td>
                 </tr>
               </table>
@@ -577,7 +577,7 @@ export function buildInvoiceClientEmailHTML(
       ? `We've received your payment for the work below, on behalf of ${agentView.professionalLabel}. This receipt is issued in their name.`
       : partial
         ? `We've received a partial payment on behalf of ${agentView.professionalLabel}. The remaining balance is shown below.`
-        : `Your job is complete. Below is the statement for the work carried out by ${agentView.professionalLabel}. Payment details are included.`
+        : `Your statement for work by ${agentView.professionalLabel} is ready. Review the amount due and payment details below.`
     : null;
   const intro = options?.customMessage?.trim()
     ? escapeHtml(options.customMessage.trim())

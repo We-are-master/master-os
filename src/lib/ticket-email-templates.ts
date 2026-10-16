@@ -34,7 +34,7 @@ export function buildNewTicketInternalEmail(args: NewTicketEmailArgs): { subject
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:24px">
           <p style="margin:0;white-space:pre-wrap;line-height:1.5">${escapeHtml(args.body)}</p>
         </div>
-        <a href="${args.dashboardUrl}" style="display:inline-block;background:#E94A02;color:white;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">Open in dashboard</a>
+        <a href="${args.dashboardUrl}" style="display:inline-block;background:#E94A02;color:white;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">View ticket</a>
       </div>
     `,
   };
@@ -51,7 +51,7 @@ interface TicketReplyEmailArgs {
 
 export function buildTicketReplyPortalEmail(args: TicketReplyEmailArgs): { subject: string; html: string } {
   return {
-    subject: `Reply on ticket ${args.ticketRef}: ${args.subject}`,
+    subject: `New reply · ${args.ticketRef}: ${args.subject}`,
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
@@ -66,7 +66,7 @@ export function buildTicketReplyPortalEmail(args: TicketReplyEmailArgs): { subje
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:24px">
           <p style="margin:0;white-space:pre-wrap;line-height:1.5">${escapeHtml(args.body)}</p>
         </div>
-        <a href="${args.portalUrl}" style="display:inline-block;background:#E94A02;color:white;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">View in portal</a>
+        <a href="${args.portalUrl}" style="display:inline-block;background:#E94A02;color:white;padding:12px 24px;border-radius:12px;text-decoration:none;font-weight:700">View and reply</a>
         <p style="color:#94a3b8;font-size:12px;margin:32px 0 0">
           Reply at <a href="mailto:support@getfixfy.com" style="color:#E94A02">support@getfixfy.com</a> or through the portal.
         </p>
@@ -86,7 +86,7 @@ interface TicketReplyInternalEmailArgs {
 
 export function buildTicketReplyInternalEmail(args: TicketReplyInternalEmailArgs): { subject: string; html: string } {
   return {
-    subject: `Reply on ${args.ticketRef} from ${args.accountName}`,
+    subject: `Ticket reply · ${args.ticketRef} · ${args.accountName}`,
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
         <h1 style="font-size:20px;margin:0 0 8px">${escapeHtml(args.senderName)} replied to ${escapeHtml(args.ticketRef)}</h1>

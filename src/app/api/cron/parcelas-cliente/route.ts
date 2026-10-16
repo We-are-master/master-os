@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
       day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London",
     });
     const jobLabel = ctx.job?.reference ?? inv.job_reference ?? "your job";
-    const subject = `Instalment ${p.sequence} of ${total ?? p.sequence} · £${valor.toFixed(2)} · ${inv.reference}`;
+    const subject = `Instalment due today · ${inv.reference} · £${valor.toFixed(2)}`;
     if (ensaio) { out.push(`${tag}: would request £${valor.toFixed(2)} from ${to}`); continue; }
     if (!resendKey || !fromEmail) return NextResponse.json({ error: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" }, { status: 503 });
 
@@ -114,7 +114,8 @@ export async function GET(req: NextRequest) {
 <p>Instalment ${p.sequence} of ${total ?? p.sequence} for ${esc(jobLabel)} is due today, ${esc(dueLabel)}: <strong>£${valor.toFixed(2)}</strong>.</p>
 ${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:#ED4B00;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Pay £${valor.toFixed(2)} now</a></p>` : ""}
 <p>Bank transfer: GETFIXFY LTD · sort code 04-00-03 · account 06913415 · reference ${esc(inv.reference ?? "")}.</p>
-<p>Thank you,<br>Fixfy Team</p></div>`;
+<p>If you have already paid, please reply with the payment date and reference so we can check. For questions about this instalment, reply to this email.</p>
+<p>Thank you,<br>The Fixfy team</p></div>`;
 
     const cc = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
     const { error: sendErr } = await new Resend(resendKey).emails.send({

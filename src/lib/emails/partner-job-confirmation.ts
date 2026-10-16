@@ -161,10 +161,10 @@ function partnerJobEmailSubject(args: {
   const postcode = extractUkPostcode(args.propertyAddress) ?? "—";
   if (args.kind === "offer") {
     const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-    return `Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
+    return `Job offer · ${typeOfWork} · ${date} · ${postcode}`;
   }
   const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-  return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
+  return `Job confirmed · ${typeOfWork} · ${date} · ${postcode}`;
 }
 
 /** e.g. Job Cancelled: General Maintenance - 1 Jun */
@@ -174,7 +174,7 @@ export function partnerJobCancelledEmailSubject(args: {
 }): string {
   const typeOfWork = args.jobTitle.trim() || "Job";
   const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-  return `Job Cancelled: ${typeOfWork} - ${date}`;
+  return `Job cancelled · ${typeOfWork} · ${date}`;
 }
 
 function partnerJobEmailNotesHtmlBlock(notes: string): string {
@@ -381,7 +381,7 @@ ${partnerEmailLogoHeaderRow()}
 
   const text = `Hi ${data.partnerFirstName || "there"},
 
-New job booked for you.
+Your job is confirmed. Review the schedule, address and scope below before the visit.
 
 Job #${data.jobReference}
 ${data.jobTitle}
@@ -792,9 +792,9 @@ export function partnerJobOnHoldEmailSubject(args: {
 }): string {
   const shortRef = partnerJobEmailShortRef(args.jobReference);
   if (partnerJobOnHoldIsComplaint(args.presetId)) {
-    return `${shortRef} - Action Required: Complaint`;
+    return `Action required · Complaint for ${shortRef}`;
   }
-  return `${shortRef} - Job On Hold - Awaiting Next Stage`;
+  return `Job on hold · ${shortRef}`;
 }
 
 /**

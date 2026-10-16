@@ -34,6 +34,6 @@ describe("overdue invoice reminders: 1, 3, 4 days friendly, 7 days final", () =>
     const c = reminderCopy(4, { name: "Maryna", reference: "INV-1", amount: "£198.00", dueLabel: "16 Oct", jobLabel: "JOB-1", payUrl: null });
     assert.equal(c.final, true);
     assert.match(c.subject, /^Final reminder/);
-    assert.match(reminderCopy(1, { name: "x", reference: "INV-1", amount: "£1", dueLabel: "d", jobLabel: "j", payUrl: null }).subject, /^Friendly reminder/);
+    assert.match(reminderCopy(1, { name: "x", reference: "INV-1", amount: "£1", dueLabel: "d", jobLabel: "j", payUrl: null }).subject, /^Payment reminder/);
   });
 });

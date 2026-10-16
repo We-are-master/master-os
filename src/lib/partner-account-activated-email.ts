@@ -9,7 +9,7 @@ import {
 } from "@/lib/emails/partner-email-layout";
 import { appBaseUrl } from "@/lib/app-base-url";
 
-export const PARTNER_ACCOUNT_ACTIVATED_SUBJECT = "You're live on Fixfy Trade";
+export const PARTNER_ACCOUNT_ACTIVATED_SUBJECT = "Your Fixfy Trade account is active";
 
 function escapeHtml(s: string): string {
   return String(s ?? "")
@@ -56,7 +56,7 @@ ${partnerEmailHeadBlock()}
 ${partnerEmailBaseStyles()}
 </head>
 ${partnerEmailBodyOpen()}
-${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. One tap and you are in.")}
+${partnerEmailPreheaderHtml("Sign in to review offers, manage jobs and keep your availability up to date.")}
 
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
   <tr><td align="center" style="padding: 32px 16px;">
@@ -69,9 +69,9 @@ ${partnerEmailPreheaderHtml("Your Fixfy Trade account is now active. One tap and
 
       <!-- Title -->
       <tr><td style="padding:20px 40px 20px 40px;" class="px-mobile">
-        ${partnerEmailSplitTitleHtml(safe.firstName, "You&#39;re live on Fixfy Trade &#127881;")}
+        ${partnerEmailSplitTitleHtml(safe.firstName, "Your account is active")}
         <p style="margin:0 0 8px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:16px; line-height:24px; color:#3A3A55;">
-          Great news, the ${safe.companyName} team just approved your onboarding. Your trade account is active
+          The ${safe.companyName} team has approved your onboarding. Your trade account is active
           and ready to receive work.
         </p>
         ${tierChip ? `<div style="margin:14px 0 0;">${tierChip}</div>` : ""}
