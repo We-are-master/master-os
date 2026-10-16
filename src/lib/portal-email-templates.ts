@@ -28,25 +28,25 @@ export function buildNewQuoteEmail({
   quoteTitle,
   portalUrl,
 }: NewQuoteEmailArgs): { subject: string; html: string } {
-  const subject = `New quote ${quoteRef} ready for review`;
+  const subject = `Review your Fixfy quote · ${quoteRef}`;
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
         <img src="/favicon.png" alt="Fixfy" style="width:40px;height:40px" />
         <strong style="font-size:18px;color:#0f172a">Fixfy Portal</strong>
       </div>
-      <h1 style="font-size:22px;margin:0 0 8px;color:#0f172a">A new quote is ready for you</h1>
+      <h1 style="font-size:22px;margin:0 0 8px;color:#0f172a">Your quote is ready</h1>
       <p style="color:#64748b;margin:0 0 24px;line-height:1.5">
         Hi ${escapeHtml(accountName)} team — the Fixfy team just sent quote
         <strong>${escapeHtml(quoteRef)}</strong> for <strong>${escapeHtml(quoteTitle)}</strong>.
-        Review the line items, scope, and total in your portal and accept or decline whenever you&rsquo;re ready.
+        Review the scope, itemised prices and total in your portal, then accept or decline the quote.
       </p>
       <a href="${portalUrl}"
          style="display:inline-block;background:#E94A02;color:white;padding:14px 28px;border-radius:12px;text-decoration:none;font-weight:700;font-size:14px">
         Review quote ${escapeHtml(quoteRef)}
       </a>
       <p style="color:#94a3b8;font-size:12px;margin:32px 0 0;line-height:1.5">
-        This is an automatic notification from the Master account portal.
+        This notification was sent from the Fixfy client portal.
         If you weren&rsquo;t expecting this, you can safely ignore it or reply to
         <a href="mailto:support@getfixfy.com" style="color:#E94A02">support@getfixfy.com</a>.
       </p>

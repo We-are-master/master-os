@@ -67,7 +67,7 @@ export function buildSelfBillEmailHtml(
          <p style="margin:2px 0 0 0; font-size:14px; color:#166534;">${payout} transferred on ${paidAt}</p>
        </td></tr>`
     : `<tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:18px 40px; border-bottom:3px solid #020040;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">PAYOUT SCHEDULED</p>
+         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">${dueYmd ? "PAYOUT SCHEDULED" : "PAYOUT PENDING"}</p>
          <p style="margin:2px 0 0 0; font-size:14px; color:#020040;">${payout}${dueYmd ? ` · payment due ${fmtSbDate(dueYmd)}` : ""}</p>
        </td></tr>`;
 
@@ -94,13 +94,13 @@ export function buildSelfBillEmailHtml(
         <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
       </td></tr>
       <tr><td style="padding:0 40px 28px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">Your self-bill is ready. Nothing to do: it is attached below for your records.</p>
+        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">Your self-bill is attached. Review the period and payment details below, and keep the PDF for your records.</p>
       </td></tr>
 
       <tr><td style="padding:0 40px 24px 40px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            <tr><td valign="middle" style="font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Self-bill Ref</td>
+            <tr><td valign="middle" style="font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Self-bill reference</td>
                 <td valign="middle" align="right" style="font-size:14px; font-weight:700; color:#020040;">${ref}</td></tr>
             <tr><td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Period</td>
                 <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">${periodText}</td></tr>
@@ -155,7 +155,7 @@ function buildPayoutStatementEmailHtml(
          <p style="margin:2px 0 0 0; font-size:14px; color:#166534;">${payout} transferred on ${paidAt}</p>
        </td></tr>`
     : `<tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:18px 40px; border-bottom:3px solid #020040;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">PAYOUT SCHEDULED</p>
+         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">${dueYmd ? "PAYOUT SCHEDULED" : "PAYOUT PENDING"}</p>
          <p style="margin:2px 0 0 0; font-size:14px; color:#020040;">${payout}${dueYmd ? ` · payment due ${fmtSbDate(dueYmd)}` : ""}</p>
        </td></tr>`;
 
@@ -189,13 +189,13 @@ function buildPayoutStatementEmailHtml(
         <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
       </td></tr>
       <tr><td style="padding:0 40px 28px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">${attached} Nothing to do: it shows every job, with your price, Fixfy's commission as a percentage of it and what you receive for your Platform Bookings.${partB}</p>
+        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">${attached} Review the jobs, your prices, Fixfy's commission percentage and your net payout for Platform Bookings.${partB} Please contact us if any details need correcting.</p>
       </td></tr>
 
       <tr><td style="padding:0 40px 24px 40px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${row("Statement Ref", ref, true)}
+            ${row("Statement reference", ref, true)}
             ${row("Period", periodText)}
             ${invoiceRef ? row("Commission VAT invoice", invoiceRef) : ""}
           </table>

@@ -308,10 +308,10 @@ export async function POST(req: NextRequest) {
               ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
               : (sb.week_label ?? sb.period ?? "this period")
           }`
-        : `Self-Billing ${sb.reference} | ${
+        : `Self-bill ${sb.reference} | ${
             sb.week_start && sb.week_end
               ? `${fmtSubjectDate(sb.week_start)} — ${fmtSubjectDate(sb.week_end)}`
-              : (sb.week_label ?? sb.period ?? "weekly")
+              : (sb.week_label ?? sb.period ?? "this period")
           }`,
       html: buildSelfBillEmailHtml(sb, dueYmd, {
         partnerName,

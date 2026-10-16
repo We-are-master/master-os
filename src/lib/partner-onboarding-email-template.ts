@@ -6,7 +6,7 @@ import type { CompanyBranding } from "@/lib/pdf/quote-template";
 const DEFAULT_LOGO_URL = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 const DEFAULT_SUPPORT_EMAIL = "support@getfixfy.com";
 
-export const PARTNER_ONBOARDING_EMAIL_SUBJECT = "Welcome to the Fixfy Partner Portal";
+export const PARTNER_ONBOARDING_EMAIL_SUBJECT = "Complete your Fixfy Trade profile";
 
 export interface PartnerOnboardingEmailOptions {
   contactName: string;

@@ -93,17 +93,11 @@ export function buildPartnerMissingReportsEmail(data: PartnerMissingReportsEmail
   const n = jobs.length;
   const maisVelho = jobs[0]?.daysWaiting ?? 0;
 
-  /**
-   * Profissional e amigável, nesta ordem: "Quick Reminder" avisa que é lembrete
-   * e não bronca, e "to submit" pede sem acusar. "still to submit" carregava um
-   * dedo apontado que não ajuda quem esqueceu de boa-fé, e o assunto é onde o
-   * parceiro decide se abre. O dinheiro fica no preheader, ao lado: no assunto
-   * ele lê como cobrança de dívida.
-   */
+  // Lead with the required action; payment context belongs in the preview.
   const subject =
     n === 1
-      ? `Quick Reminder: 1 work report to submit · ${jobs[0]!.reference}`
-      : `Quick Reminder: ${n} work reports to submit`;
+      ? `Submit your job report · ${jobs[0]!.reference}`
+      : `${n} job reports awaiting submission`;
 
   const statCell = (value: string, label: string, opts?: { accent?: boolean; first?: boolean }) => `
             <td align="center" style="padding:12px 6px;${opts?.first ? "" : " border-left:1px solid rgba(255,255,255,0.14);"}">

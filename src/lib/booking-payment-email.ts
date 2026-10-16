@@ -64,9 +64,7 @@ export function scopeLines(scope: string | null | undefined): string[] {
 }
 
 export function buildBookingPaymentSubject(i: Pick<BookingPaymentEmailInput, "clientName" | "dayLabel">): string {
-  const name = firstName(i.clientName);
-  const who = name === "there" ? "Almost there" : `Almost there, ${name}`;
-  return i.dayLabel ? `${who}: confirm your booking for ${i.dayLabel}` : `${who}: one step left to confirm your booking`;
+  return i.dayLabel ? `Confirm your Fixfy booking · ${i.dayLabel}` : "Confirm your Fixfy booking";
 }
 
 export function buildBookingPaymentEmailHTML(i: BookingPaymentEmailInput): string {
@@ -80,8 +78,8 @@ export function buildBookingPaymentEmailHTML(i: BookingPaymentEmailInput): strin
     ? `Pay your ${money(i.amountDueNow)} deposit and your slot is confirmed.`
     : `Pay ${money(i.amountDueNow)} and your slot is confirmed.`;
   const intro = isDeposit
-    ? `We have your booking ready. One step left: pay the <strong>${money(i.amountDueNow)} deposit</strong> and your slot is confirmed. The rest is only due once the work is done.`
-    : `We have your booking ready. One step left: pay <strong>${money(i.amountDueNow)}</strong> and your slot is confirmed.`;
+    ? `Hi ${esc(name)}, please pay the <strong>${money(i.amountDueNow)} deposit</strong> to confirm your booking. The remaining balance is due after the work is completed.`
+    : `Hi ${esc(name)}, please pay <strong>${money(i.amountDueNow)}</strong> to confirm your booking.`;
 
   const row = (label: string, value: string) => `
                 <tr>
@@ -153,8 +151,8 @@ export function buildBookingPaymentEmailHTML(i: BookingPaymentEmailInput): strin
           </tr>
           <tr>
             <td class="px" style="padding:34px 40px 6px 40px;">
-              <p style="margin:0 0 10px 0; font-size:12px; font-weight:700; letter-spacing:2px; color:${ORANGE}; text-transform:uppercase;">One step left</p>
-              <h1 class="h1" style="margin:0 0 14px 0; font-size:28px; line-height:34px; color:${NAVY}; font-weight:700;">Almost there, ${esc(name)}</h1>
+              <p style="margin:0 0 10px 0; font-size:12px; font-weight:700; letter-spacing:2px; color:${ORANGE}; text-transform:uppercase;">Payment required</p>
+              <h1 class="h1" style="margin:0 0 14px 0; font-size:28px; line-height:34px; color:${NAVY}; font-weight:700;">Confirm your booking</h1>
               <p style="margin:0; font-size:15px; line-height:23px; color:${MUTED};">${intro}</p>
             </td>
           </tr>
@@ -182,20 +180,20 @@ export function buildBookingPaymentEmailHTML(i: BookingPaymentEmailInput): strin
                         <td align="right" style="padding-top:4px; font-size:13px; color:${NAVY}; font-family:monospace;">${esc(invoiceRef)}</td>
                       </tr>
                 </table>
-                <p style="margin:10px 0 0 0; font-size:11px; line-height:16px; color:#9A9AA8;">Send ${esc(money(i.amountDueNow))} with the reference above and reply to this email once it is done, so we can confirm you straight away.</p>
+                <p style="margin:10px 0 0 0; font-size:11px; line-height:16px; color:#9A9AA8;">Send ${esc(money(i.amountDueNow))} with the reference above and reply to this email once it is done, so we can check receipt and confirm your booking.</p>
               </td></tr></table>
             </td>
           </tr>
           <tr>
             <td class="px" style="padding:20px 40px 6px 40px;">
               <p style="margin:0 0 4px 0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">What happens next</p>
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${step(1, isDeposit ? "Pay the deposit" : "Pay to confirm", "It takes less than a minute and your slot is locked in.")}${step(2, "We confirm your professional", "You get their details before the visit.")}${step(3, isDeposit ? "The work is done, then the balance" : "The work is done", isDeposit ? `The remaining ${money(balance)} is only due after the job is completed.` : "We check everything was completed as agreed.")}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${step(1, isDeposit ? "Pay the deposit" : "Pay to confirm", "Complete payment using the link or bank details above.")}${step(2, "We confirm your professional", "You get their details before the visit.")}${step(3, isDeposit ? "The work is done, then the balance" : "The work is done", isDeposit ? `The remaining ${money(balance)} is only due after the job is completed.` : "We check everything was completed as agreed.")}
               </table>
             </td>
           </tr>
           <tr>
             <td class="px" style="padding:16px 40px 34px 40px;">
-              <p style="margin:0; font-size:13px; line-height:20px; color:${MUTED};">Anything to change or a question first? Just reply to this email and we will sort it. Your invoice ${esc(invoiceRef)} is attached for your records.</p>
+              <p style="margin:0; font-size:13px; line-height:20px; color:${MUTED};">Need to change the booking or ask a question? Reply to this email before paying. Your invoice ${esc(invoiceRef)} is attached for your records.</p>
               <p style="margin:14px 0 0 0; font-size:13px; line-height:20px; color:${NAVY}; font-weight:600;">The Fixfy Team</p>
             </td>
           </tr>

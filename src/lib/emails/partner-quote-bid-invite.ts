@@ -143,7 +143,7 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
   const postcodeLine = postcode ? `<br><span style="color:#4A4A55;">${escapeHtml(postcode)}</span>` : "";
 
   const typeLabel = data.typeOfWork.trim() || "Quote";
-  const subject = `Quote Request: ${typeLabel} - ${postcode || "—"}`;
+  const subject = `Quote request · ${typeLabel} · ${postcode || "—"}`;
   const preheader = `New opportunity — ${data.typeOfWork} at ${data.propertyAddress || postcode || "your area"}. Bid within 12 hours.`;
 
   const safe = {
