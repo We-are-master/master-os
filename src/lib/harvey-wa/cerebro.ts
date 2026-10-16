@@ -67,7 +67,20 @@ export type Contexto = {
   falaComo?: string | null;
   /** Postcodes que o OS já tem desta pessoa (lead do Checkatrade, site, cliente): valem no request_quote. */
   postcodesConhecidos?: string[];
+  /**
+   * O que veio antes do corte de sessão (pausa de 6h), só como contexto (dono, 16/10/2026):
+   * a Justine voltou 14h depois com "cancel for today", o Harvey não sabia que ela tinha
+   * recusado o preço na véspera, se apresentou de novo e passou para a equipe.
+   */
+  conversaAnterior?: Fala[];
 };
+
+/** A conversa de antes do corte, em linhas, para o Harvey saber o que já aconteceu. */
+export function instrucaoDaConversaAnterior(anterior: Fala[]): string {
+  if (!anterior.length) return "";
+  const linhas = anterior.map((f) => `${f.papel === "cliente" ? "Customer" : f.papel === "harvey" ? "You" : "Team"}: ${f.texto.replace(/\s+/g, " ").slice(0, 400)}`);
+  return `\n\n# Earlier conversation with this customer (context only)\n\nYou have already spoken with this customer. Do not greet them as if it were the first time and do not introduce yourself or say your name again. Use this only to understand what they mean now (for example, whether they have a booking or turned down a price):\n\n${linhas.join("\n")}`;
+}
 
 /** Continuar a conversa no nome de quem da equipe falava, sem se apresentar. */
 export function instrucaoDeVoz(nome: string): string {
@@ -506,7 +519,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
   const regras = parceiro ? "" : instrucoesDosAjustes(ajustes);
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 
@@ -536,7 +549,8 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       }
       // Primeira resposta da conversa sempre se apresenta (dono, 29/09/2026):
       // não fica só na instrução, que o modelo às vezes esquece.
-      const jaFalou = conversa.some((f) => f.papel !== "cliente");
+      // Já falou com a pessoa antes do corte de sessão também conta: nada de se apresentar de novo.
+      const jaFalou = conversa.some((f) => f.papel !== "cliente") || (ctx.conversaAnterior ?? []).some((f) => f.papel !== "cliente");
       if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }

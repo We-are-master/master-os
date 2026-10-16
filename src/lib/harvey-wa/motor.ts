@@ -160,6 +160,13 @@ async function fotosDaConversa(sessao: MensagemSc[]): Promise<string[]> {
  * para a equipe de outro dia) contaminava o "hi there" seguinte.
  */
 const PAUSA_QUE_ENCERRA_MS = (Number(process.env.HARVEY_WA_SESSAO_MIN) || 360) * 60_000; // teste: HARVEY_WA_SESSAO_MIN=5
+/** O que veio antes da sessão atual, até 30 dias e as últimas 12 mensagens: só contexto para o Harvey. */
+const ANTERIOR_MAX_MS = 30 * 86_400_000;
+export function antesDaSessao(msgs: MensagemSc[], sessao: MensagemSc[], agora = Date.now()): MensagemSc[] {
+  const corte = msgs.length - sessao.length;
+  if (corte <= 0) return [];
+  return msgs.slice(0, corte).filter((m) => agora - Date.parse(m.received ?? "") < ANTERIOR_MAX_MS).slice(-12);
+}
 export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
   for (let i = msgs.length - 1; i > 0; i--) {
     const agora = Date.parse(msgs[i].received ?? "");
@@ -451,7 +458,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
 
   const r = await pensar(
     paraFalas(sessao),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone), postcodesConhecidos },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)) },
     chamarSite,
     await catalogo(),
   );

@@ -186,9 +186,20 @@ export async function syncJobAfterInvoicePaidToLedger(
   const { data: inv } = await client.from("invoices").select("invoice_kind, job_reference").eq("id", invoiceId).maybeSingle();
   const i = inv as { invoice_kind?: string | null; job_reference?: string | null } | null;
   if (i?.invoice_kind === "deposit" && i.job_reference) {
+    /**
+     * Só no navegador (o "mark as paid" da tela): a rotina manda e-mail e mora no servidor,
+     * então vai pela rota. No servidor quem chama já roda a rotina: o webhook do Stripe e o
+     * `/api/stripe/check-status` (16/10/2026). Importar o módulo do servidor aqui levava o
+     * envio de e-mail para o pacote do navegador e quebrava o build.
+     */
+    if (typeof window === "undefined") return;
     try {
-      const { aposEntradaDaCotacaoPaga } = await import("@/lib/quote-accept-job-fields");
-      await aposEntradaDaCotacaoPaga(client, i.job_reference, sourceLabel === "Stripe" ? "stripe_invoice" : "manual_mark_paid");
+      const res = await fetch("/api/quotes/deposit-paid", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobReference: i.job_reference, origem: sourceLabel === "Stripe" ? "stripe_invoice" : "manual_mark_paid" }),
+      });
+      if (!res.ok) console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up", res.status);
     } catch (e) {
       console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up failed", e);
     }

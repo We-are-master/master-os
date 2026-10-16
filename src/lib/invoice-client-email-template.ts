@@ -142,7 +142,7 @@ const B_VAT_BOX = `          <tr>
                       Need a VAT invoice?
                     </p>
                     <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">
-                      Request one at <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a>.
+                      Request one at <a href="mailto:hello@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">hello@getfixfy.com</a>.
                     </p>
                   </td>
                 </tr>
@@ -525,9 +525,13 @@ export function buildInvoiceClientEmailHTML(
     schedule: agentView ? "A" : options?.tradeFeeOptions?.schedule,
   });
   const { street, outward } = splitAddressAndPostcode(context.propertyAddress, context.postcode);
-  const quoteRef = context.quoteReference?.trim()
-    ? refForTemplate(context.quoteReference, "QT")
-    : "—";
+  // Sem cotação a linha some: "Linked to QT-—" era o que o cliente lia (15/10/2026).
+  const linkedQuoteRow = context.quoteReference?.trim()
+    ? `<tr>
+                        <td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Linked to</td>
+                        <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">QT-${escapeHtml(refForTemplate(context.quoteReference, "QT"))}</td>
+                      </tr>`
+    : "";
   const billingRefDisplay = displayBillingReference(invoice.reference);
   const issueDate = formatDisplayDate(invoice.created_at);
   const dueDate = formatDisplayDate(invoice.due_date);
@@ -654,10 +658,10 @@ export function buildInvoiceClientEmailHTML(
       ? `Payment received: £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}, issued for ${agentView.professionalLabel}.`
       : `Statement ${billingRefDisplay}: £${formatMoneyPlain(isPartialRequest ? amountDueNow : invAmt)} due for ${context.jobTitle}, work by ${agentView.professionalLabel}.`
     : paid
-    ? `Payment received — £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}.`
+    ? `Payment received: £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}.`
     : isPartialRequest
-      ? `Statement ${billingRefDisplay} — £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
-      : `Statement ${billingRefDisplay} — £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
+      ? `Statement ${billingRefDisplay}: £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
+      : `Statement ${billingRefDisplay}: £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
 
   html = replaceAll(html, "page_title", escapeHtml(pageTitle));
   html = replaceAll(html, "preheader", escapeHtml(preheader));
@@ -670,7 +674,7 @@ export function buildInvoiceClientEmailHTML(
   html = replaceAll(html, "ref_value", refValue);
   html = replaceAll(html, "issue_date", escapeHtml(issueDate));
   html = replaceAll(html, "due_date_row", dueDateRow);
-  html = replaceAll(html, "quote_reference", escapeHtml(quoteRef));
+  html = replaceAll(html, "linked_quote_row", linkedQuoteRow);
   html = replaceAll(html, "job_title", escapeHtml(context.jobTitle || "Job"));
   html = replaceAll(
     html,

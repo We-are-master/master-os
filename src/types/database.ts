@@ -989,6 +989,8 @@ export interface Account {
   billing_type?: "end_client" | "account";
   /** How this account pays: invoice after the job (with the report) or 50% deposit + saved card. */
   collection_mode?: "invoice" | "card_upfront";
+  /** % de entrada pedido no aceite da cotação (mig 336). 0 = sem entrada; ausente = 50. */
+  quote_deposit_percent?: number | null;
   /** If true, final email to client may include invoice/payment details (see Account UI). */
   email_include_invoice_on_final?: boolean;
   /** If true, final email may attach report PDFs. */

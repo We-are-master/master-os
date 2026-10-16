@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { dataDoJobNoAceite, nomeDoParceiroNoAceite, prepararJobDoAceite } from "@/lib/quote-accept-job-fields";
+import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
+import { prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
@@ -138,7 +139,9 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2",
+        // external_* e side conversation: sem eles o job nascia sem o ticket da cotação e
+        // nunca mandava o Job confirmed nem falava com o parceiro no ticket (16/10/2026).
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2, external_source, external_ref, zendesk_side_conversation_id",
       )
       .eq("id", quoteId)
       .single();
@@ -192,7 +195,6 @@ export async function POST(req: NextRequest) {
       dueDate.setDate(dueDate.getDate() + 14);
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
-      const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
       let jobImages = coerceJobImagesArray((quote as { images?: unknown }).images);
       const reqId = (quote as { request_id?: string | null }).request_id?.trim();
       if (jobImages.length === 0 && reqId) {
@@ -209,11 +211,15 @@ export async function POST(req: NextRequest) {
         client_id: qClientId || null,
         client_name: quote.client_name ?? "",
         property_address: quote.property_address ?? "Address to be confirmed",
-        partner_id: quote.partner_id ?? null,
-        partner_name: parceiroNoAceite,
+        // Com entrada o job espera o pagamento em Unassigned e sem parceiro (dono, 16/10/2026):
+        // não vai para o portal nem para o "jobs de amanhã" de ninguém antes de o cliente pagar.
+        // O parceiro do lance fica na cotação e entra quando a entrada é paga
+        // (aposEntradaDaCotacaoPaga), junto com o Job confirmed ao cliente.
+        partner_id: null,
+        partner_name: null,
         scheduled_date: dataNoAceite,
         quote_id: quoteId,
-        status: hasPartner ? "scheduled" : "unassigned",
+        status: "unassigned",
         progress: 0,
         current_phase: 0,
         total_phases: 2,
@@ -365,18 +371,17 @@ export async function POST(req: NextRequest) {
           console.error("Quote accept: downstream sync failed", e);
         }
       })();
-      /** Zendesk: status sync + customer reply + partner side conv. Idempotent. */
-      void Promise.all([
-        syncJobZendeskStatus(job.id, supabase),
-        dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }),
-      ]).catch((err) => {
-        console.error("Quote accept (deposit): Zendesk dispatch failed", err);
-      });
-      if (hasPartner) {
-        // Self-bill já no aceite; o aviso ao parceiro espera a entrada paga (aposEntradaDaCotacaoPaga).
-        const jobId = job.id;
-        after(() => prepararJobDoAceite(supabase, jobId, { avisarParceiro: false }).then(() => undefined));
-      }
+      /**
+       * Só o status do ticket aqui. O Job confirmed ao cliente, a self-bill e o aviso ao
+       * parceiro saem quando a entrada é paga (aposEntradaDaCotacaoPaga): antes disso o
+       * cliente não pagou e nada está marcado (dono, 16/10/2026).
+       */
+      const jobIdDoAceite = job.id;
+      after(() =>
+        syncJobZendeskStatus(jobIdDoAceite, supabase)
+          .then(() => undefined)
+          .catch((err) => console.error("Quote accept (deposit): Zendesk status sync failed", err)),
+      );
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id: quoteId,

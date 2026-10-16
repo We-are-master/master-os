@@ -3,6 +3,7 @@ import { requireStripe } from "@/lib/stripe";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
+import { aposEntradaDaCotacaoPaga } from "@/lib/quote-deposit-paid-server";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -73,6 +74,14 @@ export async function POST(req: NextRequest) {
 
     if (paymentStatus === "paid") {
       await syncJobAfterStripeInvoicePaid(supabaseAdmin, invoiceId);
+      // Entrada de cotação achada paga aqui faz o mesmo que o webhook (16/10/2026).
+      const { data: pago } = await supabaseAdmin.from("invoices").select("invoice_kind, job_reference").eq("id", invoiceId).maybeSingle();
+      const p = pago as { invoice_kind?: string | null; job_reference?: string | null } | null;
+      if (p?.invoice_kind === "deposit" && p.job_reference) {
+        await aposEntradaDaCotacaoPaga(supabaseAdmin, p.job_reference, "stripe_check_status").catch((e) =>
+          console.error("Stripe check: deposit follow-up failed", e),
+        );
+      }
     }
 
     return NextResponse.json({
