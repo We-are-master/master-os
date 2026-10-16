@@ -4,7 +4,7 @@ import { montarEmailDeReembolso } from "./refund-client";
 
 test("cartão: valor, final do cartão, job e prazo de 5 a 10 dias", () => {
   const m = montarEmailDeReembolso({ primeiroNome: "Jake Carr", referenciaDoJob: "JOB-9752", tituloDoJob: "Door repair", valor: 2, metodo: "stripe", finalDoCartao: "6987" });
-  assert.equal(m.subject, "Your refund of £2.00 · JOB-9752");
+  assert.equal(m.subject, "Your £2.00 refund is on its way · JOB-9752");
   assert.match(m.text, /^Hi Jake,\n\nWe've refunded £2\.00 to your card ending 6987 for job JOB-9752 \(Door repair\)\. It usually shows on your statement within 5 to 10 working days/);
   assert.doesNotMatch(m.html + m.text, /—/);
 });
