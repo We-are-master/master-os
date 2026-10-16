@@ -17,6 +17,7 @@
  *   daily-report              (sem janela; "fecha às 18h")     18h seg-sex
  *   weekly-report             (sem janela)                     18h sáb
  *   stefane                   (sem janela)                     a cada 2 min
+ *   clube-lista               (sem janela; antes das 8h do cron) 07:30
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -102,6 +103,17 @@ export const ROTINAS: Rotina[] = [
     args: ["--semana", "--enviar"],
     runtime: "node",
     limiteMinutos: 15,
+  },
+  {
+    // A lista do clube B2C na Resend (dono, 16/10/2026): 1.000 contatos por dia
+    // não cabem nos 300 s da Vercel. Roda antes do cron das 8h, que só agenda.
+    nome: "clube-lista",
+    rotulo: "com.fixfy.clube-lista",
+    agenda: { tipo: "diario", horarios: ["07:30"] },
+    script: "scripts/agente-marketing.mts",
+    args: ["--lista", "--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 50,
   },
   {
     nome: "stefane",

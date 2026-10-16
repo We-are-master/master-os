@@ -18,7 +18,7 @@ import { relampagoDoDia, relampagoNoAr } from "./calendario";
 import { ONDAS, montarB2B, nomeDaOnda } from "./b2b";
 import { montarClube, type LinhaDoClube } from "./clube";
 import { segmentoPeloNome } from "./resend";
-import { sincronizarLista, type ResultadoDaLista } from "./lista";
+import { NOME_DO_SEGMENTO, NOME_DO_SEGMENTO_SEMANAL, sincronizarLista, type ResultadoDaLista } from "./lista";
 import { mandarAvaliacoes } from "./avaliacao";
 import { abrirRelampago, voltaDoWhatsApp, type ResultadoDaAbertura, type ResultadoDoWhatsApp } from "./relampago";
 
@@ -37,7 +37,15 @@ export type ResultadoDaManha = {
   stops: unknown;
 };
 
-export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Promise<ResultadoDaManha> {
+/**
+ * A lista do clube saiu da Vercel (dono, 16/10/2026): sincronizar 1.000 contatos
+ * por dia passa dos 300 s da função e a rotina morria antes da avaliação e do
+ * relâmpago. Quem sincroniza agora é o fixfy-workers no Railway, às 7h30 de
+ * Londres (`clube-lista`). `MARKETING_LISTA_NA_VERCEL=on` volta ao jeito antigo.
+ */
+export const listaNaVercel = () => ["1", "on", "true"].includes(process.env.MARKETING_LISTA_NA_VERCEL?.trim().toLowerCase() ?? "");
+
+export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date; sincronizarLista?: boolean }): Promise<ResultadoDaManha> {
   const agora = opcoes.agora ?? new Date();
   const res: ResultadoDaManha = {
     ligado: agenteLigado(), ensaio: !opcoes.aplicar, lista: { erro: "não rodou" },
@@ -48,12 +56,20 @@ export async function rodarManha(opcoes: { aplicar: boolean; agora?: Date }): Pr
   res.stops = await varrerRespostasDoZendesk({ minutos: 26 * 60, aplicar: opcoes.aplicar }).catch((e) => ({ erro: String(e.message ?? e) }));
 
   let segmentos: { duas: string | null; semanal: string | null } = { duas: null, semanal: null };
-  try {
-    const lista = await sincronizarLista({ aplicar: opcoes.aplicar, agora });
-    res.lista = lista;
-    segmentos = lista.segmentos;
-  } catch (e) {
-    res.lista = { erro: String((e as Error).message ?? e) };
+  if (opcoes.sincronizarLista ?? listaNaVercel()) {
+    try {
+      const lista = await sincronizarLista({ aplicar: opcoes.aplicar, agora });
+      res.lista = lista;
+      segmentos = lista.segmentos;
+    } catch (e) {
+      res.lista = { erro: String((e as Error).message ?? e) };
+    }
+  } else {
+    segmentos = {
+      duas: await segmentoPeloNome(NOME_DO_SEGMENTO, false).catch(() => null),
+      semanal: await segmentoPeloNome(NOME_DO_SEGMENTO_SEMANAL, false).catch(() => null),
+    };
+    res.lista = { erro: "sincronizada pelo fixfy-workers (clube-lista, 7h30 de Londres)" };
   }
 
   const linhas = await montarClube({ aplicar: opcoes.aplicar, agendar: true, segmentos, agora });
