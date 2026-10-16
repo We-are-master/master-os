@@ -53,6 +53,14 @@ export async function POST(req: NextRequest) {
           payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
           amount_total: Number(session.amount_total ?? 0),
         });
+        // Preço da equipe fechado pelo Harvey no WhatsApp: ele confirma o pagamento na conversa
+        // (16/10/2026). Só age se a conversa gravou este job como checkout; avisa uma vez.
+        if (inv.job_reference) {
+          const { avisarPagamentoNoWhatsAppPelaReferencia } = await import("@/lib/harvey-wa/motor");
+          await avisarPagamentoNoWhatsAppPelaReferencia(inv.job_reference).catch((e) =>
+            console.error("Stripe webhook: WhatsApp payment notice failed", e),
+          );
+        }
         // Sinal de quem paga no cartão: guarda o cartão pro restante (Fase 0).
         await saveCardFromCheckoutSession(supabaseAdmin, {
           customer: typeof session.customer === "string" ? session.customer : null,
