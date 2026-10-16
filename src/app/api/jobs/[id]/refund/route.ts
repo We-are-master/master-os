@@ -115,7 +115,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   if (g instanceof NextResponse) return g;
   const { admin, job, auth } = g;
 
-  let body: { amount?: unknown; reason?: unknown; method?: unknown; request_id?: unknown };
+  let body: { amount?: unknown; reason?: unknown; method?: unknown; request_id?: unknown; notify_client?: unknown; cancel_job?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -218,11 +218,75 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   });
   if (auditErr) console.warn("[job-refund] audit não gravado:", auditErr.message);
 
-  return NextResponse.json({ ok: true, amount, method, stripeRefundIds: refundIds });
+  /**
+   * Depois do refund (dono, 16/10/2026): o job vai para Cancelled (padrão; a equipe desmarca
+   * num refund parcial de cortesia em que o job continua) e o cliente recebe o e-mail do
+   * reembolso (padrão; desmarcável). Cada passo falha sozinho: o dinheiro já voltou.
+   */
+  let cancelado = false;
+  if (body.cancel_job !== false) {
+    try {
+      const { cancelJobAfterRefund } = await import("@/lib/office-job-cancel-from-zendesk");
+      const r = await cancelJobAfterRefund(admin, job.id, { reason, userId: auth.user.id });
+      cancelado = r.ok;
+      if (!r.ok) console.error("[job-refund] cancelar job:", r.error);
+    } catch (e) {
+      console.error("[job-refund] cancelar job:", e);
+    }
+  }
+  let emailEnviado: string | null = null;
+  if (body.notify_client !== false) {
+    try {
+      emailEnviado = await avisarClienteDoReembolso(admin, job.id, { amount, method });
+    } catch (e) {
+      console.error("[job-refund] e-mail ao cliente:", e);
+    }
+  }
+
+  return NextResponse.json({ ok: true, amount, method, stripeRefundIds: refundIds, cancelled: cancelado, emailedTo: emailEnviado });
 }
 
 async function afterLedgerChange(admin: SupabaseClient, jobId: string) {
   await reconcileJobCustomerPaymentFlags(admin, jobId);
   await syncInvoicesFromJobCustomerPayments(admin, jobId);
   await syncInvoiceCollectionStagesForJob(admin, jobId).catch(() => {});
+}
+
+/** E-mail do reembolso ao cliente e nota no ticket. Devolve para quem foi, ou null. */
+async function avisarClienteDoReembolso(
+  admin: SupabaseClient,
+  jobId: string,
+  a: { amount: number; method: "stripe" | "bank_transfer" },
+): Promise<string | null> {
+  const { data: j } = await admin
+    .from("jobs")
+    .select("reference, title, client_id, client_name, external_source, external_ref")
+    .eq("id", jobId)
+    .maybeSingle();
+  const job = j as { reference: string; title: string | null; client_id: string | null; client_name: string | null; external_source: string | null; external_ref: string | null } | null;
+  if (!job?.client_id) return null;
+  const { resolveNominalBillingParty } = await import("@/lib/account-billing-addressee");
+  const parte = await resolveNominalBillingParty(admin, { clientId: job.client_id, fallbackName: job.client_name ?? undefined });
+  const para = parte.documentEmail?.trim() ?? "";
+  if (!para.includes("@")) return null;
+  const { data: c } = await admin.from("clients").select("full_name, card_last4").eq("id", job.client_id).maybeSingle();
+  const cliente = c as { full_name?: string | null; card_last4?: string | null } | null;
+  const { enviarEmailDeReembolso } = await import("@/lib/emails/refund-client");
+  await enviarEmailDeReembolso(para, {
+    primeiroNome: cliente?.full_name ?? job.client_name,
+    referenciaDoJob: job.reference,
+    tituloDoJob: job.title,
+    valor: a.amount,
+    metodo: a.method,
+    finalDoCartao: a.method === "stripe" ? cliente?.card_last4 ?? null : null,
+  });
+  if (job.external_source === "zendesk" && job.external_ref) {
+    const { updateTicket } = await import("@/lib/zendesk");
+    await updateTicket({
+      ticketId: job.external_ref,
+      publicComment: false,
+      commentBody: `Refund of £${a.amount.toFixed(2)} (${a.method === "stripe" ? "back to the card" : "bank transfer"}) on ${job.reference}. Refund email sent to ${para}.`,
+    }).catch((e: unknown) => console.error("[job-refund] nota no ticket:", e));
+  }
+  return para;
 }
