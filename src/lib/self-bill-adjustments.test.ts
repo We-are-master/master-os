@@ -7,13 +7,14 @@ import {
 } from "@/lib/self-bill-adjustments";
 
 describe("self-bill adjustments", () => {
-  it("ignora o que não tem rótulo ou valor positivo, e ordena taxas antes de material", () => {
+  it("ignora o que não tem rótulo ou valor, aceita acerto a favor (negativo) e ordena taxas antes de material", () => {
     const list = readSelfBillAdjustments({
       adjustments: [
         { kind: "materials", label: "Materials JOB-9556", amount: 190 },
         { kind: "cancellation_fee", label: "", amount: 70 },
         { kind: "cancellation_fee", label: "Fee JOB-9654", amount: 70 },
-        { kind: "other", label: "Negativo", amount: -5 },
+        { kind: "other", label: "Acerto a favor", amount: -5 },
+        { kind: "other", label: "Zero", amount: 0 },
         { kind: "other", label: "NaN", amount: Number.NaN },
         { kind: "bogus" as never, label: "Tipo desconhecido vira other", amount: "12.5" as never },
       ],
@@ -23,6 +24,7 @@ describe("self-bill adjustments", () => {
       [
         ["cancellation_fee", "Fee JOB-9654", 70],
         ["materials", "Materials JOB-9556", 190],
+        ["other", "Acerto a favor", -5],
         ["other", "Tipo desconhecido vira other", 12.5],
       ],
     );

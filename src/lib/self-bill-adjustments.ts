@@ -45,7 +45,8 @@ export function readSelfBillAdjustments(
     const a = item as Partial<SelfBillAdjustment>;
     const amount = round2(Number(a.amount));
     const label = String(a.label ?? "").trim();
-    if (!Number.isFinite(amount) || amount <= 0 || !label) continue;
+    // Positivo = desconto; negativo = acerto a favor do parceiro (dono, 16/10/2026). Zero não entra.
+    if (!Number.isFinite(amount) || amount === 0 || !label) continue;
     out.push({
       ...a,
       kind: isKind(a.kind) ? a.kind : "other",

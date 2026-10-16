@@ -397,7 +397,8 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
               para o parceiro conferir sem precisar perguntar. */}
           {hasAdjustments ? (
             <>
-              <Text style={styles.sectionLabel}>Deductions</Text>
+              {/* Valor negativo = acerto a favor do parceiro (extra de outra quinzena, 16/10/2026). */}
+              <Text style={styles.sectionLabel}>{adjustments.some((a) => a.amount < 0) ? "Adjustments" : "Deductions"}</Text>
               <View style={[styles.card, { marginBottom: 14 }]} wrap={false}>
                 {adjustments.map((a, i) => (
                   <View key={`${a.label}-${i}`} style={styles.lineRow}>
@@ -408,12 +409,12 @@ export function SelfBillPDF({ data }: { data: SelfBillPdfData }) {
                         {a.jobReference ? ` · ${a.jobReference}` : ""}
                       </Text>
                     </View>
-                    <Text style={styles.lineVal}>-{fmtPlain(a.amount)}</Text>
+                    <Text style={styles.lineVal}>{a.amount < 0 ? `+${fmtPlain(-a.amount)}` : `-${fmtPlain(a.amount)}`}</Text>
                   </View>
                 ))}
                 <View style={styles.lineRow}>
-                  <Text style={styles.lineLabel}>Total deductions</Text>
-                  <Text style={styles.lineVal}>-{fmtPlain(adjustmentsTotal)}</Text>
+                  <Text style={styles.lineLabel}>{adjustments.some((a) => a.amount < 0) ? "Total adjustments" : "Total deductions"}</Text>
+                  <Text style={styles.lineVal}>{adjustmentsTotal < 0 ? `+${fmtPlain(-adjustmentsTotal)}` : `-${fmtPlain(adjustmentsTotal)}`}</Text>
                 </View>
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Total payout</Text>
