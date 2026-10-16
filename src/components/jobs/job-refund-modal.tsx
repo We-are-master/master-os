@@ -15,6 +15,9 @@ type Info = { paid: number; cardRefundable: number; cardNote: string | null; inv
  * Cartão: a Stripe devolve e o OS registra. Transferência: o OS só registra,
  * o dinheiro sai do banco por quem pediu.
  */
+/** Motivos prontos (dono, 16/10/2026): o primeiro já vem escolhido; dá para escrever outro. */
+const MOTIVOS_DE_REFUND = ["Job cancelled", "Goodwill", "Overpayment", "Complaint", "Duplicate payment"];
+
 export function JobRefundModal({ open, jobId, jobReference, clientName, onClose, onDone }: {
   open: boolean;
   jobId: string;
@@ -26,7 +29,7 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
   const [info, setInfo] = useState<Info | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(MOTIVOS_DE_REFUND[0]);
   const [method, setMethod] = useState<Method>("bank_transfer");
   const [submitting, setSubmitting] = useState(false);
   // Dono, 16/10/2026: refund cancela o job e avisa o cliente; os dois vêm marcados.
@@ -43,7 +46,7 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
     setAmount("");
     setNotifyClient(true);
     setCancelJob(true);
-    setReason("");
+    setReason(MOTIVOS_DE_REFUND[0]);
     void (async () => {
       try {
         const res = await fetch(`/api/jobs/${jobId}/refund`);
@@ -159,7 +162,19 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-text-secondary" htmlFor="refund-reason">Reason</label>
-              <Input id="refund-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Job cancelled, goodwill, overpayment…" maxLength={300} />
+              <div className="flex flex-wrap gap-1.5">
+                {MOTIVOS_DE_REFUND.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setReason(m)}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] ${reason === m ? "border-[#020040] bg-[#020040] text-white" : "border-border text-text-secondary hover:bg-surface-hover"}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              <Input id="refund-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Or write the reason" maxLength={300} />
             </div>
             <div className="space-y-1.5">
               <label className="flex items-center gap-2 text-xs text-text-primary">

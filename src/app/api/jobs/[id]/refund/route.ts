@@ -237,7 +237,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   let emailEnviado: string | null = null;
   if (body.notify_client !== false) {
     try {
-      emailEnviado = await avisarClienteDoReembolso(admin, job.id, { amount, method });
+      // Final do cartão que a Stripe devolveu de verdade, não o cartão salvo do cliente (16/10/2026).
+      let finalDoCartao: string | null = null;
+      if (stripe && plan[0]) {
+        const pi = await stripe.paymentIntents.retrieve(plan[0].paymentIntent, { expand: ["latest_charge"] }).catch(() => null);
+        const charge = pi?.latest_charge && typeof pi.latest_charge !== "string" ? pi.latest_charge : null;
+        finalDoCartao = charge?.payment_method_details?.card?.last4 ?? null;
+      }
+      emailEnviado = await avisarClienteDoReembolso(admin, job.id, { amount, method, finalDoCartao });
     } catch (e) {
       console.error("[job-refund] e-mail ao cliente:", e);
     }
@@ -256,7 +263,7 @@ async function afterLedgerChange(admin: SupabaseClient, jobId: string) {
 async function avisarClienteDoReembolso(
   admin: SupabaseClient,
   jobId: string,
-  a: { amount: number; method: "stripe" | "bank_transfer" },
+  a: { amount: number; method: "stripe" | "bank_transfer"; finalDoCartao: string | null },
 ): Promise<string | null> {
   const { data: j } = await admin
     .from("jobs")
@@ -269,8 +276,8 @@ async function avisarClienteDoReembolso(
   const parte = await resolveNominalBillingParty(admin, { clientId: job.client_id, fallbackName: job.client_name ?? undefined });
   const para = parte.documentEmail?.trim() ?? "";
   if (!para.includes("@")) return null;
-  const { data: c } = await admin.from("clients").select("full_name, card_last4").eq("id", job.client_id).maybeSingle();
-  const cliente = c as { full_name?: string | null; card_last4?: string | null } | null;
+  const { data: c } = await admin.from("clients").select("full_name").eq("id", job.client_id).maybeSingle();
+  const cliente = c as { full_name?: string | null } | null;
   const { enviarEmailDeReembolso } = await import("@/lib/emails/refund-client");
   await enviarEmailDeReembolso(para, {
     primeiroNome: cliente?.full_name ?? job.client_name,
@@ -278,7 +285,7 @@ async function avisarClienteDoReembolso(
     tituloDoJob: job.title,
     valor: a.amount,
     metodo: a.method,
-    finalDoCartao: a.method === "stripe" ? cliente?.card_last4 ?? null : null,
+    finalDoCartao: a.method === "stripe" ? a.finalDoCartao : null,
   });
   if (job.external_source === "zendesk" && job.external_ref) {
     const { updateTicket } = await import("@/lib/zendesk");

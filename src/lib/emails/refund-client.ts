@@ -38,7 +38,7 @@ export function montarEmailDeReembolso(d: DadosDoReembolso): { subject: string; 
     d.metodo === "stripe"
       ? "It usually shows on your statement within 5 to 10 working days, depending on your bank."
       : "It should reach your account within 1 to 3 working days.";
-  const subject = `Your refund of ${valor} · ${d.referenciaDoJob}`;
+  const subject = `Your ${valor} refund is on its way · ${d.referenciaDoJob}`;
   const text = `${oi}\n\n${como.charAt(0).toUpperCase()}${como.slice(1)} ${quando}\n\nAny questions, reply to this email or write to ${RESPONDER_PARA}.\n\nFixfy Team`;
   const html = `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:#F7F7FB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
