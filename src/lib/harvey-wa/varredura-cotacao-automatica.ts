@@ -89,7 +89,7 @@ async function entrouEmNeedsQuote(ticketId: number): Promise<Date | null> {
 async function quoteDoTicket(sb: SupabaseClient, ticketId: number): Promise<QuoteRow | null> {
   const { data } = await sb
     .from("quotes")
-    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email, automation_status")
+    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email, automation_status, client_id, deposit_required")
     .eq("external_source", "zendesk")
     .eq("external_ref", String(ticketId))
     .is("deleted_at", null)
@@ -455,7 +455,28 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
   const decisao = decidirEnvio({ total, custo, faltando, canalAberto: conv.canal === "email" || (conv.janelaAberta && !!conv.conversa) });
   const parceiro = escolha?.melhor.partner_name ?? "partner";
   const resumo = `bid £${custo.toFixed(2)} (${parceiro}) → £${total.toFixed(2)} at ${Math.round(margemDe(total, custo) * 100)}% margin`;
-  const texto = textoDaQuote({ nome, servico: q.service_type, total, referencia: q.reference });
+  /**
+   * Mesmo caminho das outras quotes (16/10/2026): link de aceite que abre o pagamento da
+   * entrada da conta. Antes pedia "reply with a day" e não havia caminho automático até
+   * pagamento nem job.
+   */
+  const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
+  const { appBaseUrl } = await import("@/lib/app-base-url");
+  const { entradaPelaConta, percentualDeEntradaDaConta } = await import("@/lib/deposito-da-cotacao");
+  const link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
+  const qq = q as { client_id?: string | null; deposit_required?: number | null };
+  let contaDoCliente: string | null = null;
+  if (qq.client_id) {
+    const { data: c } = await sb.from("clients").select("source_account_id").eq("id", qq.client_id).maybeSingle();
+    contaDoCliente = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
+  }
+  const pctDaConta = await percentualDeEntradaDaConta(sb, contaDoCliente);
+  const entradaPrevista =
+    pctDaConta === undefined
+      ? null
+      : entradaPelaConta({ total, entradaAtual: Number(qq.deposit_required ?? 0), percentualDaConta: pctDaConta });
+  const entrada = entradaPrevista?.deposit_required ?? Number(qq.deposit_required ?? 0);
+  const texto = textoDaQuote({ nome, servico: q.service_type, total, referencia: q.reference, link, entrada });
   if (!aplicar) {
     out.acoes.push(`${quem}: ${resumo}: would ${decisao.enviar ? `SEND to the customer (${conv.canal}) and move to Approval` : `move to Quote Ready for review (${decisao.motivos.join(", ")})`}`);
     return true;
@@ -478,7 +499,12 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
   }
 
   if (decisao.enviar) {
+    if (entradaPrevista) await sb.from("quotes").update(entradaPrevista).eq("id", q.id);
     const via = await falarComCliente(t, user, conv, texto, q.service_type);
+    // Quote enviada: Awaiting approval no OS, como o envio pela tela.
+    const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
+    const gravado = await persistQuoteSentToCustomer(sb, q.id, new Date().toISOString(), q.client_email ?? undefined);
+    if (gravado.error) console.error(`[auto-quote] ${q.reference}: enviada mas o status não gravou`, gravado.error.message);
     await updateTicket({
       ticketId: t.id,
       customStatusId: ZD_STATUS_AWAITING_APPROVAL,

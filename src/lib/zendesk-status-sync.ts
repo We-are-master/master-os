@@ -119,7 +119,9 @@ export type ZendeskSyncSkipReason =
   | "no_ticket_id"
   | "zendesk_not_configured"
   | "no_status_mapping"
-  | "entity_not_found";
+  | "entity_not_found"
+  /** Job da cotação ainda sem a entrada paga: o ticket fica em Approval. */
+  | "awaiting_deposit";
 
 export interface ZendeskSyncResult {
   ok: boolean;
@@ -148,7 +150,7 @@ export async function syncJobZendeskStatus(
   const { data: job, error } = await supabase
     .from("jobs")
     .select(
-      "id, status, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at",
+      "id, status, quote_id, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at",
     )
     .eq("id", jobId)
     .single();
@@ -163,6 +165,20 @@ export async function syncJobZendeskStatus(
   }
   if (!isZendeskConfigured()) {
     return { ok: true, synced: false, skip: "zendesk_not_configured" };
+  }
+
+  /**
+   * Job da cotação esperando a entrada (16/10/2026): o aceite cria o job em Unassigned antes
+   * de o cliente pagar, e o ticket ia para Unassigned como se fosse trabalho para alocar.
+   * Enquanto a cotação está em awaiting_payment o ticket fica onde a cotação deixou
+   * (Approval); quando a entrada cai, `aposEntradaDaCotacaoPaga` sincroniza de novo.
+   */
+  const quoteIdDoJob = (job as { quote_id?: string | null }).quote_id;
+  if (job.status === "unassigned" && quoteIdDoJob) {
+    const { data: cot } = await supabase.from("quotes").select("status").eq("id", quoteIdDoJob).maybeSingle();
+    if ((cot as { status?: string } | null)?.status === "awaiting_payment") {
+      return { ok: true, synced: false, ticketId, skip: "awaiting_deposit" };
+    }
   }
 
   const repairPatch = stalePartnerBookedJobPatch(

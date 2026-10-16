@@ -643,6 +643,42 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
     .limit(1)
     .maybeSingle();
   if (!data) return false;
+  return confirmarPagamentoNaConversa(sb, data as ConversaComCheckout, bookingRef);
+}
+
+type ConversaComCheckout = {
+  conversation_id: string;
+  checkout_deposit: boolean | null;
+  checkout_ref: string | null;
+  checkout_total: number | null;
+  phone: string | null;
+  chases?: number | null;
+};
+
+/**
+ * Entrada paga pelo /pay do OS (16/10/2026): preço da equipe no chat (`book_team_price`),
+ * gravado como checkout com a referência do job. O webhook do Stripe chama com essa
+ * referência; só avisa uma vez (o aviso põe chases em 3, o mesmo "pagou" do site).
+ */
+export async function avisarPagamentoNoWhatsAppPelaReferencia(jobReference: string): Promise<boolean> {
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("harvey_wa_conversas")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone, chases")
+    .eq("checkout_ref", jobReference)
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const conversa = data as ConversaComCheckout | null;
+  if (!conversa || Number(conversa.chases ?? 0) >= 3) return false;
+  return confirmarPagamentoNaConversa(sb, conversa, jobReference);
+}
+
+async function confirmarPagamentoNaConversa(
+  sb: ReturnType<typeof createServiceClient>,
+  data: ConversaComCheckout,
+  bookingRef: string | null,
+): Promise<boolean> {
   // Pagou: nada mais a cobrar.
   await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
   const ref = bookingRef ?? (data.checkout_ref as string | null);

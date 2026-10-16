@@ -2,10 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Invoice, Job } from "@/types/database";
 import { allocateCustomerPaymentToSchedule } from "@/lib/allocate-customer-payment";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
-import {
-  syncJobAfterInvoicePaidToLedger,
-  maybeCompleteAwaitingPaymentJob,
-} from "@/lib/sync-job-after-invoice-paid";
+import { finalizeJobAfterInvoicePaid, maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
 import { isJobPaymentsDeletedAtMissing, isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { jobPagoSemAcao } from "@/lib/fila-de-acao";
@@ -86,8 +83,15 @@ export async function applyOsPayLinkPayment(
     .eq("id", invoiceId);
 
   if (job) {
+    /**
+     * O pagamento já entrou no razão do job acima (`applyToJobLedger`). Chamar o
+     * `syncJobAfterInvoicePaidToLedger` aqui lançava DE NOVO, como se fosse fatura paga à mão:
+     * a entrada da cotação (fatura própria paga por inteiro) entrava em dobro, o job achava o
+     * saldo pago e o cartão salvo nunca era cobrado (achado no teste de 16/10/2026). Aqui só se
+     * fecham flags e faturas pelo razão.
+     */
     if (fullyPaid) {
-      await syncJobAfterInvoicePaidToLedger(admin, invoiceId, "Stripe");
+      await finalizeJobAfterInvoicePaid(admin, job.id);
     }
     await maybeCompleteAwaitingPaymentJob(admin, job.id);
     await syncInvoiceCollectionStagesForJob(admin, job.id);

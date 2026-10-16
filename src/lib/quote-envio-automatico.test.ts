@@ -19,12 +19,12 @@ describe("auto send of a drafted quote", () => {
     assert.equal(envioAutomaticoLigado(), true);
   });
 
-  it("the ceiling defaults to £1001 and reads the env", () => {
-    assert.equal(maximoDoEnvioAutomatico(), 1001);
-    process.env.HARVEY_QUOTE_AUTO_MAX = "600";
+  it("the ceiling defaults to £600 (one rule for every path) and reads the env", () => {
     assert.equal(maximoDoEnvioAutomatico(), 600);
+    process.env.HARVEY_QUOTE_AUTO_MAX = "800";
+    assert.equal(maximoDoEnvioAutomatico(), 800);
     process.env.HARVEY_QUOTE_AUTO_MAX = "nonsense";
-    assert.equal(maximoDoEnvioAutomatico(), 1001);
+    assert.equal(maximoDoEnvioAutomatico(), 600);
   });
 
   it("sends when everything is safe", () => {

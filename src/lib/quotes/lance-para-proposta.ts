@@ -12,12 +12,10 @@ import { appBaseUrl } from "@/lib/app-base-url";
 import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
 import { selectQuoteBidForProposal } from "@/lib/quotes/select-quote-bid-for-proposal";
 
-export const MARGEM_DO_LANCE = 0.3;
-export const LIMITE_ENVIO_AUTOMATICO_GBP = () => Number(process.env.HARVEY_BID_AUTO_MAX_GBP?.trim() || "600");
+import { MARGEM_DO_LANCE, limiteDoEnvioAutomatico, precoDeVendaDoLance } from "@/lib/quotes/preco-do-lance";
 
-export function precoDeVendaDoLance(custo: number, margem = MARGEM_DO_LANCE): number {
-  return Math.ceil(custo / (1 - margem) / 5) * 5;
-}
+export { MARGEM_DO_LANCE, precoDeVendaDoLance };
+export const LIMITE_ENVIO_AUTOMATICO_GBP = limiteDoEnvioAutomatico;
 
 export type DecisaoDoLance = { auto: boolean; motivos: string[] };
 

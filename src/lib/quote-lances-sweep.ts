@@ -387,7 +387,18 @@ async function mandarSozinho(
     const { textoDaQuote } = await import("@/lib/harvey-wa/cotacao-automatica");
     const { firstName } = await import("@/lib/agent/sales/lead-brief");
     const link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
-    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link });
+    // Entrada da conta também no WhatsApp (16/10/2026): sem isto a quote saía com entrada 0, o
+    // aceite marcava o job direto com o parceiro e ninguém pagava nada antes.
+    const { aplicarEntradaDaConta } = await import("@/lib/deposito-da-cotacao");
+    const { data: atual } = await supabase.from("quotes").select("total_value, deposit_required").eq("id", q.id).maybeSingle();
+    const entradaAtual = Number((atual as { deposit_required?: number | null } | null)?.deposit_required ?? 0);
+    const aplicada = await aplicarEntradaDaConta(
+      supabase,
+      { id: q.id, total_value: Number((atual as { total_value?: number | null } | null)?.total_value ?? total) || total, deposit_required: entradaAtual },
+      contaDeOrigem,
+    );
+    const entrada = aplicada?.deposit_required ?? entradaAtual;
+    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada });
     await enviarTexto(conversa.conversation_id, texto, vozDaConversa(msgs));
     const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
     const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString(), email ?? undefined);

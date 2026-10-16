@@ -824,6 +824,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [convertRecordedDepositAmount, setConvertRecordedDepositAmount] = useState<number | null>(null);
   /** Awaiting-payment: intermediary step — confirm/adjust deposit before opening Create Job modal. */
   const [depositConfirmQuote, setDepositConfirmQuote] = useState<Quote | null>(null);
+  const [depositConfirmBusy, setDepositConfirmBusy] = useState(false);
   const [depositConfirmAmountStr, setDepositConfirmAmountStr] = useState("");
   /** Approval → Approved: unpaid deposit intermediary choice before job or Payment. */
   const [approveDepositGateQuote, setApproveDepositGateQuote] = useState<Quote | null>(null);
@@ -2279,11 +2280,40 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     if (totalVal > 0 && amt > totalVal) {
       amt = Math.round(totalVal * 100) / 100;
     }
-    setConvertRecordedDepositAmount(amt);
-    setConvertMarkDepositPaid(true);
-    setQuoteToConvert(q);
-    setDepositConfirmQuote(null);
-  }, [depositConfirmQuote, depositConfirmAmountStr]);
+    /**
+     * Cotação aceita pelo link já tem job e fatura de entrada (#800). Aí a entrada é marcada
+     * paga nesse job, no servidor, em vez de abrir o "criar job" (que duplicava o job).
+     */
+    if (depositConfirmBusy) return;
+    setDepositConfirmBusy(true);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/quotes/${q.id}/mark-deposit-paid`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ amount: amt }),
+        });
+        const out = (await res.json().catch(() => ({}))) as { ok?: boolean; jobReference?: string; error?: string; message?: string };
+        if (res.ok && out.ok) {
+          toast.success(`Deposit marked as paid on ${out.jobReference}`);
+          setDepositConfirmQuote(null);
+          refreshWithKpis();
+          return;
+        }
+        if (out.error !== "no_job") {
+          toast.error(out.message ?? out.error ?? "Could not mark the deposit as paid");
+          return;
+        }
+        // Cotação antiga, sem job ainda: segue o caminho de sempre (criar o job).
+        setConvertRecordedDepositAmount(amt);
+        setConvertMarkDepositPaid(true);
+        setQuoteToConvert(q);
+        setDepositConfirmQuote(null);
+      } finally {
+        setDepositConfirmBusy(false);
+      }
+    })();
+  }, [depositConfirmQuote, depositConfirmAmountStr, depositConfirmBusy, refreshWithKpis]);
 
   /**
    * Drawer saves: update the open quote only. Do not refetch the quotes list here — that was chaining
@@ -2912,8 +2942,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         {depositConfirmQuote ? (
           <div className="p-6 space-y-4">
             <p className="text-sm text-text-secondary">
-              Confirm the deposit received below, then continue to <strong className="text-text-primary">Create job</strong>. The amount will be recorded
-              on the new job when you submit that form (£0 skips a payment entry).
+              Confirm the deposit received. If the client accepted by link, the deposit is marked as paid on their job straight away.
+              Older quotes with no job yet continue to <strong className="text-text-primary">Create job</strong>.
             </p>
             <div className="rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs text-text-secondary">
               Quoted deposit {formatCurrency(Number(depositConfirmQuote.deposit_required) || 0)} · Quote total{" "}
@@ -2933,8 +2963,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               <Button type="button" variant="outline" onClick={() => setDepositConfirmQuote(null)}>
                 Cancel
               </Button>
-              <Button type="button" variant="primary" onClick={() => proceedDepositConfirmToJob()}>
-                Continue to create job
+              <Button type="button" variant="primary" disabled={depositConfirmBusy} onClick={() => proceedDepositConfirmToJob()}>
+                {depositConfirmBusy ? "Confirming…" : "Confirm deposit"}
               </Button>
             </div>
           </div>
@@ -3816,6 +3846,35 @@ function QuoteDetailDrawer({
     })();
     return () => { cancelled = true; };
   }, [quote.id, quote.client_id, quote.property_id, quote.source_account_id, quote.updated_at]);
+
+  /**
+   * Entrada padrão da conta no formulário (16/10/2026). Cotação ainda sem entrada e ainda não
+   * enviada mostra a da conta (`accounts.quote_deposit_percent`, 50% sem conta), a mesma que o
+   * envio grava. Antes o campo mostrava 0 e só no envio virava 50%.
+   */
+  useEffect(() => {
+    if (Number(quote.deposit_required ?? 0) > 0.01) return;
+    if (["awaiting_customer", "awaiting_payment", "converted_to_job", "rejected"].includes(String(quote.status))) return;
+    let cancelled = false;
+    const accountId = drawerAccountDraftId.trim();
+    void (async () => {
+      let pct = 50;
+      if (accountId) {
+        const { data, error } = await getSupabase()
+          .from("accounts")
+          .select("quote_deposit_percent")
+          .eq("id", accountId)
+          .maybeSingle();
+        if (error) return;
+        const v = (data as { quote_deposit_percent?: number | null } | null)?.quote_deposit_percent;
+        pct = v == null ? 50 : Number(v);
+      }
+      if (!cancelled) setDepositPercent(String(pct));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [quote.id, quote.status, quote.deposit_required, drawerAccountDraftId]);
 
   /** Keep manual-address draft aligned with what's currently stored when toggling to "No client". */
   useEffect(() => {

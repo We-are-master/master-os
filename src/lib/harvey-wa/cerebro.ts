@@ -655,6 +655,24 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const email = typeof a.email === "string" && a.email.includes("@") ? a.email.trim() : null;
     const feito = await ctx.contas.reservarPrecoDaEquipe({ preco: Math.round(Number(a.price) * 100) / 100, servico: String(a.service || "General Maintenance").trim(), escopo: String(a.scope ?? "").trim(), data, janela, nome: nomeCompleto, email, endereco, postcode });
     if ("error" in feito) return feito;
+    /**
+     * Grava como checkout da conversa, igual ao link do site (16/10/2026): a referência é a do
+     * job, e quando a entrada cai pelo /pay do OS o webhook acha a conversa por ela e o Harvey
+     * diz "payment received". Antes este caminho ficava mudo depois do pagamento.
+     */
+    r.checkout = {
+      ref: feito.reference,
+      url: feito.payUrl,
+      metodo: "card",
+      total: Math.round(Number(a.price) * 100) / 100,
+      deposit: true,
+      sinal: feito.deposit,
+      jobIds: [feito.jobId],
+      email: email ?? "",
+      nome: nomeCompleto,
+      servico: String(a.service || "General Maintenance").trim(),
+      postcode,
+    };
     return { ...feito, note: "Send this exact link. Say in one line: half now by card on a secure page to hold the slot, the other half after the job. Then stop: the team will confirm the professional." };
   }
   if (nome === "request_quote") {

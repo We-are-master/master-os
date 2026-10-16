@@ -14,15 +14,17 @@
  */
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 
-export const MAXIMO_PADRAO_GBP = 1001;
+import { limiteDoEnvioAutomatico } from "@/lib/quotes/preco-do-lance";
+
+/** Teto único do envio automático (16/10/2026: era £1001 aqui e £600 nos outros caminhos). */
+export const MAXIMO_PADRAO_GBP = 600;
 
 export function envioAutomaticoLigado(): boolean {
   return process.env.HARVEY_QUOTE_AUTO_SEND?.trim() === "1";
 }
 
 export function maximoDoEnvioAutomatico(): number {
-  const n = Number(process.env.HARVEY_QUOTE_AUTO_MAX ?? MAXIMO_PADRAO_GBP);
-  return Number.isFinite(n) && n > 0 ? n : MAXIMO_PADRAO_GBP;
+  return limiteDoEnvioAutomatico();
 }
 
 /**
