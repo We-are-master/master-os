@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ComponentType } from "react";
-import { BellRing, CreditCard, FileText, MessageCircle, Receipt, Star } from "lucide-react";
+import { BellRing, CreditCard, FileText, MessageCircle, Receipt, Star, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
@@ -16,6 +16,7 @@ import type { Account } from "@/types/database";
  *   client_feedback_whatsapp → pedido de feedback no dia seguinte
  *   overdue_reminders → lembretes de fatura vencida
  *   collection_mode → cartão adiantado ou fatura
+ *   quote_deposit_percent → entrada que o aceite da cotação cobra (50% ou nada)
  * Salva na hora, uma coluna por clique.
  */
 type Flags = {
@@ -136,6 +137,31 @@ export function AccountAutomations({
     }
   };
 
+  // Entrada da cotação (mig 336): ausente = 50%, como o envio trata.
+  const depositPct = (() => {
+    const v = (account as unknown as { quote_deposit_percent?: number | null }).quote_deposit_percent;
+    return v == null ? 50 : Number(v);
+  })();
+  const [deposit, setDeposit] = useState<number>(depositPct);
+  const [depositBusy, setDepositBusy] = useState(false);
+  useEffect(() => setDeposit(depositPct), [depositPct]);
+
+  const saveDeposit = async (value: number) => {
+    if (!canEdit || depositBusy || value === deposit) return;
+    const before = deposit;
+    setDeposit(value);
+    setDepositBusy(true);
+    try {
+      const next = await updateAccount(account.id, { quote_deposit_percent: value } as Partial<Account>);
+      onSaved(next, {});
+    } catch (e) {
+      setDeposit(before);
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setDepositBusy(false);
+    }
+  };
+
   const bothEmailOff = !flags.email_include_report_on_final && !flags.email_include_invoice_on_final;
 
   return (
@@ -179,6 +205,26 @@ export function AccountAutomations({
                   </div>
                 );
               })}
+              {g.group === "Payment" ? (
+                <div className="flex items-center gap-2 px-2.5 py-2">
+                  <Wallet className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text-primary" title="Deposit on quote">
+                    Deposit on quote
+                  </span>
+                  <FixfyHintIcon text="What the client pays when they accept a quote. 50%: Accept opens the card payment straight away, and the job is confirmed once it is paid. No deposit: the quote is accepted with nothing to pay now, and the work is invoiced later." />
+                  <select
+                    aria-label="Deposit on quote"
+                    value={deposit}
+                    disabled={!canEdit || depositBusy}
+                    onChange={(e) => void saveDeposit(Number(e.target.value))}
+                    className="h-6 shrink-0 rounded-md border border-border bg-card px-1.5 text-[12px] text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deposit !== 50 && deposit !== 0 ? <option value={deposit}>{deposit}%</option> : null}
+                    <option value={50}>50%</option>
+                    <option value={0}>No deposit</option>
+                  </select>
+                </div>
+              ) : null}
             </div>
           </div>
         ))}

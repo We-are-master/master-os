@@ -84,9 +84,13 @@ export async function prepararJobDoAceite(
 }
 
 /**
- * Entrada da cotação paga (Stripe ou à mão): cotação vai para converted_to_job e o
- * parceiro recebe o aviso de job novo. Só age com a cotação em awaiting_payment, então
- * rodar duas vezes não manda dois avisos.
+ * Entrada da cotação paga (Stripe ou à mão). Rotina do dono (16/10/2026):
+ *   1. cotação vai para converted_to_job;
+ *   2. o cliente recebe o recibo da entrada (Payment received);
+ *   3. cotação com parceiro (veio de lance): o parceiro entra no job, que vira Scheduled,
+ *      ganha a self-bill, o parceiro é avisado e o cliente recebe o Job confirmed;
+ *      sem parceiro: o job fica em Unassigned para a equipe.
+ * Só age com a cotação em awaiting_payment, então rodar duas vezes não repete nada.
  */
 export async function aposEntradaDaCotacaoPaga(
   supabase: SupabaseClient,
@@ -96,8 +100,18 @@ export async function aposEntradaDaCotacaoPaga(
   const { data: jobRow } = await supabase.from("jobs").select("id, quote_id").eq("reference", jobReference).maybeSingle();
   const j = jobRow as { id: string; quote_id?: string | null } | null;
   if (!j?.quote_id) return false;
-  const { data: q } = await supabase.from("quotes").select("id, reference, status").eq("id", j.quote_id).maybeSingle();
-  const quote = q as { id: string; reference?: string | null; status?: string | null } | null;
+  const { data: q } = await supabase
+    .from("quotes")
+    .select("id, reference, status, partner_id, partner_name")
+    .eq("id", j.quote_id)
+    .maybeSingle();
+  const quote = q as {
+    id: string;
+    reference?: string | null;
+    status?: string | null;
+    partner_id?: string | null;
+    partner_name?: string | null;
+  } | null;
   if (!quote || quote.status !== "awaiting_payment") return false;
   const { data: mudou, error } = await supabase
     .from("quotes")
@@ -116,6 +130,53 @@ export async function aposEntradaDaCotacaoPaga(
     new_value: "converted_to_job",
     metadata: { deposit_paid: true, source: origem },
   });
+
+  await enviarReciboDaEntrada(supabase, jobReference);
+
+  // O parceiro do lance entra agora; o job só sai de Unassigned se ainda estiver lá sem
+  // ninguém (job antigo, aceito antes desta regra, já nasceu Scheduled e fica como está).
+  const parceiroId = String(quote.partner_id ?? "").trim();
+  if (parceiroId) {
+    const nome = await nomeDoParceiroNoAceite(supabase, quote);
+    const { error: erroParceiro } = await supabase
+      .from("jobs")
+      .update({ partner_id: parceiroId, partner_name: nome, status: "scheduled" })
+      .eq("id", j.id)
+      .eq("status", "unassigned")
+      .is("partner_id", null);
+    if (erroParceiro) console.error("[entrada paga] parceiro no job", j.id, erroParceiro.message);
+  }
+
   await prepararJobDoAceite(supabase, j.id, { avisarParceiro: true });
+
+  // Job confirmed ao cliente: só sai se o job tem parceiro e data (o dispatch confere).
+  try {
+    const { dispatchJobCreatedZendesk } = await import("@/lib/zendesk-lifecycle");
+    await dispatchJobCreatedZendesk({ jobId: j.id, client: supabase });
+  } catch (e) {
+    console.error("[entrada paga] job confirmed", j.id, e);
+  }
   return true;
+}
+
+/** Recibo da entrada ao cliente: o e-mail da fatura de entrada, que paga sai como "Payment received". */
+async function enviarReciboDaEntrada(supabase: SupabaseClient, jobReference: string): Promise<void> {
+  const { data: inv } = await supabase
+    .from("invoices")
+    .select("id")
+    .eq("job_reference", jobReference)
+    .eq("invoice_kind", "deposit")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const invoiceId = (inv as { id?: string } | null)?.id;
+  if (!invoiceId) return;
+  try {
+    const { sendInvoiceEmail } = await import("@/lib/invoice-send-email");
+    const r = await sendInvoiceEmail(supabase, invoiceId, { userId: null, userName: "Fixfy (deposit paid)" });
+    if ("error" in r) console.error("[entrada paga] recibo", invoiceId, r.error);
+  } catch (e) {
+    console.error("[entrada paga] recibo", invoiceId, e);
+  }
 }
