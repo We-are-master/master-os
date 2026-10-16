@@ -444,6 +444,10 @@ export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { a
   const { results } = await zendeskApi<{ results?: Ticket[] }>(`search.json?query=${encodeURIComponent(q)}`).catch(() => ({ results: [] as Ticket[] }));
   for (const t of results ?? []) {
     if (!t.created_at) continue;
+    // Só ticket de lead com o assunto padrão ("Lead · Serviço · Nome"): é de lá que sai o serviço do texto.
+    // Ticket renomeado (virou conversa, quote, job) já não é lead da régua.
+    const servico = String(t.subject ?? "").split("·")[1]?.trim().toLowerCase();
+    if (!/^lead\b/i.test(String(t.subject ?? "")) || !servico) continue;
     const cliente = await emailDoCliente(t).catch(() => null);
     await seguirLead(
       sb,
@@ -452,7 +456,7 @@ export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { a
         clienteId: null,
         telefone: null,
         nome: firstName(cliente?.nome ?? null) ?? "there",
-        servico: String(t.subject ?? "").split("·")[1]?.trim().toLowerCase() || "your job",
+        servico,
         leadExterno: null,
         primeiro: new Date(t.created_at),
         soPorEmail: true,
