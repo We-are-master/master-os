@@ -22,11 +22,12 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
 import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
 import { externalIdDoLead } from "./primeiro-contato";
+import { ticketDoJobAtivo } from "./job-ativo";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
@@ -225,6 +226,7 @@ type LeadWa = { lead_externo?: string | null; job_id?: string | null; ticket_id?
 
 /** Qual ticket anterior entra no da conversa: o do lead (Checkatrade), o do site ou o do job do Express. */
 function dadosDeJuncao(leadWa: LeadWa): Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob"> {
+  if (!leadWa) return {};
   const doSite = leadWa?.origem === "site";
   return {
     ...(leadWa?.lead_externo && !doSite ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo) } : {}),
@@ -235,13 +237,32 @@ function dadosDeJuncao(leadWa: LeadWa): Pick<DadosDoCliente, "ticketDoLead" | "t
   };
 }
 
-/** Só quem recebeu um template nosso tem ticket anterior; para o resto é uma leitura no banco. */
+/**
+ * Cliente sem job do Express no harvey_wa_leads: o job em andamento dele no OS,
+ * com o e-mail do cliente para provar a pessoa (Jessica Rooney, 16/10/2026).
+ */
+async function jobDoClienteNoOs(sb: ReturnType<typeof createServiceClient>, clientId: string | null | undefined): Promise<Pick<DadosDoCliente, "ticketDoJob">> {
+  if (!clientId) return {};
+  const job = await ticketDoJobAtivo(sb, clientId).catch(() => null);
+  if (!job) return {};
+  const { data: c } = await sb.from("clients").select("email").eq("id", clientId).maybeSingle();
+  const email = (c?.email as string | null) ?? null;
+  if (!(await ticketDoProprioCliente(job.ticketId, email).catch(() => false))) return {};
+  return { ticketDoJob: { ...job, emailDoCliente: email } };
+}
+
+/** O ticket anterior da conversa: o do template nosso (harvey_wa_leads) ou o do job em andamento do cliente. */
 export async function juntarTicketAnterior(telefone: string | null, esperarEquipe = false): Promise<void> {
   if (!telefone) return;
   const sb = createServiceClient();
   const { data: leadWa } = await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
-  if (!leadWa) return;
-  const feito = await juntarTicketsDaConversa(telefone, dadosDeJuncao(leadWa), { esperarEquipe });
+  const dados = dadosDeJuncao(leadWa);
+  if (!dados.ticketDoJob) {
+    const { data: conv } = await sb.from("harvey_wa_conversas").select("client_id, tipo").eq("phone", telefone).order("atualizado_em", { ascending: false }).limit(1).maybeSingle();
+    if (conv?.tipo !== "parceiro") Object.assign(dados, await jobDoClienteNoOs(sb, conv?.client_id as string | null));
+  }
+  if (!dados.ticketDoLead && !dados.ticketAntigo && !dados.ticketDoJob) return;
+  const feito = await juntarTicketsDaConversa(telefone, dados, { esperarEquipe });
   if (/juntado|espelhado/.test(feito)) console.log("[harvey-wa] ticket anterior:", feito);
 }
 
@@ -510,6 +531,8 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       ...(r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {}),
       ...dadosDeJuncao(leadWa),
     };
+    // Cliente que já tem job em andamento: a conversa cai no ticket do job, não abre outro.
+    if (!dados.ticketDoJob && quem.tipo === "cliente") Object.assign(dados, await jobDoClienteNoOs(sb, quem.cliente.id));
     const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
   }
