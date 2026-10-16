@@ -133,9 +133,12 @@ export async function aposEntradaDaCotacaoPaga(
 
   await enviarReciboDaEntrada(supabase, jobReference);
 
-  // O parceiro do lance entra agora; o job só sai de Unassigned se ainda estiver lá sem
-  // ninguém (job antigo, aceito antes desta regra, já nasceu Scheduled e fica como está).
-  const parceiroId = String(quote.partner_id ?? "").trim();
+  // O parceiro entra agora SÓ se o preço veio de um lance que ele mesmo enviou
+  // (dono, 16/10/2026). Preço nosso (tabela) ou dado pela equipe: o job fica em
+  // Unassigned e a equipe aloca, mesmo que a cotação tenha um parceiro anotado.
+  // O job só sai de Unassigned se ainda estiver lá sem ninguém (job antigo, aceito antes
+  // desta regra, já nasceu Scheduled e fica como está).
+  const parceiroId = (await parceiroQueDeuOLance(supabase, quote.id, quote.partner_id)) ?? "";
   if (parceiroId) {
     const nome = await nomeDoParceiroNoAceite(supabase, quote);
     const { error: erroParceiro } = await supabase
@@ -157,6 +160,30 @@ export async function aposEntradaDaCotacaoPaga(
     console.error("[entrada paga] job confirmed", j.id, e);
   }
   return true;
+}
+
+/** Lances que contam: enviados pelo parceiro (submitted) ou aprovados pela equipe em cima deles. */
+export const STATUS_DE_LANCE_VALIDO = ["submitted", "approved"];
+
+/**
+ * Parceiro da cotação, só se ele mandou lance nela. Null = preço nosso ou da equipe:
+ * ninguém é alocado automaticamente.
+ */
+export async function parceiroQueDeuOLance(
+  supabase: SupabaseClient,
+  quoteId: string,
+  partnerId: string | null | undefined,
+): Promise<string | null> {
+  const id = String(partnerId ?? "").trim();
+  if (!id) return null;
+  const { data } = await supabase
+    .from("quote_bids")
+    .select("id")
+    .eq("quote_id", quoteId)
+    .eq("partner_id", id)
+    .in("status", STATUS_DE_LANCE_VALIDO)
+    .limit(1);
+  return (data as unknown[] | null)?.length ? id : null;
 }
 
 /** Recibo da entrada ao cliente: o e-mail da fatura de entrada, que paga sai como "Payment received". */

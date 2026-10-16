@@ -138,7 +138,9 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2",
+        // external_* e side conversation: sem eles o job nascia sem o ticket da cotação e
+        // nunca mandava o Job confirmed nem falava com o parceiro no ticket (16/10/2026).
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2, external_source, external_ref, zendesk_side_conversation_id",
       )
       .eq("id", quoteId)
       .single();
