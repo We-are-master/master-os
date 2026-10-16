@@ -7,6 +7,7 @@ import { depositAmountFromPercent } from "@/lib/quote-deposit";
 import { saldoDoLinkDePagamento, valorFixoDoLink } from "@/lib/pay-link-amount";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
+import { textoDoCartaoSalvo } from "@/lib/texto-cartao-salvo";
 import { customerBalanceCap, loadJobPromotionAmount } from "@/lib/agent-model/promotion";
 
 export const dynamic = "force-dynamic";
@@ -180,6 +181,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     }
     if (saveCard) metadata.save_card = "1";
     const balanceAfter = Math.max(0, Math.round((balance - amount) * 100) / 100);
+    // O que fica para depois é o do JOB, não só desta fatura (16/10/2026): a entrada da cotação
+    // é uma fatura própria paga por inteiro, e o texto dizia "You pay in full now" com o saldo
+    // ainda por cobrar no cartão no fim do job.
+    const restanteDoJob = jobPrice
+      ? Math.max(
+          0,
+          Math.round(
+            (Number(jobPrice.client_price ?? 0) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion) - (pagoNoJob ?? 0) - amount) * 100,
+          ) / 100,
+        )
+      : balanceAfter;
     // Metadata stays on the session only (not payment_intent_data): the webhook's
     // legacy payment_intent.succeeded branch marks invoices FULLY paid, which
     // would be wrong for a deposit charge.
@@ -205,10 +217,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
             payment_intent_data: { setup_future_usage: "off_session" as const },
             custom_text: {
               submit: {
-                message:
-                  pct < 100
-                    ? `You pay the ${pct}% deposit now. Your card is saved securely by Stripe and the remaining balance (£${balanceAfter.toFixed(2)}) is charged automatically when your job is completed and checked. Extra work or materials you approve, or a late-cancellation charge under our booking terms, may also be charged to this card.`
-                    : `You pay in full now. Your card is saved securely by Stripe and is only charged again for extra work or materials you approve, or a late-cancellation charge under our booking terms.`,
+                message: textoDoCartaoSalvo({ pct, restante: Math.max(balanceAfter, restanteDoJob) }),
               },
             },
           }
