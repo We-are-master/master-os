@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { Trophy, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MicroLabel } from "@/components/fx/primitives";
@@ -32,9 +33,9 @@ export function SchoolHero({ progress, overallPercent }: Props) {
 
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-3 min-w-0">
-          <MicroLabel className="!text-[#FF8A5C]">Fixfy School</MicroLabel>
+          <MicroLabel className="!text-[#FF8A5C]">Training</MicroLabel>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight m-0">
-            Learn Fixfy in 5 phases
+            Training <FixfyHintIcon label="Training" text="Complete the lessons and assessments in each stage to progress through the training programme." />
           </h1>
           <p className="text-sm text-white/65 max-w-xl m-0 leading-relaxed">
             Start with Products & Vision, then Zendesk, the OS and Trade Portal — earn XP and pass each

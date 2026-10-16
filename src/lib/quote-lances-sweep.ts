@@ -18,9 +18,19 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
-import { addTicketTags } from "@/lib/zendesk";
-import { escolherMelhorLance, MARGEM_PADRAO, type Lance } from "@/lib/quote-melhor-lance";
+import { assumirConversa, conversaDoTicket } from "@/lib/harvey-wa/controle";
+import { addTicketTags, getZendeskTicketSnapshot, replyToSideConversation, zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
+import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
+import { escolherMelhorLance, MARGEM_PADRAO, type Escolha, type Lance } from "@/lib/quote-melhor-lance";
 import { montarEmailDaQuote, scopeEmInglesUk, lerPayloadDoLance } from "@/lib/quote-email-cliente";
+import { registrarDecisao } from "@/lib/harvey-wa/diario";
+import {
+  ESCOPO_PRECISA_DE_GENTE, TAG_ESCOPO, escopoDoLance, htmlDaPergunta, lerMarcaDeEspera, lerRespostaDoParceiro,
+  marcaDeEspera, notasComNovoValor, passoDepoisDaResposta, pedidoDoCliente, respostaDoParceiro, verificarEscopoDoLance,
+  type EsperaDeEscopo, type EventoDeSideConversation,
+} from "@/lib/quote-lance-escopo";
+import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -38,6 +48,8 @@ export const JANELA_HORAS = 2;
 export const PRAZO_SEM_LANCE_HORAS = JANELA_HORAS + 24;
 /** Marca de "já avisei que ninguém cotou", no banco para não repetir a nota. */
 const AVISEI_SEM_LANCE = "no_bids_reported";
+/** Mesma coisa quando não há onde avisar: o ticket já estava fechado. */
+const TICKET_FECHADO_SEM_LANCE = "no_bids_ticket_closed";
 /** Tag no ticket para o silêncio aparecer no Action Required. */
 export const TAG_SEM_LANCE = "harvey_no_bids";
 /** Teto por ciclo: sem ele a primeira rodada despeja o backlog inteiro. */
@@ -51,6 +63,11 @@ const MAX_POR_CICLO = 5;
  * rotas de cron que soltaram 52 convites reais em 20/08.
  */
 const IDADE_MAXIMA_DIAS = 14;
+/**
+ * Quanto ele espera o parceiro responder à pergunta de escopo. Passou, gente
+ * decide: o cliente está esperando preço e um dia calado já é resposta.
+ */
+export const PRAZO_RESPOSTA_ESCOPO_HORAS = 24;
 
 export type ResultadoDaVarredura = {
   armado: boolean;
@@ -59,6 +76,12 @@ export type ResultadoDaVarredura = {
   semLance: number;
   /** Quotes que passaram das 26h sem um lance e viraram nota interna. */
   silenciosas: number;
+  /** Lances que não batiam com o pedido: pergunta ao parceiro, sem preço. */
+  perguntasDeEscopo: number;
+  /** Escopo que voltou para gente (parceiro não confirmou, não respondeu, ou não deu para perguntar). */
+  escopoParaGente: number;
+  /** Quotes que saíram sozinhas para o cliente (HARVEY_QUOTE_AUTO_SEND=1). */
+  enviadasSozinhas: number;
   janelaAberta: number;
   detalhes: string[];
 };
@@ -77,8 +100,11 @@ export async function varrerLancesParaRascunho(
 ): Promise<ResultadoDaVarredura> {
   const armado = process.env.HARVEY_RASCUNHO_LANCE === "1";
   const r: ResultadoDaVarredura = {
-    armado, analisados: 0, rascunhados: 0, semLance: 0, silenciosas: 0, janelaAberta: 0, detalhes: [],
+    armado, analisados: 0, rascunhados: 0, semLance: 0, silenciosas: 0,
+    perguntasDeEscopo: 0, escopoParaGente: 0, enviadasSozinhas: 0, janelaAberta: 0, detalhes: [],
   };
+  // Desligável sem deploy, caso o modelo comece a perguntar demais.
+  const checarEscopo = process.env.HARVEY_ESCOPO_LANCE !== "0";
 
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase
@@ -99,7 +125,8 @@ export async function varrerLancesParaRascunho(
 
 
   for (const bruta of (quotes ?? []) as Array<Record<string, unknown>>) {
-    if (r.rascunhados >= MAX_POR_CICLO) break;
+    // Pergunta ao parceiro também é escrita para fora: conta no mesmo teto.
+    if (r.rascunhados + r.perguntasDeEscopo >= MAX_POR_CICLO) break;
     const q = bruta as unknown as {
       id: string; reference: string; title: string | null; service_type: string | null;
       scope: string | null; external_ref: string; created_at: string;
@@ -137,7 +164,8 @@ export async function varrerLancesParaRascunho(
        */
       const horas = horasDesde(primeiro.invited_at);
       if (horas < PRAZO_SEM_LANCE_HORAS) continue;
-      if ((bruta.automation_status as string | null) === AVISEI_SEM_LANCE) continue;
+      const marca = bruta.automation_status as string | null;
+      if (marca === AVISEI_SEM_LANCE || marca === TICKET_FECHADO_SEM_LANCE) continue;
 
       const convidados = (await supabase
         .from("quote_partner_invitations")
@@ -155,6 +183,20 @@ export async function varrerLancesParaRascunho(
         r.detalhes.push(`[ensaio] ${q.reference}: ${Math.round(horas)}h sem lance de ${convidados} convidado(s)`);
         continue;
       }
+      /**
+       * Ticket fechado não aceita nota: o Zendesk devolve 422 e, sem a marca,
+       * ele tentava de novo a cada ciclo (QT-2026-1150 no #50536, 24/09/2026).
+       * Conversa encerrada não precisa de aviso, então marca e segue.
+       */
+      const snap = await getZendeskTicketSnapshot(q.external_ref);
+      if (snap.ok && snap.ticket?.status === "closed") {
+        await supabase
+          .from("quotes")
+          .update({ automation_status: TICKET_FECHADO_SEM_LANCE, updated_at: new Date().toISOString() })
+          .eq("id", q.id);
+        r.detalhes.push(`${q.reference}: sem lance, mas o ticket #${q.external_ref} está fechado — não aviso`);
+        continue;
+      }
       try {
         await postarNotaInterna(Number(q.external_ref), nota);
         await addTicketTags(q.external_ref, [TAG_SEM_LANCE]);
@@ -162,21 +204,64 @@ export async function varrerLancesParaRascunho(
         r.detalhes.push(`${q.reference}: aviso de silêncio falhou, não marco — ${String(err)}`);
         continue;
       }
+      const fila = await precisaDeAcao(q.external_ref, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners or call`);
+      if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
       await supabase
         .from("quotes")
         .update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() })
         .eq("id", q.id);
       r.silenciosas++;
       r.detalhes.push(`${q.reference}: ${Math.round(horas)}h sem lance — nota pro humano`);
+      await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No bids on ${q.reference} after ${Math.round(horas)}h from ${convidados} invited partner(s): asked the team to step in`, regra: `no bid within ${PRAZO_SEM_LANCE_HORAS}h of the first invite`, pendente: "Team: widen the trade, call a partner or tell the customer" }, supabase);
       continue;
     }
 
-    const nota = await rascunhoDaQuote(q, escolha);
+    /**
+     * Antes do preço, o escopo. Ver `quote-lance-escopo.ts` (QT-2026-1166).
+     *
+     * Três caminhos: a quote já está parada com gente (não toca), está
+     * esperando o parceiro responder (lê a side conversation), ou é lance novo
+     * (compara com o pedido e, se divergir, pergunta em vez de precificar).
+     */
+    const marcaDoEscopo = bruta.automation_status as string | null;
+    if (marcaDoEscopo === ESCOPO_PRECISA_DE_GENTE) {
+      r.detalhes.push(`${q.reference}: escopo do lance parado com gente, não precifico`);
+      continue;
+    }
+    const lances = (lancesBrutos ?? []) as unknown as LanceComNotas[];
+    let escolhaFinal: Escolha = escolha;
+    const avisosDeEscopo: string[] = [];
+    let escopoConfirmado: string | null = null;
+    // Escopo conferido de verdade (o envio automático só sai assim): o parceiro confirmou, ou o modelo comparou e bateu.
+    let escopoConferido = false;
+    const espera = lerMarcaDeEspera(marcaDoEscopo);
+    if (espera) {
+      const res = await acompanharPerguntaDeEscopo(supabase, q, espera, lances, armado, postarNotaInterna);
+      r.detalhes.push(`${q.reference}: ${res.linha}`);
+      if (res.tipo === "pessoa") r.escopoParaGente++;
+      if (res.tipo !== "seguir") continue;
+      escolhaFinal = res.escolha;
+      escopoConfirmado = res.resumo || null;
+      avisosDeEscopo.push(res.aviso);
+      escopoConferido = true;
+    } else if (checarEscopo) {
+      const chec = await checarEscopoDoLance(supabase, q, escolha, armado, postarNotaInterna);
+      if (chec.tipo !== "seguir") {
+        r.detalhes.push(`${q.reference}: ${chec.linha}`);
+        if (chec.tipo === "perguntou") r.perguntasDeEscopo++;
+        if (chec.tipo === "pessoa") r.escopoParaGente++;
+        continue;
+      }
+      if (chec.aviso) avisosDeEscopo.push(chec.aviso);
+      else escopoConferido = true;
+    }
+
+    const nota = await rascunhoDaQuote(q, escolhaFinal, { escopoDoParceiro: escopoConfirmado, avisos: avisosDeEscopo });
 
     if (!armado) {
       r.detalhes.push(
-        `[ensaio] ${q.reference}: ${escolha.ordenados.length} lance(s), melhor ${libras(escolha.melhor.valor)} ` +
-          `(${escolha.melhor.partner_name ?? "parceiro"}) → cliente ${libras(escolha.precoAoCliente)}`,
+        `[ensaio] ${q.reference}: ${escolhaFinal.ordenados.length} lance(s), melhor ${libras(escolhaFinal.melhor.valor)} ` +
+          `(${escolhaFinal.melhor.partner_name ?? "parceiro"}) → cliente ${libras(escolhaFinal.precoAoCliente)}`,
       );
       continue;
     }
@@ -203,25 +288,453 @@ export async function varrerLancesParaRascunho(
       .from("quotes")
       .update({
         status: "quote_ready",
-        partner_id: escolha.melhor.partner_id,
-        partner_name: escolha.melhor.partner_name,
-        partner_cost: escolha.melhor.valor,
-        margin_percent: escolha.margem,
-        total_value: escolha.precoAoCliente,
+        partner_id: escolhaFinal.melhor.partner_id,
+        partner_name: escolhaFinal.melhor.partner_name,
+        partner_cost: escolhaFinal.melhor.valor,
+        margin_percent: escolhaFinal.margem,
+        total_value: escolhaFinal.precoAoCliente,
+        // A marca de escopo já cumpriu o papel: limpa para a cotação automática não tropeçar nela.
+        ...(espera ? { automation_status: "scope_check_resolved" } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", q.id);
+    let enviada = false;
     if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a quote não mudou — ${upErr.message}`);
     else {
-      void syncQuoteZendeskStatus(q.id, supabase).catch((err: unknown) =>
-        console.error("[lances] sync do status no Zendesk falhou:", err),
-      );
+      // Fase 1: quando é seguro, o preço sai sozinho para o cliente e o Harvey segue com a conversa.
+      const envio = envioAutomaticoLigado()
+        ? await mandarSozinho(supabase, q, escolhaFinal, escopoConferido, postarNotaInterna).catch((err: unknown) => ({ enviado: false, linha: `envio automático falhou: ${String(err).slice(0, 120)}` }))
+        : { enviado: false, linha: null };
+      if (envio.linha) r.detalhes.push(`${q.reference}: ${envio.linha}`);
+      enviada = envio.enviado;
+      if (enviada) r.enviadasSozinhas++;
+      else {
+        const aviso = await chamarEquipeParaOLance(supabase, q.id, q.reference, Number(q.external_ref));
+        if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
+      }
     }
     r.rascunhados++;
-    r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolha.precoAoCliente)}`);
+    r.detalhes.push(`${q.reference}: rascunho na thread, cliente ${libras(escolhaFinal.precoAoCliente)}`);
+    if (!upErr && enviada) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Sent ${q.reference} to the customer at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s)), no person needed`, regra: `auto send: scope checked, direct customer, up to £${maximoDoEnvioAutomatico()}, margin ${escolhaFinal.margem}%`, pendente: "Customer: accept the quote" }, supabase);
+    else if (!upErr) await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Drafted ${q.reference} at ${libras(escolhaFinal.precoAoCliente)} from the ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.ordenados.length} bid(s))`, regra: `best bid after the ${JANELA_HORAS}h window, margin ${escolhaFinal.margem}%`, pendente: "Team: review the draft and send the quote" }, supabase);
   }
 
   return r;
+}
+
+/**
+ * O preço sai sozinho para o cliente (Fase 1, dono 15/10/2026). Quem decide é
+ * `podeMandarSozinho` (quote-envio-automatico.ts); aqui só se junta o que ela
+ * precisa e se usa o canal de sempre:
+ *  - WhatsApp com o Harvey na conversa e a janela de 24h aberta: o texto da
+ *    quote da cotação automática (textoDaQuote) com o link para aceitar;
+ *  - senão, e-mail com o PDF pela mesma rota do botão (send-pdf, segredo interno).
+ * Depois: ticket em 🟠 Approval, Reply Status 🟢, nota interna, e a conversa
+ * continua com o Harvey. Não deu para mandar: devolve false e a equipe é chamada.
+ */
+async function mandarSozinho(
+  supabase: SupabaseClient,
+  q: { id: string; reference: string; title: string | null; service_type: string | null; external_ref: string },
+  escolha: Escolha,
+  escopoConferido: boolean,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<{ enviado: boolean; linha: string | null }> {
+  const ticketId = Number(q.external_ref);
+  const { data: qq } = await supabase.from("quotes").select("client_id, client_name, client_email").eq("id", q.id).maybeSingle();
+  const quote = (qq ?? {}) as { client_id?: string | null; client_name?: string | null; client_email?: string | null };
+  let contaDeOrigem: string | null = null;
+  if (quote.client_id) {
+    const { data: c } = await supabase.from("clients").select("source_account_id").eq("id", quote.client_id).maybeSingle();
+    contaDeOrigem = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
+  }
+  const { tryGetFixfyAccountId } = await import("@/lib/fixfy-account");
+  const contaFixfy = await tryGetFixfyAccountId(supabase).catch(() => null);
+  const tags = await zendeskApi<{ ticket: { tags?: string[] } }>(`tickets/${ticketId}.json`).then((t) => t.ticket?.tags ?? []).catch(() => [] as string[]);
+  const conversa = await conversaDoTicket(supabase, ticketId).catch(() => null);
+  const { historico, enviarTexto, vozDaConversa } = await import("@/lib/harvey-wa/sunshine");
+  const msgs = conversa ? await historico(conversa.conversation_id, 50).catch(() => []) : [];
+  const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
+  const janelaAberta = !!ultimaDoCliente && Date.now() - Date.parse(ultimaDoCliente.received) < 23 * 36e5;
+  const email = quote.client_email?.includes("@") && !/@getfixfy\.com$/i.test(quote.client_email) ? quote.client_email.trim() : null;
+  const pelaConversa = !!conversa && conversa.estado === "harvey" && janelaAberta;
+  const total = escolha.precoAoCliente;
+  const decisao = podeMandarSozinho({
+    ligado: envioAutomaticoLigado(),
+    total,
+    maximo: maximoDoEnvioAutomatico(),
+    escopoConferido,
+    perguntaPendente: false,
+    contaDireta: contaEhDireta({ contaDeOrigem, contaFixfy, daConversaDoHarvey: !!conversa }),
+    b2b: tags.includes("b2b"),
+    temCanal: pelaConversa || !!email,
+    equipeNaConversa: conversa?.estado === "equipe",
+  });
+  if (!decisao.enviar) return { enviado: false, linha: `não sai sozinha: ${decisao.motivos.join(", ")}` };
+
+  // O PDF e a tela de Quotes leem as linhas: uma linha com o preço, se ainda não houver.
+  const { count } = await supabase.from("quote_line_items").select("id", { count: "exact", head: true }).eq("quote_id", q.id);
+  if (!count) {
+    const { insertQuoteLineItemsResilient } = await import("@/lib/quote-line-items-insert");
+    await insertQuoteLineItemsResilient(supabase, [
+      { quote_id: q.id, description: (q.title || q.service_type || "Works as described").slice(0, 300), quantity: 1, unit_price: total, sort_order: 0, partner_unit_cost: escolha.melhor.valor, notes: `From ${escolha.melhor.partner_name?.trim() || "partner"}'s bid` },
+    ]);
+  }
+
+  let via: string;
+  if (pelaConversa && conversa) {
+    const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
+    const { appBaseUrl } = await import("@/lib/app-base-url");
+    const { textoDaQuote } = await import("@/lib/harvey-wa/cotacao-automatica");
+    const { firstName } = await import("@/lib/agent/sales/lead-brief");
+    const link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
+    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link });
+    await enviarTexto(conversa.conversation_id, texto, vozDaConversa(msgs));
+    const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
+    const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString(), email ?? undefined);
+    if (gravado.error) console.error(`[lances] ${q.reference}: enviada no WhatsApp mas o status não gravou`, gravado.error.message);
+    via = "WhatsApp";
+  } else {
+    const { appBaseUrl } = await import("@/lib/app-base-url");
+    const res = await fetch(`${appBaseUrl()}/api/quotes/send-pdf`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-internal-secret": process.env.INTERNAL_SYNC_SECRET?.trim() ?? "" },
+      body: JSON.stringify({ quoteId: q.id }),
+      signal: AbortSignal.timeout(90_000),
+    }).catch(() => null);
+    if (!res?.ok) return { enviado: false, linha: `envio automático por e-mail falhou (${res?.status ?? "sem resposta"}), vai para gente` };
+    via = "email (PDF)";
+  }
+
+  // Ticket em 🟠 Approval e 🟢 (fomos nós por último). Cada passo falha sozinho: a quote já saiu.
+  try {
+    await zendeskApi(`tickets/${ticketId}.json`, {
+      method: "PUT",
+      body: { ticket: { custom_status_id: ZD_STATUS_AWAITING_APPROVAL, custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }] } },
+    });
+  } catch (err) {
+    console.error(`[lances] ${q.reference}: status do ticket após envio`, err);
+  }
+  // A quote saiu: nada nosso a fazer até o cliente responder.
+  await acaoFeita(ticketId);
+  await postarNotaInterna(ticketId, [
+    `🤖 HARVEY — ${q.reference} SENT to the customer by ${via}: ${libras(total)}`,
+    "",
+    `Best bid ${libras(escolha.melhor.valor)} from ${escolha.melhor.partner_name?.trim() || "partner"}, ${escolha.margem}% margin. Scope checked, direct customer, under £${maximoDoEnvioAutomatico()}.`,
+    "Harvey keeps the WhatsApp chat. The approval follow-up takes it from here.",
+  ].join("\n")).catch((err: unknown) => console.error(`[lances] ${q.reference}: nota do envio`, err));
+  return { enviado: true, linha: `enviada sozinha ao cliente (${via}), ${libras(total)}` };
+}
+
+/**
+ * Lance entrou: o ticket tem de aparecer na Action Required, venha de onde vier.
+ *
+ * Em 15/10/2026 três quotes com lance ficaram paradas sem ninguém ver. A
+ * QT-2026-1170 tinha preço no OS e o ticket continuou em Bidding: o sync do
+ * status era `void` depois da resposta, e na Vercel isso morre no meio. A
+ * QT-2026-1171 virou Quote Ready, mas o ticket ainda tinha `harvey_ai` (a
+ * conversa estava com o Harvey), e a Action Required ignora essa tag.
+ *
+ * Então, em ordem, cada passo sem derrubar o próximo:
+ *  1. o status do ticket acompanha a quote (com `await`);
+ *  2. se o Harvey segura a conversa do WhatsApp, ela passa para a equipe;
+ *  3. Reply Status 🔴 e sem `harvey_ai`: a view mostra o ticket;
+ *  4. Action Required Yes com a próxima ação (fila-de-acao.ts).
+ * Devolve uma linha para o relatório quando algum passo falha.
+ */
+async function chamarEquipeParaOLance(supabase: SupabaseClient, quoteId: string, referencia: string, ticketId: number): Promise<string | null> {
+  const falhas: string[] = [];
+  await syncQuoteZendeskStatus(quoteId, supabase).catch((err: unknown) => falhas.push(`sync do status: ${String(err).slice(0, 120)}`));
+  if (!Number.isFinite(ticketId) || ticketId <= 0) return falhas.length ? falhas.join("; ") : null;
+  try {
+    const conversa = await conversaDoTicket(supabase, ticketId);
+    if (conversa?.estado === "harvey") await assumirConversa(supabase, conversa.conversation_id, "Team", "a partner bid (quote ready)");
+  } catch (err) {
+    falhas.push(`passar a conversa: ${String(err).slice(0, 120)}`);
+  }
+  try {
+    await zendeskApi(`tickets/${ticketId}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_awaiting" }] } } });
+    await zendeskApi(`tickets/${ticketId}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
+  } catch (err) {
+    falhas.push(`marcar o ticket: ${String(err).slice(0, 120)}`);
+  }
+  const fila = await precisaDeAcao(ticketId, `Bids are in on ${referencia}: review the draft and send the quote`);
+  if (!fila.ok) falhas.push(fila.linha);
+  return falhas.length ? falhas.join("; ") : null;
+}
+
+/* ============================ escopo do lance ============================ */
+
+type LanceComNotas = Lance & { notes?: string | null };
+type QuoteDaVarredura = { id: string; reference: string; title: string | null; scope: string | null; external_ref: string };
+type Parceiro = { id: string; email: string | null; company_name: string | null; contact_name: string | null; zendesk_user_id: string | number | null };
+
+async function parceiroDoLance(supabase: SupabaseClient, partnerId: string | null): Promise<Parceiro | null> {
+  if (!partnerId) return null;
+  const { data } = await supabase
+    .from("partners")
+    .select("id, email, company_name, contact_name, zendesk_user_id")
+    .eq("id", partnerId)
+    .maybeSingle();
+  return (data as Parceiro | null) ?? null;
+}
+
+/** O pedido do cliente: scope da quote + o que o requester escreveu no ticket. */
+async function lerPedidoDoCliente(q: QuoteDaVarredura): Promise<string> {
+  try {
+    const { ticket } = await zendeskApi<{ ticket: { requester_id?: number } }>(`tickets/${q.external_ref}.json`);
+    const { comments } = await zendeskApi<{ comments: Array<{ author_id?: number; public?: boolean; body?: string }> }>(
+      `tickets/${q.external_ref}/comments.json?sort_order=asc&per_page=100`,
+    );
+    return pedidoDoCliente(q.scope, comments ?? [], ticket?.requester_id ?? null);
+  } catch {
+    // Sem o ticket, o scope da quote ainda é o pedido; melhor checar com menos do que não checar.
+    return pedidoDoCliente(q.scope, [], null);
+  }
+}
+
+/**
+ * Chama gente para o escopo: nota interna, Reply Status 🔴, sem `harvey_ai`, e
+ * a quote marcada para a varredura não voltar a mexer. Nunca fala com o cliente.
+ */
+async function escopoParaGente(
+  supabase: SupabaseClient,
+  q: QuoteDaVarredura,
+  nota: string,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<string | null> {
+  const ticketId = Number(q.external_ref);
+  try {
+    await postarNotaInterna(ticketId, nota);
+  } catch (err) {
+    return `nota falhou, não marco: ${String(err).slice(0, 120)}`;
+  }
+  await supabase
+    .from("quotes")
+    .update({ automation_status: ESCOPO_PRECISA_DE_GENTE, updated_at: new Date().toISOString() })
+    .eq("id", q.id);
+  try {
+    await zendeskApi(`tickets/${ticketId}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_awaiting" }] } } });
+    await addTicketTags(ticketId, [TAG_ESCOPO]);
+    await zendeskApi(`tickets/${ticketId}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
+  } catch (err) {
+    return `nota saiu, mas marcar o ticket falhou: ${String(err).slice(0, 120)}`;
+  }
+  const fila = await precisaDeAcao(ticketId, `Scope check on ${q.reference}: read the partner's side conversation and decide the price`);
+  return fila.ok ? null : fila.linha;
+}
+
+type ResultadoDaChecagem =
+  | { tipo: "seguir"; aviso: string | null }
+  | { tipo: "perguntou" | "pessoa" | "esperar"; linha: string };
+
+/**
+ * Lance novo: bate com o pedido? Se não bate, pergunta ao parceiro na side
+ * conversation do convite e NÃO precifica. A quote fica em `bidding` com a
+ * marca de espera (ver `marcaDeEspera`).
+ */
+async function checarEscopoDoLance(
+  supabase: SupabaseClient,
+  q: QuoteDaVarredura,
+  escolha: Escolha,
+  armado: boolean,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<ResultadoDaChecagem> {
+  const lance = escolha.melhor as LanceComNotas & { valor: number };
+  const escopo = escopoDoLance(lerPayloadDoLance(lance.notes), lance.notes);
+  const pedido = await lerPedidoDoCliente(q);
+  const v = await verificarEscopoDoLance(pedido, escopo);
+  if (!v.verificado) {
+    return { tipo: "seguir", aviso: `⚠️ Scope NOT checked against the customer's request (${v.motivo}). Compare them before sending.` };
+  }
+  if (!v.diverge) return { tipo: "seguir", aviso: null };
+
+  const nomeDoParceiro = lance.partner_name?.trim() || "partner";
+  if (!armado) {
+    return { tipo: "perguntou", linha: `[ensaio] escopo diverge (${v.motivo}); perguntaria a ${nomeDoParceiro}: "${v.pergunta}"` };
+  }
+
+  const ticketId = Number(q.external_ref);
+  const parceiro = await parceiroDoLance(supabase, lance.partner_id);
+  const email = parceiro?.email?.trim().toLowerCase() ?? "";
+  let sc: { id: string } | undefined;
+  if (email) {
+    try {
+      const { side_conversations } = await zendeskApi<{ side_conversations: Array<{ id: string; participants?: Array<{ email?: string }> }> }>(
+        `tickets/${ticketId}/side_conversations.json`,
+      );
+      sc = (side_conversations ?? []).find((s) => s.participants?.some((x) => x.email?.toLowerCase() === email));
+    } catch {
+      sc = undefined;
+    }
+  }
+
+  if (!sc || !email) {
+    const nota = [
+      `🤖 HARVEY — scope check on ${q.reference}: NOT priced`,
+      "",
+      `The ${libras(lance.valor)} bid from ${nomeDoParceiro} does not match what the customer asked for.`,
+      `Why: ${v.motivo}`,
+      "",
+      "I could not find the partner's side conversation on this ticket to ask them, so this needs a person.",
+      `Suggested question: ${v.pergunta}`,
+    ].join("\n");
+    const falha = await escopoParaGente(supabase, q, nota, postarNotaInterna);
+    return { tipo: "pessoa", linha: `escopo diverge e não achei a side conversation de ${nomeDoParceiro}${falha ? ` (${falha})` : ""}` };
+  }
+
+  const perguntadoEm = Date.now();
+  const enviado = await replyToSideConversation({
+    ticketId,
+    sideConversationId: sc.id,
+    htmlBody: htmlDaPergunta(q.reference, v.pergunta),
+    toEmail: email,
+    toName: parceiro?.contact_name || parceiro?.company_name || undefined,
+    toUserId: parceiro?.zendesk_user_id ?? null,
+  });
+  if (!enviado.ok) {
+    // Não marca: a próxima rodada tenta perguntar de novo, e o preço continua segurado.
+    return { tipo: "esperar", linha: `escopo diverge, mas a pergunta ao parceiro falhou (${String(enviado.error ?? enviado.status).slice(0, 120)})` };
+  }
+  // Marca logo depois de perguntar: se a nota falhar, ao menos não pergunta duas vezes.
+  await supabase
+    .from("quotes")
+    .update({ automation_status: marcaDeEspera({ bidId: lance.id, sideConversationId: sc.id, perguntadoEm }), updated_at: new Date().toISOString() })
+    .eq("id", q.id);
+  try {
+    await postarNotaInterna(ticketId, [
+      `🤖 HARVEY — scope check on ${q.reference}: asked the partner before pricing`,
+      "",
+      `The ${libras(lance.valor)} bid from ${nomeDoParceiro} does not match what the customer asked for.`,
+      `Why: ${v.motivo}`,
+      "",
+      `Asked in their side conversation: "${v.pergunta}"`,
+      "",
+      `Nothing goes to the customer. When they answer I carry on: confirmed or revised price becomes the draft; anything else comes back here for a person. No answer in ${PRAZO_RESPOSTA_ESCOPO_HORAS}h also comes back here.`,
+    ].join("\n"));
+    await addTicketTags(ticketId, [TAG_ESCOPO]);
+  } catch {
+    /* a pergunta saiu e a marca está gravada; a nota é só o rastro */
+  }
+  return { tipo: "perguntou", linha: `escopo diverge, perguntei a ${nomeDoParceiro} na side conversation` };
+}
+
+/** A escolha presa a UM lance (o que perguntamos), com o leque inteiro para a nota. */
+function escolhaDoLance(lances: LanceComNotas[], bidId: string, novoValor?: number, novasNotas?: string): Escolha | null {
+  const ajustados = lances.map((l) =>
+    l.id === bidId && novoValor !== undefined ? { ...l, bid_amount: novoValor, notes: novasNotas ?? l.notes } : l,
+  );
+  const so = escolherMelhorLance(ajustados.filter((l) => l.id === bidId), { margem: MARGEM_PADRAO });
+  const todos = escolherMelhorLance(ajustados, { margem: MARGEM_PADRAO });
+  if (!so || !todos) return null;
+  return { ...todos, melhor: so.melhor, precoAoCliente: so.precoAoCliente, margem: so.margem };
+}
+
+type ResultadoDaEspera =
+  | { tipo: "seguir"; escolha: Escolha; resumo: string; aviso: string; linha: string }
+  | { tipo: "esperar" | "pessoa"; linha: string };
+
+/**
+ * Quote esperando o parceiro: lê a side conversation e decide.
+ *
+ *  - confirmou o que o cliente pediu → segue para `quote_ready` com o lance;
+ *  - confirmou com outro valor → grava o valor no lance e segue;
+ *  - recusou, ficou ambíguo, ou calou por 24h → nota para gente, 🔴, sem preço.
+ */
+async function acompanharPerguntaDeEscopo(
+  supabase: SupabaseClient,
+  q: QuoteDaVarredura,
+  espera: EsperaDeEscopo,
+  lances: LanceComNotas[],
+  armado: boolean,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<ResultadoDaEspera> {
+  const ticketId = Number(q.external_ref);
+  const lance = lances.find((l) => l.id === espera.bidId);
+  const original = lance ? escolhaDoLance(lances, espera.bidId) : null;
+  const nomeDoParceiro = lance?.partner_name?.trim() || "partner";
+
+  const paraGente = async (porque: string, extra: string[] = []): Promise<ResultadoDaEspera> => {
+    if (!armado) return { tipo: "pessoa", linha: `[ensaio] escopo voltaria para gente: ${porque}` };
+    const nota = [
+      `🤖 HARVEY — scope check on ${q.reference}: needs a person`,
+      "",
+      porque,
+      ...extra,
+      "",
+      "Not priced and nothing sent to the customer. Read the partner's side conversation and decide.",
+    ].join("\n");
+    const falha = await escopoParaGente(supabase, q, nota, postarNotaInterna);
+    return { tipo: "pessoa", linha: `escopo para gente: ${porque}${falha ? ` (${falha})` : ""}` };
+  };
+
+  if (!lance || !original) return paraGente(`The bid I asked ${nomeDoParceiro} about is gone or no longer valid.`);
+
+  const parceiro = await parceiroDoLance(supabase, lance.partner_id);
+  const email = parceiro?.email?.trim().toLowerCase() ?? "";
+  let eventos: EventoDeSideConversation[] = [];
+  try {
+    const r = await zendeskApi<{ events?: EventoDeSideConversation[] }>(
+      `tickets/${ticketId}/side_conversations/${espera.sideConversationId}/events.json`,
+    );
+    eventos = r.events ?? [];
+  } catch (err) {
+    return { tipo: "esperar", linha: `não consegui ler a side conversation (${String(err).slice(0, 120)}), tento no próximo ciclo` };
+  }
+
+  const resposta = respostaDoParceiro(eventos, espera.perguntadoEm, email);
+  if (!resposta) {
+    const horas = horasDesde(new Date(espera.perguntadoEm).toISOString());
+    if (horas < PRAZO_RESPOSTA_ESCOPO_HORAS) return { tipo: "esperar", linha: `esperando ${nomeDoParceiro} responder o escopo (${Math.round(horas)}h)` };
+    return paraGente(`${nomeDoParceiro} did not answer the scope question in ${PRAZO_RESPOSTA_ESCOPO_HORAS}h.`);
+  }
+
+  // Nossa pergunta é a última mensagem que não é do parceiro, a partir da hora em que perguntamos.
+  const nossa = eventos
+    .filter((e) => e.message && e.created_at && new Date(e.created_at).getTime() >= espera.perguntadoEm - 60_000)
+    .filter((e) => (e.message?.from?.email ?? "").trim().toLowerCase() !== email)
+    .filter((e) => e.created_at! <= resposta.em)
+    .map((e) => e.message?.body ?? "")
+    .pop() ?? "";
+  const lida = await lerRespostaDoParceiro(nossa, resposta.texto);
+  const passo = passoDepoisDaResposta(lida, original.melhor.valor);
+  const citacao = `Partner's reply: "${resposta.texto.slice(0, 600)}"`;
+
+  if (passo === "pessoa") {
+    const porque = !lida
+      ? `I could not read ${nomeDoParceiro}'s reply.`
+      : !lida.confirma
+        ? `${nomeDoParceiro} did not confirm the work the customer asked for.`
+        : `${nomeDoParceiro} gave a price far from their bid (${libras(original.melhor.valor)} → ${libras(lida.novo_valor ?? 0)}).`;
+    return paraGente(porque, ["", citacao]);
+  }
+
+  if (passo === "seguir") {
+    return {
+      tipo: "seguir",
+      escolha: original,
+      resumo: lida!.resumo,
+      aviso: `✅ Scope checked: ${nomeDoParceiro} confirmed in the side conversation that the ${libras(original.melhor.valor)} covers what the customer asked.${lida!.resumo ? ` Agreed scope: ${lida!.resumo}` : ""}`,
+      linha: `${nomeDoParceiro} confirmou o escopo, sigo com ${libras(original.melhor.valor)}`,
+    };
+  }
+
+  // revisar
+  const novo = lida!.novo_valor!;
+  const novasNotas = notasComNovoValor(lance.notes, novo, new Date().toISOString().slice(0, 16).replace("T", " "));
+  const revisada = escolhaDoLance(lances, espera.bidId, novo, novasNotas);
+  if (!revisada) return paraGente(`${nomeDoParceiro}'s revised price could not be applied.`, ["", citacao]);
+  if (!armado) {
+    return { tipo: "esperar", linha: `[ensaio] ${nomeDoParceiro} revisou ${libras(original.melhor.valor)} → ${libras(novo)}` };
+  }
+  const { error } = await supabase.from("quote_bids").update({ bid_amount: novo, notes: novasNotas }).eq("id", espera.bidId);
+  if (error) return { tipo: "esperar", linha: `não consegui gravar o valor revisado (${error.message}), tento no próximo ciclo` };
+  return {
+    tipo: "seguir",
+    escolha: revisada,
+    resumo: lida!.resumo,
+    aviso: `✅ Scope checked: ${nomeDoParceiro} revised the bid in the side conversation from ${libras(original.melhor.valor)} to ${libras(novo)} to do what the customer asked.${lida!.resumo ? ` Agreed scope: ${lida!.resumo}` : ""}`,
+    linha: `${nomeDoParceiro} revisou o lance ${libras(original.melhor.valor)} → ${libras(novo)}, sigo`,
+  };
 }
 
 /**
@@ -235,6 +748,16 @@ export async function varrerLancesParaRascunho(
 export async function rascunhoDaQuote(
   q: { reference: string; title: string | null; scope: string | null },
   escolha: NonNullable<ReturnType<typeof escolherMelhorLance>>,
+  extra?: {
+    /**
+     * O que o parceiro confirmou na side conversation. Quando existe, manda
+     * no lugar da descrição original do lance: era ela que contradizia o
+     * cliente (o "wood filler" da QT-2026-1166).
+     */
+    escopoDoParceiro?: string | null;
+    /** Linhas da checagem de escopo que a pessoa tem de ler antes de enviar. */
+    avisos?: string[];
+  },
 ): Promise<string> {
   /**
    * O corpo do e-mail sai do LANCE, não de um preço nosso: o parceiro separa
@@ -243,7 +766,7 @@ export async function rascunhoDaQuote(
    */
   const paga = lerPayloadDoLance((escolha.melhor as { notes?: string | null }).notes);
   const traducao = await scopeEmInglesUk(
-    { escopoDaQuote: q.scope, labour: paga.labourDescription, materials: paga.materialsDescription },
+    { escopoDaQuote: q.scope, labour: extra?.escopoDoParceiro?.trim() || paga.labourDescription, materials: paga.materialsDescription },
     process.env.OPENAI_API_KEY?.trim(),
   );
   // Sem separação, a mão de obra leva o lance inteiro e material fica zerado.
@@ -254,7 +777,7 @@ export async function rascunhoDaQuote(
     materialsCost: paga.materialsCost,
     margem: escolha.margem,
   });
-  return montarNota(q, escolha, email?.corpo ?? null, traducao.traduzido ? null : (traducao.motivo ?? "não traduzido"));
+  return montarNota(q, escolha, email?.corpo ?? null, traducao.traduzido ? null : (traducao.motivo ?? "não traduzido"), extra?.avisos ?? []);
 }
 
 function montarNota(
@@ -262,6 +785,7 @@ function montarNota(
   e: NonNullable<ReturnType<typeof escolherMelhorLance>>,
   corpoDoEmail: string | null,
   avisoDeTraducao: string | null,
+  avisosDeEscopo: string[] = [],
 ): string {
   const leque = e.ordenados
     .map((l, i) => `  ${i === 0 ? "→" : " "} ${libras(l.valor)}  ${l.partner_name?.trim() || "partner"}`)
@@ -278,6 +802,7 @@ function montarNota(
     "",
     `All bids (${e.ordenados.length}), cheapest first:`,
     leque + descartados,
+    ...(avisosDeEscopo.length ? ["", ...avisosDeEscopo] : []),
     ...(avisoDeTraducao
       ? ["", `⚠️ Scope NOT translated (${avisoDeTraducao}). Read it before sending: it may be in the partner's own language.`]
       : []),

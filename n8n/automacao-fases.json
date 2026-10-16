@@ -1,0 +1,296 @@
+{
+  "name": "Fixfy OS · rotinas da automação (fases 0-5)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "22fc4abe-1ad9-4548-8614-df7f65b7a429",
+      "name": "⏰ Cartão recusado · nova tentativa (de hora em hora)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.getfixfy.com/api/internal/payments/card-retry",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "8ec7a1b5-bbdf-4dba-a344-7deb009aaa16",
+      "name": "→ payments/card-retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · INTERNAL_SYNC_SECRET"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "de187654-a740-477c-b774-a4dc61e9d5e8",
+      "name": "⏰ Fatura vencida · lembrete (todo dia 9h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.getfixfy.com/api/internal/invoices/overdue-reminders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "3424d2bd-16d6-4ce6-8f69-8c35d01c6430",
+      "name": "→ invoices/overdue-reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        180
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · INTERNAL_SYNC_SECRET"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "4922caff-06cf-4721-8ee4-bc175e32157e",
+      "name": "⏰ Retrabalho vencido · volta pra equipe (de hora em hora)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.getfixfy.com/api/internal/jobs/remedial-sweep",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "3de01cdb-dcc6-43db-913c-bbd9f4b70879",
+      "name": "→ jobs/remedial-sweep",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · INTERNAL_SYNC_SECRET"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "73bcd584-2619-4d00-b886-fde0d175c4d4",
+      "name": "⏰ Alertas · e-mail se tiver algo (todo dia 8h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://app.getfixfy.com/api/internal/alerts/automation",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "19f7a7ae-74a2-4d90-93ef-a852c7e4018d",
+      "name": "→ alerts/automation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        540
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · INTERNAL_SYNC_SECRET"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                4
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "c09452d3-1426-4e57-9d35-b376ea99a379",
+      "name": "⏰ Conferência do payday (quinta 9h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://app.getfixfy.com/api/internal/self-bills/payday-check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "e9c94458-4ce2-492f-95de-789f0fdecf3d",
+      "name": "→ self-bills/payday-check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        720
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · INTERNAL_SYNC_SECRET"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "⏰ Cartão recusado · nova tentativa (de hora em hora)": {
+      "main": [
+        [
+          {
+            "node": "→ payments/card-retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Fatura vencida · lembrete (todo dia 9h)": {
+      "main": [
+        [
+          {
+            "node": "→ invoices/overdue-reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Retrabalho vencido · volta pra equipe (de hora em hora)": {
+      "main": [
+        [
+          {
+            "node": "→ jobs/remedial-sweep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Alertas · e-mail se tiver algo (todo dia 8h)": {
+      "main": [
+        [
+          {
+            "node": "→ alerts/automation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏰ Conferência do payday (quinta 9h)": {
+      "main": [
+        [
+          {
+            "node": "→ self-bills/payday-check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "Europe/London",
+    "executionOrder": "v1"
+  },
+  "active": false
+}

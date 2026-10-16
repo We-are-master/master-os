@@ -54,3 +54,6 @@ next-env.d.ts
 # Logs de execução local (escalada, dispatch de vendas).
 .logs/
 scripts/harvey/.seen.json
+.previa-emails/
+.copy-deck/
+scripts/harvey-wa/ultima-bateria.txt

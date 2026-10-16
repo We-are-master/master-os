@@ -32,13 +32,13 @@ export function TimeSelect({ label, value = "", onChange, className, disabled }:
       : BASE_TIME_OPTIONS;
   return (
     <div>
-      {label ? <label className="block text-xs font-medium text-text-secondary mb-1.5">{label}</label> : null}
+      {label ? <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">{label}</label> : null}
       <Select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         options={options}
         disabled={disabled}
-        className={cn("h-9 rounded-lg border-border bg-card text-sm", className)}
+        className={cn("rounded-lg border-border bg-card text-[13px]", className)}
       />
     </div>
   );

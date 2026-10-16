@@ -58,4 +58,21 @@ describe("splitInvoiceTradeAndFee", () => {
     assert.equal(fee, 250);
     assert.equal(trade, 750);
   });
+
+  it("Schedule A (agent model): the whole amount is the professional's price, no Fixfy fee", () => {
+    const job = {
+      client_price: 266,
+      extras_amount: 0,
+      commission: 0,
+      partner_cost: 166,
+      materials_cost: 0,
+      partner_agreed_value: 166,
+    };
+    assert.deepEqual(splitInvoiceTradeAndFee(266, job, { schedule: "A", defaultPlatformFeePct: 30 }), {
+      trade: 266,
+      fee: 0,
+    });
+    // Schedule B continua com a divisão de sempre.
+    assert.deepEqual(splitInvoiceTradeAndFee(266, job, { schedule: "B" }), { trade: 166, fee: 100 });
+  });
 });

@@ -6,6 +6,7 @@ import {
   type PortalInvoiceRow,
 } from "@/lib/server-fetchers/portal-invoices";
 import { formatCurrency } from "@/lib/utils";
+import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 
 export const dynamic = "force-dynamic";
 
@@ -125,7 +126,7 @@ function InvoiceTable({ invoices, showPay }: InvoiceTableProps) {
             </div>
             {showPay && inv.stripe_payment_link_url && (
               <a
-                href={inv.stripe_payment_link_url}
+                href={invoicePayLinkForClient(inv.reference, inv.stripe_payment_link_url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-600 text-white text-xs font-bold hover:bg-orange-700 transition-colors shrink-0"

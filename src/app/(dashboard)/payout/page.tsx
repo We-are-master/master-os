@@ -397,7 +397,7 @@ export default function PayoutPage() {
       <div className="space-y-6 px-1 pb-24 sm:px-0">
         {/* ── 1. Header ─────────────────────────────────────────────────── */}
         <PageHeader
-          title="Payout"
+          title="Payouts"
           subtitle="Operations' weekly payment run — Workforce, Partners & Expenses"
         >
           <Button
@@ -412,7 +412,7 @@ export default function PayoutPage() {
             <Button
               size="sm"
               icon={<Plus className="h-3.5 w-3.5" />}
-              className="bg-[#020040] hover:bg-[#020040]/90 text-white border-[#020040]"
+              className="bg-primary hover:bg-primary/90 text-white border-primary"
             >
               Add expense
             </Button>
@@ -464,11 +464,11 @@ export default function PayoutPage() {
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#A32D2D] text-white">
                 <AlertCircle className="h-4 w-4" aria-hidden />
               </div>
-              <p className="text-sm text-[#A32D2D]">
+              <p className="text-sm text-danger">
                 <span className="font-semibold">
                   {overdueItems.length} item{overdueItems.length === 1 ? "" : "s"} overdue payout
                 </span>
-                <span className="ml-2 font-normal text-[#A32D2D]/80">
+                <span className="ml-2 font-normal text-danger/80">
                   {earliestOverdueWeek ? `from ${earliestOverdueWeek} · ` : ""}
                   <span className="tabular-nums">{formatCurrency(overdueTotal)}</span> still open
                 </span>
@@ -477,7 +477,7 @@ export default function PayoutPage() {
             <Button
               variant="outline"
               size="sm"
-              className="shrink-0 border-[#F5BFBF] bg-card text-[#A32D2D] hover:bg-white"
+              className="shrink-0 border-[#F5BFBF] bg-card text-danger hover:bg-white"
               onClick={() => {
                 setPrimaryTab("approved");
                 setPeriodMode("range");
@@ -548,8 +548,8 @@ export default function PayoutPage() {
                   className={cn(
                     "relative inline-flex items-center gap-1.5 px-3 py-2 text-xs transition-colors",
                     active
-                      ? "font-semibold text-[#ED4B00]"
-                      : "font-medium text-[#6B6B70] hover:text-text-primary",
+                      ? "font-semibold text-text-primary"
+                      : "font-medium text-text-tertiary hover:text-text-primary",
                   )}
                 >
                   {t.label}
@@ -557,16 +557,16 @@ export default function PayoutPage() {
                     className={cn(
                       "inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
                       active
-                        ? "bg-[#FFF1EB] text-[#ED4B00]"
+                        ? "bg-[var(--pick-bg)] text-text-primary"
                         : t.accent && t.count > 0
-                          ? "bg-[#FFF1EB] text-[#ED4B00]"
-                          : "bg-[#F1EFE8] text-[#6B6B70]",
+                          ? "bg-[var(--pick-bg)] text-text-primary"
+                          : "bg-[#F1EFE8] text-text-tertiary",
                     )}
                   >
                     {t.count}
                   </span>
                   {active ? (
-                    <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-[#ED4B00]" aria-hidden />
+                    <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-primary" aria-hidden />
                   ) : null}
                 </button>
               );
@@ -594,7 +594,7 @@ export default function PayoutPage() {
                   className={cn(
                     "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
                     active
-                      ? "bg-[#020040] text-white"
+                      ? "bg-primary text-white"
                       : "text-text-secondary hover:bg-surface-hover",
                   )}
                 >
@@ -645,7 +645,7 @@ export default function PayoutPage() {
               return (
                 <div key={g.key} className={cn(idx > 0 && "border-t border-border-light")}>
                   {/* Category header */}
-                  <div className="flex items-center justify-between gap-3 bg-[#FAFAFB] px-4 py-3 sm:px-5">
+                  <div className="flex items-center justify-between gap-3 bg-surface-secondary px-4 py-3 sm:px-5">
                     <div className="flex items-center gap-3 min-w-0">
                       <input
                         type="checkbox"
@@ -655,7 +655,7 @@ export default function PayoutPage() {
                         aria-label={`Select all ${meta.label}`}
                         className="h-4 w-4"
                       />
-                      <Icon className="h-4 w-4 shrink-0 text-[#020040]" aria-hidden />
+                      <Icon className="h-4 w-4 shrink-0 text-text-primary" aria-hidden />
                       <div className="min-w-0">
                         <div className="flex items-baseline gap-2 flex-wrap">
                           <p className="text-sm font-semibold text-[#1C1917]">{meta.label}</p>
@@ -709,10 +709,10 @@ export default function PayoutPage() {
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Selected</p>
                 <p className="text-sm">
-                  <span className="font-semibold tabular-nums text-[#ED4B00]">{selectedIds.size}</span>
+                  <span className="font-semibold tabular-nums text-text-primary">{selectedIds.size}</span>
                   <span className="ml-1 text-text-primary">item{selectedIds.size === 1 ? "" : "s"}</span>
                   <span className="mx-1.5 text-text-tertiary">·</span>
-                  <span className="font-semibold tabular-nums text-[#ED4B00]">{formatCurrency(selectedTotal)}</span>
+                  <span className="font-semibold tabular-nums text-text-primary">{formatCurrency(selectedTotal)}</span>
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -723,7 +723,7 @@ export default function PayoutPage() {
                   size="sm"
                   icon={<Check className="h-3.5 w-3.5" />}
                   onClick={() => setReviewOpen(true)}
-                  className="bg-[#ED4B00] hover:bg-[#D84300] text-white border-[#ED4B00] hover:border-[#D84300]"
+                  className="bg-primary hover:bg-primary-hover text-white border-text-primary hover:border-text-primary"
                 >
                   Review &amp; pay
                 </Button>
@@ -792,7 +792,7 @@ function WeekChipsRow({
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors",
               isPrimary
-                ? "border-[#020040] bg-[#020040] text-white"
+                ? "border-primary bg-primary text-white"
                 : "border-border-light bg-card text-text-secondary",
             )}
           >
@@ -822,7 +822,7 @@ function WeekChipsRow({
       <button
         type="button"
         onClick={onAddPrevious}
-        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border bg-card px-2.5 py-1 text-xs font-semibold text-text-secondary transition-colors hover:border-[#020040]/40 hover:text-[#020040]"
+        className="inline-flex items-center gap-1 rounded-lg border border-dashed border-border bg-card px-2.5 py-1 text-xs font-semibold text-text-secondary transition-colors hover:border-primary/40 hover:text-text-primary"
         title="Include the week before the earliest selected week"
       >
         <Plus className="h-3 w-3" />
@@ -871,7 +871,7 @@ function KpiTile({
           <p
             className={cn(
               "text-[10px] font-semibold uppercase tracking-wide",
-              isAccent ? "text-[#B25418]" : "text-text-tertiary",
+              isAccent ? "text-text-primary" : "text-text-tertiary",
             )}
           >
             {label}
@@ -879,11 +879,11 @@ function KpiTile({
           <p
             className={cn(
               "mt-1 tabular-nums leading-tight",
-              isAccent ? "text-[#ED4B00]" : "text-[#1C1917]",
+              isAccent ? "text-text-primary" : "text-[#1C1917]",
             )}
           >
             <span className="text-[26px] font-bold">{whole}</span>
-            <span className={cn("text-[16px] font-bold", isAccent ? "text-[#ED4B00]/70" : "text-text-tertiary")}>
+            <span className={cn("text-[16px] font-bold", isAccent ? "text-text-primary/70" : "text-text-tertiary")}>
               {decimals}
             </span>
           </p>
@@ -896,7 +896,7 @@ function KpiTile({
         <div
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl",
-            isAccent ? "bg-[#ED4B00]/15 text-[#ED4B00]" : "bg-[#020040]/8 text-[#020040]",
+            isAccent ? "bg-[var(--pick-bg)] text-text-primary" : "bg-primary/8 text-text-primary",
           )}
         >
           <Icon className="h-4 w-4" aria-hidden />
@@ -950,7 +950,7 @@ function PayoutRow({
         <Avatar
           name={row.avatarName}
           size="xs"
-          className="bg-[#020040] text-white ring-2 ring-transparent hover:ring-[#020040]/20 transition-shadow"
+          className="bg-primary text-white ring-2 ring-transparent hover:ring-text-primary/20 transition-shadow"
         />
       </Link>
 
@@ -959,7 +959,7 @@ function PayoutRow({
           href={row.linkHref}
           target="_blank"
           rel="noopener"
-          className="block truncate text-sm font-semibold text-[#1C1917] hover:text-[#ED4B00] hover:underline"
+          className="block truncate text-sm font-semibold text-[#1C1917] hover:text-text-primary hover:underline"
           title={row.name}
         >
           {row.name}
@@ -972,7 +972,7 @@ function PayoutRow({
           href={row.linkHref}
           target="_blank"
           rel="noopener"
-          className="truncate font-mono text-[11px] text-[#1C1917] hover:text-[#ED4B00] hover:underline"
+          className="truncate font-mono text-[11px] text-[#1C1917] hover:text-text-primary hover:underline"
           title={row.reference}
         >
           {row.reference}
@@ -999,7 +999,7 @@ function PayoutRow({
           <button
             type="button"
             onClick={onMarkPaid}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-[#0F6E56]/30 bg-[#EFF7F3] px-2 text-[11px] font-semibold text-[#0F6E56] transition-colors hover:bg-[#DBEEE5]"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-[#0F6E56]/30 bg-success-light px-2 text-[11px] font-semibold text-success transition-colors hover:bg-[#DBEEE5]"
             title="Mark paid"
           >
             <Check className="h-3 w-3" strokeWidth={2.5} />
@@ -1035,19 +1035,19 @@ function PayoutRow({
 function StatusChip({ status }: { status: PayoutStatus }) {
   if (status === "paid")
     return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-[#EFF7F3] px-2 py-0.5 text-[11px] font-semibold text-[#0F6E56]">
+      <span className="inline-flex items-center gap-1 rounded-md bg-success-light px-2 py-0.5 text-[11px] font-semibold text-success">
         <Check className="h-3 w-3" strokeWidth={3} /> Paid
       </span>
     );
   if (status === "draft")
     return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-[#F1EFE8] px-2 py-0.5 text-[11px] font-semibold text-[#6B6B70]">
+      <span className="inline-flex items-center gap-1 rounded-md bg-[#F1EFE8] px-2 py-0.5 text-[11px] font-semibold text-text-tertiary">
         Draft
       </span>
     );
   if (status === "cancelled")
     return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-[#FEF5F3] px-2 py-0.5 text-[11px] font-semibold text-[#A32D2D]">
+      <span className="inline-flex items-center gap-1 rounded-md bg-[#FEF5F3] px-2 py-0.5 text-[11px] font-semibold text-danger">
         Cancelled
       </span>
     );

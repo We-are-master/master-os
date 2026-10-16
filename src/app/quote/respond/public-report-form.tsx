@@ -1,7 +1,8 @@
 "use client";
 
-import { FileText, Upload } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { FileText, Loader2, RotateCcw, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getSupabase } from "@/services/base";
 import {
   fieldsForTemplate,
   isFieldVisible,
@@ -35,7 +36,7 @@ interface PublicReportFormProps {
 }
 
 function fieldInputClass(): string {
-  return "w-full rounded-lg border px-3 py-2.5 text-[14px] text-[#0A0A1F] placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/25 focus:border-[#ED4B00]";
+  return "w-full rounded-lg border px-3 py-2.5 text-[14px] text-text-primary placeholder:text-[#9A9AAE] focus:outline-none focus:ring-2 focus:ring-text-primary/20 focus:border-text-primary";
 }
 
 export default function PublicReportForm({
@@ -65,26 +66,125 @@ export default function PublicReportForm({
    * MB, e a aba trava com o relatório meio escrito. Foi assim que se perdeu um
    * relatório inteiro em 14/08/2026, do lado do escritório.
    */
+  /**
+   * Cada foto sobe NA HORA em que é escolhida (15/10/2026): pede um endereço assinado
+   * e vai direto para o armazenamento. O envio final leva só o texto e os endereços,
+   * então não existe mais "o pacote ficou grande demais", e o que já subiu não se
+   * perde se a internet cair.
+   */
+  type EstadoFoto = { status: "subindo" | "ok" | "erro"; url?: string; erro?: string; restaurada?: boolean };
+  const [estado, setEstado] = useState<Map<File, EstadoFoto>>(() => new Map());
+  const marcar = useCallback((f: File, e: EstadoFoto) => setEstado((m) => new Map(m).set(f, e)), []);
+
   const previews = useMemo(() => {
     const m = new Map<File, string>();
     for (const lista of Object.values(photos)) {
       for (const f of lista) {
-        if (!isPdfFile(f) && !m.has(f)) m.set(f, URL.createObjectURL(f));
+        if (m.has(f) || isPdfFile(f)) continue;
+        const e = estado.get(f);
+        m.set(f, e?.restaurada && e.url ? e.url : URL.createObjectURL(f));
       }
     }
     return m;
-  }, [photos]);
+  }, [photos, estado]);
 
   useEffect(() => {
     return () => {
-      for (const url of previews.values()) URL.revokeObjectURL(url);
+      for (const url of previews.values()) if (url.startsWith("blob:")) URL.revokeObjectURL(url);
     };
   }, [previews]);
+
+  /** Até 3 subindo ao mesmo tempo: celular no 4G não aguenta 20 de uma vez. */
+  const fila = useRef<{ ativos: number; espera: Array<() => void> }>({ ativos: 0, espera: [] });
+  const naVez = useCallback(async <T,>(fn: () => Promise<T>): Promise<T> => {
+    if (fila.current.ativos >= 3) await new Promise<void>((r) => fila.current.espera.push(r));
+    fila.current.ativos += 1;
+    try {
+      return await fn();
+    } finally {
+      fila.current.ativos -= 1;
+      fila.current.espera.shift()?.();
+    }
+  }, []);
+
+  const subir = useCallback(
+    async (chave: string, f: File, i: number) => {
+      marcar(f, { status: "subindo" });
+      try {
+        await naVez(async () => {
+          const pronto = await prepareUploadFile(f, chave, i);
+          const r = await fetch("/api/quotes/report-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token, slot: chave, pdf: isPdfFile(f) }),
+          });
+          const j = (await r.json().catch(() => ({}))) as { error?: string; path?: string; uploadToken?: string; publicUrl?: string };
+          if (!r.ok || !j.path || !j.uploadToken) throw new Error(j.error || `Error ${r.status}`);
+          const { error: upErr } = await getSupabase()
+            .storage.from("job-reports")
+            .uploadToSignedUrl(j.path, j.uploadToken, pronto, { contentType: pronto.type || (isPdfFile(f) ? "application/pdf" : "image/jpeg") });
+          if (upErr) throw new Error(upErr.message);
+          marcar(f, { status: "ok", url: j.publicUrl });
+        });
+      } catch (err) {
+        marcar(f, { status: "erro", erro: err instanceof Error ? err.message : "Upload failed" });
+      }
+    },
+    [marcar, naVez, token],
+  );
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Rascunho no celular (15/10/2026): o que foi digitado e as fotos que já subiram
+   * voltam se a página fechar ou o celular travar. Chave pelo job; some no envio.
+   */
+  const chaveRascunho = `fixfy-report-draft:${jobReference}`;
+  const restaurou = useRef(false);
+  useEffect(() => {
+    if (restaurou.current) return;
+    restaurou.current = true;
+    try {
+      const bruto = localStorage.getItem(chaveRascunho);
+      if (!bruto) return;
+      const r = JSON.parse(bruto) as { data?: Record<string, unknown>; hours?: string; minutes?: string; fotos?: Record<string, string[]> };
+      if (r.data) setData(r.data);
+      if (r.hours) setHours(r.hours);
+      if (r.minutes) setMinutes(r.minutes);
+      if (r.fotos) {
+        const novas: Record<string, File[]> = {};
+        const est = new Map<File, EstadoFoto>();
+        for (const [chave, urls] of Object.entries(r.fotos)) {
+          novas[chave] = urls.map((url) => {
+            const f = new File([], url.toLowerCase().endsWith(".pdf") ? "file.pdf" : "photo.jpg", { type: url.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg" });
+            est.set(f, { status: "ok", url, restaurada: true });
+            return f;
+          });
+        }
+        setPhotos(novas);
+        setEstado(est);
+      }
+    } catch {
+      /* sem storage ou rascunho velho: começa do zero */
+    }
+  }, [chaveRascunho]);
+
+  useEffect(() => {
+    if (!restaurou.current) return;
+    const fotos: Record<string, string[]> = {};
+    for (const [chave, lista] of Object.entries(photos)) {
+      const urls = lista.map((f) => estado.get(f)?.url).filter((u): u is string => Boolean(u));
+      if (urls.length) fotos[chave] = urls;
+    }
+    try {
+      localStorage.setItem(chaveRascunho, JSON.stringify({ data, hours, minutes, fotos }));
+    } catch {
+      /* sem storage: segue sem rascunho */
+    }
+  }, [chaveRascunho, data, hours, minutes, photos, estado]);
 
   const setField = (key: string, value: unknown) =>
     setData((prev) => ({ ...prev, [key]: value }));
@@ -103,16 +203,17 @@ export default function PublicReportForm({
     const novos = Array.from(files);
     // A chave chega como "start:kitchen"; o teto é do cômodo, não da metade.
     const teto = tetoDoSlot.get(slot.includes(":") ? slot.slice(slot.indexOf(":") + 1) : slot);
-    setPhotos((prev) => {
-      const atuais = prev[slot] ?? [];
-      // O teto bloqueia NA ENTRADA: aceitar tudo e cortar no envio é como o
-      // excedente sumia em silêncio. Aqui o parceiro escolhe quais ficam.
-      const vaga = teto ? Math.max(0, teto - atuais.length) : novos.length;
-      if (novos.length > vaga) {
-        setError(`Maximum ${teto} photos in this block — pick the ones that show the work best.`);
-      }
-      return { ...prev, [slot]: [...atuais, ...novos.slice(0, vaga)] };
-    });
+    // O upload sai FORA do setState: dentro do updater o React pode rodar duas vezes.
+    const atuais = photos[slot] ?? [];
+    // O teto bloqueia NA ENTRADA: aceitar tudo e cortar no envio é como o
+    // excedente sumia em silêncio. Aqui o parceiro escolhe quais ficam.
+    const vaga = teto ? Math.max(0, teto - atuais.length) : novos.length;
+    if (novos.length > vaga) {
+      setError(`Maximum ${teto} photos in this block. Pick the ones that show the work best.`);
+    }
+    const aceitos = novos.slice(0, vaga);
+    setPhotos((prev) => ({ ...prev, [slot]: [...(prev[slot] ?? []), ...aceitos] }));
+    aceitos.forEach((f, k) => void subir(slot, f, atuais.length + k));
   };
 
   const removePhoto = (slot: string, idx: number) => {
@@ -226,22 +327,51 @@ export default function PublicReportForm({
     }
   };
 
+  /** O que está acontecendo com a foto: subindo, pronta ou falhou (com "tentar de novo"). */
+  const selo = (slot: string, f: File, i: number) => {
+    const e = estado.get(f);
+    if (!e || e.status === "ok") {
+      return e?.status === "ok" ? (
+        <span className="absolute bottom-1 left-1 rounded-full bg-[#0E8A5F] px-1.5 text-[9px] font-semibold text-white">✓</span>
+      ) : null;
+    }
+    if (e.status === "subindo") {
+      return (
+        <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/60">
+          <Loader2 className="h-5 w-5 animate-spin" style={{ color: FIXFY_NAVY }} />
+        </span>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => void subir(slot, f, i)}
+        title={e.erro}
+        className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 rounded-lg bg-[#C8102E]/75 text-[10px] font-semibold text-white"
+      >
+        <RotateCcw className="h-4 w-4" />
+        Try again
+      </button>
+    );
+  };
+
   const renderPhotoThumb = (slot: string, f: File, i: number) => {
     if (isPdfFile(f)) {
       return (
         <div
           key={`${slot}-${i}`}
-          className="relative flex h-20 flex-col items-center justify-center rounded-lg border bg-[#F7F7FB] p-2"
+          className="relative flex h-20 flex-col items-center justify-center rounded-lg border bg-surface-secondary p-2"
           style={{ borderColor: FIXFY_BORDER }}
         >
           <FileText className="h-6 w-6" style={{ color: FIXFY_NAVY }} />
           <p className="mt-1 max-w-full truncate text-[10px] font-medium" style={{ color: FIXFY_MUTED }}>
             {f.name}
           </p>
+          {selo(slot, f, i)}
           <button
             type="button"
             onClick={() => removePhoto(slot, i)}
-            className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white"
+            className="absolute right-1 top-1 z-[1] flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white"
             aria-label="Remove file"
           >
             ×
@@ -258,10 +388,11 @@ export default function PublicReportForm({
           className="h-20 w-full rounded-lg border object-cover"
           style={{ borderColor: FIXFY_BORDER }}
         />
+        {selo(slot, f, i)}
         <button
           type="button"
           onClick={() => removePhoto(slot, i)}
-          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white"
+          className="absolute right-1 top-1 z-[1] flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[11px] text-white"
           aria-label="Remove photo"
         >
           ×
@@ -299,7 +430,7 @@ export default function PublicReportForm({
             ) : null}
           </div>
           <label
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors hover:border-[#ED4B00]/50 hover:bg-[#FFF7F3]"
+            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors hover:border-text-primary hover:bg-[#FFF7F3]"
             style={{ borderColor: "#F5CFB8", background: "#FFFBF8" }}
           >
             <div
@@ -405,6 +536,15 @@ export default function PublicReportForm({
    * só libera quando o envio vai passar, e a lista diz o que falta enquanto o
    * parceiro ainda está no imóvel com a câmera na mão.
    */
+  /** Fotos que contam: subindo ou prontas. A que falhou só conta depois do "tentar de novo". */
+  const fotosValidas = useMemo(() => {
+    const out: Record<string, File[]> = {};
+    for (const [chave, lista] of Object.entries(photos)) out[chave] = lista.filter((f) => estado.get(f)?.status !== "erro");
+    return out;
+  }, [photos, estado]);
+  const subindo = useMemo(() => Object.values(photos).flat().filter((f) => estado.get(f)?.status === "subindo").length, [photos, estado]);
+  const comErro = useMemo(() => Object.values(photos).flat().filter((f) => estado.get(f)?.status === "erro").length, [photos, estado]);
+
   const veredito = useMemo(() => {
     const { startFields, finalFields } = splitReportFields(spec, data);
     return validarSubmissaoDeReport({
@@ -415,13 +555,13 @@ export default function PublicReportForm({
       // Cliente recusou foto: a plataforma some com os campos e a exigência
       // some junto. Sem isto o parceiro dizia a verdade e ficava preso.
       photosRefused: photosRefused(data),
-      startPhotos: plannedPhotoShape(template, "start", photos, null),
-      finalPhotos: plannedPhotoShape(template, "final", photos, null),
+      startPhotos: plannedPhotoShape(template, "start", fotosValidas, null),
+      finalPhotos: plannedPhotoShape(template, "final", fotosValidas, null),
       // Presença basta: o item de horários não bloqueia a submissão.
       timerStartedAt: Number(hours) || Number(minutes) ? "typed" : null,
       timerEndedAt: Number(hours) || Number(minutes) ? "typed" : null,
     });
-  }, [spec, data, template, photos, hours, minutes]);
+  }, [spec, data, template, fotosValidas, hours, minutes]);
 
   const submit = async () => {
     setError(null);
@@ -444,28 +584,26 @@ export default function PublicReportForm({
     form.set("startData", JSON.stringify(startFields));
     form.set("finalData", JSON.stringify(finalFields));
 
+    if (subindo > 0) {
+      setError(`${subindo} photo(s) are still uploading. Wait for the ticks and press Submit again.`);
+      return;
+    }
+    if (comErro > 0) {
+      setError(`${comErro} photo(s) did not upload. Tap "Try again" on them, or remove them, then submit.`);
+      return;
+    }
+    // As fotos já estão no armazenamento: o envio leva só os endereços (15/10/2026).
+    const enviadas: Record<string, string[]> = {};
+    for (const [chave, lista] of Object.entries(photos)) {
+      const urls = lista.map((f) => estado.get(f)?.url).filter((u): u is string => Boolean(u));
+      if (urls.length) enviadas[chave] = urls;
+    }
+    form.set("uploaded", JSON.stringify(enviadas));
+    const fotos = Object.values(enviadas).reduce((n, l) => n + l.length, 0);
+    const mb = "0";
     setSubmitting(true);
-    setProgress("Processing files…");
+    setProgress("Sending the report…");
     try {
-      for (const [slot, slotFiles] of Object.entries(photos)) {
-        for (let i = 0; i < slotFiles.length; i++) {
-          const prepared = await prepareUploadFile(slotFiles[i], slot, i);
-          form.append(`photos[${slot}][]`, prepared);
-        }
-      }
-      /**
-       * O tamanho do envio, medido antes de mandar.
-       *
-       * Um relatório de limpeza são 60 fotos, e é ele que estoura limite de
-       * corpo em proxy. Saber o número ANTES transforma "não deu" em "são
-       * 47MB", que é uma frase sobre a qual alguém consegue agir.
-       */
-      let bytes = 0;
-      for (const [, v] of form.entries()) if (v instanceof File) bytes += v.size;
-      const mb = (bytes / 1024 / 1024).toFixed(1);
-      const fotos = Object.values(photos).reduce((n, l) => n + l.length, 0);
-
-      setProgress(`Uploading ${fotos} photo(s), ${mb}MB…`);
       const res = await fetch("/api/quotes/submit-report", { method: "POST", body: form });
       const body = (await res.json().catch(() => null)) as
         | { error?: string; pendencias?: string[] }
@@ -498,6 +636,17 @@ export default function PublicReportForm({
                 : `The report was refused (error ${res.status}) and the server gave no reason. Send this screen to the office.`,
         );
         return;
+      }
+      try {
+        localStorage.removeItem(chaveRascunho);
+      } catch {
+        /* nada */
+      }
+      // Dentro do portal: avisa a página de fora para atualizar o job (15/10/2026).
+      try {
+        if (window.parent !== window) window.parent.postMessage({ type: "fixfy-report-submitted", jobReference }, "*");
+      } catch {
+        /* sem portal em volta */
       }
       onSubmitted();
     } catch (err) {

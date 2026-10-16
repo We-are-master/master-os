@@ -18,7 +18,7 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   scheduled: "Scheduled",
   late: "Late",
   in_progress: "In progress",
-  final_check: "Final check",
+  final_check: "Final review",
   awaiting_payment: "Awaiting payment",
   need_attention: "Need attention",
   completed: "Completed",

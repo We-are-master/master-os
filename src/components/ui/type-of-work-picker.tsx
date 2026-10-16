@@ -201,7 +201,7 @@ export function TypeOfWorkPicker(props: TypeOfWorkPickerProps) {
                         "w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors inline-flex items-center gap-1.5",
                         active
                           ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
-                          : "bg-[#fafaf8] border-[#e0ddd8] text-[#555] hover:bg-surface-hover",
+                          : "bg-surface-secondary border-border text-text-secondary hover:bg-surface-hover",
                       )}
                     >
                       <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -231,7 +231,7 @@ export function TypeOfWorkPicker(props: TypeOfWorkPickerProps) {
                         "w-full rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors inline-flex items-center gap-1.5",
                         active
                           ? "bg-[#1a1a1a] text-white border-[#1a1a1a]"
-                          : "bg-[#fafaf8] border-[#e0ddd8] text-[#555] hover:bg-surface-hover",
+                          : "bg-surface-secondary border-border text-text-secondary hover:bg-surface-hover",
                       )}
                     >
                       <Icon className="h-3.5 w-3.5 shrink-0" />

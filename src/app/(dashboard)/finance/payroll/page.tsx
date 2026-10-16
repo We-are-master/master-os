@@ -534,9 +534,9 @@ export default function PayrollPage() {
   };
 
   const sectionTabs = [
-    { id: "internal", label: "Payroll staff", count: internalCosts.length },
-    { id: "recurring", label: "Recurring bills", count: scopedRecurring.length },
-    { id: "commission", label: "Run Commission", count: filteredCommissionRuns.length },
+    { id: "internal", label: "Staff costs", hint: "Review staff salaries, service fees and internal costs.", count: internalCosts.length },
+    { id: "recurring", label: "Recurring expenses", hint: "Review recurring expenses in the selected period.", count: scopedRecurring.length },
+    { id: "commission", label: "Commissions", hint: "Review commission payment runs.", count: filteredCommissionRuns.length },
   ];
 
   const patchInternalLifecycle = useCallback(
@@ -797,8 +797,8 @@ export default function PayrollPage() {
     <PageTransition>
       <div className="space-y-5">
         <PageHeader
-          title="Payroll & costs"
-          subtitle="Pay-run model: Employed vs Self-employed, stages (onboarding → active → needs attention → offboard). Approve once to make recurring until offboard. Only Active + due in week appear in Pay Run. Period: All · Monthly · Week · Date range (default: current month). Recurring bills and commission runs below."
+          title="Payroll"
+          subtitle="Manage staff costs, recurring expenses and commissions. Approved active costs recur until offboarding and appear in payment runs when due."
         >
           <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />}>Export CSV</Button>
           {section === "internal" && (
@@ -1118,7 +1118,7 @@ export default function PayrollPage() {
           saving={saving}
         />
 
-        <Modal open={runCommissionOpen} onClose={() => { setRunCommissionOpen(false); setRunCommissionDraft(null); }} title="Run Commission" subtitle="Select period. Paid invoices in period determine tier; pool is split by role." size="lg">
+        <Modal open={runCommissionOpen} onClose={() => { setRunCommissionOpen(false); setRunCommissionDraft(null); }} title="Commissions" subtitle="Select period. Paid invoices in period determine tier; pool is split by role." size="lg">
           <div className="p-6 space-y-4">
             {!runCommissionDraft ? (
               <>

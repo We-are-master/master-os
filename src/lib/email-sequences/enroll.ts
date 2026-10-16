@@ -18,6 +18,15 @@ export type EnrollInput = {
   email: string;
   name?: string;
   context?: SequenceContext;
+  /** Cliente no OS, quando houver. Serve para a varredura e para o card. */
+  clientId?: string | null;
+  /**
+   * Quando o PRIMEIRO envio deve sair, ignorando o offset do passo.
+   *
+   * Existe por causa do clube: a regra é "duas semanas depois da compra", e
+   * quem comprou há três meses tem que receber logo, não daqui a duas semanas.
+   */
+  firstSendAt?: Date | string | null;
 };
 
 export type EnrollResult =
@@ -51,7 +60,13 @@ export async function enrollInSequence(input: EnrollInput): Promise<EnrollResult
   }
 
   const firstDelayMs = seq.steps[0].offsetHours * HOUR_MS;
-  const nextSendAt = new Date(Date.now() + firstDelayMs).toISOString();
+  const padrao = new Date(Date.now() + firstDelayMs);
+  const pedido = input.firstSendAt ? new Date(input.firstSendAt) : null;
+  // Nunca no passado: data velha faria o motor disparar tudo de uma vez.
+  const nextSendAt = (pedido && !Number.isNaN(pedido.getTime())
+    ? new Date(Math.max(pedido.getTime(), Date.now()))
+    : padrao
+  ).toISOString();
 
   const { data, error } = await admin
     .from("email_sequence_enrollments")
@@ -59,6 +74,7 @@ export async function enrollInSequence(input: EnrollInput): Promise<EnrollResult
       sequence_key: seq.key,
       contact_email: email,
       contact_name: input.name?.trim() || null,
+      client_id: input.clientId ?? null,
       context: input.context ?? {},
       current_step: 0,
       status: "active",
@@ -114,4 +130,42 @@ export async function stopAllSequences(email: string): Promise<number> {
     .eq("status", "active")
     .select("id");
   return data?.length ?? 0;
+}
+
+/**
+ * As sequências em que este e-mail está ativo agora.
+ *
+ * A varredura pergunta isto antes de inscrever: sem ele, alguém que já está no
+ * clube entraria também no nurture na volta seguinte e receberia os dois.
+ */
+export async function sequenciasAtivas(emails: string[]): Promise<Map<string, Set<string>>> {
+  const limpos = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const mapa = new Map<string, Set<string>>();
+  if (limpos.length === 0) return mapa;
+
+  const admin = createServiceClient();
+  /**
+   * Puxa TODAS as inscrições ativas e cruza na memória.
+   *
+   * Mesmo motivo da lista de bloqueio: mandar mil e-mails num `in(...)` estoura
+   * o tamanho da URL do PostgREST, e as inscrições ativas são poucas milhares
+   * mesmo com a base inteira dentro do funil.
+   */
+  const PAGINA = 1000;
+  for (let inicio = 0; ; inicio += PAGINA) {
+    const { data, error } = await admin
+      .from("email_sequence_enrollments")
+      .select("sequence_key, contact_email")
+      .eq("status", "active")
+      .range(inicio, inicio + PAGINA - 1);
+    if (error) throw new Error(`sequenciasAtivas: ${error.message}`);
+    const pagina = data ?? [];
+    for (const r of pagina) {
+      const e = String(r.contact_email).toLowerCase();
+      if (!mapa.has(e)) mapa.set(e, new Set());
+      mapa.get(e)!.add(String(r.sequence_key));
+    }
+    if (pagina.length < PAGINA) break;
+  }
+  return mapa;
 }

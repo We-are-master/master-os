@@ -1,5 +1,6 @@
 "use client";
 
+import { limparCopias } from "@/lib/invoice-account-cc";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, Suspense } from "react";
 import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
@@ -22,6 +23,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { motion, AnimatePresence } from "framer-motion";
 import { fadeInUp } from "@/lib/motion";
 import {
+  FileText,
   Plus, Building, DollarSign, Briefcase, TrendingUp, Calendar, BarChart3,
   Receipt, Users, Loader2, Save, ExternalLink, Upload, Trash2,   Archive,
   Minus, ArrowRight, Share2,
@@ -37,6 +39,7 @@ import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { toast } from "sonner";
 import type { Account, AccountLegacyYearlyStat, CatalogService, Client, Job, Invoice } from "@/types/database";
 import { listAccountLegacyYearlyStats, fetchLegacyRevenueTotalsByAccount } from "@/services/account-legacy-stats";
+import { AccountAutomations } from "@/components/accounts/account-automations";
 import { AccountOverviewGlance } from "@/components/accounts/account-overview-glance";
 import { AccountHistorySection } from "@/components/accounts/account-history-section";
 import {
@@ -78,8 +81,8 @@ import { useAdminConfig } from "@/hooks/use-admin-config";
 
 const INDUSTRY_OPTIONS = [
   { value: "General", label: "General" },
-  { value: "Real Estate", label: "Real Estate" },
-  { value: "Financial Services", label: "Financial Services" },
+  { value: "Real Estate", label: "Real estate" },
+  { value: "Financial Services", label: "Financial services" },
   { value: "Technology", label: "Technology" },
   { value: "Hospitality", label: "Hospitality" },
   { value: "Manufacturing", label: "Manufacturing" },
@@ -96,7 +99,7 @@ const PAYMENT_TERMS_OPTIONS = [
   { value: "Every 7 days",            label: "Every 7 days" },
   { value: "Every 15 days",           label: "Every 15 days" },
   { value: "Every 30 days",           label: "Every 30 days" },
-  { value: "Every Friday",            label: "Every Friday" },
+  { value: "Every Friday",            label: "Every friday" },
   { value: "Every 2 weeks on Friday", label: "Every 2 weeks on Friday" },
 ];
 
@@ -780,7 +783,7 @@ export default function AccountsPage() {
         {kpisVisible ? (
         <StaggerContainer className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <KpiCard
-            title="Total Accounts"
+            title="Total accounts"
             value={totalAccounts}
             format="number"
             description={`${activeAccountCount} active · ${inactiveAccountCount} inactive`}
@@ -788,16 +791,16 @@ export default function AccountsPage() {
             accent="blue"
           />
           <KpiCard
-            title="Total Revenue"
+            title="Total revenue"
             value={combinedTotalRevenue}
             format="currency"
             description="All-time across accounts"
             icon={DollarSign}
             accent="emerald"
           />
-          <KpiCard title="Active Jobs" value={totalJobs} format="number" description="Open jobs in pipeline" icon={Briefcase} accent="primary" />
+          <KpiCard title="Active jobs" value={totalJobs} format="number" description="Open jobs in pipeline" icon={Briefcase} accent="primary" />
           <KpiCard
-            title="Avg Deal Size"
+            title="Avg deal size"
             value={avgDeal}
             format="currency"
             description="Revenue per account"
@@ -873,13 +876,8 @@ export default function AccountsPage() {
             }
           />
           {sortedListData.length > 0 ? (
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-3 border-t border-border-light bg-surface/30 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              <span>
-                Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
-              </span>
-              <span className="tabular-nums">
-                Total revenue {formatCurrency(combinedTotalRevenue)} · Active jobs {totalJobs}
-              </span>
+            <div className="border-t border-border-light px-4 py-2.5 text-[12px] text-text-tertiary sm:px-5">
+              Showing {(listPage - 1) * ACCOUNTS_LIST_PAGE_SIZE + 1}–{Math.min(listPage * ACCOUNTS_LIST_PAGE_SIZE, sortedListData.length)} of {sortedListData.length} accounts
             </div>
           ) : null}
         </motion.div>
@@ -925,7 +923,7 @@ export default function AccountsPage() {
 
       <CatalogShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Account" subtitle="Add a new corporate client account.">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New account" subtitle="Add a new corporate client account.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -933,7 +931,7 @@ export default function AccountsPage() {
               <Input
                 value={form.company_name}
                 onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
-                placeholder="Acme Corp"
+                placeholder="Acme corp"
               />
             </div>
             <div>
@@ -941,7 +939,7 @@ export default function AccountsPage() {
               <Input
                 value={form.contact_name}
                 onChange={(e) => setForm((f) => ({ ...f, contact_name: e.target.value }))}
-                placeholder="Jane Doe"
+                placeholder="Jane doe"
               />
             </div>
           </div>
@@ -1124,7 +1122,12 @@ function AccountDetailDrawer({
   const contractFileRef = useRef<HTMLInputElement>(null);
   const [billingType, setBillingType] = useState<"end_client" | "account">("end_client");
   const [emailIncludeInvoiceOnFinal, setEmailIncludeInvoiceOnFinal] = useState(true);
+  const [collectionMode, setCollectionMode] = useState<"invoice" | "card_upfront">("invoice");
   const [emailIncludeReportOnFinal, setEmailIncludeReportOnFinal] = useState(true);
+  // Fatura desta conta (migrations 323 e 324): razão social, VAT só na taxa e quem recebe cópia.
+  const [billingLegalName, setBillingLegalName] = useState("");
+  const [invoiceFeeVat, setInvoiceFeeVat] = useState(false);
+  const [invoiceCcEmails, setInvoiceCcEmails] = useState("");
   const [termsModalOpen, setTermsModalOpen] = useState(false);
   const [edit, setEdit] = useState({
     company_name: "",
@@ -1144,12 +1147,22 @@ function AccountDetailDrawer({
     default_client_cancel_fee_gbp: "",
   });
 
+  /** Interruptor de Automations salvou: a conta muda, mas o formulário não pode ser zerado. */
+  const skipFormResetRef = useRef(false);
   useEffect(() => {
     if (!account) return;
+    if (skipFormResetRef.current) {
+      skipFormResetRef.current = false;
+      return;
+    }
     setBillingType(((account as unknown as Record<string, unknown>).billing_type as "end_client" | "account") ?? "end_client");
     const a = account as unknown as Record<string, unknown>;
     setEmailIncludeInvoiceOnFinal(a.email_include_invoice_on_final !== false);
+    setCollectionMode(a.collection_mode === "card_upfront" ? "card_upfront" : "invoice");
     setEmailIncludeReportOnFinal(a.email_include_report_on_final !== false);
+    setBillingLegalName(typeof a.billing_legal_name === "string" ? a.billing_legal_name : "");
+    setInvoiceFeeVat(a.invoice_fee_vat === true);
+    setInvoiceCcEmails(Array.isArray(a.invoice_cc_emails) ? (a.invoice_cc_emails as string[]).join(", ") : "");
     setEdit({
       company_name: account.company_name,
       contact_name: account.contact_name,
@@ -1391,8 +1404,12 @@ function AccountDetailDrawer({
         logo_url: edit.logo_url.trim() || null,
         contract_url: edit.contract_url.trim() || null,
         billing_type: billingType,
+        collection_mode: collectionMode,
         email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
         email_include_report_on_final: emailIncludeReportOnFinal,
+        billing_legal_name: billingLegalName.trim() || null,
+        invoice_fee_vat: invoiceFeeVat,
+        invoice_cc_emails: limparCopias(invoiceCcEmails.split(/[,;\s]+/)),
         default_client_cancel_fee_gbp:
           Number(edit.default_client_cancel_fee_gbp) > 0
             ? Math.round(Number(edit.default_client_cancel_fee_gbp) * 100) / 100
@@ -1437,7 +1454,7 @@ function AccountDetailDrawer({
           <p className="text-xs text-text-tertiary">No services selected — choose them in Trades &amp; Skills.</p>
         )
       }
-      width="w-[min(580px,calc(100vw-1rem))]"
+      width="w-[min(760px,calc(100vw-1rem))]"
       footer={
         isAdmin && (tab === "overview" || tab === "finance") ? (
           <DrawerFooter
@@ -1476,10 +1493,10 @@ function AccountDetailDrawer({
             // Four tabs. Services, Rates and Portal moved into Overview as
             // sections: across the ten active accounts they were filled on 7, 2
             // and 1 respectively, so as tabs they were mostly a dead click.
-            { id: "overview", label: "Overview" },
-            { id: "clients", label: "Clients", count: clientsTotal || undefined },
-            { id: "jobs", label: "Jobs", count: jobs.length || undefined },
-            { id: "finance", label: "Finance", count: invoices.length || undefined },
+            { id: "overview", label: "Overview", hint: "Review account details, services, agreed rates and portal access." },
+            { id: "clients", label: "Clients", hint: "Review clients linked to this account.", count: clientsTotal || undefined },
+            { id: "jobs", label: "Jobs", hint: "Review jobs linked to this account.", count: jobs.length || undefined },
+            { id: "finance", label: "Finance", hint: "Review invoices and balances linked to this account.", count: invoices.length || undefined },
           ]}
         />
       </div>
@@ -1489,6 +1506,17 @@ function AccountDetailDrawer({
         {/* ── Overview tab ─────────────────────────────────────────── */}
         {tab === "overview" && (
           <>
+            <AccountAutomations
+              account={account}
+              canEdit={isAdmin}
+              onSaved={(next, changed) => {
+                if (changed.email_include_invoice_on_final !== undefined) setEmailIncludeInvoiceOnFinal(changed.email_include_invoice_on_final);
+                if (changed.email_include_report_on_final !== undefined) setEmailIncludeReportOnFinal(changed.email_include_report_on_final);
+                if (changed.card_upfront !== undefined) setCollectionMode(changed.card_upfront ? "card_upfront" : "invoice");
+                skipFormResetRef.current = true;
+                onAccountUpdated(next);
+              }}
+            />
             <AccountOverviewGlance
               account={account}
               jobs={jobs}
@@ -1501,7 +1529,7 @@ function AccountDetailDrawer({
 
             {/* ── ACCOUNT DETAILS card ─────────────────────────────── */}
             <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Account details</p>
+              <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Account details</p>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1588,14 +1616,8 @@ function AccountDetailDrawer({
               </div>
             </div>
 
-            {/* ── ASSETS card ─────────────────────────────────────── */}
-            <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
-              <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Assets</p>
-
-              <div className="grid grid-cols-2 gap-5">
-                {/* Contract */}
-                <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">Contract</label>
+            {/* ── Assets: duas linhas, ações à direita ─────────────── */}
+            <section className="rounded-xl border border-border bg-card">
                   <input
                     ref={contractFileRef}
                     type="file"
@@ -1620,59 +1642,6 @@ function AccountDetailDrawer({
                       }
                     }}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full justify-center"
-                    disabled={uploadingContract || saving}
-                    onClick={() => contractFileRef.current?.click()}
-                    icon={uploadingContract ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  >
-                    {uploadingContract ? "Uploading…" : "Upload contract"}
-                  </Button>
-                  {edit.contract_url.trim() && (
-                    <div className="flex gap-2 mt-2">
-                      <Button type="button" variant="outline" size="sm" className="flex-1 justify-center"
-                        onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
-                        icon={<ExternalLink className="h-3.5 w-3.5" />}>
-                        Preview
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" disabled={uploadingContract}
-                        onClick={async () => {
-                          if (!account || !isAdmin) return;
-                          setUploadingContract(true);
-                          try {
-                            try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
-                            const updated = await updateAccount(account.id, { contract_url: null });
-                            const fresh = await getAccount(account.id);
-                            onAccountUpdated(fresh ?? updated);
-                            setEdit((p) => ({ ...p, contract_url: "" }));
-                            toast.success("Contract removed");
-                          } catch (err) {
-                            toast.error(err instanceof Error ? err.message : "Failed");
-                          } finally {
-                            setUploadingContract(false);
-                          }
-                        }}
-                        icon={<Trash2 className="h-3.5 w-3.5" />}>
-                      </Button>
-                    </div>
-                  )}
-                  <p className="text-[10px] text-text-tertiary mt-1.5">PDF · DOC · DOCX · max 10MB</p>
-                </div>
-
-                {/* Logo — centered like partner avatar */}
-                <div className="flex flex-col items-center text-center">
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-2">
-                    Logo
-                  </label>
-                  <Avatar
-                    name={account.company_name}
-                    size="lg"
-                    src={(edit.logo_url.trim() || account.logo_url) ?? undefined}
-                    className="shrink-0"
-                  />
                   <input
                     ref={logoFileRef}
                     type="file"
@@ -1680,37 +1649,94 @@ function AccountDetailDrawer({
                     className="hidden"
                     onChange={(ev) => void handleLogoUpload(ev)}
                   />
-                  <div className="mt-2 flex flex-col items-center gap-1.5">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px] h-7 px-3"
-                      disabled={uploadingLogo || saving}
-                      onClick={() => logoFileRef.current?.click()}
-                    >
-                      {uploadingLogo
-                        ? "Uploading…"
-                        : (edit.logo_url.trim() || account.logo_url)
-                          ? "Change"
-                          : "Upload logo"}
-                    </Button>
-                    {(edit.logo_url.trim() || account.logo_url) ? (
-                      <button
-                        type="button"
-                        disabled={uploadingLogo}
-                        onClick={() => void handleRemoveLogo()}
-                        className="inline-flex items-center gap-1 text-[10px] font-medium text-text-tertiary transition-colors hover:text-red-600 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <p className="text-[10px] text-text-tertiary mt-1.5">PNG · SVG · max 5MB</p>
-                </div>
+              <div className="flex items-center gap-3 px-4 py-2.5">
+                <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-primary">
+                  Contract
+                  <FixfyHintIcon text="PDF, DOC or DOCX, up to 10 MB." />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">
+                  {edit.contract_url.trim() ? "Uploaded" : "Not uploaded"}
+                </span>
+                {edit.contract_url.trim() ? (
+                  <button
+                    type="button"
+                    aria-label="Open contract"
+                    title="Open contract"
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={() => window.open(edit.contract_url, "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingContract || saving}
+                  onClick={() => contractFileRef.current?.click()}
+                  icon={uploadingContract ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                >
+                  {uploadingContract ? "Uploading…" : edit.contract_url.trim() ? "Replace" : "Upload"}
+                </Button>
+                {edit.contract_url.trim() ? (
+                  <button
+                    type="button"
+                    aria-label="Remove contract"
+                    title="Remove contract"
+                    disabled={uploadingContract}
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={async () => {
+                      if (!account || !isAdmin) return;
+                      setUploadingContract(true);
+                      try {
+                        try { await removeAccountContractFromStorage(account.id); } catch { /* ok */ }
+                        const updated = await updateAccount(account.id, { contract_url: null });
+                        const fresh = await getAccount(account.id);
+                        onAccountUpdated(fresh ?? updated);
+                        setEdit((p) => ({ ...p, contract_url: "" }));
+                        toast.success("Contract removed");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Failed");
+                      } finally {
+                        setUploadingContract(false);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
-            </div>
+              <div className="flex items-center gap-3 border-t border-border px-4 py-2.5">
+                <Avatar name={account.company_name} size="sm" src={(edit.logo_url.trim() || account.logo_url) ?? undefined} className="shrink-0" />
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-primary">
+                  Logo
+                  <FixfyHintIcon text="PNG or SVG, up to 5 MB. Shows on the client portal and documents." />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">{(edit.logo_url.trim() || account.logo_url) ? "Set" : "Not set"}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={uploadingLogo || saving}
+                  onClick={() => logoFileRef.current?.click()}
+                >
+                  {uploadingLogo ? "Uploading…" : (edit.logo_url.trim() || account.logo_url) ? "Change" : "Upload"}
+                </Button>
+                {(edit.logo_url.trim() || account.logo_url) ? (
+                  <button
+                    type="button"
+                    aria-label="Remove logo"
+                    title="Remove logo"
+                    disabled={uploadingLogo}
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+                    onClick={() => void handleRemoveLogo()}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            </section>
 
             {account ? (
               <DrawerSectionList>
@@ -1740,7 +1766,7 @@ function AccountDetailDrawer({
                   />
                 </DrawerSection>
 
-                <DrawerSection title="Portal & history" summary="Client logins and legacy revenue">
+                <DrawerSection title="Portal & history" summary="Client logins and revenue by year">
                   <div className="space-y-6">
                     <AccountHistorySection
                       account={account}
@@ -1907,7 +1933,7 @@ function AccountDetailDrawer({
                   <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                     Send customer emails to
                   </span>
-                  <span className="text-[#ED4B00]" aria-hidden>*</span>
+                  <span className="text-text-primary" aria-hidden>*</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {(["end_client", "account"] as const).map((bt) => {
@@ -1919,17 +1945,17 @@ function AccountDetailDrawer({
                         onClick={() => setBillingType(bt)}
                         className={cn(
                           "rounded-xl border-2 p-3.5 text-left transition-all bg-card",
-                          selected ? "border-[#020040] bg-[#020040]/[0.04]" : "border-border-light hover:border-border",
+                          selected ? "border-primary bg-primary/[0.04]" : "border-border-light hover:border-border",
                         )}
                       >
                         <div className="flex items-start gap-2.5">
                           <div
                             className={cn(
                               "mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0",
-                              selected ? "border-[#020040]" : "border-border",
+                              selected ? "border-primary" : "border-border",
                             )}
                           >
-                            {selected ? <div className="h-2 w-2 rounded-full bg-[#020040]" /> : null}
+                            {selected ? <div className="h-2 w-2 rounded-full bg-primary" /> : null}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
@@ -1958,52 +1984,14 @@ function AccountDetailDrawer({
               </div>
 
               <div>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                    When a job is finalised (client email)
-                  </span>
-                  <FixfyHintIcon
-                    text="Controls what the team can put in the completion email on the job. If you handle your own self-bill, you can turn off invoice lines but still receive final report PDFs."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeInvoiceOnFinal}
-                      onChange={(e) => setEmailIncludeInvoiceOnFinal(e.target.checked)}
-                    />
-                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
-                      Include invoice / payment in the email
-                      <FixfyHintIcon text="Uncheck if you generate your own self-bill and do not want our invoice copy in the message." />
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 rounded border-border"
-                      checked={emailIncludeReportOnFinal}
-                      onChange={(e) => setEmailIncludeReportOnFinal(e.target.checked)}
-                    />
-                    <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
-                      Attach final report PDFs
-                      <FixfyHintIcon text="Uncheck to send a notice without report attachments (rare)." />
-                    </span>
-                  </label>
-                </div>
-                {!emailIncludeInvoiceOnFinal && !emailIncludeReportOnFinal ? (
-                  <p className="text-[11px] text-amber-800 dark:text-amber-200 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-2 py-1.5 border border-amber-200/80 dark:border-amber-800/60">
-                    With both off, final review can only move the job internally (no client email until you re-enable at least one).
-                  </p>
-                ) : null}
+                <p className="m-0 text-[12px] text-text-tertiary">Completion email, card or invoice, and reminders are switched in Overview › Automations.</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary mb-1.5">
                     Payment Terms
-                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                    <span className="text-text-primary" aria-hidden>*</span>
                   </label>
                   <button
                     type="button"
@@ -2025,7 +2013,7 @@ function AccountDetailDrawer({
                     <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
                       Billing Email
                     </span>
-                    <span className="text-[#ED4B00]" aria-hidden>*</span>
+                    <span className="text-text-primary" aria-hidden>*</span>
                     <FixfyHintIcon
                       text={
                         billingType === "account"
@@ -2043,6 +2031,36 @@ function AccountDetailDrawer({
                 </div>
               </div>
 
+              <div className="space-y-3 rounded-xl border border-border-light px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Invoice for this account</span>
+                  <FixfyHintIcon text="How the invoice is addressed and who receives a copy. Leave everything empty to keep the standard invoice." />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Legal name on the invoice</span>
+                      <FixfyHintIcon text="The company the invoice is billed to, e.g. LF Europe Ltd. The address and company number above are printed with it." />
+                    </div>
+                    <Input value={billingLegalName} onChange={(e) => setBillingLegalName(e.target.value)} placeholder="Company Ltd" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Invoice copies (CC)</span>
+                      <FixfyHintIcon text="These emails get a copy of every invoice, overdue reminder and completion email with invoice for this account. Separate with commas." />
+                    </div>
+                    <Input value={invoiceCcEmails} onChange={(e) => setInvoiceCcEmails(e.target.value)} placeholder="finance@company.com, accounts@company.com" />
+                  </div>
+                </div>
+                <label className="flex items-start gap-2.5 text-[13px] text-text-primary cursor-pointer">
+                  <input type="checkbox" className="mt-0.5 rounded border-border" checked={invoiceFeeVat} onChange={(e) => setInvoiceFeeVat(e.target.checked)} />
+                  <span className="font-medium inline-flex items-center gap-1.5 flex-wrap leading-snug">
+                    Show VAT on the Fixfy fee only
+                    <FixfyHintIcon text="The invoice shows trade services passed through with no VAT, and the Fixfy management fee as net plus 20% VAT. The total does not change." />
+                  </span>
+                </label>
+              </div>
+
               {(() => {
                 const terms = edit.payment_terms;
                 if (!terms) return null;
@@ -2050,41 +2068,27 @@ function AccountDetailDrawer({
                 const label = formatBritishDate(new Date(iso + "T12:00:00"));
                 const isDor = /due\s+on\s+receipt/i.test(terms);
                 return (
-                  <div className="flex items-start gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
-                    <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0 mt-0.5" />
+                  <div className="flex items-start gap-2.5 rounded-xl bg-primary/[0.04] border border-primary/10 px-4 py-3">
+                    <Calendar className="h-4 w-4 text-text-primary/50 shrink-0 mt-0.5" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-text-primary/50">
                           Next payment date
                         </p>
                         {isDor ? (
                           <FixfyHintIcon text="Due on receipt — same day as job completion." placement="bottom-start" />
                         ) : null}
                       </div>
-                      <p className="text-sm font-semibold text-[#020040]">{label}</p>
+                      <p className="text-sm font-semibold text-text-primary">{label}</p>
                     </div>
                   </div>
                 );
               })()}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Credit limit</p>
-                <p className="text-lg font-bold tabular-nums">{formatCurrency(account.credit_limit)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Terms</p>
-                <p className="text-sm font-semibold mt-1">{account.payment_terms}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Total revenue</p>
-                <p className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(account.total_revenue)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
-                <p className="text-[10px] font-semibold text-text-tertiary uppercase">Open invoices</p>
-                <p className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(outstandingInvoices)}</p>
-              </div>
+            <div className="flex items-center justify-between rounded-lg bg-[var(--warning-light)] px-3 py-2 text-[12px] text-[var(--warn-ink)]">
+              <span className="font-medium">Open invoices</span>
+              <span className="font-semibold tabular-nums">{formatCurrency(outstandingInvoices)}</span>
             </div>
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-text-secondary flex items-center gap-2">
@@ -2149,25 +2153,6 @@ function AccountDetailDrawer({
   );
 }
 
-function DetailRow({
-  icon: Icon,
-  label,
-  children,
-}: {
-  icon?: React.ComponentType<{ className?: string }>;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex gap-3 px-4 py-3">
-      {Icon ? <Icon className="h-4 w-4 text-text-tertiary shrink-0 mt-0.5" /> : <span className="w-4 shrink-0" />}
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">{label}</p>
-        <div className="text-sm text-text-primary mt-1">{children}</div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Portal users tab content ──────────────────────────────────────────────
 function PortalUsersTabSection({ accountId, accountName }: { accountId: string; accountName: string }) {
@@ -2357,16 +2342,16 @@ function PaymentTermsModal({
     : null;
 
   return (
-    <Modal open={open} onClose={onClose} title="Payment Terms" size="md" rootClassName="z-[60]">
+    <Modal open={open} onClose={onClose} title="Payment terms" size="md" rootClassName="z-[60]">
       <div className="px-5 py-4 space-y-4">
         <PaymentTermsBuilder value={local} onChange={setLocal} />
 
         {nextLabel && (
-          <div className="flex items-center gap-2.5 rounded-xl bg-[#020040]/[0.04] border border-[#020040]/10 px-4 py-3">
-            <Calendar className="h-4 w-4 text-[#020040]/50 shrink-0" />
+          <div className="flex items-center gap-2.5 rounded-xl bg-primary/[0.04] border border-primary/10 px-4 py-3">
+            <Calendar className="h-4 w-4 text-text-primary/50 shrink-0" />
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-[#020040]/50">Next payment date</p>
-              <p className="text-sm font-semibold text-[#020040]">{nextLabel}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-text-primary/50">Next payment date</p>
+              <p className="text-sm font-semibold text-text-primary">{nextLabel}</p>
             </div>
           </div>
         )}
@@ -2467,7 +2452,7 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             className={cn(
               "px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors",
               mode === m
-                ? "bg-[#020040] text-white border-[#020040]"
+                ? "bg-primary text-white border-primary"
                 : "bg-white text-text-secondary border-border-light hover:bg-surface-hover",
             )}
           >
@@ -2559,12 +2544,6 @@ function PaymentTermsBuilder({ value, onChange }: { value: string; onChange: (v:
             />
           </div>
 
-          <div className="rounded-lg bg-[#020040]/5 border border-[#020040]/15 px-3 py-2">
-            <p className="text-[10px] font-medium text-[#020040]/60 uppercase mb-0.5">Encoded as</p>
-            <p className="text-xs font-mono font-semibold text-[#020040]">
-              {buildCycleString(freq, cutoffDay, cutoffWeekday, payWeekday, refDate || undefined)}
-            </p>
-          </div>
         </div>
       )}
     </div>

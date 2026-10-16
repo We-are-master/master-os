@@ -1,14 +1,26 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/services/base";
-import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
+import { londonWallNow, wallToLondonIso, type DashboardDateBounds } from "@/lib/dashboard-date-range";
 import { MicroLabel, SectionCard } from "@/components/fx/primitives";
 import { fetchPulseTopAccounts, type PulseTopAccountRow } from "@/lib/pulse-top-accounts";
 
+/** O ano corrente de Londres, de 1 de janeiro a 31 de dezembro. */
+function anoCorrente(): { bounds: DashboardDateBounds; ano: number } {
+  const agora = londonWallNow();
+  const ano = agora.getFullYear();
+  return { ano, bounds: { fromIso: wallToLondonIso(new Date(ano, 0, 1, 0, 0, 0, 0)), toIso: wallToLondonIso(new Date(ano, 11, 31, 23, 59, 59, 999)) } };
+}
+
+/**
+ * As maiores contas do ANO (dono, 12/10/2026), sempre o ano corrente, independente do
+ * filtro de data do Pulse: conta grande se mede no ano, não no mês.
+ */
 export function TopAccounts() {
-  const { bounds, rangeLabel } = useDashboardDateRange();
+  const [{ bounds, ano }] = useState(anoCorrente);
   const [rows, setRows] = useState<PulseTopAccountRow[] | null>(null);
 
   useEffect(() => {
@@ -34,8 +46,12 @@ export function TopAccounts() {
 
   return (
     <SectionCard
-      title="Top Accounts"
-      subtitle={`By billed value · ${bounds ? rangeLabel : "this month"}`}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          Top Accounts
+          <FixfyHintIcon text={`By billed value in ${ano}, whole year.`} placement="top-start" />
+        </span>
+      }
       bodyClassName="p-0"
     >
       <div className="flex flex-col">

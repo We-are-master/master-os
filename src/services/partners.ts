@@ -1,8 +1,9 @@
 import { getSupabase, type ListParams, type ListResult } from "./base";
 import { PARTNER_RATING_MAX } from "@/lib/partner-rating";
-import { PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
+import { ARCHIVED_REASON, PARTNER_ONBOARDING_STAGE_STATUSES } from "@/lib/partner-status";
+import { buildPartnerSearchOrFilter } from "@/lib/partner-search";
 import type { Partner } from "@/types/database";
-import { sanitizePostgrestValue, safePostgrestEnumValue } from "@/lib/supabase/sanitize";
+import { safePostgrestEnumValue } from "@/lib/supabase/sanitize";
 import {
   isSupabaseMissingColumnError,
   parsePostgrestUnknownColumnName,
@@ -96,7 +97,15 @@ export async function listPartners(params: PartnerListParams): Promise<ListResul
   const tradeArg = params.trade && params.trade !== "all" ? params.trade : null;
   const searchArg = params.search?.trim() || null;
 
-  if (statusArg !== "__needs_fallback__") {
+  // The bundle RPC has no sort argument: date sorts go through the direct query.
+  const needsDirectSort = params.sortBy === "joined_at";
+  // The bundle RPC does not know about archived partners; "all" goes direct so they stay hidden.
+  const needsArchiveFilter = !params.status || params.status === "all";
+  // The bundle RPC only searches company_name/email/contact_name (migration 129). The direct
+  // path also matches phone, address and tax numbers, so every search goes through it.
+  const needsDirectSearch = searchArg != null;
+
+  if (statusArg !== "__needs_fallback__" && !needsDirectSort && !needsArchiveFilter && !needsDirectSearch) {
     const { data, error } = await supabase.rpc("get_partners_list_bundle", {
       p_status: statusArg,
       p_trade:  tradeArg,
@@ -133,13 +142,17 @@ async function listPartnersLegacy(
   const from = (page - 1) * pageSize;
   const to   = from + pageSize - 1;
 
-  let query = supabase.from("partners").select("*", { count: "exact" });
+  let query = supabase
+    .from("partners")
+    .select("*", { count: "exact" })
+    .not("partner_status_reasons", "cs", `{${ARCHIVED_REASON}}`);
 
   if (params.status && params.status !== "all") {
     /** Inactive stage includes legacy `on_break` rows (same lifecycle as inactive + reason). */
     if (params.status === "inactive") {
       query = query.in("status", ["inactive", "on_break"]);
     } else if (params.status === "onboarding") {
+      // Every signup in the funnel shows up here, verified email or not.
       query = query.in("status", [...PARTNER_ONBOARDING_STAGE_STATUSES]);
     } else {
       query = query.eq("status", params.status);
@@ -154,21 +167,22 @@ async function listPartnersLegacy(
     }
   }
   if (params.search) {
-    const safeSearch = sanitizePostgrestValue(params.search);
-    if (safeSearch) {
-      query = query.or(
-        `company_name.ilike.%${safeSearch}%,contact_name.ilike.%${safeSearch}%,email.ilike.%${safeSearch}%`
-      );
+    const searchFilter = buildPartnerSearchOrFilter(params.search);
+    if (searchFilter) {
+      query = query.or(searchFilter);
     }
   }
 
-  query = query.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc" });
+  query = query.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc", nullsFirst: false });
   query = query.range(from, to);
 
   let { data, error, count } = await query;
   if (error && params.trade && params.trade !== "all") {
     // Fallback for environments where `trades` column is not available yet.
-    let fallback = supabase.from("partners").select("*", { count: "exact" });
+    let fallback = supabase
+      .from("partners")
+      .select("*", { count: "exact" })
+      .not("partner_status_reasons", "cs", `{${ARCHIVED_REASON}}`);
     if (params.status && params.status !== "all") {
       if (params.status === "inactive") {
         fallback = fallback.in("status", ["inactive", "on_break"]);
@@ -183,11 +197,9 @@ async function listPartnersLegacy(
       fallback = fallback.eq("trade", safeTradeFallback);
     }
     if (params.search) {
-      const safeSearchFallback = sanitizePostgrestValue(params.search);
-      if (safeSearchFallback) {
-        fallback = fallback.or(
-          `company_name.ilike.%${safeSearchFallback}%,contact_name.ilike.%${safeSearchFallback}%,email.ilike.%${safeSearchFallback}%`
-        );
+      const searchFilterFallback = buildPartnerSearchOrFilter(params.search);
+      if (searchFilterFallback) {
+        fallback = fallback.or(searchFilterFallback);
       }
     }
     fallback = fallback.order(params.sortBy ?? "total_earnings", { ascending: params.sortDir === "asc" }).range(from, to);

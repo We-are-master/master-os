@@ -41,11 +41,11 @@ export function DateRangeFilter({ value, onChange, className }: Props) {
 
   return (
     <div ref={wrapRef} className={cn("relative inline-flex items-center", className)}>
-      <div className="inline-flex bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
+      <div className="inline-flex h-8 items-center bg-fx-paper-2 rounded-md p-[3px] gap-0.5">
         <button
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          className="rounded bg-card px-3 py-[5px] text-[12.5px] font-medium text-text-primary shadow-fx-1 transition-colors"
+          className="inline-flex h-[26px] items-center rounded bg-card px-3 text-[12px] font-medium text-text-primary shadow-fx-1 transition-colors"
         >
           {dateFilterLabel(value) || "Today"}
         </button>
@@ -54,7 +54,7 @@ export function DateRangeFilter({ value, onChange, className }: Props) {
           aria-label="More date options"
           onClick={() => setMenuOpen((v) => !v)}
           className={cn(
-            "inline-flex items-center justify-center rounded px-2 py-[5px] text-[12.5px] font-medium transition-colors",
+            "inline-flex h-[26px] items-center justify-center rounded px-2 text-[12px] font-medium transition-colors",
             menuOpen
               ? "bg-card text-text-primary shadow-fx-1"
               : "bg-transparent text-fx-mute hover:text-text-primary",

@@ -138,6 +138,21 @@ const CSP_DIRECTIVES = [
   "worker-src 'self' blob:",
 ].join("; ");
 
+/** Origens do portal do parceiro que podem embutir o formulário do report. */
+function origensDoPortal(): string {
+  const lista = new Set<string>(["https://partners.getfixfy.com"]);
+  for (const v of [process.env.NEXT_PUBLIC_PARTNER_APP_URL, process.env.PARTNER_PORTAL_ORIGINS]) {
+    for (const parte of String(v ?? "").split(",")) {
+      try {
+        if (parte.trim()) lista.add(new URL(parte.trim()).origin);
+      } catch {
+        /* valor inválido: ignora */
+      }
+    }
+  }
+  return [...lista].join(" ");
+}
+
 /**
  * `DENY` breaks same-origin iframes (e.g. quote drawer PDF preview loading `/api/quotes/send-pdf`).
  * `SAMEORIGIN` still blocks embedding on other sites.
@@ -146,7 +161,14 @@ function addSecurityHeaders(res: NextResponse, pathname?: string) {
   res.headers.set("X-Content-Type-Options", "nosniff");
   const allowSameOriginFrame =
     pathname === "/api/quotes/send-pdf" || pathname === "/api/quotes/email-preview";
-  res.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");
+  /**
+   * O formulário do report aparece DENTRO do portal do parceiro (15/10/2026: uma porta
+   * só). Só esta tela pode ser embutida, e só pelo portal.
+   */
+  const embutivelNoPortal = pathname === "/job/report";
+  if (!embutivelNoPortal) {
+    res.headers.set("X-Frame-Options", allowSameOriginFrame ? "SAMEORIGIN" : "DENY");
+  }
   res.headers.set("X-XSS-Protection", "1; mode=block");
   res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
@@ -156,11 +178,14 @@ function addSecurityHeaders(res: NextResponse, pathname?: string) {
   res.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   // Cross-origin isolation — opt out of cross-origin window references.
   res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  res.headers.set("Cross-Origin-Resource-Policy", embutivelNoPortal ? "cross-origin" : "same-origin");
   // Apply CSP only to HTML responses (skip API routes so JSON/webhook
   // payloads aren't penalised by frame/script restrictions).
   if (!pathname?.startsWith("/api")) {
-    res.headers.set("Content-Security-Policy", CSP_DIRECTIVES);
+    res.headers.set(
+      "Content-Security-Policy",
+      embutivelNoPortal ? CSP_DIRECTIVES.replace("frame-ancestors 'self'", `frame-ancestors 'self' ${origensDoPortal()}`) : CSP_DIRECTIVES,
+    );
   }
 }
 

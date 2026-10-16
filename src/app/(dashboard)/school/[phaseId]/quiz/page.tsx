@@ -22,7 +22,7 @@ export default function SchoolQuizPage() {
     return (
       <PageTransition>
         <p className="text-text-secondary">Phase not found.</p>
-        <Link href="/school" className="text-[#E94A02] text-sm font-medium">
+        <Link href="/school" className="text-text-primary text-sm font-medium">
           Back to Fixfy School
         </Link>
       </PageTransition>
@@ -54,7 +54,7 @@ export default function SchoolQuizPage() {
             <p className="text-xs text-text-tertiary mt-1">
               Score 5/5 on the previous phase quiz to unlock.
             </p>
-            <Link href="/school" className="text-[#E94A02] text-sm font-medium mt-4 inline-block">
+            <Link href="/school" className="text-text-primary text-sm font-medium mt-4 inline-block">
               Back to overview
             </Link>
           </div>

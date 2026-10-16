@@ -1,12 +1,13 @@
 "use client";
 
+import { PageHeader } from "@/components/layout/page-header";
 import Link from "next/link";
 import { formatBritishDate } from "@/lib/utils/date";
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Download, RefreshCw, BarChart3, Briefcase, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink , History } from "lucide-react";
+import { Plus, Download, RefreshCw, BarChart3, Briefcase, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, FileText, ExternalLink , History } from "lucide-react";
 import { PageTransition } from "@/components/layout/page-transition";
 import { ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
@@ -14,9 +15,11 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { useBillingStandaloneData } from "@/hooks/use-billing-standalone-data";
 import {
@@ -45,17 +48,18 @@ import {
 import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
 import { BillingStandalonePeriodFilter } from "@/components/finance/billing-standalone-period-filter";
 import { CashflowWeekDetailModal } from "@/components/finance/cashflow-week-detail-modal";
-import { workPeriodBoundsForPayoutFriday } from "@/lib/partner-payout-schedule";
+import { workPeriodBoundsForPayoutFriday, workPeriodForJobStartYmd } from "@/lib/partner-payout-schedule";
 import {
   buildAttentionAccountGroups,
+  type AttentionAccountGroup,
+  type WorklistRow,
   buildInvoiceLedgerAccountGroups,
-  computeAgingTotals,
   computeBillingKpis,
   selfBillCountsAsReady,
   selfBillDueYmd,
   isSelfBillOverdue,
 } from "@/lib/billing-standalone-metrics";
-import {
+import { buildRunwayPeriodDetail,
   buildRunwayWeekBreakdown,
   buildRunwayWeekly,
   type RunwayViewMode,
@@ -84,7 +88,7 @@ import type { SelfBillDueResolveContext } from "@/lib/partner-payout-schedule";
 import { syncWorkforceSelfBillsForBilling } from "@/lib/billing-workforce-sync";
 import { getCompanySettings, updateCompanySettings } from "@/services/company";
 import { mergeFrontendSetup } from "@/lib/frontend-setup";
-import { orgCtxFromSetup } from "@/lib/account-payment-due-date";
+import { dueDateIsoFromAccountPaymentTerms, orgCtxFromSetup } from "@/lib/account-payment-due-date";
 import {
   isSelfBillClosed,
   isSelfBillPayoutVoided,
@@ -119,7 +123,6 @@ const SelfBillDetailDrawer = dynamic(
   { ssr: false },
 );
 
-type MoneyInTab = "draft" | "ready";
 type MoneyOutTab = "draft" | "ready";
 
 const CASHFLOW_WINDOW_WEEKS = 10;
@@ -184,7 +187,16 @@ function BillingStandaloneInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const { setup: frontendSetup, refetch: refetchFrontendSetup } = useFrontendSetup();
+  const { can } = useAdminConfig();
+  /** Detalhe do fluxo de caixa da empresa: sem `finance_overview` a faixa mostra só os números. */
+  const canSeeFinanceOverview = can("finance_overview");
+  const {
+    setup: frontendSetup,
+    refetch: refetchFrontendSetup,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+  } = useFrontendSetup();
+  const [collapsedInRuns, setCollapsedInRuns] = useState<Record<string, boolean>>({});
   const [periodFilter, setPeriodFilter] = useState<BillingStandaloneFilterValue>(defaultBillingStandaloneFilter);
   const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("billing_kpis_visible_v1");
   const data = useBillingStandaloneData();
@@ -214,16 +226,10 @@ function BillingStandaloneInner() {
     (id: string, opts?: { received?: boolean }) => void handleMarkInvoicesPaid([id], opts),
     [handleMarkInvoicesPaid],
   );
-  const [moneyInTab, setMoneyInTab] = useState<MoneyInTab>(() => {
-    const inTab = searchParams.get("in");
-    return inTab === "draft" ? "draft" : "ready";
-  });
-  const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>(() => {
-    const outTab = searchParams.get("out");
-    /** "paid" stopped being a tab (bottom fold now) — old links land on Ready. */
-    if (outTab === "draft" || outTab === "ready") return outTab;
-    return "ready";
-  });
+  const [moneyOutTab, setMoneyOutTab] = useState<MoneyOutTab>("ready");
+  /** Draft e Ready no mesmo formato (quinzenas recolhíveis) nos dois lados. */
+  const [moneyInView, setMoneyInView] = useState<"draft" | "ready">("ready");
+  const [collapsedRuns, setCollapsedRuns] = useState<Record<string, boolean>>({});
   const invoiceIdFromUrl = searchParams.get("invoiceId");
   const selfBillIdFromUrl = searchParams.get("selfBillId");
   const [createOpen, setCreateOpen] = useState(false);
@@ -648,6 +654,8 @@ function BillingStandaloneInner() {
   const [expandedLedgerSelfBillPartners, setExpandedLedgerSelfBillPartners] = useState<Set<string>>(new Set());
   const [expandedLedgerInvoiceAccounts, setExpandedLedgerInvoiceAccounts] = useState<Set<string>>(new Set());
   const [cashflowWeekOffset, setCashflowWeekOffset] = useState(0);
+  /** Runway por quinzena (padrão) ou por semana; quinzena = duas semanas somadas. */
+  const [runwayGranularity, setRunwayGranularity] = useState<"fortnight" | "week">("fortnight");
   const [runwayView, setRunwayView] = useState<RunwayViewMode>("accrual");
   const [cashflowDetailWeekStart, setCashflowDetailWeekStart] = useState<string | null>(null);
   const [savingRunwayOpening, setSavingRunwayOpening] = useState(false);
@@ -766,9 +774,15 @@ function BillingStandaloneInner() {
     return { cancelled, paid };
   }, [inactivePeriodInvoices]);
 
+  /** Rascunho de job cancelado nunca vai virar dinheiro: fica fora do Draft (14/10/2026). */
   const draftPeriodInvoices = useMemo(
-    () => periodInvoices.filter((inv) => inv.status === "draft"),
-    [periodInvoices],
+    () =>
+      periodInvoices.filter((inv) => {
+        if (inv.status !== "draft") return false;
+        const ref = inv.job_reference?.trim();
+        return !(ref && data.jobsByRef[ref]?.status === "cancelled");
+      }),
+    [periodInvoices, data.jobsByRef],
   );
 
   const draftInvoiceLedgerGroups = useMemo(
@@ -787,10 +801,6 @@ function BillingStandaloneInner() {
     [draftPeriodInvoices],
   );
 
-  const aging = useMemo(
-    () => computeAgingTotals(data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds ?? undefined),
-    [data.invoices, data.jobsByRef, data.customerPaidByJobId, todayYmd, periodBounds],
-  );
 
   const attentionAccountGroups = useMemo(
     () =>
@@ -816,6 +826,66 @@ function BillingStandaloneInner() {
     ],
   );
 
+  /**
+   * Money In por quinzena (mesmo calendário dos parceiros): cada fatura cai na quinzena
+   * da data em que se espera receber. Em cima a quinzena atual, depois as atrasadas,
+   * depois as futuras. Dentro de cada uma, as contas como antes.
+   */
+  const moneyInRuns = useMemo(() => {
+    type Run = { key: string; start: string; end: string; rows: WorklistRow[] };
+    const runs = new Map<string, Run>();
+    for (const g of attentionAccountGroups) {
+      for (const row of g.rows) {
+        const period = row.expectedPayYmd
+          ? workPeriodForJobStartYmd(row.expectedPayYmd, partnerPayoutStandardTerms, partnerPayoutReferenceYmd)
+          : null;
+        const key = period ? period.periodStartYmd : "no-date";
+        const run = runs.get(key) ?? { key, start: period?.periodStartYmd ?? "", end: period?.periodEndYmd ?? "", rows: [] };
+        run.rows.push(row);
+        runs.set(key, run);
+      }
+    }
+    const toGroups = (rows: WorklistRow[]): AttentionAccountGroup[] => {
+      const by = new Map<string, AttentionAccountGroup>();
+      for (const row of rows) {
+        const src = attentionAccountGroups.find((g) => g.accountKey === row.accountKey);
+        const g =
+          by.get(row.accountKey) ??
+          {
+            accountKey: row.accountKey,
+            accountId: src?.accountId ?? null,
+            accountName: row.accountName,
+            invoiceCount: 0,
+            totalDue: 0,
+            maxDaysLate: 0,
+            nextExpectedPayYmd: null,
+            rows: [],
+          };
+        g.rows.push(row);
+        g.invoiceCount += 1;
+        g.totalDue = Math.round((g.totalDue + row.balanceDue) * 100) / 100;
+        g.maxDaysLate = Math.max(g.maxDaysLate, row.daysLate);
+        if (row.expectedPayYmd && (!g.nextExpectedPayYmd || row.expectedPayYmd < g.nextExpectedPayYmd)) {
+          g.nextExpectedPayYmd = row.expectedPayYmd;
+        }
+        by.set(row.accountKey, g);
+      }
+      return [...by.values()].sort(
+        (a, b) => b.maxDaysLate - a.maxDaysLate || b.totalDue - a.totalDue || a.accountName.localeCompare(b.accountName),
+      );
+    };
+    const kind = (r: Run) =>
+      !r.start ? 3 : r.start <= todayYmd && todayYmd <= r.end ? 0 : r.end < todayYmd ? 1 : 2;
+    return [...runs.values()]
+      .sort((a, b) => kind(a) - kind(b) || a.start.localeCompare(b.start))
+      .map((r) => ({
+        ...r,
+        kind: kind(r),
+        total: Math.round(r.rows.reduce((t, x) => t + x.balanceDue, 0) * 100) / 100,
+        groups: toGroups(r.rows),
+      }));
+  }, [attentionAccountGroups, partnerPayoutStandardTerms, partnerPayoutReferenceYmd, todayYmd]);
+
   const selectableReadyInvoiceIds = useMemo(() => {
     const ids: string[] = [];
     for (const group of attentionAccountGroups) {
@@ -825,11 +895,6 @@ function BillingStandaloneInner() {
     }
     return ids;
   }, [attentionAccountGroups, data.jobsByRef]);
-
-  const selectableDraftInvoiceIds = useMemo(
-    () => draftPeriodInvoices.filter((inv) => invoiceCanSelectForPayment(inv, data.jobsByRef)).map((inv) => inv.id),
-    [draftPeriodInvoices, data.jobsByRef],
-  );
 
   /**
    * Uma seleção por vez, entre as três listas da tela.
@@ -961,10 +1026,63 @@ function BillingStandaloneInner() {
 
   const cashflowWeekStart = useMemo(() => {
     const monday = startOfWeekMondayFromYmd(todayYmd);
-    return addDaysYmd(monday, cashflowWeekOffset * 7);
-  }, [todayYmd, cashflowWeekOffset]);
+    const start = addDaysYmd(monday, cashflowWeekOffset * 7);
+    if (runwayGranularity !== "fortnight") return start;
+    // Encaixa no começo da quinzena dos parceiros, para cada coluna ser uma quinzena inteira.
+    return workPeriodForJobStartYmd(start, partnerPayoutStandardTerms, partnerPayoutReferenceYmd)?.periodStartYmd ?? start;
+  }, [todayYmd, cashflowWeekOffset, runwayGranularity, partnerPayoutStandardTerms, partnerPayoutReferenceYmd]);
 
   const paymentOrgCtx = useMemo(() => orgCtxFromSetup(frontendSetup), [frontendSetup]);
+
+  /**
+   * Rascunhos por quinzena de RECEBIMENTO, como o Ready: término do job (ou hoje,
+   * se já passou) + prazo da conta. Sem job ou data, o vencimento da fatura.
+   */
+  const draftInRuns = useMemo(() => {
+    const expectedYmd = (inv: Invoice): string => {
+      const ref = inv.job_reference?.trim();
+      const job = ref ? data.jobsByRef[ref] : undefined;
+      const sched = String(job?.scheduled_finish_date ?? job?.scheduled_date ?? job?.scheduled_start_at ?? "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(sched)) {
+        const base = sched < todayYmd ? todayYmd : sched;
+        const accountId = ref ? data.jobRefToAccountId[ref] : undefined;
+        const terms = accountId ? data.accountTermsById[accountId] : undefined;
+        const due = dueDateIsoFromAccountPaymentTerms(new Date(`${base}T12:00:00`), terms ?? null, paymentOrgCtx);
+        if (due) return due.slice(0, 10);
+      }
+      return String(inv.due_date ?? inv.created_at ?? "").slice(0, 10);
+    };
+    const runs = new Map<string, { key: string; start: string; end: string; invoices: Invoice[] }>();
+    for (const inv of draftPeriodInvoices) {
+      const ymd = expectedYmd(inv);
+      const period = ymd ? workPeriodForJobStartYmd(ymd, partnerPayoutStandardTerms, partnerPayoutReferenceYmd) : null;
+      const key = period ? period.periodStartYmd : "no-date";
+      const run = runs.get(key) ?? { key, start: period?.periodStartYmd ?? "", end: period?.periodEndYmd ?? "", invoices: [] };
+      run.invoices.push(inv);
+      runs.set(key, run);
+    }
+    const kind = (r: { start: string; end: string }) =>
+      !r.start ? 3 : r.start <= todayYmd && todayYmd <= r.end ? 0 : r.end < todayYmd ? 1 : 2;
+    return [...runs.values()]
+      .sort((a, b) => kind(a) - kind(b) || a.start.localeCompare(b.start))
+      .map((r) => ({
+        ...r,
+        kind: kind(r),
+        total: r.invoices.reduce((t, inv) => t + Number(inv.amount ?? 0), 0),
+        groups: buildInvoiceLedgerAccountGroups(r.invoices, data.accountNameById, data.jobRefToAccountId, data.clientNameToAccountId),
+      }));
+  }, [
+    draftPeriodInvoices,
+    partnerPayoutStandardTerms,
+    partnerPayoutReferenceYmd,
+    todayYmd,
+    paymentOrgCtx,
+    data.jobsByRef,
+    data.accountTermsById,
+    data.accountNameById,
+    data.jobRefToAccountId,
+    data.clientNameToAccountId,
+  ]);
 
   const runwayCashBalanceOptions = useMemo(
     () => ({
@@ -998,7 +1116,7 @@ function BillingStandaloneInner() {
           runwayView === "cash" || runwayView === "accrual" ? runwayCashBalanceOptions : undefined,
         startYmd: periodBounds?.from ?? cashflowWeekStart,
         endYmd: periodBounds?.to,
-        weekCount: periodBounds ? undefined : CASHFLOW_WINDOW_WEEKS,
+        weekCount: periodBounds ? undefined : runwayGranularity === "fortnight" ? CASHFLOW_WINDOW_WEEKS * 2 : CASHFLOW_WINDOW_WEEKS,
       }),
     [
       runwayView,
@@ -1022,14 +1140,39 @@ function BillingStandaloneInner() {
       runwayCashBalanceOptions,
       periodBounds,
       cashflowWeekStart,
+      runwayGranularity,
     ],
   );
 
+  /** Colunas do gráfico: as semanas como vêm, ou de duas em duas na vista por quinzena. */
+  const cashflowShown = useMemo(() => {
+    if (runwayGranularity !== "fortnight") return cashflow;
+    const dm = (ymd: string) =>
+      new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const out: typeof cashflow = [];
+    for (let i = 0; i < cashflow.length; i += 2) {
+      const a = cashflow[i]!;
+      const b = cashflow[i + 1];
+      const end = addDaysYmd(a.weekStart, b ? 13 : 6);
+      out.push({
+        ...a,
+        moneyIn: a.moneyIn + (b?.moneyIn ?? 0),
+        moneyOut: a.moneyOut + (b?.moneyOut ?? 0),
+        isCurrentWeek: a.isCurrentWeek || !!b?.isCurrentWeek,
+        closingBalance: b ? b.closingBalance : a.closingBalance,
+        label: "Fortnight",
+        dayNum: `${dm(a.weekStart)} – ${dm(end)}`,
+        title: `Fortnight ${dm(a.weekStart)} – ${dm(end)}`,
+      });
+    }
+    return out;
+  }, [cashflow, runwayGranularity]);
+
   const cashflowRangeLabel = useMemo(() => {
-    if (!cashflow.length) return "";
-    if (cashflow.length === 1) return cashflow[0]!.title;
-    return `${cashflow[0]!.dayNum} – ${cashflow[cashflow.length - 1]!.dayNum}`;
-  }, [cashflow]);
+    if (!cashflowShown.length) return "";
+    if (cashflowShown.length === 1) return cashflowShown[0]!.title;
+    return `${cashflowShown[0]!.dayNum} – ${cashflowShown[cashflowShown.length - 1]!.dayNum}`;
+  }, [cashflowShown]);
 
   const cashflowBuildArgs = useMemo(
     () => ({
@@ -1073,14 +1216,35 @@ function BillingStandaloneInner() {
   );
 
   const cashflowDetailWeek = useMemo(
-    () => (cashflowDetailWeekStart ? cashflow.find((w) => w.weekStart === cashflowDetailWeekStart) : undefined),
-    [cashflow, cashflowDetailWeekStart],
+    () => (cashflowDetailWeekStart ? cashflowShown.find((w) => w.weekStart === cashflowDetailWeekStart) : undefined),
+    [cashflowShown, cashflowDetailWeekStart],
   );
 
   const cashflowDetailBreakdown = useMemo(() => {
     if (!cashflowDetailWeekStart) return null;
-    return buildRunwayWeekBreakdown(runwayView, cashflowDetailWeekStart, cashflowBuildArgs);
-  }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView]);
+    const first = buildRunwayWeekBreakdown(runwayView, cashflowDetailWeekStart, cashflowBuildArgs);
+    if (runwayGranularity !== "fortnight" || !first) return first;
+    // Quinzena: as linhas das duas semanas juntas.
+    const second = buildRunwayWeekBreakdown(runwayView, addDaysYmd(cashflowDetailWeekStart, 7), cashflowBuildArgs);
+    if (!second) return first;
+    return {
+      ...first,
+      title: cashflowDetailWeek?.title ?? first.title,
+      moneyIn: first.moneyIn + second.moneyIn,
+      moneyOut: first.moneyOut + second.moneyOut,
+      inLines: [...first.inLines, ...second.inLines],
+      outLines: [...first.outLines, ...second.outLines],
+    };
+  }, [cashflowDetailWeekStart, cashflowBuildArgs, runwayView, runwayGranularity, cashflowDetailWeek]);
+
+  /** Período inteiro do modal: entrou, vai entrar, saiu e vai sair (dono, 15/10/2026). */
+  const cashflowDetailPeriod = useMemo(
+    () =>
+      cashflowDetailWeekStart
+        ? buildRunwayPeriodDetail(cashflowDetailWeekStart, runwayGranularity === "fortnight" ? 2 : 1, cashflowBuildArgs)
+        : null,
+    [cashflowDetailWeekStart, cashflowBuildArgs, runwayGranularity],
+  );
 
   const handleSaveRunwayOpeningBalance = useCallback(
     async (weekStart: string, amount: number) => {
@@ -1116,6 +1280,8 @@ function BillingStandaloneInner() {
   const goingOutSelfBills = useMemo(
     () =>
       periodSelfBills.filter((sb) => {
+        // Folha interna não passa pelo Money Out (14/10/2026): é custo fixo no Pulse, como as bills.
+        if (sb.bill_origin === "internal") return false;
         if (sb.status === "paid" || sb.wise_paid_at) return false;
         if (!selfBillCountsAsReady(sb) || isSelfBillPayoutVoided(sb)) return false;
         const amt = computeSelfBillAmountDue(
@@ -1400,24 +1566,147 @@ function BillingStandaloneInner() {
     [activePeriodSelfBills],
   );
 
-  const cfMax = Math.max(1, ...cashflow.flatMap((d) => [d.moneyIn, d.moneyOut]));
+  const cfMax = Math.max(1, ...cashflowShown.flatMap((d) => [d.moneyIn, d.moneyOut]));
+
+  /**
+   * Quinzenas abertas: self-bills ainda acumulando (aprovados ao fim de cada job).
+   * A que contém hoje vai no topo da lista, com barra verde do quanto já passou; as
+   * seguintes (ex.: folha interna) vão no fim, sem barra. Sem checkbox: não dá pra pagar.
+   */
+  /**
+   * Quanto sai na data do documento. Com parcelas (job parcelado, mig 326), é a
+   * próxima parcela em aberto: o `due_date` já é o dela, e o resto vai aparecer
+   * na data de cada uma.
+   */
+  const selfBillAmountOnDue = useCallback(
+    (sb: SelfBill) => {
+      const inst = data.installmentsBySelfBillId[sb.id];
+      if (hasActiveSelfBillPaymentPlan(inst)) {
+        const next = (inst ?? [])
+          .filter((i) => i.status !== "paid" && i.status !== "cancelled")
+          .sort((x, y) => x.sequence - y.sequence)[0];
+        if (next) return Number(next.amount ?? 0);
+      }
+      /**
+       * Draft = o que o parceiro vai receber pelos jobs já atribuídos (dono, 15/10/2026),
+       * não só os concluídos. O `net_payout` continua sendo o que se PAGA (só concluído);
+       * aqui é a previsão, igual à fatura em draft do lado do cliente.
+       */
+      const previsto = (data.jobsBySelfBillId[sb.id] ?? [])
+        .filter((j) => !j.deleted_at && !j.partner_cancelled_at && j.status !== "cancelled")
+        .reduce((t, j) => t + Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0), 0);
+      return Math.max(Number(sb.net_payout ?? 0), Math.round(previsto * 100) / 100);
+    },
+    [data.installmentsBySelfBillId, data.jobsBySelfBillId],
+  );
+
+  const buildingRuns = useMemo(() => {
+    const rows = data.selfBills.filter(
+      (sb) =>
+        !isSelfBillPayoutVoided(sb) &&
+        sb.status !== "paid" &&
+        !sb.wise_paid_at &&
+        !selfBillCountsAsReady(sb) &&
+        selfBillAmountOnDue(sb) > 0.005 &&
+        sb.bill_origin !== "internal" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(String(sb.due_date ?? "")),
+    );
+    const byDue = new Map<string, SelfBill[]>();
+    for (const sb of rows) {
+      const k = String(sb.due_date);
+      byDue.set(k, [...(byDue.get(k) ?? []), sb]);
+    }
+    return [...byDue.entries()]
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([due, list]) => {
+        const start = list.map((r) => r.week_start ?? "").filter(Boolean).sort()[0] ?? null;
+        const end = list.map((r) => r.week_end ?? "").filter(Boolean).sort().slice(-1)[0] ?? null;
+        let pct = 0;
+        if (start && end) {
+          const t0 = new Date(`${start.slice(0, 10)}T00:00:00`).getTime();
+          const t1 = new Date(`${end.slice(0, 10)}T23:59:59`).getTime();
+          pct = Math.max(0, Math.min(100, Math.round(((Date.now() - t0) / (t1 - t0)) * 100)));
+        }
+        const isCurrent = !!start && !!end && start.slice(0, 10) <= todayYmd && todayYmd <= end.slice(0, 10);
+        return {
+          due,
+          rows: [...list].sort((x, y) => String(x.partner_name ?? "").localeCompare(String(y.partner_name ?? ""))),
+          start,
+          end,
+          pct,
+          isCurrent,
+          total: list.reduce((t, r) => t + selfBillAmountOnDue(r), 0),
+        };
+      });
+  }, [data.selfBills, todayYmd, selfBillAmountOnDue]);
+
+  const renderBuildingRun = (run: (typeof buildingRuns)[number]) => {
+    const short = (ymd: string) =>
+      new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    const open = !(collapsedRuns[run.due] ?? !run.isCurrent);
+    return (
+      <div key={run.due} className="border-b border-border-light">
+        <RunHeader
+          open={open}
+          onToggle={() => setCollapsedRuns((c) => ({ ...c, [run.due]: open }))}
+          title={`${run.isCurrent ? "This fortnight" : "Building"} · pays ${shortDay(run.due)}`}
+          tone={run.isCurrent ? "ok" : "plain"}
+          range={run.start && run.end ? `${shortDay(run.start)} – ${shortDay(run.end)}` : ""}
+          count={run.rows.length}
+          noun="self-bill"
+          total={run.total}
+        />
+        {open
+          ? (() => {
+              // Uma linha por parceiro, como no Ready.
+              const byPartner = new Map<string, SelfBill[]>();
+              for (const sb of run.rows) {
+                const k = sb.partner_id ?? sb.partner_name ?? sb.id;
+                byPartner.set(k, [...(byPartner.get(k) ?? []), sb]);
+              }
+              return [...byPartner.entries()].map(([k, bills]) => {
+                const first = bills[0]!;
+                const sum = bills.reduce((t, b) => t + selfBillAmountOnDue(b), 0);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => void openSelfBill(first)}
+                    title={bills.map((b) => b.reference).join(", ")}
+                    className="bl-ledger-partner flex w-full items-center gap-2 border-t border-border-light/70 px-4 py-1.5 text-left hover:bg-surface-hover"
+                  >
+                    <span className="w-3.5 shrink-0" aria-hidden />
+                    <PartnerGroupAvatar
+                      partnerKey={first.partner_id ?? first.partner_name ?? first.id}
+                      partnerName={first.partner_name ?? "Partner"}
+                      partnerAvatarById={data.partnerAvatarById}
+                    />
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="truncate text-[13px] font-semibold text-text-primary">{first.partner_name}</span>
+                      <span className="shrink-0 text-[12px] text-text-tertiary">
+                        {bills.length} self-bill{bills.length === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                    <span className="ml-auto text-[13px] font-semibold tabular-nums text-text-secondary">{formatCurrency(sum)}</span>
+                  </button>
+                );
+              });
+            })()
+          : null}
+      </div>
+    );
+  };
 
   const dateLabel = formatBritishDate(new Date());
 
   return (
     <PageTransition>
-      <div className="bl-standalone flex min-h-0 min-w-0 flex-col gap-4 sm:gap-6">
-        <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h1 className="inline-flex items-center gap-2 text-xl font-bold text-[#020040] sm:text-2xl">
-              Billing
-              <FixfyHintIcon
-                text={`Everything you owe and everything you're owed — what's due, what's late, day by day. ${dateLabel}.`}
-                placement="bottom-start"
-              />
-            </h1>
-          </div>
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+      <div className="bl-standalone flex min-h-0 min-w-0 flex-col gap-4">
+        <PageHeader
+          title="Billing"
+          infoTooltip={`Everything you owe and everything you're owed: what's due, what's late, day by day. ${dateLabel}.`}
+        >
+          <div className="contents">
             <BillingStandalonePeriodFilter value={periodFilter} onChange={setPeriodFilter} />
             <ToolbarIconButton
               icon={BarChart3}
@@ -1440,7 +1729,7 @@ function BillingStandaloneInner() {
               New invoice
             </Button>
           </div>
-        </div>
+        </PageHeader>
 
         {data.loading && !data.hasLoadedOnce ? (
           <BillingContentSkeleton />
@@ -1453,11 +1742,11 @@ function BillingStandaloneInner() {
           >
             {kpisVisible ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
-              <KpiCard label="To collect · receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
-              <KpiCard label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
-              <KpiCard label="To pay · self-bills" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
-              <KpiCard label={`Net · ${kpiMonthLabel}`} value={`${kpiRow.netWeek >= 0 ? "+" : ""}${formatCurrency(kpiRow.netWeek)}`} sub={`in ${formatCurrency(kpiRow.weekIn)} · out ${formatCurrency(kpiRow.weekOut)}`} green={kpiRow.netWeek >= 0} />
-              <KpiCard label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
+              <KpiCard hint="Outstanding customer invoice balances under the current filters, including overdue balances." label="Receivables" value={formatCurrency(kpiRow.toCollect)} sub={`${kpiRow.toCollectCount} open · ${kpiRow.overdueCount} overdue`} />
+              <KpiCard hint="Outstanding invoices past their due date under the current filters." label="Overdue" value={formatCurrency(kpiRow.overdue)} sub={`${kpiRow.overdueCount} invoices · oldest ${kpiRow.oldestOverdueDays}d`} alert />
+              <KpiCard hint="Partner self-bills ready for payment with a remaining balance. Excludes workforce self-bills, drafts and paid items." label="Partner payables" value={formatCurrency(kpiRow.toPaySelfBills)} sub={`${kpiRow.toPayPartnerCount} partners · run ${kpiRow.nextRunLabel}`} coral />
+              <KpiCard hint="Incoming amounts minus outgoing amounts for the indicated period. This is a cash-flow measure, not profit." label={`Net · ${kpiMonthLabel}`} value={`${kpiRow.netWeek >= 0 ? "+" : ""}${formatCurrency(kpiRow.netWeek)}`} sub={`in ${formatCurrency(kpiRow.weekIn)} · out ${formatCurrency(kpiRow.weekOut)}`} green={kpiRow.netWeek >= 0} />
+              <KpiCard hint="Invoice payments recorded in the indicated month." label={`Collected · ${kpiMonthLabel}`} value={formatCurrency(kpiRow.collectedMtd)} sub={`${kpiRow.collectedMtdCount} invoices${kpiRow.onTimePct != null ? ` · ${kpiRow.onTimePct}% on time` : ""}`} />
             </div>
             ) : null}
 
@@ -1467,16 +1756,16 @@ function BillingStandaloneInner() {
                   {!periodBounds ? (
                     <button
                       type="button"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Previous week"
-                      onClick={() => setCashflowWeekOffset((o) => o - 1)}
+                      onClick={() => setCashflowWeekOffset((o) => o - (runwayGranularity === "fortnight" ? 2 : 1))}
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </button>
                   ) : null}
                   <div className="min-w-0">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                      Cash-Flow Runway
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                      Cash forecast
                       <FixfyHintIcon
                         text={cashflowRunwayHintForView(runwayView)}
                         placement="bottom-start"
@@ -1487,16 +1776,16 @@ function BillingStandaloneInner() {
                     ) : null}
                     <p className="mt-0.5 text-[11px] text-text-tertiary">
                       {runwayView === "cash" || runwayView === "accrual"
-                        ? "Click a week to see line items and edit Em caixa (opening balance)"
-                        : "Click a week to see what is due in and out"}
+                        ? `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to review items and set the opening balance`
+                        : `Click a ${runwayGranularity === "fortnight" ? "fortnight" : "week"} to see what is due in and out`}
                     </p>
                   </div>
                   {!periodBounds ? (
                     <button
                       type="button"
-                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-[#020040]"
+                      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-light text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
                       aria-label="Next week"
-                      onClick={() => setCashflowWeekOffset((o) => o + 1)}
+                      onClick={() => setCashflowWeekOffset((o) => o + (runwayGranularity === "fortnight" ? 2 : 1))}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </button>
@@ -1504,7 +1793,7 @@ function BillingStandaloneInner() {
                   {!periodBounds && cashflowWeekOffset !== 0 ? (
                     <button
                       type="button"
-                      className="shrink-0 text-[11px] font-semibold text-[#ED4B00] hover:underline"
+                      className="shrink-0 text-[11px] font-semibold text-text-primary hover:underline"
                       onClick={() => setCashflowWeekOffset(0)}
                     >
                       Today
@@ -1512,49 +1801,55 @@ function BillingStandaloneInner() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                   <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
-                    <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Accrual" />
-                    <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash" />
-                    <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="P&L" />
+                    <RunwayTabBtn active={runwayGranularity === "fortnight"} onClick={() => { setRunwayGranularity("fortnight"); setCashflowDetailWeekStart(null); }} label="Fortnight" />
+                    <RunwayTabBtn active={runwayGranularity === "week"} onClick={() => { setRunwayGranularity("week"); setCashflowDetailWeekStart(null); }} label="Week" />
+                  </div>
+                  <div className="flex flex-wrap gap-1 rounded-lg border border-border-light bg-surface-hover/40 p-1">
+                    <RunwayTabBtn active={runwayView === "accrual"} onClick={() => setRunwayView("accrual")} label="Pipeline forecast" />
+                    <RunwayTabBtn active={runwayView === "cash"} onClick={() => setRunwayView("cash")} label="Cash movements" />
+                    <RunwayTabBtn active={runwayView === "pl"} onClick={() => setRunwayView("pl")} label="Due-date forecast" />
+                  </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-3 text-xs text-text-secondary sm:gap-4">
                     {runwayView === "cash" ? (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Closing balance
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Payments in</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Paid / projected out</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Paid / projected out</span>
                       </>
                     ) : runwayView === "accrual" ? (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Em caixa
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Closing balance
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Pipeline revenue</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> All costs due</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> All costs due</span>
                       </>
                     ) : (
                       <>
-                        <span className="flex items-center gap-1.5 font-semibold text-[#020040]">
-                          <span className="h-2 w-2 rounded-sm bg-[#020040]" /> Weekly P&amp;L
+                        <span className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span className="h-2 w-2 rounded-sm bg-primary" /> Weekly P&amp;L
                         </span>
                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-600" /> Receivables due</span>
-                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#ED4B00]" /> Approved pay + expenses due</span>
+                        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-primary" /> Approved pay + expenses due</span>
                       </>
                     )}
                   </div>
                 </div>
               </div>
               <div className="cf flex gap-0.5 overflow-x-auto pb-2">
-                {cashflow.map((w, idx) => {
+                {cashflowShown.map((w, idx) => {
                   const ih = w.moneyIn ? Math.max(6, Math.round((w.moneyIn / cfMax) * 44)) : 0;
                   const oh = w.moneyOut ? Math.max(6, Math.round((w.moneyOut / cfMax) * 44)) : 0;
                   const isSelected = cashflowDetailWeekStart === w.weekStart;
                   const weekNet = cashflowWeekNet(w.moneyIn, w.moneyOut);
                   const weekHasActivity = cashflowWeekHasActivity(w.moneyIn, w.moneyOut);
                   const showRunwayBalance = runwayView === "cash" || runwayView === "accrual";
-                  const prevClosing = idx > 0 ? cashflow[idx - 1]?.closingBalance : undefined;
+                  const prevClosing = idx > 0 ? cashflowShown[idx - 1]?.closingBalance : undefined;
                   const topLabel =
                     showRunwayBalance && w.closingBalance !== undefined
                       ? formatCashRunwayClosing(w.closingBalance)
@@ -1574,15 +1869,19 @@ function BillingStandaloneInner() {
                           : "flat"
                       : null;
                   const pnlLabel = topLabel;
+                  // Sem `finance_overview` a coluna é só leitura: div, sem clique nem hover.
+                  const WeekCol = canSeeFinanceOverview ? "button" : "div";
                   return (
-                    <button
+                    <WeekCol
                       key={w.weekStart}
-                      type="button"
+                      {...(canSeeFinanceOverview
+                        ? { type: "button" as const, onClick: () => setCashflowDetailWeekStart(w.weekStart) }
+                        : {})}
                       title={cashflowWeekColumnTitle(runwayView, w.title, w.moneyIn, w.moneyOut, w.closingBalance)}
-                      aria-label={`${w.title}. ${showRunwayBalance ? `Em caixa ${pnlLabel}` : `Weekly P and L ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}. View breakdown.`}
-                      onClick={() => setCashflowDetailWeekStart(w.weekStart)}
+                      aria-label={`${w.title}. ${showRunwayBalance ? `Closing balance ${pnlLabel}` : `Due-date forecast ${pnlLabel}`}. In ${formatCurrency(w.moneyIn)}. Out ${formatCurrency(w.moneyOut)}.${canSeeFinanceOverview ? " View breakdown." : ""}`}
                       className={cn(
-                        "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px] cursor-pointer transition-colors hover:bg-surface-hover/80",
+                        "cf__day cf__week min-w-[52px] flex-1 sm:min-w-[64px]",
+                        canSeeFinanceOverview && "cursor-pointer transition-colors hover:bg-surface-hover/80",
                         w.isCurrentWeek && "is-today",
                         isSelected && "is-selected",
                       )}
@@ -1615,7 +1914,7 @@ function BillingStandaloneInner() {
                         </div>
                       ) : null}
                       <div className="cf__lbl">{w.label}<b>{w.dayNum}</b></div>
-                    </button>
+                    </WeekCol>
                   );
                 })}
               </div>
@@ -1625,56 +1924,55 @@ function BillingStandaloneInner() {
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                      Money In
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                      Customer invoices
                       <FixfyHintIcon
                         text={`Draft invoices and collectible receivables · ${periodBounds ? periodLabel : "All periods"}.`}
                         placement="bottom-start"
                       />
                     </h2>
-                    <div className="flex gap-1">
-                      <TabPill
-                        active={moneyInTab === "draft"}
-                        onClick={() => {
-                          setMoneyInTab("draft");
-                          setSelectedInvoiceIds(new Set());
-                        }}
-                        label="Draft"
-                        count={draftPeriodInvoices.length}
-                        total={draftInvoiceTotal}
-                      />
-                      <TabPill
-                        active={moneyInTab === "ready"}
-                        onClick={() => {
-                          setMoneyInTab("ready");
-                          setSelectedInvoiceIds(new Set());
-                        }}
-                        label="Ready to receive"
-                        count={kpiRow.toCollectCount}
-                        total={kpiRow.toCollect}
-                      />
-                    </div>
+                    <ViewToggle
+                      value={moneyInView}
+                      onChange={(v) => {
+                        setMoneyInView(v);
+                        setSelectedInvoiceIds(new Set());
+                      }}
+                      options={[
+                        { value: "draft", label: "Draft", count: draftPeriodInvoices.length },
+                        { value: "ready", label: "Ready to receive", count: kpiRow.toCollectCount },
+                      ]}
+                    />
                   </div>
                 </div>
-                {moneyInTab === "ready" ? (
-                  <>
-                <div className="shrink-0 border-b border-border-light px-4 py-4 sm:px-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">To collect · receivables</p>
-                      <p className="text-sm font-semibold text-[#020040]">
-                        {kpiRow.toCollectCount} open
-                        {kpiRow.overdueCount > 0 ? ` · ${kpiRow.overdueCount} overdue` : ""}
+                <>
+                <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    {moneyInView === "draft" ? (
+                      <p className="m-0 text-[12px] text-text-tertiary">
+                        {draftPeriodInvoices.length} draft{draftPeriodInvoices.length === 1 ? "" : "s"} · not sent yet
                       </p>
+                    ) : (
+                    <p className="m-0 text-[12px] text-text-tertiary">
+                      {kpiRow.toCollectCount} open
+                      {kpiRow.overdueCount > 0 ? ` · ${kpiRow.overdueCount} overdue` : ""}
                       {kpiRow.overdue > 0.02 ? (
-                        <p className="mt-0.5 text-xs font-medium text-red-600">{formatCurrency(kpiRow.overdue)} overdue</p>
+                        <span className="font-medium text-[var(--bad)]"> · {formatCurrency(kpiRow.overdue)} overdue</span>
                       ) : null}
-                    </div>
-                    <p className="text-xl font-bold tabular-nums text-[#020040]">{formatCurrency(kpiRow.toCollect)}</p>
-                  </div>
-                  <AgingBar aging={aging} compact />
-                  {selectableReadyInvoiceIds.length > 0 ? (
-                    <div className="mt-3 flex items-center justify-end">
+                    </p>
+                    )}
+                    {moneyInView === "draft" ? (
+                      draftPeriodInvoices.length > 0 ? (
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-primary hover:underline"
+                          onClick={() => toggleSelectAllInvoices(draftPeriodInvoices.map((inv) => inv.id))}
+                        >
+                          {draftPeriodInvoices.every((inv) => selectedInvoiceIds.has(inv.id))
+                            ? "Clear selection"
+                            : `Select all (${draftPeriodInvoices.length})`}
+                        </button>
+                      ) : null
+                    ) : selectableReadyInvoiceIds.length > 0 ? (
                       <button
                         type="button"
                         className="text-xs font-semibold text-primary hover:underline"
@@ -1684,20 +1982,92 @@ function BillingStandaloneInner() {
                           ? "Clear selection"
                           : `Select all (${selectableReadyInvoiceIds.length})`}
                       </button>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
+                  <p className="m-0 mt-2 text-xl font-bold tabular-nums text-text-primary">
+                    {formatCurrency(moneyInView === "draft" ? draftInvoiceTotal : kpiRow.toCollect)}
+                  </p>
                 </div>
                 <div className="min-h-0 flex-1 divide-y divide-border-light overflow-y-auto">
-                  <MoneyInReadyList
-                    groups={attentionAccountGroups}
-                    accountLogoById={data.accountLogoById}
-                    jobsByRef={data.jobsByRef}
-                    selectedInvoiceIds={selectedInvoiceIds}
-                    resetKey={moneyInReadyResetKey}
-                    onToggleInvoiceSelection={toggleInvoiceSelection}
-                    onOpenInvoice={openInvoice}
-                    onMarkReceived={handleMarkInvoiceReceived}
-                  />
+                  {moneyInView === "draft" ? (
+                    draftInRuns.length === 0 ? (
+                      <p className="px-5 py-8 text-center text-sm text-text-tertiary">No draft invoices.</p>
+                    ) : (
+                      draftInRuns.map((run) => {
+                        const open = !(collapsedInRuns[`d:${run.key}`] ?? run.kind !== 0);
+                        const short = (ymd: string) =>
+                          new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                        return (
+                          <div key={run.key} className="border-b border-border-light">
+                            <RunHeader
+                              open={open}
+                              onToggle={() => setCollapsedInRuns((c) => ({ ...c, [`d:${run.key}`]: open }))}
+                              title={run.kind === 0 ? "Due this fortnight" : run.kind === 1 ? "Late" : run.kind === 2 ? "Due" : "No due date"}
+                              tone={run.kind === 0 ? "ok" : run.kind === 1 ? "bad" : "plain"}
+                              range={run.start && run.end ? `${shortDay(run.start)} – ${shortDay(run.end)}` : ""}
+                              count={run.invoices.length}
+                              noun="invoice"
+                              total={run.total}
+                            />
+                            {open ? (
+                              <InvoiceGroupedLedger
+                                groups={run.groups}
+                                todayYmd={todayYmd}
+                                selectedIds={selectedInvoiceIds}
+                                onSelectionChange={selecionarFaturas}
+                                jobsByRef={data.jobsByRef}
+                                customerPaidByJobId={data.customerPaidByJobId}
+                                installmentsByInvoiceId={data.installmentsByInvoiceId}
+                                accountLogoById={data.accountLogoById}
+                                onOpen={openInvoice}
+                                onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
+                                compact
+                                collapsibleAccounts={{
+                                  expandedKeys: expandedLedgerInvoiceAccounts,
+                                  onToggle: toggleLedgerInvoiceAccount,
+                                }}
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    )
+                  ) : moneyInRuns.length === 0 ? (
+                    <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing to collect right now.</p>
+                  ) : (
+                    moneyInRuns.map((run) => {
+                      const open = !(collapsedInRuns[run.key] ?? run.kind !== 0);
+                      const short = (ymd: string) =>
+                        new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+                      const range = run.start && run.end ? `${short(run.start)} – ${short(run.end)}` : "";
+                      return (
+                        <div key={run.key} className="border-b border-border-light">
+                          <RunHeader
+                            open={open}
+                            onToggle={() => setCollapsedInRuns((c) => ({ ...c, [run.key]: open }))}
+                            title={run.kind === 0 ? "Due this fortnight" : run.kind === 1 ? "Late" : run.kind === 2 ? "Due" : "No due date"}
+                            tone={run.kind === 0 ? "ok" : run.kind === 1 ? "bad" : "plain"}
+                            range={run.start && run.end ? `${shortDay(run.start)} – ${shortDay(run.end)}` : ""}
+                            count={run.rows.length}
+                            noun="invoice"
+                            total={run.total}
+                          />
+                          {open ? (
+                            <MoneyInReadyList
+                              groups={run.groups}
+                              accountLogoById={data.accountLogoById}
+                              jobsByRef={data.jobsByRef}
+                              selectedInvoiceIds={selectedInvoiceIds}
+                              resetKey={`${moneyInReadyResetKey}:${run.key}`}
+                              onToggleInvoiceSelection={toggleInvoiceSelection}
+                              onOpenInvoice={openInvoice}
+                              onMarkReceived={handleMarkInvoiceReceived}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
                 {inactivePeriodInvoices.length > 0 ? (
                   <div className="shrink-0 border-t border-border-light bg-surface-hover/20">
@@ -1742,186 +2112,53 @@ function BillingStandaloneInner() {
                     ) : null}
                   </div>
                 ) : null}
-                  </>
-                ) : (
-                  <>
-                    <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-lg font-bold tabular-nums text-[#020040]">{formatCurrency(draftInvoiceTotal)}</p>
-                        {selectableDraftInvoiceIds.length > 0 ? (
-                          <button
-                            type="button"
-                            className="text-xs font-semibold text-primary hover:underline"
-                            onClick={() => toggleSelectAllInvoices(selectableDraftInvoiceIds)}
-                          >
-                            {selectableDraftInvoiceIds.every((id) => selectedInvoiceIds.has(id))
-                              ? "Clear selection"
-                              : `Select all (${selectableDraftInvoiceIds.length})`}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
-                      <InvoiceGroupedLedger
-                        groups={draftInvoiceLedgerGroups}
-                        todayYmd={todayYmd}
-                        selectedIds={selectedInvoiceIds}
-                        onSelectionChange={selecionarFaturas}
-                        jobsByRef={data.jobsByRef}
-                        customerPaidByJobId={data.customerPaidByJobId}
-                        installmentsByInvoiceId={data.installmentsByInvoiceId}
-                        accountLogoById={data.accountLogoById}
-                        onOpen={openInvoice}
-                        onMarkPaid={(id) => void handleMarkInvoicePaid(id)}
-                        emptyLabel="No draft invoices in this period."
-                        collapsibleAccounts={{
-                          expandedKeys: expandedLedgerInvoiceAccounts,
-                          onToggle: toggleLedgerInvoiceAccount,
-                        }}
-                      />
-                    </div>
-                  </>
-                )}
+                </>
               </div>
 
               <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border-light bg-white shadow-sm">
                 <div className="shrink-0 border-b border-border-light px-4 py-3.5 sm:px-5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#020040]">
-                      Money Out
+                    <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                      Partner self-bills
                       <FixfyHintIcon
                         text={`Self-bills by pay week · ${periodWorkWeekLabel}. Mark draft → Ready → Mark as paid.`}
                         placement="bottom-start"
                       />
                     </h2>
-                    <div className="flex gap-1">
-                      <TabPill
-                        active={moneyOutTab === "draft"}
-                        onClick={() => {
-                          setMoneyOutTab("draft");
-                          setSelectedSbIds(new Set());
-                          setMoneyOutSelectedIds(new Set());
-                        }}
-                        label="Draft"
-                        count={ledgerSbDraftSelfBills.length}
-                        total={ledgerSbDraftTotal}
-                      />
-                      <TabPill
-                        active={moneyOutTab === "ready"}
-                        onClick={() => {
-                          setMoneyOutTab("ready");
-                          setSelectedSbIds(new Set());
-                          setMoneyOutSelectedIds(new Set());
-                        }}
-                        label="Ready"
-                        count={goingOutApprovedSelfBills.length}
-                        total={goingOutReadyTotal}
-                      />
-                    </div>
+                    <ViewToggle
+                      value={moneyOutTab === "draft" ? "draft" : "ready"}
+                      onChange={(v) => {
+                        setMoneyOutTab(v);
+                        setSelectedSbIds(new Set());
+                        setMoneyOutSelectedIds(new Set());
+                      }}
+                      options={[
+                        { value: "draft", label: "Draft", count: buildingRuns.reduce((t, r) => t + r.rows.length, 0) },
+                        { value: "ready", label: "Ready", count: goingOutApprovedSelfBills.length },
+                      ]}
+                    />
                   </div>
                 </div>
 
                 {moneyOutTab === "draft" ? (
                   <>
                     <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-lg font-bold tabular-nums text-[#020040]">{formatCurrency(ledgerSbDraftTotal)}</p>
-                        {(() => {
-                          const allTabIds = ledgerSbDraftSelfBills.map((sb) => sb.id);
-                          const selectedInTab = allTabIds.filter((id) => selectedSbIds.has(id));
-                          const hasSelection = selectedInTab.length > 0;
-                          const readyTargetIds = hasSelection ? selectedInTab : allTabIds;
-                          if (readyTargetIds.length === 0) return null;
-                          return (
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              loading={readyTargetIds.some((id) => readyingSelfBillIds.has(id))}
-                              onClick={() => void handleMarkSelfBillsReadyToPay(readyTargetIds)}
-                            >
-                              {hasSelection
-                                ? `Ready to pay (${readyTargetIds.length})`
-                                : `Ready to pay all (${readyTargetIds.length})`}
-                            </Button>
-                          );
-                        })()}
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="m-0 text-[12px] text-text-tertiary">
+                          {buildingRuns.reduce((t, r) => t + r.rows.length, 0)} building · jobs not closed yet
+                        </p>
                       </div>
+                      <p className="m-0 mt-2 text-xl font-bold tabular-nums text-text-primary">
+                        {formatCurrency(buildingRuns.reduce((t, r) => t + r.total, 0))}
+                      </p>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
-                      <SelfBillGroupedLedger
-                        mode="draftQueue"
-                        workforceGroups={ledgerSbDraftSections.workforce}
-                        partnerGroups={ledgerSbDraftSections.partners}
-                        todayYmd={todayYmd}
-                        selectedIds={selectedSbIds}
-                        onSelectionChange={selecionarSelfBillsParaEnvio}
-                        partnerDueCtx={data.partnerDueCtx}
-                        partnerAvatarById={data.partnerAvatarById}
-                        jobsBySelfBillId={data.jobsBySelfBillId}
-                        visitsBySelfBillId={data.visitsBySelfBillId}
-                        partnerPaidByJobId={data.partnerPaidByJobId}
-                        installmentsBySelfBillId={data.installmentsBySelfBillId}
-                        onOpen={(sb) => void openSelfBill(sb)}
-                        onMarkPaid={async () => {}}
-                        emptyLabel="No draft self-bills in this period."
-                        collapsiblePartners={{
-                          expandedKeys: expandedLedgerSelfBillPartners,
-                          onToggle: toggleLedgerSelfBillPartner,
-                        }}
-                        onMarkReadyToPay={handleMarkSelfBillsReadyToPay}
-                        readyingIds={readyingSelfBillIds}
-                      />
+                      {buildingRuns.length === 0 ? (
+                        <p className="px-5 py-8 text-center text-sm text-text-tertiary">Nothing building right now.</p>
+                      ) : (
+                        buildingRuns.map((r) => renderBuildingRun(r))
+                      )}
                     </div>
-                    {inactiveSelfBillCounts.cancelled + inactiveSelfBillCounts.voided > 0 ? (
-                      <div className="shrink-0 border-t border-border-light bg-surface-hover/20">
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-hover/40"
-                          onClick={() => setShowInactiveSelfBills((v) => !v)}
-                        >
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <span className="font-semibold text-text-secondary">Closed</span>
-                            {inactiveSelfBillCounts.cancelled > 0 ? (
-                              <span className="rounded-full bg-red-50 px-2 py-0.5 font-medium text-red-700">
-                                {inactiveSelfBillCounts.cancelled} cancelled
-                              </span>
-                            ) : null}
-                            {inactiveSelfBillCounts.voided > 0 ? (
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
-                                {inactiveSelfBillCounts.voided} void
-                              </span>
-                            ) : null}
-                          </div>
-                          <ChevronDown className={cn("h-4 w-4 shrink-0 text-text-tertiary transition-transform", showInactiveSelfBills && "rotate-180")} />
-                        </button>
-                        {showInactiveSelfBills ? (
-                          <SelfBillGroupedLedger
-                            workforceGroups={inactiveSelfBillLedgerSections.workforce}
-                            partnerGroups={inactiveSelfBillLedgerSections.partners}
-                            todayYmd={todayYmd}
-                            selectedIds={selectedSbIds}
-                            onSelectionChange={selecionarSelfBillsParaEnvio}
-                            partnerDueCtx={data.partnerDueCtx}
-                            partnerAvatarById={data.partnerAvatarById}
-                            jobsBySelfBillId={data.jobsBySelfBillId}
-                          visitsBySelfBillId={data.visitsBySelfBillId}
-                            partnerPaidByJobId={data.partnerPaidByJobId}
-                            installmentsBySelfBillId={data.installmentsBySelfBillId}
-                            onOpen={(sb) => void openSelfBill(sb)}
-                            onMarkPaid={async (id) => {
-                              await markSelfBillsPaid([id]);
-                              toast.success("Marked paid");
-                              await loadData();
-                            }}
-                            variant="compact"
-                            collapsiblePartners={{
-                              expandedKeys: expandedLedgerSelfBillPartners,
-                              onToggle: toggleLedgerSelfBillPartner,
-                            }}
-                          />
-                        ) : null}
-                      </div>
-                    ) : null}
                   </>
                 ) : (
                   (() => {
@@ -1954,8 +2191,8 @@ function BillingStandaloneInner() {
                       <>
                         <div className="shrink-0 border-b border-border-light px-4 py-3 sm:px-5">
                           <div className="flex flex-wrap items-center justify-between gap-3">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
-                              {goingOutApprovedSelfBills.length} ready · {kpiRow.nextRunLabel}
+                            <p className="m-0 text-[12px] text-text-tertiary">
+                              {goingOutApprovedSelfBills.length} ready · next payment {kpiRow.nextRunLabel}
                             </p>
                             {selectableIds.length > 0 ? (
                               <button
@@ -1973,8 +2210,8 @@ function BillingStandaloneInner() {
                               </button>
                             ) : null}
                           </div>
-                          <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-xl font-bold tabular-nums text-[#020040]">
+                          <div className="mt-2 flex flex-col items-center gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="m-0 text-xl font-bold tabular-nums text-text-primary">
                               {formatCurrency(goingOutApprovedTotal)}
                             </p>
                             <MoneyOutPayActions
@@ -1992,7 +2229,7 @@ function BillingStandaloneInner() {
                           <SelfBillGroupedLedger
                             mode="payQueue"
                             variant="compact"
-                            workforceGroups={goingOutApprovedSections.workforce}
+                            workforceGroups={[]}
                             partnerGroups={goingOutApprovedSections.partners}
                             todayYmd={todayYmd}
                             selectedIds={moneyOutSelectedIds}
@@ -2118,10 +2355,11 @@ function BillingStandaloneInner() {
         <CreateInvoiceModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
 
         <CashflowWeekDetailModal
-          open={cashflowDetailWeekStart !== null}
+          open={canSeeFinanceOverview && cashflowDetailWeekStart !== null}
           onClose={() => setCashflowDetailWeekStart(null)}
           view={runwayView}
           breakdown={cashflowDetailBreakdown}
+          detail={cashflowDetailPeriod}
           openingBalance={cashflowDetailWeek?.openingBalance}
           closingBalance={cashflowDetailWeek?.closingBalance}
           onSaveOpeningBalance={
@@ -2130,7 +2368,11 @@ function BillingStandaloneInner() {
           savingOpeningBalance={savingRunwayOpening}
         />
 
-        {selectedInvoiceIds.size > 0 ? (
+        {selectedInvoiceIds.size > 0 ? (() => {
+          // Draft deixou de ser aba: o comportamento vem do que está selecionado.
+          const draftIds = new Set(draftPeriodInvoices.map((inv) => inv.id));
+          const onlyDrafts = [...selectedInvoiceIds].every((id) => draftIds.has(id));
+          return (
           <BillingBulkBar
             count={selectedInvoiceIds.size}
             /* Saldo em aberto, não o valor cheio da fatura: é o que entra se a
@@ -2143,21 +2385,22 @@ function BillingStandaloneInner() {
             }, 0)}
             saving={bulkSaving}
             variant="invoice"
-            markPaidLabel={moneyInTab === "ready" ? "Mark as received" : "Mark as paid"}
+            markPaidLabel={onlyDrafts ? "Mark as paid" : "Mark as received"}
             onClear={() => setSelectedInvoiceIds(new Set())}
             onMarkPaid={async () => {
               setBulkSaving(true);
               try {
                 await handleMarkInvoicesPaid([...selectedInvoiceIds], {
                   clearSelection: true,
-                  received: moneyInTab === "ready",
+                  received: !onlyDrafts,
                 });
               } finally {
                 setBulkSaving(false);
               }
             }}
           />
-        ) : moneyOutSelectedIds.size > 0 ? (
+          );
+        })() : moneyOutSelectedIds.size > 0 ? (
           <BillingBulkBar
             count={moneyOutSelectedIds.size}
             totalAmount={somarSelfBillsSelecionados(moneyOutSelectedIds)}
@@ -2524,6 +2767,30 @@ function ledgerNextDueLabel(
   return { text: formatDate(nextDueYmd), overdue: todayYmd > nextDueYmd };
 }
 
+/** Número do job que abre o job (dono, 15/10/2026). Não abre o drawer da linha. */
+function JobRefLink({ reference, jobId }: { reference: string; jobId?: string | null }) {
+  if (!jobId) return <span className="truncate text-[12px] text-text-tertiary">· {reference}</span>;
+  return (
+    <a
+      href={`/jobs/${jobId}`}
+      onClick={(e) => e.stopPropagation()}
+      className="truncate text-[12px] font-medium text-primary underline-offset-2 hover:underline"
+      title={`Open ${reference}`}
+    >
+      · {reference}
+    </a>
+  );
+}
+
+/** Fase do job no padrão de chip do OS. */
+function JobPhaseBadge({ status }: { status: string }) {
+  return (
+    <Badge variant={jobStatusBadgeVariant(status)} size="sm" marker>
+      {jobStatusLabel(status)}
+    </Badge>
+  );
+}
+
 function InvoiceLedgerRow({
   inv,
   todayYmd,
@@ -2563,7 +2830,7 @@ function InvoiceLedgerRow({
       className={cn("bl-inv-row cursor-pointer", stripeAlt && "bl-inv-row--alt")}
       onClick={() => onOpen(inv)}
     >
-      <td className={cn("w-8", compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+      <td className={cn("w-8", compact ? "py-1.5 pl-4 pr-1" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
         {canSelect ? (
           <input
             type="checkbox"
@@ -2578,67 +2845,71 @@ function InvoiceLedgerRow({
           />
         ) : null}
       </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-        <p className="font-semibold">{displayBillingReference(inv.reference)}</p>
-        <p className="text-xs text-text-tertiary">{inv.job_reference ?? "—"}</p>
+      <td className={cn("max-w-0 w-full whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")}>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="shrink-0 text-[13px] font-semibold text-text-primary">{displayBillingReference(inv.reference)}</span>
+          {inv.job_reference ? (
+            <JobRefLink reference={inv.job_reference} jobId={jobsByRef[inv.job_reference.trim()]?.id} />
+          ) : null}
+        </span>
       </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")}>
-        <InvoiceStatusPill status={st} />
+      <td className={cn("whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")}>
+        {/* A fase do job diz mais que o status da fatura (o status já é a aba: Draft ou Ready). */}
+        {inv.job_reference && jobsByRef[inv.job_reference.trim()]?.status ? (
+          <JobPhaseBadge status={jobsByRef[inv.job_reference.trim()]!.status} />
+        ) : (
+          <InvoiceStatusPill status={st} />
+        )}
       </td>
-      <td className={cn("text-right font-medium tabular-nums", compact ? "px-4 py-2" : "px-3 py-2")}>
+      <td className={cn("whitespace-nowrap text-right text-[13px] font-semibold tabular-nums text-text-primary", compact ? "px-3 py-1.5" : "px-3 py-2")}>
         {formatCurrency(total)}
       </td>
-      <td className={cn("text-right tabular-nums text-emerald-700", compact ? "px-4 py-2" : "px-3 py-2")}>
-        {paid > 0 ? formatCurrency(paid) : "—"}
+      <td
+        className={cn("whitespace-nowrap text-right text-[12px] tabular-nums text-[var(--warn-ink)]", compact ? "px-3 py-1.5" : "px-3 py-2")}
+        title={paid > 0 ? `${formatCurrency(paid)} already paid` : undefined}
+      >
+        {/* Só quando entrou parte; senão repetiria o total. */}
+        {paid > 0.02 && outstanding > 0.02 ? `${formatCurrency(outstanding)} left` : ""}
       </td>
       <td
         className={cn(
-          "text-right font-medium tabular-nums",
-          outstanding > 0 ? "text-amber-800" : "text-text-tertiary",
-          compact ? "px-4 py-2" : "px-3 py-2",
+          "whitespace-nowrap text-right text-[12px] tabular-nums",
+          nextDue.overdue ? "font-medium text-[var(--bad)]" : nextDue.text === "—" ? "text-text-tertiary" : "text-text-secondary",
+          compact ? "px-3 py-1.5" : "px-3 py-2",
         )}
       >
-        {outstanding > 0 ? formatCurrency(outstanding) : "—"}
+        {(() => {
+          const ymd = invoiceDisplayDueYmd(inv, installments);
+          if (nextDue.text === "—" || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return nextDue.text;
+          return `Due ${shortDay(ymd)}`;
+        })()}
       </td>
-      <td
-        className={cn(
-          "text-right text-sm tabular-nums",
-          nextDue.overdue ? "font-medium text-red-700" : nextDue.text === "—" ? "text-text-tertiary" : "text-text-secondary",
-          compact ? "px-4 py-2" : "px-3 py-2",
-        )}
-      >
-        {nextDue.text}
-      </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-end gap-1">
+      <td className={cn("whitespace-nowrap", compact ? "px-3 py-1.5" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1">
           {canMarkPaid ? (
             <button
               type="button"
-              title="Mark paid"
-              className="rounded border border-border-light p-1 hover:bg-emerald-50"
+              title="Mark as received"
+              aria-label="Mark as received"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
               onClick={(e) => {
                 e.stopPropagation();
                 onMarkPaid(inv.id);
               }}
             >
-              <Check className="h-3.5 w-3.5 text-emerald-700" />
+              <CheckCheck className="h-3.5 w-3.5" />
             </button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             title="View PDF"
-            icon={<FileText className="h-3.5 w-3.5" />}
+            aria-label="View PDF"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-text-secondary hover:bg-surface-hover"
             onClick={() => openInvoicePdf(inv.id)}
           >
-            PDF
-          </Button>
+            <FileText className="h-3.5 w-3.5" />
+          </button>
         </div>
-      </td>
-      <td className={cn(compact ? "px-4 py-2" : "px-3 py-2")} onClick={(e) => e.stopPropagation()}>
-        <Button variant="ghost" size="sm" onClick={() => onOpen(inv)}>
-          Open
-        </Button>
       </td>
     </tr>
   );
@@ -2701,7 +2972,7 @@ function InvoiceGroupedLedger({
             {collapsibleAccounts ? (
               <button
                 type="button"
-                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[#020040]/[0.04]"
+                className="bl-ledger-partner flex w-full items-center justify-between gap-3 px-4 py-1.5 text-left hover:bg-primary/[0.04]"
                 onClick={() => collapsibleAccounts.onToggle(group.accountKey)}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -2710,58 +2981,52 @@ function InvoiceGroupedLedger({
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 shrink-0 text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
-                    {groupOutstanding > 0 ? (
-                      <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
-                    ) : null}
-                  </div>
+                  <p className="m-0 text-[13px] font-semibold tabular-nums text-text-secondary" title={groupOutstanding > 0.02 && Math.abs(groupOutstanding - groupTotal) > 0.02 ? `${formatCurrency(groupOutstanding)} still due` : undefined}>
+                    {formatCurrency(groupOutstanding > 0.02 ? groupOutstanding : groupTotal)}
+                  </p>
                   <ChevronDown className={cn("h-4 w-4 text-text-tertiary transition-transform", groupOpen && "rotate-180")} />
                 </div>
               </button>
             ) : (
-              <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-2.5">
+              <div className="flex items-center justify-between gap-3 bg-surface-hover/30 px-4 py-1.5">
                 <div className="flex min-w-0 items-center gap-2.5">
                   {logoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={logoUrl}
                       alt=""
-                      className="h-7 w-7 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
+                      className="h-6 w-6 shrink-0 rounded-full border border-border-light bg-white object-contain p-0.5"
                     />
                   ) : (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-800">
                       {group.accountName.slice(0, 2).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{group.accountName}</p>
-                    <p className="text-xs text-text-tertiary">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{group.accountName}</p>
+                    <p className="m-0 shrink-0 text-[12px] text-text-tertiary">
                       {group.invoiceCount} invoice{group.invoiceCount === 1 ? "" : "s"}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(groupTotal)}</p>
-                  {groupOutstanding > 0 ? (
-                    <p className="text-[10px] tabular-nums text-amber-800">{formatCurrency(groupOutstanding)} due</p>
-                  ) : null}
-                </div>
+                  <p className="m-0 text-[13px] font-semibold tabular-nums text-text-secondary" title={groupOutstanding > 0.02 && Math.abs(groupOutstanding - groupTotal) > 0.02 ? `${formatCurrency(groupOutstanding)} still due` : undefined}>
+                  {formatCurrency(groupOutstanding > 0.02 ? groupOutstanding : groupTotal)}
+                </p>
               </div>
             )}
             {groupOpen ? (
@@ -2809,12 +3074,92 @@ function PartnerGroupAvatar({
       name={partnerName}
       size="xs"
       src={partnerAvatarById[partnerKey] ?? undefined}
-      className="h-7 w-7 shrink-0 border border-border-light"
+      className="h-6 w-6 shrink-0 border border-border-light"
     />
   );
 }
 
 type SelfBillLedgerMode = "payQueue" | "draftQueue" | "approveQueue" | "manageQueue";
+
+/** Seletor Draft / Ready igual nos dois painéis. */
+function ViewToggle<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string; count?: number }[];
+}) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-lg bg-surface-secondary p-0.5" role="group">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors",
+            value === o.value ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+          )}
+        >
+          {o.label}
+          {o.count != null ? <span className="tabular-nums text-text-tertiary">{o.count}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Data curta igual nos dois painéis: "Mon 12 Oct". */
+function shortDay(ymd: string): string {
+  return new Date(`${ymd.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** Cabeçalho de grupo (quinzena) igual nos dois painéis. */
+function RunHeader({
+  open,
+  onToggle,
+  title,
+  tone,
+  range,
+  count,
+  noun,
+  total,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  title: string;
+  tone: "ok" | "bad" | "plain";
+  range: string;
+  count: number;
+  noun: string;
+  total: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex w-full items-center gap-2 bg-surface-secondary px-4 py-2 text-left hover:bg-surface-hover"
+    >
+      <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform", !open && "-rotate-90")} />
+      <span
+        className={cn(
+          "shrink-0 text-[13px] font-semibold",
+          tone === "ok" ? "text-[var(--ok)]" : tone === "bad" ? "text-[var(--bad)]" : "text-text-primary",
+        )}
+      >
+        {title}
+      </span>
+      <span className="min-w-0 truncate text-[12px] text-text-tertiary">
+        {[range, `${count} ${noun}${count === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}
+      </span>
+      <span className="ml-auto shrink-0 text-[13px] font-semibold tabular-nums text-text-primary">{formatCurrency(total)}</span>
+    </button>
+  );
+}
 
 function SelfBillGroupedLedger({
   workforceGroups,
@@ -2897,6 +3242,7 @@ function SelfBillGroupedLedger({
   const draftQueue = mode === "draftQueue";
   const approveQueue = mode === "approveQueue";
   const manageQueue = mode === "manageQueue";
+  const [collapsedWeeks, setCollapsedWeeks] = useState<Record<string, boolean>>({});
   const queueMode = payQueue || draftQueue || approveQueue || manageQueue;
   const showWeekApproveAndSend = approveQueue && !!onApproveAndSend;
   const showWeekBulkActions =
@@ -2926,18 +3272,60 @@ function SelfBillGroupedLedger({
     <div className="divide-y divide-border-light">
       {ledgerSections.map((section) => (
         <div key={section.label}>
-          <div className="border-b border-border-light bg-surface-hover/30 px-4 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">{section.label}</p>
-          </div>
-          {section.groups.map((week) => (
-        <div key={week.weekKey}>
-          <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-[#020040]">{week.weekTitle}</p>
-              {week.weekSubtitle ? <p className="text-xs text-text-secondary">{week.weekSubtitle}</p> : null}
+          {compact ? null : (
+            <div className="border-b border-border-light bg-surface-hover/30 px-4 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">{section.label}</p>
             </div>
-            <div className="flex items-center gap-3">
-              <p className="text-sm font-bold tabular-nums text-[#020040]">{formatCurrency(week.weekTotal)}</p>
+          )}
+          {(() => {
+            // Em cima o próximo pagamento (primeiro dia de pagar de hoje em diante), depois os
+            // atrasados, depois o resto.
+            const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+            const dated = section.groups.filter((g) => /^\d{4}-\d{2}-\d{2}$/.test(g.weekKey));
+            const nextKey = dated.map((g) => g.weekKey).filter((k) => k >= today).sort()[0] ?? null;
+            const rank = (g: (typeof section.groups)[number]) =>
+              g.weekKey === nextKey ? 0 : /^\d{4}-\d{2}-\d{2}$/.test(g.weekKey) && g.weekKey < today ? 1 : 2;
+            return [...section.groups]
+              .sort((a, b) => rank(a) - rank(b) || a.weekKey.localeCompare(b.weekKey))
+              .map((week) => ({ week, isNext: week.weekKey === nextKey }));
+          })().map(({ week, isNext }) => (
+        <div key={week.weekKey}>
+          <div className="bl-ledger-week flex flex-wrap items-center justify-between gap-2 bg-surface-secondary">
+            {(() => {
+              const due = /^\d{4}-\d{2}-\d{2}$/.test(week.weekKey) ? week.weekKey : null;
+              const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+              const hasOpen = week.partners.some((pg) =>
+                pg.rows.some((sb) => sb.status !== "paid" && sb.status !== "rejected" && !isSelfBillPayoutVoided(sb)),
+              );
+              const late = due !== null && due < today && hasOpen;
+              const all = week.partners.flatMap((pg) => pg.rows);
+              const starts = all.map((r) => r.week_start ?? "").filter(Boolean).sort();
+              const ends = all.map((r) => r.week_end ?? "").filter(Boolean).sort();
+              const range = starts[0] && ends.length ? `${shortDay(starts[0])} – ${shortDay(ends[ends.length - 1])}` : week.weekSubtitle ?? "";
+              return (
+                <div className="min-w-0 flex-1">
+                  <RunHeader
+                    open={!(collapsedWeeks[week.weekKey] ?? !isNext)}
+                    onToggle={() => setCollapsedWeeks((c) => ({ ...c, [week.weekKey]: !(c[week.weekKey] ?? !isNext) }))}
+                    title={
+                      late && due
+                        ? `Late · was due ${shortDay(due)}`
+                        : isNext && due
+                          ? `Next payment · ${shortDay(due)}`
+                          : due
+                            ? `Pay · ${shortDay(due)}`
+                            : week.weekTitle
+                    }
+                    tone={late ? "bad" : isNext ? "ok" : "plain"}
+                    range={range}
+                    count={all.length}
+                    noun="self-bill"
+                    total={week.weekTotal}
+                  />
+                </div>
+              );
+            })()}
+            <div className="flex items-center gap-3 empty:hidden">
               {showWeekBulkActions && onApproveAndSend ? (() => {
                 const weekApproveIds = week.partners.flatMap((p) =>
                   p.rows
@@ -2989,6 +3377,7 @@ function SelfBillGroupedLedger({
               })() : null}
             </div>
           </div>
+          <div hidden={collapsedWeeks[week.weekKey] ?? !isNext}>
           {week.partners.map((partner) => {
             const partnerGroupKey = `${week.weekKey}::${partner.partnerKey}`;
             const partnerOpen = !collapsiblePartners || collapsiblePartners.expandedKeys.has(partnerGroupKey);
@@ -3017,7 +3406,7 @@ function SelfBillGroupedLedger({
             return (
             <div key={partnerGroupKey}>
               {collapsiblePartners ? (
-                <div className="bl-ledger-partner flex items-center gap-2 px-4 py-2.5">
+                <div className="bl-ledger-partner flex items-center gap-2 px-4 py-1.5">
                   {partnerSelectableIds.length > 0 ? (
                     <input
                       type="checkbox"
@@ -3048,9 +3437,9 @@ function SelfBillGroupedLedger({
                         partnerName={partner.partnerName}
                         partnerAvatarById={partnerAvatarById}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
-                        <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{partner.partnerName}</p>
+                        <p className="m-0 shrink-0 text-[12px] text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -3097,9 +3486,9 @@ function SelfBillGroupedLedger({
                         partnerName={partner.partnerName}
                         partnerAvatarById={partnerAvatarById}
                       />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#020040]">{partner.partnerName}</p>
-                        <p className="text-xs text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <p className="m-0 truncate text-[13px] font-semibold text-text-primary">{partner.partnerName}</p>
+                        <p className="m-0 shrink-0 text-[12px] text-text-tertiary">{partner.rows.length} self-bill{partner.rows.length === 1 ? "" : "s"}</p>
                       </div>
                     </div>
                     <p className="text-sm font-semibold tabular-nums text-text-secondary">{formatCurrency(partner.partnerTotal)}</p>
@@ -3160,8 +3549,15 @@ function SelfBillGroupedLedger({
                               ) : null}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-[#020040]">
+                              <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-text-primary">
                                 <span className="truncate">{sb.reference}</span>
+                                {sb.week_start && sb.week_end ? (
+                                  <span className="shrink-0 text-[12px] font-normal text-text-tertiary">
+                                    · {new Date(`${sb.week_start.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} –{" "}
+                                    {new Date(`${sb.week_end.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                    {(jobsBySelfBillId[sb.id]?.length ?? 0) > 1 ? ` · ${jobsBySelfBillId[sb.id]!.length} jobs` : ""}
+                                  </span>
+                                ) : null}
                                 {(() => {
                                   /**
                                    * Single-job self-bill: one hop to the job. The job number is spelled
@@ -3172,25 +3568,7 @@ function SelfBillGroupedLedger({
                                   const linked = jobsBySelfBillId[sb.id] ?? [];
                                   const only = linked.length === 1 ? linked[0] : null;
                                   if (!only) return null;
-                                  const jobYmd =
-                                    only.scheduled_date?.trim().slice(0, 10) ||
-                                    only.scheduled_start_at?.trim().slice(0, 10) ||
-                                    "";
-                                  const refShowsJob = sb.reference?.includes(only.reference) ?? false;
-                                  return (
-                                    <button
-                                      type="button"
-                                      title={`Open ${only.reference}${jobYmd ? ` · ${formatDate(jobYmd)}` : ""}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.open(`/jobs/${only.id}`, "_blank", "noopener,noreferrer");
-                                      }}
-                                      className="inline-flex shrink-0 items-center gap-1 rounded border border-border-light px-1.5 py-0.5 text-[10px] font-medium text-text-secondary hover:bg-surface-hover"
-                                    >
-                                      <Briefcase className="h-3 w-3" aria-hidden />
-                                      {refShowsJob ? null : only.reference}
-                                    </button>
-                                  );
+                                  return <JobRefLink reference={only.reference} jobId={only.id} />;
                                 })()}
                                 {sb.bill_origin === "internal" ? (
                                   <Badge variant="info" size="sm" className="text-[9px] uppercase tracking-wide">
@@ -3223,7 +3601,15 @@ function SelfBillGroupedLedger({
                           </div>
                           <div className="bl-sb-row__cols">
                             <span className="bl-sb-row__statuscell">
-                              <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                              {(() => {
+                                // Self-bill de um job só: a fase do job, como na linha da fatura.
+                                const linked = jobsBySelfBillId[sb.id] ?? [];
+                                return linked.length === 1 && label !== "Paid" && label !== "Overdue" ? (
+                                  <JobPhaseBadge status={linked[0]!.status} />
+                                ) : (
+                                  <StatusPill label={label} tone={label === "Paid" ? "ok" : label === "Overdue" ? "bad" : "info"} />
+                                );
+                              })()}
                             </span>
                             <span
                               className="bl-sb-row__amount text-sm tabular-nums"
@@ -3237,7 +3623,8 @@ function SelfBillGroupedLedger({
                                 outstanding > 0.02 ? "text-amber-800" : "text-text-tertiary",
                               )}
                             >
-                              {outstanding > 0.02 ? formatCurrency(outstanding) : "—"}
+                              {/* Só quando já entrou parte: senão repetiria o total. */}
+                              {paid > 0.02 && outstanding > 0.02 ? `${formatCurrency(outstanding)} left` : ""}
                             </span>
                             <span
                               className={cn(
@@ -3249,12 +3636,18 @@ function SelfBillGroupedLedger({
                                     : "text-text-secondary",
                               )}
                             >
-                              {nextDue.text}
+                              {nextDue.text !== "—" && !nextDue.overdue && label !== "Paid" ? `Pay ${nextDue.text}` : nextDue.text}
                             </span>
                             <div className="bl-sb-row__actions">
                               {showRowMarkPaid && canSelect ? (
-                                <button type="button" title="Mark paid" className="rounded border border-border-light p-1 hover:bg-emerald-50" onClick={() => void onMarkPaid(sb.id)}>
-                                  <Check className="h-3.5 w-3.5 text-emerald-700" />
+                                <button
+                                  type="button"
+                                  title="Mark as paid"
+                                  aria-label="Mark as paid"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border text-[var(--ok)] hover:bg-[var(--success-light)]"
+                                  onClick={() => void onMarkPaid(sb.id)}
+                                >
+                                  <CheckCheck className="h-3.5 w-3.5" />
                                 </button>
                               ) : null}
                               {showRowSend && sb.bill_origin !== "internal" && !!sb.partner_id?.trim() && !isSelfBillPayoutVoided(sb) ? (
@@ -3381,6 +3774,7 @@ function SelfBillGroupedLedger({
             </div>
           );
           })}
+          </div>
         </div>
           ))}
         </div>
@@ -3389,53 +3783,20 @@ function SelfBillGroupedLedger({
   );
 }
 
-function KpiCard({ label, value, sub, alert, coral, green }: { label: string; value: string; sub: string; alert?: boolean; coral?: boolean; green?: boolean }) {
+function KpiCard({ label, value, sub, hint, alert, coral, green }: { label: string; value: string; sub: string; hint?: string; alert?: boolean; coral?: boolean; green?: boolean }) {
   return (
     <div className={cn(
       "min-w-0 rounded-xl border bg-white px-3 py-3 shadow-sm sm:px-4",
       alert ? "border-red-200 bg-red-50/30" : coral ? "border-orange-200 bg-orange-50/30" : "border-border-light",
     )}>
-      <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px]">{label}</p>
-      <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-[#020040]")}>{value}</p>
+      <p className="text-[9px] font-bold uppercase leading-snug tracking-wider text-text-tertiary sm:text-[10px] inline-flex items-center gap-1.5">{label}{hint ? <FixfyHintIcon label={label} text={hint} /> : null}</p>
+      <p className={cn("mt-1 text-lg font-bold tabular-nums sm:text-xl", green ? "text-emerald-700" : "text-text-primary")}>{value}</p>
       <p className="mt-0.5 text-[11px] leading-snug text-text-secondary sm:text-xs">{sub}</p>
     </div>
   );
 }
 
 /** Clean pill: numbers live in the hover tooltip, not inline — the header stays scannable. */
-function TabPill({
-  active,
-  onClick,
-  label,
-  count,
-  total,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count?: number | null;
-  total?: number;
-}) {
-  const hoverDetail =
-    count != null
-      ? `${count} item${count === 1 ? "" : "s"}${total != null && count > 0 ? ` · ${formatCurrency(total)}` : ""}`
-      : undefined;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={hoverDetail}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition",
-        active
-          ? "bg-[#020040] text-white"
-          : "bg-surface-hover/40 text-text-secondary hover:bg-surface-hover/80",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
 
 function RunwayTabBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
@@ -3444,7 +3805,7 @@ function RunwayTabBtn({ active, onClick, label }: { active: boolean; onClick: ()
       onClick={onClick}
       className={cn(
         "shrink-0 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors sm:px-3 sm:text-xs",
-        active ? "bg-[#ED4B00] text-white" : "text-text-secondary hover:bg-white/80",
+        active ? "bg-primary text-white" : "text-text-secondary hover:bg-white/80",
       )}
     >
       {label}
@@ -3462,25 +3823,4 @@ function InvoiceStatusPill({ status }: { status: ReturnType<typeof invoiceDispla
           ? "muted"
           : "info";
   return <StatusPill label={status} tone={tone} />;
-}
-
-function AgingBar({ aging, compact = false }: { aging: ReturnType<typeof computeAgingTotals>; compact?: boolean }) {
-  const total = aging.current + aging.d1_7 + aging.d8_30 + aging.d30plus || 1;
-  const pct = (n: number) => `${Math.max(0, (n / total) * 100)}%`;
-  return (
-    <div className={cn(compact ? "mt-3" : "px-5 py-4")}>
-      <div className={cn("flex overflow-hidden rounded-full bg-surface-hover", compact ? "h-1.5" : "h-2.5")}>
-        <span className="bg-emerald-500" style={{ width: pct(aging.current) }} />
-        <span className="bg-amber-400" style={{ width: pct(aging.d1_7) }} />
-        <span className="bg-[#ED4B00]" style={{ width: pct(aging.d8_30) }} />
-        <span className="bg-red-600" style={{ width: pct(aging.d30plus) }} />
-      </div>
-      <div className={cn("flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary", compact ? "mt-2" : "mt-3")}>
-        <span>Current <b className="text-[#020040]">{formatCurrency(aging.current)}</b></span>
-        <span>1–7 days <b className="text-[#020040]">{formatCurrency(aging.d1_7)}</b></span>
-        <span>8–30 days <b className="text-[#020040]">{formatCurrency(aging.d8_30)}</b></span>
-        <span>30+ <b className="text-[#020040]">{formatCurrency(aging.d30plus)}</b></span>
-      </div>
-    </div>
-  );
 }

@@ -1,0 +1,62 @@
+{
+  "name": "Reserva abandonada · e-mails de retomada (a cada 10 min)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "name": "A cada 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "5c0e0d64-3c41-4a0e-9a6f-4b8c2f1d7a01"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://app.getfixfy.com/api/cron/reserva-abandonada",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "Manda o e-mail que venceu (OS → Resend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · CRON_SECRET"
+        }
+      },
+      "id": "7b1f2a3e-8d4c-4e5f-a6b7-c8d9e0f1a2b3"
+    }
+  ],
+  "connections": {
+    "A cada 10 min": {
+      "main": [
+        [
+          {
+            "node": "Manda o e-mail que venceu (OS → Resend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London"
+  },
+  "active": false
+}

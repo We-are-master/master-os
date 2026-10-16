@@ -40,16 +40,8 @@ import { saveUserPermissions, resolvePermission } from "@/services/admin-config"
 import { BrandingImageUpload } from "@/components/settings/branding-image-upload";
 import { AiBriefsTab } from "./ai-briefs-tab";
 import { SetupTab } from "./setup-tab";
-import { SETUP_TAB_BADGE_COUNT } from "@/lib/settings-setup-sections";
-import { ServicesPricingClient } from "@/app/(dashboard)/services/services-pricing-client";
-const settingsAdminTabs = [
-  { id: "ai-briefs", label: "AI & Daily brief" },
-  { id: "setup", label: "Setup", count: SETUP_TAB_BADGE_COUNT },
-  { id: "navigation", label: "Navigation" },
-  { id: "permissions", label: "Roles & Permissions" },
-  { id: "team", label: "Users Access" },
-  { id: "system", label: "System" },
-] as const;
+import { LeadOriginsTab } from "./lead-origins-tab";
+import { SETTINGS_PAGE_TABS, useSettingsTabs } from "@/components/settings/settings-tabs-bar";
 
 export default function SettingsPage() {
   return (
@@ -63,33 +55,22 @@ function SettingsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { profile } = useProfile();
-  const { loading: configLoading, can } = useAdminConfig();
+  const { loading: configLoading } = useAdminConfig();
   const isAdmin = profile?.role === "admin";
-  const canCatalog = can("service_catalog");
 
-  const visibleTabs = useMemo(() => {
-    const tabs: { id: string; label: string; count?: number }[] = [{ id: "profile", label: "My Profile" }];
-    if (canCatalog) {
-      tabs.push({ id: "services", label: "Services" });
-    }
-    if (isAdmin) {
-      tabs.push(
-        ...settingsAdminTabs.map((t) => ({
-          id: t.id,
-          label: t.label,
-          count: "count" in t ? t.count : undefined,
-        })),
-      );
-    }
-    return tabs;
-  }, [isAdmin, canCatalog]);
+  const visibleTabs = useSettingsTabs();
 
   const tabFromUrl = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState("profile");
 
   useEffect(() => {
-    if (tabFromUrl === "service-catalog") {
-      router.replace("/settings?tab=services");
+    // Agents e Services são abas que moram nas páginas deles.
+    if (tabFromUrl === "service-catalog" || tabFromUrl === "services") {
+      router.replace("/services");
+      return;
+    }
+    if (tabFromUrl === "agents") {
+      router.replace("/agents");
       return;
     }
     if (tabFromUrl === "tiers") {
@@ -109,6 +90,10 @@ function SettingsPageInner() {
   }, [tabFromUrl, visibleTabs, configLoading, activeTab, router]);
 
   const handleTabChange = (id: string) => {
+    if (SETTINGS_PAGE_TABS[id]) {
+      router.push(SETTINGS_PAGE_TABS[id]!);
+      return;
+    }
     setActiveTab(id);
     const params = new URLSearchParams(searchParams.toString());
     if (id === "profile") params.delete("tab");
@@ -123,7 +108,7 @@ function SettingsPageInner() {
       <div className="space-y-6">
         <PageHeader
           title="Settings"
-          subtitle={isAdmin ? "The system is modular — only the Admin profile can change navigation, permissions and system configuration. All other profiles use what is configured." : "Manage your profile."}
+          subtitle={isAdmin ? "Manage business settings, users and access permissions. Administrative options depend on your role." : "Manage your profile."}
         >
           {isAdmin && (
             <Badge variant="primary" dot size="md">
@@ -137,9 +122,9 @@ function SettingsPageInner() {
         <motion.div variants={fadeInUp} initial="hidden" animate="visible">
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "team" && isAdmin && <TeamTab />}
-          {activeTab === "services" && canCatalog && <ServicesPricingClient embedded />}
           {activeTab === "ai-briefs" && isAdmin && <AiBriefsTab />}
           {activeTab === "setup" && isAdmin && <SetupTab />}
+          {activeTab === "lead-origins" && isAdmin && <LeadOriginsTab />}
           {activeTab === "navigation" && isAdmin && <NavigationTab />}
           {activeTab === "permissions" && isAdmin && <PermissionsTab />}
           {activeTab === "system" && isAdmin && <SystemTab />}
@@ -373,8 +358,8 @@ function ProfileTab() {
             <CardTitle>Account Info</CardTitle>
           </CardHeader>
           <div className="px-5 pb-5 space-y-3">
-            <InfoRow label="Member Since" value={profile?.created_at ? formatBritishDate(profile.created_at) : "-"} />
-            <InfoRow label="Last Login" value={profile?.last_login_at ? formatBritishDate(profile.last_login_at) : "Current session"} />
+            <InfoRow label="Member since" value={profile?.created_at ? formatBritishDate(profile.created_at) : "-"} />
+            <InfoRow label="Last login" value={profile?.last_login_at ? formatBritishDate(profile.last_login_at) : "Current session"} />
             <InfoRow label="Status" value={profile?.is_active !== false ? "Active" : "Inactive"} />
             <InfoRow label="Role" value={profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1) : "-"} />
           </div>
@@ -513,7 +498,7 @@ function TeamTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Users Access</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Users</h3>
           <p className="text-sm text-text-tertiary">{members.length} members · click the sliders icon to set per-user permission overrides</p>
         </div>
         <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setInviteOpen(true)}>
@@ -622,12 +607,12 @@ function TeamTab() {
 const ALL_PERMISSIONS: PermissionKey[] = [
   "dashboard", "requests", "leads", "quotes", "jobs", "service_catalog", "partners",
   "accounts", "finance", "team", "settings", "manage_team", "manage_roles",
-  "delete_data", "export_data",
+  "delete_data", "export_data", "manage_partners", "manage_jobs", "finance_overview",
 ];
 
 const PERMISSION_GROUPS: { label: string; keys: PermissionKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "service_catalog"] },
-  { label: "Network & Finance", keys: ["partners", "accounts", "finance", "team"] },
+  { label: "Operations", keys: ["dashboard", "requests", "leads", "quotes", "jobs", "manage_jobs", "service_catalog"] },
+  { label: "Network & finance", keys: ["partners", "manage_partners", "accounts", "finance", "finance_overview", "team"] },
   { label: "Administration", keys: ["settings", "manage_team", "manage_roles", "delete_data", "export_data"] },
 ];
 
@@ -913,7 +898,7 @@ function NavigationTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Navigation (Sidebar)</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Navigation</h3>
           <p className="text-sm text-text-tertiary">The menu is modular. Only Admin can edit groups and items; visibility depends on each role&apos;s permissions.</p>
         </div>
         {canEditConfig && (
@@ -1023,7 +1008,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         <h3 className="text-lg font-semibold text-text-primary">Invite user</h3>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Full Name</label>
-          <Input value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} placeholder="John Smith" />
+          <Input value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} placeholder="John smith" />
         </div>
         <div>
           <label className="block text-xs font-medium text-text-secondary mb-1.5">Email</label>
@@ -1069,6 +1054,9 @@ const permissionLabels: Record<string, string> = {
   manage_roles: "Manage Roles",
   delete_data: "Delete Records",
   export_data: "Export Data",
+  manage_partners: "Manage Partners",
+  manage_jobs: "Manage Jobs",
+  finance_overview: "See cashflow and Pulse details",
 };
 
 function PermissionsTab() {
@@ -1117,7 +1105,7 @@ function PermissionsTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Roles & Permissions</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Permissions</h3>
           <p className="text-sm text-text-tertiary">The system is modular: each role sees only what is enabled. Only Admin can make changes.</p>
         </div>
         {canEditConfig && (
@@ -1340,7 +1328,7 @@ function SystemTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-text-primary">System Configuration</h3>
+        <h3 className="text-lg font-semibold text-text-primary">System</h3>
         <p className="text-sm text-text-tertiary">Company branding, PDF templates and system preferences. Admin only.</p>
       </div>
 
@@ -1506,7 +1494,7 @@ function SystemTab() {
             <p className="text-xs text-text-tertiary mt-1 font-normal leading-relaxed max-w-3xl">
               Partner, employee, and contractor document rules are configured in{" "}
               <Link href="/settings?tab=setup&section=partners" className="text-primary font-medium hover:underline">
-                Settings → Setup → Partners
+                Settings → Business settings → Partners
               </Link>
               {" "}(Partner documents and Workforce documents sections). Use Request / Mandatory toggles to control upload links, onboarding, and compliance scoring.
             </p>
@@ -1552,7 +1540,7 @@ function SystemTab() {
             <BrandingImageUpload
               kind="pdf-logo"
               label="PDF & email logo"
-              description="Used on quote PDFs and customer emails. Statement/receipt overrides live in Settings → Setup → Finance."
+              description="Used on quote PDFs and customer emails. Statement/receipt overrides live in Settings → Business settings → Finance."
               value={form.logo_url}
               onChange={(v) => update("logo_url", v)}
               placeholder="https://your-domain.com/logo.png"
@@ -1569,7 +1557,7 @@ function SystemTab() {
             />
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Tagline</label>
-              <Input value={form.tagline} onChange={(e) => update("tagline", e.target.value)} placeholder="Professional Property Services" />
+              <Input value={form.tagline} onChange={(e) => update("tagline", e.target.value)} placeholder="Professional property services" />
             </div>
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1.5">Brand Color</label>
@@ -1622,7 +1610,7 @@ function SystemTab() {
               ]}
             />
             <Select
-              label="Date Format"
+              label="Date format"
               defaultValue="DD/MM/YYYY"
               options={[
                 { value: "DD/MM/YYYY", label: "DD/MM/YYYY" },
@@ -1634,8 +1622,8 @@ function SystemTab() {
               label="Timezone"
               defaultValue="Europe/London"
               options={[
-                { value: "Europe/London", label: "London (GMT)" },
-                { value: "America/New_York", label: "New York (EST)" },
+                { value: "Europe/London", label: "London" },
+                { value: "America/New_York", label: "New York" },
                 { value: "America/Sao_Paulo", label: "Sao Paulo (BRT)" },
               ]}
             />

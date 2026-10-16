@@ -6,6 +6,8 @@ export function buildDailyBriefHtml(params: {
   kind: "morning" | "evening";
   snapshot: OpsSnapshot;
   insightsHtml?: string;
+  /** Seção "Where you need to step in" (só no brief da manhã), já em HTML. */
+  atencaoHtml?: string;
 }): string {
   const title = params.kind === "morning" ? "Morning brief" : "End of day brief";
   const rows = [
@@ -38,6 +40,7 @@ export function buildDailyBriefHtml(params: {
     <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;border:1px solid #e2e8f0">
       <h1 style="font-family:system-ui,sans-serif;font-size:20px;margin:0 0 8px">${escapeHtml(params.companyName)} — ${title}</h1>
       <p style="font-family:system-ui,sans-serif;font-size:13px;color:#64748b;margin:0 0 20px">Operational snapshot</p>
+      ${params.atencaoHtml ?? ""}
       ${table}
       ${recent}
       ${brain}

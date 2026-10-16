@@ -11,12 +11,38 @@ export const PARTNER_REASON_CODES = [
 
 export type PartnerReasonCode = (typeof PARTNER_REASON_CODES)[number];
 
+/**
+ * Written by the trade portal signup while it still asked for a 6-digit email code.
+ * The portal dropped that step on 28/09/2026, so nothing clears it any more: it is a
+ * label on old rows, and it does **not** hide the partner from the Onboarding tab.
+ * It used to, and 17 real signups from 24-28/09 sat invisible in the Directory because
+ * of it, with documents already on file.
+ */
+export const EMAIL_UNVERIFIED_REASON = "email_unverified";
+
+/**
+ * Set by the trade portal when the partner row is born; cleared on the first rate card
+ * save or document upload. Same as above: a label, not a filter. A signup that stopped
+ * at step one is still a signup, and someone has to see it to chase it.
+ */
+export const ONBOARDING_NOT_STARTED_REASON = "onboarding_not_started";
+
+/**
+ * Archived: test accounts and duplicates that must disappear from every Directory tab and
+ * count, without deleting rows that jobs or self-bills still point at. Reversible: drop the
+ * reason and the partner comes back.
+ */
+export const ARCHIVED_REASON = "archived";
+
 const LABELS: Record<string, string> = {
-  missing_documents: "Missing Documents",
-  low_compliance_score: "Low Compliance Score",
-  expired_docs: "Expired Docs",
-  on_break: "On Break",
-  force_activated: "Force Activated",
+  email_unverified: "Email not verified",
+  onboarding_not_started: "Onboarding not started",
+  archived: "Archived",
+  missing_documents: "Missing documents",
+  low_compliance_score: "Low compliance score",
+  expired_docs: "Expired docs",
+  on_break: "On break",
+  force_activated: "Force activated",
   was_activated: "Activated",
 };
 

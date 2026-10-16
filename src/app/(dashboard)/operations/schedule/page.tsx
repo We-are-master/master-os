@@ -10,7 +10,7 @@ import { PipelineScheduleMiniCalendar } from "@/components/quotes/pipeline-sched
  */
 export default function OperationsSchedulePage() {
   return (
-    <PageTransition className="flex min-h-0 w-full flex-1 flex-col -mt-2 sm:-mt-3 lg:-mt-4 h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)] overflow-hidden">
+    <PageTransition className="flex min-h-0 w-full flex-1 flex-col h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)] overflow-hidden">
       <PipelineScheduleMiniCalendar hideCardTitle className="min-h-0 w-full flex-1" />
     </PageTransition>
   );

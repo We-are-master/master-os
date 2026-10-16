@@ -13,10 +13,35 @@ export interface QuoteEmailOptions {
   rejectUrl?: string;
   customMessage?: string;
   context?: QuoteClientEmailContext;
+  /**
+   * Schedule A (modelo de agente): preço do profissional, Fixfy como agente.
+   * Ausente/false = Schedule B, e-mail de sempre.
+   */
+  agentModel?: boolean;
 }
 
-const DEFAULT_INTRO =
-  "Thanks for the request. Please find your quote below. To accept, simply reply to this email confirming and we'll schedule the work.";
+const DEFAULT_INTRO = "Thanks for the request. Please find your quote below.";
+
+/** Schedule A: o preço é do profissional, a Fixfy cota e agenda como agente dele. */
+const AGENT_INTRO =
+  "Thanks for the request. Here is the price for your job. The work is carried out by a vetted independent professional, and Fixfy arranges the booking as their agent.";
+
+/** Schedule A: quem faz o trabalho e quem recebe o pagamento, curto. */
+function buildAgentNoticeBlock(): string {
+  return `
+          <tr>
+            <td class="px" style="padding:0 40px 24px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;">
+                <tr>
+                  <td style="padding:14px 18px;">
+                    <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Who does the work</p>
+                    <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">This is the price of the independent, vetted professional who will carry out your job. Your contract for the work is with them: GETFIXFY LTD (Fixfy) arranges the booking and receives your payment as their agent. No Fixfy fee and no VAT added on top. If your professional is VAT registered, their VAT is included and shown on your receipt.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`;
+}
 
 let cachedTemplate: string | null = null;
 
@@ -129,6 +154,30 @@ function buildAcceptRejectBlock(acceptUrl?: string, rejectUrl?: string): string 
           </tr>`;
 }
 
+/**
+ * O quadro "How to accept" (16/10/2026). Antes dizia sempre "reply to this email",
+ * mesmo com o botão Accept logo acima, e nunca falava da entrada: o cliente só
+ * descobria o sinal depois de aceitar. Agora diz o que fazer e o que pagar agora.
+ */
+export function buildHowToAcceptText(args: {
+  hasAcceptButton: boolean;
+  total: number;
+  depositRequired?: number;
+}): string {
+  const total = Math.round((Number(args.total) || 0) * 100) / 100;
+  const deposit = Math.round((Number(args.depositRequired) || 0) * 100) / 100;
+  const passo = args.hasAcceptButton
+    ? "Tap Accept quote above."
+    : "Reply to this email to go ahead.";
+  const pagamento =
+    deposit > 0.02 && deposit < total - 0.02
+      ? ` A deposit of £${formatMoneyPlain(deposit)} secures the booking, and the balance of £${formatMoneyPlain(total - deposit)} is due when the job is done.`
+      : deposit > 0.02
+        ? ` Payment of £${formatMoneyPlain(deposit)} secures the booking.`
+        : "";
+  return `${passo}${pagamento} We'll then confirm the date and arrival window by email.`;
+}
+
 function replaceAll(template: string, key: string, value: string): string {
   return template.split(`{{${key}}}`).join(value);
 }
@@ -156,9 +205,12 @@ export function buildQuoteClientEmailHTML(
       : escapeHtml(data.title || "As discussed");
 
   let html = loadQuoteClientTemplate();
+  const agent = options?.agentModel === true;
   const intro = customMessage?.trim()
     ? escapeHtml(customMessage.trim())
-    : DEFAULT_INTRO;
+    : agent
+      ? AGENT_INTRO
+      : DEFAULT_INTRO;
 
   html = replaceAll(html, "client_first_name", escapeHtml(clientFirstName(data.clientName)));
   html = replaceAll(html, "job_title", escapeHtml(data.title || "Quote"));
@@ -176,7 +228,19 @@ export function buildQuoteClientEmailHTML(
   html = replaceAll(html, "labour_amount", formatMoneyPlain(labour));
   html = replaceAll(html, "materials_amount", formatMoneyPlain(materials));
   html = replaceAll(html, "intro_message", intro);
+  html = replaceAll(html, "agent_notice_block", agent ? buildAgentNoticeBlock() : "");
   html = replaceAll(html, "accept_reject_block", buildAcceptRejectBlock(acceptUrl, rejectUrl));
+  html = replaceAll(
+    html,
+    "how_to_accept",
+    escapeHtml(
+      buildHowToAcceptText({
+        hasAcceptButton: Boolean(acceptUrl && rejectUrl),
+        total: Number(data.totalValue) || 0,
+        depositRequired: data.depositRequired,
+      }),
+    ),
+  );
 
   return html;
 }

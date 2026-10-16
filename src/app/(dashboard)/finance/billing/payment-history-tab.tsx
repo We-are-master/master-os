@@ -162,13 +162,13 @@ export function PaymentHistoryTab() {
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                      run.cycle_kind === "standard" ? "bg-[#020040]/[0.08] text-[#020040]" : "bg-amber-50 text-amber-800",
+                      run.cycle_kind === "standard" ? "bg-primary/[0.08] text-text-primary" : "bg-amber-50 text-amber-800",
                     )}
                   >
                     {run.cycle_kind === "standard" ? "Standard" : "Off-cycle"}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#020040]">{periodLabel}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{periodLabel}</p>
                     <p className="text-xs text-text-tertiary">
                       {run.self_bills.length} self-bill{run.self_bills.length === 1 ? "" : "s"} · created {fmtDateTime(run.created_at)}
                     </p>
@@ -178,7 +178,7 @@ export function PaymentHistoryTab() {
                   <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", TONE_CLS[status.tone])}>
                     {status.label}
                   </span>
-                  <p className="text-sm font-semibold tabular-nums text-[#020040]">{formatCurrency(run.total_amount)}</p>
+                  <p className="text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(run.total_amount)}</p>
                   {run.zendesk_ticket_url ? (
                     <a
                       href={run.zendesk_ticket_url}
@@ -231,7 +231,7 @@ export function PaymentHistoryTab() {
 
       <aside className="rounded-xl border border-border-light bg-white shadow-sm">
         <div className="border-b border-border-light px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-wider text-text-tertiary">Activity log</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-text-tertiary">Audit log</p>
         </div>
         <div className="max-h-[600px] overflow-y-auto">
           {timeline.length === 0 ? (

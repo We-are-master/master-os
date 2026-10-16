@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { aposEntradaDaCotacaoPaga } from "@/lib/quote-deposit-paid-server";
 import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
 import { applyOsPayLinkPayment } from "@/lib/stripe-pay-link-payment";
+import { saveCardFromCheckoutSession } from "@/lib/stripe-card-charge";
 
 export async function POST(req: NextRequest) {
   const supabaseAdmin = createServiceClient();
@@ -29,7 +31,9 @@ export async function POST(req: NextRequest) {
   if (event.type === "checkout.session.completed" || event.type === "payment_intent.succeeded") {
     const session = event.data.object as unknown as Record<string, unknown>;
     const metadata = (session.metadata ?? {}) as Record<string, string>;
-    const invoiceId = metadata.invoice_id;
+    // Cobrança no cartão salvo (`os_charge`) é lançada no ledger por quem cobrou
+    // (lib/stripe-card-charge); nunca pode cair no ramo antigo que marca a fatura paga inteira.
+    const invoiceId = metadata.os_charge ? undefined : metadata.invoice_id;
 
     if (invoiceId) {
       const { data: invRow } = await supabaseAdmin
@@ -49,6 +53,12 @@ export async function POST(req: NextRequest) {
           payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
           amount_total: Number(session.amount_total ?? 0),
         });
+        // Sinal de quem paga no cartão: guarda o cartão pro restante (Fase 0).
+        await saveCardFromCheckoutSession(supabaseAdmin, {
+          customer: typeof session.customer === "string" ? session.customer : null,
+          payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : null,
+          metadata,
+        }).catch((e) => console.error("Stripe webhook: save card failed", e));
       } else {
         await supabaseAdmin.from("invoices").update({
           stripe_payment_status: "paid",
@@ -65,41 +75,9 @@ export async function POST(req: NextRequest) {
       // `awaiting_payment` to `converted_to_job`. Safe no-op if the invoice
       // isn't a deposit or the job/quote can't be resolved.
       if (fullyPaid && inv.invoice_kind === "deposit" && inv.job_reference) {
+        // Entrada paga: cotação vai para converted_to_job e o parceiro recebe o aviso (15/10/2026).
         try {
-          const { data: jobRow } = await supabaseAdmin
-            .from("jobs")
-            .select("id, quote_id")
-            .eq("reference", inv.job_reference)
-            .maybeSingle();
-          const quoteId = (jobRow as { quote_id?: string | null } | null)?.quote_id ?? null;
-          if (quoteId) {
-            const { data: quoteRow } = await supabaseAdmin
-              .from("quotes")
-              .select("id, reference, status")
-              .eq("id", quoteId)
-              .maybeSingle();
-            const q = (quoteRow ?? null) as { id: string; reference?: string | null; status?: string | null } | null;
-            if (q && q.status === "awaiting_payment") {
-              const { error: qErr } = await supabaseAdmin
-                .from("quotes")
-                .update({ status: "converted_to_job", updated_at: new Date().toISOString() })
-                .eq("id", q.id);
-              if (qErr) {
-                console.error("Stripe webhook: quote -> converted_to_job update failed", qErr);
-              } else {
-                void supabaseAdmin.from("audit_logs").insert({
-                  entity_type: "quote",
-                  entity_id: q.id,
-                  entity_ref: q.reference ?? null,
-                  action: "status_changed",
-                  field_name: "status",
-                  old_value: "awaiting_payment",
-                  new_value: "converted_to_job",
-                  metadata: { invoice_id: invoiceId, deposit_paid: true, source: "stripe_webhook" },
-                });
-              }
-            }
-          }
+          await aposEntradaDaCotacaoPaga(supabaseAdmin, inv.job_reference, "stripe_webhook");
         } catch (e) {
           console.error("Stripe webhook: advance quote after deposit failed", e);
         }

@@ -1,5 +1,7 @@
 "use client";
 
+import { PartnerJobCcEmails } from "@/components/partners/partner-job-cc-emails";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import type { ListResult } from "@/services/base";
 import { formatBritishDate } from "@/lib/utils/date";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
@@ -27,7 +29,7 @@ import {
   FileText, Upload, CheckCircle2, XCircle, Clock, AlertTriangle,
   MessageSquare, Send, Trash2, Download, Eye, Copy,
   Play, KeyRound, MailPlus, Share2, BarChart3,
-  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2,
+  Home, Link2, Info, LayoutList, LayoutGrid, Columns3, ChevronLeft, ChevronRight, ChevronDown, Minus, Pencil, Loader2, Archive,
 } from "lucide-react";
 
 import { KanbanBoard, type KanbanColumn } from "@/components/shared/kanban-board";
@@ -35,7 +37,8 @@ import { SegmentedControl } from "@/components/shared/segmented-control";
 import { DrawerSection, DrawerSectionList } from "@/components/shared/drawer-section";
 import { ExpandingSearch, ToolbarIconButton } from "@/components/shared/page-toolbar";
 import { useKpiVisibility } from "@/hooks/use-kpi-visibility";
-import { formatCurrency, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import Link from "next/link";
 import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
@@ -54,6 +57,7 @@ import { getStatusCounts, getAggregates } from "@/services/base";
 import { getSupabase } from "@/services/base";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import type { ListParams } from "@/services/base";
 import {
   getTeamMembers,
@@ -103,6 +107,7 @@ import {
   type PartnerDocExpiryPolicy,
 } from "@/lib/partner-required-docs";
 import {
+  ARCHIVED_REASON,
   computeAutoReasonCodes,
   deriveAutoStatusAndReasons,
   isPartnerInactiveStage,
@@ -144,6 +149,8 @@ import {
 import { upsertPartnerServicePrice } from "@/services/partner-service-prices";
 import { PartnerTradesIconStrip } from "@/services/partner-trade-icons";
 import { CatalogTradesSkillsTab } from "@/components/partners/catalog-trades-skills-tab";
+import { PartnerAvailabilityTab } from "@/components/partners/partner-availability-tab";
+import { PartnerCancellationsSection } from "@/components/partners/partner-cancellations-section";
 import {
   displayPartnerRating,
   PARTNER_COMPLAINT_PENALTY_POINTS,
@@ -159,10 +166,7 @@ import {
 } from "@/services/partner-rating";
 import { requestPartnerOnboardingLink } from "@/lib/partner-onboarding-link";
 import { invitePartnerFromZero } from "@/lib/partner-invite";
-import {
-  computePartnerOnboardingProgress,
-  type PartnerOnboardingProgress,
-} from "@/lib/partner-ready-check";
+import { PARTNER_CONTRACT_TYPES, computePartnerChecklist, type PartnerChecklist } from "@/lib/partner-ready-check";
 import { fetchPartnerDocumentRules } from "@/lib/company-partner-doc-rules";
 import type { PartnerDocLike } from "@/lib/partner-required-docs";
 
@@ -281,7 +285,7 @@ function PartnersDirectoryGridView({
   onSelectionChange,
   selectedPartnerId,
   onOpenPartner,
-  isAdmin,
+  canManagePartners,
   bulkActionsSlot,
   catalogServices,
   maxEarningsInView,
@@ -301,7 +305,7 @@ function PartnersDirectoryGridView({
   onSelectionChange: (ids: Set<string>) => void;
   selectedPartnerId?: string | null;
   onOpenPartner: (p: Partner) => void;
-  isAdmin: boolean;
+  canManagePartners: boolean;
   bulkActionsSlot: ReactNode;
   catalogServices: readonly CatalogService[];
   maxEarningsInView: number;
@@ -312,12 +316,12 @@ function PartnersDirectoryGridView({
   onSendOnboardingLink: (p: Partner) => void;
 }) {
   const allIds = data.map((p) => p.id);
-  const allSelected = isAdmin && data.length > 0 && allIds.every((id) => selectedIds.has(id));
-  const someSelected = isAdmin && allIds.some((id) => selectedIds.has(id));
+  const allSelected = canManagePartners && data.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = canManagePartners && allIds.some((id) => selectedIds.has(id));
   const selectionCount = selectedIds.size;
 
   const toggleAll = () => {
-    if (!isAdmin || !onSelectionChange) return;
+    if (!canManagePartners || !onSelectionChange) return;
     if (allSelected) {
       const next = new Set(selectedIds);
       for (const id of allIds) next.delete(id);
@@ -330,7 +334,7 @@ function PartnersDirectoryGridView({
   };
 
   const toggleOne = (id: string) => {
-    if (!isAdmin || !onSelectionChange) return;
+    if (!canManagePartners || !onSelectionChange) return;
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -339,7 +343,7 @@ function PartnersDirectoryGridView({
 
   return (
     <div className="relative overflow-hidden">
-      {isAdmin ? (
+      {canManagePartners ? (
         <AnimatePresence>
           {selectionCount > 0 ? (
             <motion.div
@@ -426,7 +430,7 @@ function PartnersDirectoryGridView({
                   isOpen ? "border-primary/40 bg-primary/[0.04]" : "",
                 )}
               >
-                {isAdmin ? (
+                {canManagePartners ? (
                   <div
                     className="absolute left-3 top-3 z-[1]"
                     role="presentation"
@@ -437,7 +441,7 @@ function PartnersDirectoryGridView({
                   </div>
                 ) : null}
 
-                <div className={cn("p-4 flex flex-col gap-3", isAdmin && "pt-11")}>
+                <div className={cn("p-4 flex flex-col gap-3", canManagePartners && "pt-11")}>
                   <div className="flex gap-3 min-w-0">
                     <Avatar name={item.company_name} size="md" src={item.avatar_url ?? undefined} className="shrink-0" />
                     <div className="min-w-0 flex-1">
@@ -742,7 +746,7 @@ function PartnersDirectoryKanbanView({
 
 const statusConfig: Record<string, { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; color: string }> = {
   active: { label: "Active", variant: "success", color: "bg-emerald-50 dark:bg-emerald-950/300" },
-  needs_attention: { label: "Needs Attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
+  needs_attention: { label: "Needs attention", variant: "danger", color: "bg-red-50 dark:bg-red-950/300" },
   inactive: { label: "Inactive", variant: "default", color: "bg-stone-600 dark:bg-stone-800" },
   onboarding: { label: "Onboarding", variant: "warning", color: "bg-amber-50 dark:bg-amber-950/300" },
   /** @deprecated DB value — shown as Inactive + “On break” badge */
@@ -868,14 +872,33 @@ interface PartnerSelfBill {
   net_payout: number;
   status: string;
   created_at: string;
+  week_start?: string | null;
+  week_end?: string | null;
+  week_label?: string | null;
+  paid_at?: string | null;
 }
+
+/** Período de um self-bill em texto curto: "6 Oct – 19 Oct 26", senão o rótulo da semana ou o mês. */
+function selfBillPeriodLabel(sb: PartnerSelfBill): string {
+  const fmt = (d: string, withYear: boolean) =>
+    new Date(`${d.slice(0, 10)}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(withYear ? { year: "2-digit" } : {}) });
+  if (sb.week_start && sb.week_end) return `${fmt(sb.week_start, false)} – ${fmt(sb.week_end, true)}`;
+  return sb.week_label?.trim() || sb.period;
+}
+
+const SELF_BILL_STATUS: Record<string, { label: string; variant: BadgeVariant }> = {
+  paid: { label: "Paid", variant: "success" },
+  audit_required: { label: "Audit required", variant: "danger" },
+  ready_to_pay: { label: "Ready to pay", variant: "info" },
+  awaiting_payment: { label: "Awaiting payment", variant: "warning" },
+};
 
 const jobStatusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   draft: { label: "Draft", variant: "default" },
   unassigned: { label: "Unassigned", variant: JOB_STATUS_BADGE_VARIANT.unassigned },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
-  on_hold: { label: "On Hold", variant: "warning" },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
+  on_hold: { label: "On hold", variant: "warning" },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
 };
@@ -899,9 +922,9 @@ const emptyForm = {
 };
 
 const CREATE_PARTNER_WIZARD_STEPS = [
-  { id: "info", label: "Partner info" },
-  { id: "documents", label: "Documents" },
-  { id: "rates", label: "Rate Card" },
+  { id: "info", label: "Details" },
+  { id: "documents", label: "Documents", hint: "Review uploaded files, compliance records and contracts." },
+  { id: "rates", label: "Service rates" },
 ] as const;
 
 type CreatePartnerWizardStep = (typeof CREATE_PARTNER_WIZARD_STEPS)[number]["id"];
@@ -1186,13 +1209,16 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [complianceAvg, setComplianceAvg] = useState<number | null>(null);
   const [partnersBelow50Count, setPartnersBelow50Count] = useState(0);
   /** Per-onboarding-partner core upload progress (Insurance / ID / Right to work) for the Onboarding tab bar. */
-  const [onboardingProgress, setOnboardingProgress] = useState<Map<string, PartnerOnboardingProgress>>(() => new Map());
+  /** Full checklist per partner (mandatory docs + active agreements signed; DBS never counts). */
+  const [checklistByPartner, setChecklistByPartner] = useState<Map<string, PartnerChecklist>>(() => new Map());
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   /** When set (e.g. after Add Partner), drawer opens on this tab once. Cleared when picking another row or closing. */
   const [partnerDrawerInitialTab, setPartnerDrawerInitialTab] = useState<string | undefined>(undefined);
   const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMember | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [directoryDisplayMode, setDirectoryDisplayMode] = useState<PartnersDirectoryDisplayMode>("list");
+  /** Server-side order for the list: earnings (default) or when the partner joined. */
+  const [dateSort, setDateSort] = useState<"earnings" | "newest" | "oldest">("earnings");
   const [listSortKey, setListSortKey] = useState<string | null>("total_earnings");
   const [listSortDir, setListSortDir] = useState<"asc" | "desc">("desc");
   const [onboardingCopyBusyId, setOnboardingCopyBusyId] = useState<string | null>(null);
@@ -1219,8 +1245,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const { profile } = useProfile();
+  const { can } = useAdminConfig();
   const { confirmDespiteDuplicates } = useDuplicateConfirm();
-  const isAdmin = profile?.role === "admin";
+  const canManagePartners = can("manage_partners");
   const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
   const router = useRouter();
 
@@ -1315,6 +1342,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       ...params,
       status: params.status,
       trade: tradeFilter !== "all" ? tradeFilter : undefined,
+      ...(dateSort === "earnings" ? {} : { sortBy: "joined_at", sortDir: dateSort === "newest" ? "desc" : "asc" }),
     });
     try {
       const data = await enrichPartnersDirectoryEarnings(result.data);
@@ -1322,7 +1350,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     } catch {
       return result;
     }
-  }, [tradeFilter]);
+  }, [tradeFilter, dateSort]);
 
   const {
     data: partners,
@@ -1489,49 +1517,77 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         supabase
           .from("partners")
           .select("id", { count: "exact", head: true })
-          .lt("compliance_score", 50)
-          .is("deleted_at", null),
+          .lt("compliance_score", 50),
       ]);
+      // Archived partners (tests, duplicates) leave every tab and the total.
+      const { data: archivedRows } = await supabase
+        .from("partners")
+        .select("status")
+        .contains("partner_status_reasons", [ARCHIVED_REASON]);
+      for (const row of (archivedRows ?? []) as Array<{ status: string }>) {
+        if (counts[row.status] != null) counts[row.status] = Math.max(0, counts[row.status] - 1);
+        if (counts["all"] != null) counts["all"] = Math.max(0, counts["all"] - 1);
+      }
       setStatusCounts(counts);
       const avg = complianceAgg.count > 0 ? complianceAgg.sum / complianceAgg.count : null;
       setComplianceAvg(avg == null ? null : Math.round(avg * 10) / 10);
       setPartnersBelow50Count(below50Res.count ?? 0);
 
-      // Core onboarding progress (Insurance / ID / Right to work) for the Onboarding tab bar.
+      // Full onboarding checklist for every partner: the 4 mandatory documents plus every active
+      // agreement signed in its current version (DBS never counts). The Onboarding bar counts what was
+      // SENT or signed (pending counts); the Compliance column counts what is approved and in date.
+      // partners.deleted_at and partner_documents.counts_toward_compliance do not exist in production
+      // (migration 125 was never applied): selecting or filtering them made these queries fail silently
+      // and every bar sat at 0%.
       try {
-        const { data: onboardingPartners } = await supabase
-          .from("partners")
-          .select("id, status, trade, trades, partner_legal_type, utr, crn, vat_number, vat_registered")
-          .in("status", ["onboarding", "needs_attention"])
-          .is("deleted_at", null);
-        const onboardingRows = (onboardingPartners ?? []) as Array<
-          Pick<
-            Partner,
-            "id" | "status" | "trade" | "trades" | "partner_legal_type" | "utr" | "crn" | "vat_number" | "vat_registered"
-          >
-        >;
-        if (onboardingRows.length === 0) {
-          setOnboardingProgress(new Map());
+        const [partnersRes, versionsRes] = await Promise.all([
+          supabase.from("partners").select("id"),
+          supabase
+            .from("contract_versions")
+            .select("id")
+            .eq("is_active", true)
+            .in("contract_type", [...PARTNER_CONTRACT_TYPES]),
+        ]);
+        if (partnersRes.error) console.error("[partners] checklist: partners query failed", partnersRes.error);
+        if (versionsRes.error) console.error("[partners] checklist: agreements query failed", versionsRes.error);
+        const ids = ((partnersRes.data ?? []) as Array<{ id: string }>).map((p) => p.id);
+        const activeVersionIds = ((versionsRes.data ?? []) as Array<{ id: string }>).map((v) => v.id);
+        if (ids.length === 0) {
+          setChecklistByPartner(new Map());
         } else {
-          const ids = onboardingRows.map((p) => p.id);
-          const docsRes = await supabase
-            .from("partner_documents")
-            .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at, counts_toward_compliance")
-            .in("partner_id", ids);
+          const [docsRes, sigRes] = await Promise.all([
+            supabase
+              .from("partner_documents")
+              .select("id, partner_id, name, doc_type, status, expires_at, notes, created_at")
+              .in("partner_id", ids),
+            supabase.from("partner_contract_signatures").select("partner_id, contract_version_id").in("partner_id", ids),
+          ]);
+          if (docsRes.error) console.error("[partners] checklist: documents query failed", docsRes.error);
+          if (sigRes.error) console.error("[partners] checklist: signatures query failed", sigRes.error);
           const docsByPartnerId = new Map<string, PartnerDocLike[]>();
           for (const row of (docsRes.data ?? []) as Array<PartnerDocLike & { partner_id: string }>) {
             const arr = docsByPartnerId.get(row.partner_id) ?? [];
             arr.push(row);
             docsByPartnerId.set(row.partner_id, arr);
           }
-          const progress = new Map<string, PartnerOnboardingProgress>();
-          for (const p of onboardingRows) {
-            progress.set(p.id, computePartnerOnboardingProgress(p, docsByPartnerId.get(p.id)));
+          const signedByPartnerId = new Map<string, Set<string>>();
+          for (const row of (sigRes.data ?? []) as Array<{ partner_id: string; contract_version_id: string }>) {
+            const set = signedByPartnerId.get(row.partner_id) ?? new Set<string>();
+            set.add(row.contract_version_id);
+            signedByPartnerId.set(row.partner_id, set);
           }
-          setOnboardingProgress(progress);
+          const map = new Map<string, PartnerChecklist>();
+          for (const id of ids) {
+            map.set(
+              id,
+              computePartnerChecklist(docsByPartnerId.get(id), signedByPartnerId.get(id) ?? new Set(), activeVersionIds),
+            );
+          }
+          setChecklistByPartner(map);
         }
-      } catch {
-        setOnboardingProgress(new Map());
+      } catch (err) {
+        console.error("[partners] checklist failed", err);
+        setChecklistByPartner(new Map());
       }
     } catch { /* cosmetic */ }
   }, []);
@@ -1603,6 +1659,9 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     refreshList();
     if (directoryDisplayMode === "kanban") void loadKanbanPartners();
   }, [tradeFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    refreshList();
+  }, [dateSort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createAvatarPreviewUrl = useMemo(
     () => (createAvatarFile ? URL.createObjectURL(createAvatarFile) : null),
@@ -2043,7 +2102,36 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
     }
   }, [selectedIds, refresh]);
 
+  /** Archive = hide from every tab without deleting (jobs and self-bills keep pointing at the row). */
+  const archivePartners = useCallback(
+    async (targets: Array<Pick<Partner, "id" | "partner_status_reasons">>) => {
+      if (targets.length === 0) return;
+      const label = targets.length === 1 ? "this partner" : `${targets.length} partners`;
+      if (!window.confirm(`Archive ${label}? They disappear from every tab. Nothing is deleted.`)) return;
+      const supabase = getSupabase();
+      let failed = 0;
+      for (const p of targets) {
+        const reasons = Array.from(new Set([...(p.partner_status_reasons ?? []), ARCHIVED_REASON]));
+        const { error } = await supabase.from("partners").update({ partner_status_reasons: reasons }).eq("id", p.id);
+        if (error) failed += 1;
+      }
+      if (failed > 0) toast.error(`${failed} could not be archived`);
+      const done = targets.length - failed;
+      if (done > 0) toast.success(`${done} partner${done === 1 ? "" : "s"} archived`);
+      setSelectedIds(new Set());
+      refresh();
+      void loadCounts();
+    },
+    [refresh, loadCounts],
+  );
+
+  const handleBulkArchive = useCallback(() => {
+    void archivePartners(partners.filter((p) => selectedIds.has(p.id)));
+  }, [archivePartners, partners, selectedIds]);
+
   const sortedPartners = useMemo(() => {
+    // Newest / oldest come ordered from the server; re-sorting by earnings here would undo it.
+    if (dateSort !== "earnings") return partners;
     const sortKey = listSortKey ?? "total_earnings";
     const rows = [...partners];
     const dir = listSortDir === "asc" ? 1 : -1;
@@ -2059,7 +2147,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       return (av - bv) * dir;
     });
     return rows;
-  }, [partners, listSortKey, listSortDir]);
+  }, [partners, listSortKey, listSortDir, dateSort]);
 
   const maxEarningsInView = useMemo(
     () => Math.max(1, ...sortedPartners.map((p) => Number(p.total_earnings) || 0)),
@@ -2150,24 +2238,41 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
+        // Real checklist first (approved docs + signed agreements); the stored compliance_score is only a
+        // fallback while it loads.
+        const c = checklistByPartner.get(item.id);
         const raw = item.compliance_score;
-        const s = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
-        const tier = complianceTier(s);
-        const approxOk = Math.round((Math.max(0, Math.min(100, s)) / 100) * 3);
+        const stored = typeof raw === "number" && !Number.isNaN(raw) ? raw : Number(raw ?? 0);
+        const total = c ? c.docsTotal + c.contractsTotal : 3;
+        const okCount = c ? c.docsValid + c.contractsSigned : Math.round((Math.max(0, Math.min(100, stored)) / 100) * 3);
+        const s = c ? c.validPct : stored;
+        const tier = c
+          ? c.validPct >= 100
+            ? complianceTier(100)
+            : c.uploadedPct >= 100
+              ? complianceTier(50)
+              : complianceTier(0)
+          : complianceTier(stored);
         return (
           <div
             className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
-            title="Insurance · ID · Right to work (extras don’t count)"
+            title={
+              c
+                ? `Approved documents ${c.docsValid}/${c.docsTotal} · Agreements signed ${c.contractsSigned}/${c.contractsTotal} · Sent ${c.docsUploaded}/${c.docsTotal} (DBS does not count)`
+                : "Mandatory documents and agreements (DBS does not count)"
+            }
           >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", tier.textClass)}>
-                {approxOk}/3
+                {okCount}/{total}
               </span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", tier.textClass)}>
                 {tier.label}
               </span>
             </div>
-            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
+            <p className="text-[10px] text-text-tertiary leading-tight">
+              {c ? `Docs ${c.docsValid}/${c.docsTotal} · Contracts ${c.contractsSigned}/${c.contractsTotal}` : "Docs · Contracts"}
+            </p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", tier.barClass)}
@@ -2254,6 +2359,14 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               </button>
             </>
           ) : null}
+          <button
+            type="button"
+            title="Archive (hide from every tab, nothing is deleted)"
+            onClick={() => void archivePartners([item])}
+            className="h-8 w-8 rounded-lg inline-flex items-center justify-center text-text-tertiary hover:text-rose-600 hover:bg-surface-hover transition-colors"
+          >
+            <Archive className="h-4 w-4" />
+          </button>
           <ArrowRight className="h-4 w-4 text-text-tertiary mx-auto shrink-0" aria-hidden />
         </div>
       ),
@@ -2277,9 +2390,11 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       headerClassName: partnersTableHeader,
       cellClassName: partnersTableCell,
       render: (item) => {
-        const prog = onboardingProgress.get(item.id);
-        const pct = prog?.pct ?? 0;
-        const done = prog?.ready ?? false;
+        const c = checklistByPartner.get(item.id);
+        const pct = c?.uploadedPct ?? 0;
+        const done = pct >= 100;
+        const sent = c ? c.docsUploaded + c.contractsSigned : 0;
+        const total = c ? c.docsTotal + c.contractsTotal : 0;
         const barClass = done ? "bg-emerald-500" : pct >= 50 ? "bg-amber-500" : "bg-sky-500";
         const textClass = done
           ? "text-emerald-600 dark:text-emerald-400"
@@ -2290,18 +2405,20 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           <div
             className="mx-auto min-w-0 max-w-[10rem] space-y-1 text-center"
             title={
-              prog
-                ? `${prog.submitted}/${prog.total} core docs (Insurance · ID · Right to work) — Activate when complete`
-                : "Core onboarding progress"
+              c
+                ? `Documents sent ${c.docsUploaded}/${c.docsTotal} · Agreements signed ${c.contractsSigned}/${c.contractsTotal}. Counts what the partner sent, approved or not. DBS does not count.`
+                : "Onboarding progress"
             }
           >
             <div className="flex items-center justify-center gap-2">
               <span className={cn("text-sm font-bold tabular-nums", textClass)}>{pct}%</span>
               <span className={cn("text-[9px] font-bold uppercase tracking-wide", textClass)}>
-                {done ? "ACTIVATE" : prog ? `${prog.submitted}/${prog.total}` : "—"}
+                {done ? "ACTIVATE" : c ? `${sent}/${total}` : "—"}
               </span>
             </div>
-            <p className="text-[10px] text-text-tertiary leading-tight">Insurance · ID · RTW</p>
+            <p className="text-[10px] text-text-tertiary leading-tight">
+              {c ? `Docs ${c.docsUploaded}/${c.docsTotal} · Contracts ${c.contractsSigned}/${c.contractsTotal}` : "Docs · Contracts"}
+            </p>
             <div className="h-1.5 w-full rounded-full bg-surface-tertiary overflow-hidden">
               <div
                 className={cn("h-full rounded-full transition-all", barClass)}
@@ -2338,7 +2455,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
               className="max-w-full"
               options={[
                 { id: "directory", label: "Directory", count: totalPartners },
-                { id: "team", label: "Team (App)", count: teamMembers.length },
+                { id: "team", label: "App users", count: teamMembers.length },
               ]}
               value={viewMode}
               onChange={(id) => {
@@ -2510,10 +2627,26 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                       className="w-[7.25rem] sm:w-[9rem] shrink-0"
                     />
                   ) : null}
+                  {directoryDisplayMode !== "kanban" ? (
+                    <Select
+                      value={dateSort}
+                      onChange={(e) => {
+                        setDateSort(e.target.value as "earnings" | "newest" | "oldest");
+                        setPage(1);
+                      }}
+                      options={[
+                        { value: "earnings", label: "Highest earnings" },
+                        { value: "newest", label: "Newest first" },
+                        { value: "oldest", label: "Oldest first" },
+                      ]}
+                      className="w-[8.5rem] sm:w-[10rem] shrink-0"
+                      aria-label="Sort partners"
+                    />
+                  ) : null}
                   <ExpandingSearch
                     value={search}
                     onChange={setSearch}
-                    placeholder="Search partners…"
+                    placeholder="Name, email, phone, postcode…"
                     className="ml-auto"
                   />
                   <ToolbarIconButton icon={Filter} label="Filter" />
@@ -2551,7 +2684,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                 pageSize={PARTNERS_PAGE_SIZE}
                 onPageChange={setPage}
                 loading={loading}
-                selectable={isAdmin}
+                selectable={canManagePartners}
                 selectedIds={selectedIds}
                 onSelectionChange={setSelectedIds}
                 className="border-0 shadow-none rounded-none"
@@ -2566,9 +2699,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Verify all" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn
@@ -2608,14 +2742,15 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   setPartnerDrawerInitialTab(undefined);
                   setSelectedPartner(p);
                 }}
-                isAdmin={isAdmin}
+                canManagePartners={canManagePartners}
                 bulkActionsSlot={
                   <>
                     <BulkActionBtn label="Activate" onClick={() => handleBulkStatusChange("active")} variant="success" />
                     <BulkActionBtn label="Delete" onClick={() => handleBulkStatusChange("inactive")} variant="danger" />
+                    <BulkActionBtn label="Archive" onClick={handleBulkArchive} variant="default" />
                     <BulkActionBtn label="Needs attention" onClick={() => handleBulkStatusChange("needs_attention")} variant="warning" />
                     <div className="h-4 w-px bg-border" />
-                    <BulkActionBtn label="Verify All" onClick={() => handleBulkVerify(true)} variant="success" />
+                    <BulkActionBtn label="Verify all" onClick={() => handleBulkVerify(true)} variant="success" />
                     <BulkActionBtn label="Unverify" onClick={() => handleBulkVerify(false)} variant="default" />
                     <div className="h-4 w-px bg-border" />
                     <BulkActionBtn
@@ -2667,7 +2802,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           setInviteEmail("");
           setInvitePhone("");
         }}
-        title="Invite Partner"
+        title="Invite partner"
         subtitle="Create a minimal directory record and email a Trade Portal onboarding link. They complete profile, trades, coverage, and documents from scratch."
         size="md"
       >
@@ -2750,7 +2885,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
       <Modal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="Add Partner"
+        title="Add partner"
         subtitle={
           viewMode === "team"
             ? "Saves to Directory. To show them under Team (App), open the partner and link their app login email, or assign them on a job."
@@ -2915,7 +3050,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-text-secondary">Company / trading name *</label>
-              <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme Corp" />
+              <Input value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} placeholder="Acme corp" />
             </div>
             {form.partner_legal_type === "self_employed" ? (
               <div className="space-y-1.5">
@@ -3590,21 +3725,21 @@ const docTypeLabels: Record<string, { label: string; icon: typeof FileText }> = 
   certification: { label: "Certification", icon: CheckCircle2 },
   license: { label: "License", icon: FileText },
   contract: { label: "Contract", icon: FileText },
-  tax: { label: "Tax Document", icon: DollarSign },
+  tax: { label: "Tax document", icon: DollarSign },
   utr: { label: "UTR / HMRC", icon: DollarSign },
   company_registration: { label: "Proof of company", icon: FileText },
-  service_agreement: { label: "Service Agreement", icon: FileText },
-  self_bill_agreement: { label: "Self Bill Agreement", icon: FileText },
+  service_agreement: { label: "Service agreement", icon: FileText },
+  self_bill_agreement: { label: "Self bill agreement", icon: FileText },
   id_proof: { label: "ID Proof", icon: Users },
-  proof_of_address: { label: "Proof of Address", icon: FileText },
-  right_to_work: { label: "Right to Work", icon: FileText },
+  proof_of_address: { label: "Proof of address", icon: FileText },
+  right_to_work: { label: "Right to work", icon: FileText },
   poa: { label: "Power of Attorney (POA)", icon: FileText },
   dbs: { label: "DBS (Disclosure & Barring)", icon: ShieldCheck },
   other: { label: "Other", icon: FileText },
 };
 
 const docStatusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
-  pending: { label: "Pending Review", variant: "warning" },
+  pending: { label: "Pending review", variant: "warning" },
   approved: { label: "Approved", variant: "success" },
   rejected: { label: "Rejected", variant: "danger" },
   expired: { label: "Expired", variant: "default" },
@@ -4084,10 +4219,10 @@ function PartnerDocumentsSubNav({
   onChange: (id: PartnerDocumentsSubTab) => void;
   complianceCount?: number;
 }) {
-  const items: { id: PartnerDocumentsSubTab; label: string; count?: number }[] = [
-    { id: "files", label: "Files" },
-    { id: "compliance", label: "Compliance", count: complianceCount },
-    { id: "contracts", label: "Contracts" },
+  const items: { id: PartnerDocumentsSubTab; label: string; hint?: string; count?: number }[] = [
+    { id: "files", label: "Files", hint: "Review uploaded partner files." },
+    { id: "compliance", label: "Compliance", hint: "Review required certificates and their status.", count: complianceCount },
+    { id: "contracts", label: "Contracts", hint: "Review partner agreements." },
   ];
   return (
     <div className="px-4 sm:px-6 pt-4 pb-0 border-b border-border-light bg-card/95 backdrop-blur-sm sticky top-0 z-[1]">
@@ -4162,13 +4297,15 @@ function PartnerDetailDrawer({
   const [notes, setNotes] = useState<PartnerNote[]>([]);
   const [partnerJobs, setPartnerJobs] = useState<PartnerJobRow[]>([]);
   const [selfBills, setSelfBills] = useState<PartnerSelfBill[]>([]);
+  const [jobSearch, setJobSearch] = useState("");
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingFinance, setLoadingFinance] = useState(false);
   const [newNote, setNewNote] = useState("");
   const { profile } = useProfile();
-  const isAdmin = profile?.role === "admin";
+  const { can } = useAdminConfig();
+  const canManagePartners = can("manage_partners");
   const canSendPartnerLinks = ["admin", "manager", "operator"].includes(profile?.role ?? "");
 
   const isAppUserMode = !!teamMember;
@@ -4846,7 +4983,7 @@ function PartnerDetailDrawer({
       setActivateForceOpen(false);
 
       let postActivateNote = "";
-      if (isAdmin) {
+      if (canManagePartners) {
         try {
           if (partner.auth_user_id) {
             await syncAppUserRow(partner.auth_user_id, partner.id);
@@ -4883,7 +5020,7 @@ function PartnerDetailDrawer({
         toast.success(`Partner activated${postActivateNote}`);
       }
     },
-    [partner, computedCompliance, onPartnerPatch, activateAccountType, isAdmin, syncAppUserRow, linkEmail, linkPartnerAppAccountByEmail],
+    [partner, computedCompliance, onPartnerPatch, activateAccountType, canManagePartners, syncAppUserRow, linkEmail, linkPartnerAppAccountByEmail],
   );
 
   const submitDeactivate = useCallback(async () => {
@@ -5108,11 +5245,11 @@ function PartnerDetailDrawer({
 
   if (teamMember) {
     const appTabs = [
-      { id: "profile", label: "Profile" },
-      { id: "jobs", label: "Jobs", count: appJobs.length },
-      { id: "location", label: "Location" },
-      { id: "financial", label: "Financial" },
-      { id: "actions", label: "Actions" },
+      { id: "profile", label: "Profile", hint: "Review the app user profile." },
+      { id: "jobs", label: "Jobs", hint: "Review jobs linked to this partner.", count: appJobs.length },
+      { id: "location", label: "Location", hint: "Review available location information." },
+      { id: "financial", label: "Finance", hint: "Review financial information and balances." },
+      { id: "actions", label: "Account actions", hint: "Manage this app account." },
     ];
     return (
       <Drawer open={true} onClose={onClose} title={teamMember.full_name} subtitle={teamMember.email} width="w-[620px]">
@@ -5213,7 +5350,7 @@ function PartnerDetailDrawer({
               <p className="text-xs text-text-tertiary">{appFinancial.jobs_count} jobs, {appFinancial.completed_count} completed · {appFinancial.self_bills_count} self-bills</p>
             </div>
           )}
-          {tab === "actions" && isAdmin && (
+          {tab === "actions" && canManagePartners && (
             <div className="p-6 space-y-5">
               <p className="text-sm font-semibold text-text-primary">Admin actions</p>
               <div className="space-y-3">
@@ -5300,7 +5437,7 @@ function PartnerDetailDrawer({
               </div>
             </div>
           )}
-          {tab === "actions" && !isAdmin && <div className="p-6 text-sm text-text-tertiary">Admin only</div>}
+          {tab === "actions" && !canManagePartners && <div className="p-6 text-sm text-text-tertiary">Needs Manage partners access</div>}
         </div>
       </Drawer>
     );
@@ -5372,10 +5509,11 @@ function PartnerDetailDrawer({
   // sections: of the eleven active partners, rate cards were filled on five and
   // the other three are read far more often than they are edited.
   const drawerTabs = [
-    { id: "overview", label: "Overview" },
+    { id: "overview", label: "Overview", hint: "Review partner details, trades, coverage and agreed rates." },
     {
       id: "documents",
       label: "Documents",
+      hint: "Review uploaded files, compliance records and contracts.",
       count:
         complianceAttentionCount > 0
           ? complianceAttentionCount
@@ -5383,8 +5521,9 @@ function PartnerDetailDrawer({
             ? documents.length
             : undefined,
     },
-    { id: "financial", label: "Finance", count: selfBills.length },
-    { id: "jobs", label: "Jobs", count: realJobsCount },
+    { id: "financial", label: "Finance", hint: "Review financial information and balances." },
+    { id: "jobs", label: "Jobs", hint: "Review jobs linked to this partner.", count: realJobsCount },
+    { id: "selfbills", label: "Self-bills", hint: "Review self-billing documents issued for this partner's work.", count: selfBills.length },
   ];
 
   return (
@@ -5404,7 +5543,7 @@ function PartnerDetailDrawer({
             catalogServices={partnerCatalogForIds}
             className="min-w-0"
           />
-          {isAdmin ? (
+          {canManagePartners ? (
             partner.status !== "active" ? (
               <Button
                 size="sm"
@@ -5579,7 +5718,7 @@ function PartnerDetailDrawer({
                         value={nameForm.company_name}
                         onChange={(e) => setNameForm((p) => ({ ...p, company_name: e.target.value }))}
                         className="mt-1 h-9"
-                        placeholder="Acme Maintenance Ltd"
+                        placeholder="Acme maintenance ltd"
                         autoFocus
                       />
                     </div>
@@ -5591,7 +5730,7 @@ function PartnerDetailDrawer({
                         value={nameForm.contact_name}
                         onChange={(e) => setNameForm((p) => ({ ...p, contact_name: e.target.value }))}
                         className="mt-1 h-9"
-                        placeholder="John Smith"
+                        placeholder="John smith"
                       />
                     </div>
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -5628,7 +5767,7 @@ function PartnerDetailDrawer({
                       )}
                       <div className="flex shrink-0 items-center gap-1">
                         {partner.verified ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> : null}
-                        {isAdmin && !editingOverview ? (
+                        {canManagePartners && !editingOverview ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -5645,7 +5784,7 @@ function PartnerDetailDrawer({
                             Edit name
                           </Button>
                         ) : null}
-                        {isAdmin ? (
+                        {canManagePartners ? (
                           <Button
                             size="sm"
                             variant={editingOverview ? "outline" : "ghost"}
@@ -5722,6 +5861,7 @@ function PartnerDetailDrawer({
                   />
                 ) : partner.email}
               </div>
+              <PartnerJobCcEmails key={partner.id} partner={partner} canEdit={canManagePartners} />
               {editingOverview ? (
                 <div className="col-span-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-3 space-y-3">
                   <p className="text-[10px] font-medium text-text-tertiary uppercase tracking-wide">Partner type</p>
@@ -5983,7 +6123,7 @@ function PartnerDetailDrawer({
               <div className="p-2 rounded-lg bg-surface-hover border border-border-light min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <p className="text-[9px] font-semibold text-text-tertiary uppercase tracking-wide">Rating</p>
-                  {isAdmin ? (
+                  {canManagePartners ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -6010,7 +6150,7 @@ function PartnerDetailDrawer({
                 </p>
               </div>
             </div>
-            {isAdmin && editingOverview && (
+            {canManagePartners && editingOverview && (
               <div className="flex flex-col @sm:flex-row gap-2">
                 <Button size="sm" className="flex-1 min-h-10" onClick={handleSaveOverview}>
                   Save changes
@@ -6040,15 +6180,23 @@ function PartnerDetailDrawer({
                     kind="partner"
                     partner={partner}
                     onPartnerUpdate={onPartnerUpdate}
-                    canEdit={isAdmin}
+                    canEdit={canManagePartners}
                   />
                 </DrawerSection>
 
                 <DrawerSection title="Coverage" summary={formatPartnerCoverageSummary(partner) || "Coverage TBC"}>
-                  <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={isAdmin} />
+                  <PartnerCoverageTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
                 </DrawerSection>
 
-                <DrawerSection title="Rate card" summary="Prices agreed with this partner">
+                <DrawerSection title="Availability" summary={resumoDisponibilidade(partner)}>
+                  <PartnerAvailabilityTab partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
+                </DrawerSection>
+
+                <DrawerSection title="Cancellations" summary="Jobs this partner cancelled in the portal">
+                  <PartnerCancellationsSection partnerId={partner.id} canEdit={canManagePartners} />
+                </DrawerSection>
+
+                <DrawerSection title="Service rates" summary="Prices agreed with this partner">
                   <PartnerServiceRatesTabSection
                     partnerId={partner.id}
                     partner={{
@@ -6079,7 +6227,7 @@ function PartnerDetailDrawer({
             </div>
           </div>
 
-          {isAdmin && (
+          {canManagePartners && (
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <div className="flex items-center gap-1.5">
                 <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Mobile app account</p>
@@ -6120,7 +6268,7 @@ function PartnerDetailDrawer({
                       Sync app profile
                     </Button>
                     <span
-                      title="The app reads public.users (not only profiles). Use sync if they still see a missing profile after linking."
+                      title="If the partner still sees a missing profile in the app after linking, press Sync."
                       className="text-text-tertiary cursor-help"
                     >
                       <Info className="h-3.5 w-3.5" />
@@ -6150,10 +6298,11 @@ function PartnerDetailDrawer({
           {canSendPartnerLinks && (
             <div className="rounded-xl border border-border-light bg-card p-4 space-y-3">
               <div>
-                <p className="text-sm font-semibold text-text-primary">Trade portal onboarding</p>
-                <p className="text-xs text-text-secondary mt-1">
-                  Send a Fixfy Trade onboarding link so {partner.contact_name?.trim() || partner.company_name} can
-                  partners.getfixfy.com — new partners apply via /join; existing accounts sign in with their email.
+                <p className="m-0 flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+                  Trade portal onboarding
+                  <FixfyHintIcon
+                    text={`Send ${partner.contact_name?.trim() || partner.company_name} the Fixfy Trade link to finish onboarding. New partners apply through the join page; existing ones sign in with their email.`}
+                  />
                 </p>
                 {!partner.email?.trim() ? (
                   <p className="text-xs text-amber-700 mt-2">Add a partner email on Profile before sending the link.</p>
@@ -6193,7 +6342,7 @@ function PartnerDetailDrawer({
             </div>
           )}
 
-          {partner.auth_user_id && isAdmin && (
+          {partner.auth_user_id && canManagePartners && (
             <div className="pt-4 border-t border-border-light space-y-3">
               <p className="text-sm font-semibold text-text-primary">Admin actions</p>
               <div>
@@ -6299,75 +6448,122 @@ function PartnerDetailDrawer({
         )}
 
         {/* ========== JOBS ========== */}
-        {tab === "jobs" && (
-          <div className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-text-primary">{realJobsCount} Jobs</p>
-                <p className="text-xs text-text-tertiary">{completedJobs} completed, {activeJobs} in progress</p>
+        {tab === "jobs" && (() => {
+          const q = jobSearch.trim().toLowerCase();
+          const shown = q
+            ? partnerJobs.filter((j) =>
+                [j.reference, j.title, j.client_name, j.property_address, jobStatusConfig[j.status]?.label ?? j.status]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(q)),
+              )
+            : partnerJobs;
+          return (
+            <div className="space-y-3 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="m-0 text-[12px] text-text-tertiary">
+                  <span className="font-semibold text-text-primary">{realJobsCount} jobs</span> · {completedJobs} completed · {activeJobs} in progress
+                </p>
+                <div className="ml-auto w-64 max-w-full">
+                  <SearchInput
+                    value={jobSearch}
+                    onChange={(e) => setJobSearch(e.target.value)}
+                    placeholder="Search job, client, address"
+                    aria-label="Search this partner's jobs"
+                  />
+                </div>
               </div>
+
+              {loadingJobs ? (
+                <div className="space-y-1.5">
+                  {Array.from({ length: 5 }).map((_, i) => <div key={i} className="h-11 animate-pulse rounded-lg bg-surface-hover" />)}
+                </div>
+              ) : shown.length === 0 ? (
+                <p className="py-10 text-center text-[13px] text-text-tertiary">
+                  {q ? "No job matches this search" : "No jobs for this partner yet"}
+                </p>
+              ) : (
+                <div className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border">
+                  {shown.map((job) => {
+                    const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
+                    const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
+                    const when = formatJobScheduleLine(job);
+                    return (
+                      <Link
+                        key={job.id}
+                        href={`/jobs/${job.id}`}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-3 py-2 text-left no-underline transition-colors hover:bg-surface-hover sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[12px] font-semibold text-text-primary">{job.reference}</span>
+                            <Badge variant={jConfig.variant} size="sm">{jConfig.label}</Badge>
+                            <span className="truncate text-[12px] text-text-secondary">{job.title}</span>
+                          </div>
+                          <p className="m-0 truncate text-[11px] text-text-tertiary">
+                            {[job.client_name, job.property_address, when].filter(Boolean).join(" · ")}
+                          </p>
+                        </div>
+                        <div className="hidden text-right text-[11px] leading-tight text-text-tertiary sm:block">
+                          <div>Client <span className="font-medium tabular-nums text-text-primary">{formatCurrency(Number(job.client_price))}</span></div>
+                          <div>Partner <span className="font-medium tabular-nums text-text-primary">{formatCurrency(Number(job.partner_cost))}</span></div>
+                        </div>
+                        <span className={cn("text-right text-[12px] font-semibold tabular-nums", profit >= 0 ? "text-[var(--ok)]" : "text-[var(--bad)]")} title="Profit">
+                          {formatCurrency(profit)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+          );
+        })()}
 
-            {loadingJobs && (
-              <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="animate-pulse h-20 bg-surface-hover rounded-xl" />)}
+        {tab === "selfbills" && (
+          <div className="space-y-3 p-4 sm:p-5">
+            <p className="m-0 text-[12px] text-text-tertiary">
+              <span className="font-semibold text-text-primary">{selfBills.length} self-bills</span>
+              {selfBills.length > 0 ? (
+                <> · {formatCurrency(selfBills.filter((x) => x.status === "paid").reduce((t, x) => t + Number(x.net_payout), 0))} paid</>
+              ) : null}
+            </p>
+            {loadingFinance ? (
+              <div className="space-y-1.5">
+                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-hover" />)}
+              </div>
+            ) : selfBills.length === 0 ? (
+              <p className="py-10 text-center text-[13px] text-text-tertiary">No self-bills for this partner yet</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[560px] border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-surface-secondary text-[11px] text-text-tertiary">
+                      <th className="px-3 py-2 text-left font-medium">Self-bill</th>
+                      <th className="px-3 py-2 text-left font-medium">Period</th>
+                      <th className="px-3 py-2 text-center font-medium">Jobs</th>
+                      <th className="px-3 py-2 text-right font-medium">Net payout</th>
+                      <th className="px-3 py-2 text-center font-medium">Status</th>
+                      <th className="px-3 py-2 text-right font-medium">Paid on</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selfBills.map((sb) => {
+                      const st = SELF_BILL_STATUS[sb.status] ?? { label: sb.status, variant: "default" as BadgeVariant };
+                      return (
+                        <tr key={sb.id} className="border-t border-border/60">
+                          <td className="px-3 py-2 font-semibold text-text-primary">{sb.reference}</td>
+                          <td className="px-3 py-2 text-text-secondary">{selfBillPeriodLabel(sb)}</td>
+                          <td className="px-3 py-2 text-center tabular-nums text-text-secondary">{sb.jobs_count}</td>
+                          <td className="px-3 py-2 text-right font-semibold tabular-nums text-text-primary">{formatCurrency(Number(sb.net_payout))}</td>
+                          <td className="px-3 py-2 text-center"><Badge variant={st.variant} size="sm">{st.label}</Badge></td>
+                          <td className="px-3 py-2 text-right tabular-nums text-text-tertiary">{sb.paid_at ? formatDate(sb.paid_at) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
-
-            {!loadingJobs && partnerJobs.length === 0 && (
-              <div className="py-12 text-center">
-                <Briefcase className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No jobs found for this partner</p>
-              </div>
-            )}
-
-            {!loadingJobs && partnerJobs.map((job) => {
-              const jConfig = jobStatusConfig[job.status] || { label: job.status, variant: "default" as const };
-              const profit = Number(job.client_price) - Number(job.partner_cost) - Number(job.materials_cost);
-              const partnerSchedLine = formatJobScheduleLine(job);
-              return (
-                <motion.div key={job.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-text-primary">{job.reference}</p>
-                        <Badge variant={jConfig.variant} dot size="sm">{jConfig.label}</Badge>
-                      </div>
-                      <p className="text-xs text-text-tertiary mt-0.5">{job.title}</p>
-                      <p className="text-xs text-text-tertiary">{job.client_name} — {job.property_address}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 mt-3">
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Client Price</p>
-                      <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(job.client_price))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Partner Cost</p>
-                      <p className="text-sm font-semibold text-emerald-600">{formatCurrency(Number(job.partner_cost))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Materials</p>
-                      <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(job.materials_cost))}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-text-tertiary uppercase">Profit</p>
-                      <p className={`text-sm font-semibold ${profit >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatCurrency(profit)}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-3">
-                    <Progress value={job.progress} size="sm" color={job.progress === 100 ? "emerald" : "primary"} className="flex-1" />
-                    <span className="text-xs font-medium text-text-tertiary">{job.progress}%</span>
-                    <span className="text-[10px] text-text-tertiary">
-                      Phase {job.current_phase}/{Math.max(job.total_phases, 1)}
-                    </span>
-                  </div>
-                  {partnerSchedLine ? (
-                    <p className="text-[10px] text-text-secondary mt-2 leading-snug">{partnerSchedLine}</p>
-                  ) : null}
-                </motion.div>
-              );
-            })}
           </div>
         )}
 
@@ -6449,10 +6645,10 @@ function PartnerDetailDrawer({
                   className="h-8 text-xs"
                   onClick={() => {
                     setTab("overview");
-                    if (isAdmin) setEditingOverview(true);
+                    if (canManagePartners) setEditingOverview(true);
                   }}
                 >
-                  {isAdmin ? "Fix in Overview" : "View Overview"}
+                  {canManagePartners ? "Fix in Overview" : "View Overview"}
                 </Button>
               </div>
               <ul className="divide-y divide-border-light rounded-xl border border-border-light bg-card">
@@ -6843,78 +7039,16 @@ function PartnerDetailDrawer({
                 </div>
             </div>
 
-            <p className="text-sm font-semibold text-text-primary">{selfBills.length} Self-Bills</p>
-
-            {loadingFinance && (
-              <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <div key={i} className="animate-pulse h-16 bg-surface-hover rounded-xl" />)}
-              </div>
-            )}
-
-            {!loadingFinance && selfBills.length === 0 && (
-              <div className="py-10 text-center">
-                <DollarSign className="h-8 w-8 text-text-tertiary mx-auto mb-2" />
-                <p className="text-sm text-text-tertiary">No self-bills found</p>
-              </div>
-            )}
-
-            {!loadingFinance && selfBills.map((sb) => (
-              <motion.div key={sb.id} variants={staggerItem} className="p-4 rounded-xl border border-border-light hover:border-border transition-colors">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-text-primary">{sb.reference}</p>
-                    <Badge variant={sb.status === "paid" ? "success" : sb.status === "audit_required" ? "danger" : sb.status === "ready_to_pay" ? "info" : "warning"} size="sm" dot>
-                      {sb.status === "paid" ? "Paid" : sb.status === "audit_required" ? "Audit Required" : sb.status === "ready_to_pay" ? "Ready to Pay" : "Awaiting Payment"}
-                    </Badge>
-                  </div>
-                  <span className="text-xs text-text-tertiary">{sb.period}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Jobs</p>
-                    <p className="text-sm font-semibold text-text-primary">{sb.jobs_count}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Job Value</p>
-                    <p className="text-sm font-semibold text-text-primary">{formatCurrency(Number(sb.job_value))}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Commission</p>
-                    <p className="text-sm font-semibold text-red-500">-{formatCurrency(Number(sb.commission))}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-text-tertiary uppercase">Net Payout</p>
-                    <p className="text-sm font-bold text-emerald-600">{formatCurrency(Number(sb.net_payout))}</p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+            <p className="m-0 text-[12px] text-text-tertiary">The full list of self-bills is in the Self-bills tab.</p>
           </div>
         )}
 
-        {/* ========== LOCATION (directory partner with app user link) ========== */}
-        {tab === "location" && partner.auth_user_id && (
-          <div className="p-6 space-y-4">
-            <p className="text-sm font-semibold text-text-primary">Live location (from app)</p>
-            {partnerLocation ? (
-              <LocationMiniMapByCoords
-                latitude={Number(partnerLocation.latitude)}
-                longitude={Number(partnerLocation.longitude)}
-                label={`Last update: ${new Date(partnerLocation.created_at).toLocaleString()}`}
-              />
-            ) : <p className="text-sm text-text-tertiary">No recent location</p>}
-          </div>
-        )}
-
-        {/* ========== RATE CARD ========== */}
         {/* ========== DOCUMENTS · CONTRACTS ========== */}
         {tab === "documents" && documentsSubTab === "contracts" && (
           <div className="p-4 sm:p-6">
             <ContractsTab partnerId={partner.id} />
           </div>
         )}
-
-        {/* ========== PRIVACY & PERMISSIONS ========== */}
 
         {/* ========== DOCUMENTS · FILES ========== */}
         {tab === "documents" && documentsSubTab === "files" && (
@@ -6937,7 +7071,7 @@ function PartnerDetailDrawer({
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <p className="text-sm font-semibold text-text-primary">{documents.length} Documents</p>
               <div className="flex items-center gap-2">
-                {isAdmin && (
+                {canManagePartners && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -7418,8 +7552,8 @@ function PartnerDetailDrawer({
             <div className="flex gap-2">
               {(
                 [
-                  { id: "praise" as const, label: "Good" },
-                  { id: "complaint" as const, label: "Bad / Poor" },
+                  { id: "praise" as const, label: "Positive" },
+                  { id: "complaint" as const, label: "Complaint" },
                 ] as const
               ).map((opt) => (
                 <button
@@ -7693,3 +7827,13 @@ function PartnerDetailDrawer({
   );
 }
 
+
+/** "Mon–Fri · 5/day" ou o aviso de que falta preencher (sem dia = fora do auto-assign). */
+function resumoDisponibilidade(partner: Partner): string {
+  const av = (partner as Partner & { availability?: { days?: Record<string, { on?: boolean }>; maxJobsPerDay?: number } | null }).availability;
+  const ordem = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const rotulo: Record<string, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+  const ligados = ordem.filter((d) => av?.days?.[d]?.on === true);
+  if (!ligados.length) return "Not set · no offers";
+  return `${ligados.map((d) => rotulo[d]).join(" ")} · ${av?.maxJobsPerDay ?? 5}/day`;
+}

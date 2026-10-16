@@ -7,7 +7,7 @@ import { format } from "date-fns";
 import { getSupabase } from "@/services/base";
 import { JOB_LIST_ALL_TAB_STATUSES } from "@/services/jobs";
 import { batchResolveLinkedAccountLabels } from "@/lib/client-linked-account-label";
-import { FxAvatar, LiveIndicator, MicroLabel, Pill, SectionCard } from "@/components/fx/primitives";
+import { LiveIndicator, MicroLabel, Pill, SectionCard } from "@/components/fx/primitives";
 import { jobStatusLabel } from "@/lib/job-status-ui";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { cn } from "@/lib/utils";
@@ -80,7 +80,7 @@ const MODE_META: Record<
   },
   leads: {
     title: "Live Leads",
-    href: "/leads",
+    href: "/crm?side=b2c",
     linkLabel: "Open Leads →",
     empty: "No new leads.",
     loading: "Loading live leads…",
@@ -188,22 +188,32 @@ export function LiveBoard() {
         setQuotes(enriched);
         setActiveCount(countRes.count ?? 0);
       } else {
+        // Os leads de verdade (site, WhatsApp, lançados à mão), os mesmos da tela Leads.
+        // A tabela `leads` antiga é de jobs oferecidos a parceiros (11/10/2026).
+        const ABERTOS = ["new", "hot", "contacted"];
         const [listRes, countRes] = await Promise.all([
           supabase
-            .from("leads")
-            .select("id, reference, name, address, urgency, scope, status, created_at")
-            .eq("status", "new")
-            .is("deleted_at", null)
-            .order("created_at", { ascending: false })
+            .from("site_leads")
+            .select("id, full_name, email, phone, postcode, channel, status, service_label, created_at, last_activity_at")
+            .in("status", ABERTOS)
+            .order("last_activity_at", { ascending: false })
             .limit(5),
-          supabase
-            .from("leads")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "new")
-            .is("deleted_at", null),
+          supabase.from("site_leads").select("id", { count: "exact", head: true }).in("status", ABERTOS),
         ]);
         if (cancelled) return;
-        setLeads((listRes.data ?? []) as LiveLead[]);
+        type SiteLead = { id: string; full_name: string | null; email: string | null; phone: string | null; postcode: string | null; channel: string | null; status: string; service_label: string | null; created_at: string };
+        setLeads(
+          ((listRes.data ?? []) as SiteLead[]).map((l) => ({
+            id: l.id,
+            reference: (l.channel ?? "website").replace(/_/g, " "),
+            name: l.full_name || l.email || l.phone || "Lead",
+            address: l.postcode ?? "",
+            urgency: (l.status === "hot" ? "high" : l.status === "contacted" ? "low" : "medium") as LeadUrgency,
+            scope: l.service_label ?? "",
+            status: l.status,
+            created_at: l.created_at,
+          })),
+        );
         setActiveCount(countRes.count ?? 0);
       }
 
@@ -291,223 +301,123 @@ function LiveModeToggle({
   );
 }
 
-function JobsTable({
-  jobs,
-  loading,
-  empty,
-  loadingLabel,
+/**
+ * Uma linha do Live Board que cabe em qualquer largura (dono, 12/10/2026): em meia tela a
+ * tabela de 7 colunas quebrava cada célula em 4 linhas. Agora são duas linhas por item:
+ * título + valor, e embaixo o resumo cortado com reticências. O texto inteiro fica no
+ * `title` (aparece ao passar o mouse) e a linha toda abre o item.
+ */
+function LinhaViva({
+  href,
+  titulo,
+  referencia,
+  resumo,
+  completo,
+  selo,
+  valor,
 }: {
-  jobs: LiveJob[];
-  loading: boolean;
-  empty: string;
-  loadingLabel: string;
+  href: string;
+  titulo: string;
+  referencia: string;
+  /** Os pedaços do resumo, do mais importante para o menos: os últimos somem primeiro. */
+  resumo: Array<string | null | undefined>;
+  /** Tudo, sem corte, para o tooltip. */
+  completo: string;
+  selo?: React.ReactNode;
+  valor?: string | null;
 }) {
-  return (
-    <table className="w-full border-collapse text-[13px]">
-      <thead>
-        <tr>
-          {["Job", "Client", "Partner", "Stage", "Window", "Value", ""].map((h) => (
-            <th
-              key={h}
-              className="text-left px-4 py-2.5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-fx-mute bg-fx-paper border-b border-fx-line whitespace-nowrap last:text-right"
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {loading ? (
-          <EmptyRow colSpan={7} message={loadingLabel} />
-        ) : jobs.length === 0 ? (
-          <EmptyRow colSpan={7} message={empty} />
-        ) : (
-          jobs.map((j) => (
-            <tr key={j.id} className="border-b border-fx-line last:border-0 hover:bg-fx-paper transition-colors">
-              <td className="px-4 py-3 align-middle">
-                <div className="font-medium text-text-primary">{j.title}</div>
-                <MicroLabel className="block mt-0.5">{j.reference}</MicroLabel>
-              </td>
-              <td className="px-4 py-3 align-middle">
-                <div className="font-medium text-text-primary">{j.client_name}</div>
-                {j.property_address && (
-                  <MicroLabel className="block mt-0.5">
-                    {shortAddress(j.property_address)}
-                    {(() => {
-                      const pc = extractUkPostcode(j.property_address ?? "");
-                      return pc ? <span className="ml-1 uppercase">· {pc}</span> : null;
-                    })()}
-                  </MicroLabel>
-                )}
-              </td>
-              <td className="px-4 py-3 align-middle">
-                {j.partner_name ? (
-                  <div className="flex items-center gap-2">
-                    <FxAvatar initials={initials(j.partner_name)} tone="coral" size="sm" />
-                    <span className="text-text-primary">{j.partner_name}</span>
-                  </div>
-                ) : (
-                  <span className="text-fx-mute italic">Unassigned</span>
-                )}
-              </td>
-              <td className="px-4 py-3 align-middle">
-                <JobStatusPill status={j.status} />
-              </td>
-              <td className="px-4 py-3 align-middle font-mono text-[11.5px] text-fx-mute">
-                {formatWindow(j.scheduled_start_at, j.scheduled_end_at)}
-              </td>
-              <td className="px-4 py-3 align-middle font-medium text-text-primary tabular-nums">
-                {formatGbp(Number(j.client_price) + (Number(j.extras_amount) || 0))}
-              </td>
-              <td className="px-4 py-3 align-middle text-right">
-                <OpenLink href={`/jobs/${j.id}`} />
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  );
-}
-
-function QuotesTable({
-  quotes,
-  loading,
-  empty,
-  loadingLabel,
-}: {
-  quotes: LiveQuote[];
-  loading: boolean;
-  empty: string;
-  loadingLabel: string;
-}) {
-  return (
-    <table className="w-full border-collapse text-[13px]">
-      <thead>
-        <tr>
-          {["Quote", "Client", "Account", "Stage", "Value", ""].map((h) => (
-            <th
-              key={h}
-              className="text-left px-4 py-2.5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-fx-mute bg-fx-paper border-b border-fx-line whitespace-nowrap last:text-right"
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {loading ? (
-          <EmptyRow colSpan={6} message={loadingLabel} />
-        ) : quotes.length === 0 ? (
-          <EmptyRow colSpan={6} message={empty} />
-        ) : (
-          quotes.map((q) => (
-            <tr key={q.id} className="border-b border-fx-line last:border-0 hover:bg-fx-paper transition-colors">
-              <td className="px-4 py-3 align-middle">
-                <div className="font-medium text-text-primary">{q.title}</div>
-                <MicroLabel className="block mt-0.5">{q.reference}</MicroLabel>
-              </td>
-              <td className="px-4 py-3 align-middle">
-                <div className="font-medium text-text-primary">{q.client_name}</div>
-                {q.property_address?.trim() && (
-                  <MicroLabel className="block mt-0.5">{shortAddress(q.property_address)}</MicroLabel>
-                )}
-              </td>
-              <td className="px-4 py-3 align-middle text-text-primary">
-                {q.source_account_name?.trim() || <span className="text-fx-mute italic">—</span>}
-              </td>
-              <td className="px-4 py-3 align-middle">
-                <QuoteStatusPill status={q.status} />
-              </td>
-              <td className="px-4 py-3 align-middle font-medium text-text-primary tabular-nums">
-                {formatGbp(Number(q.total_value) || 0)}
-              </td>
-              <td className="px-4 py-3 align-middle text-right">
-                <OpenLink href="/quotes" />
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  );
-}
-
-function LeadsTable({
-  leads,
-  loading,
-  empty,
-  loadingLabel,
-}: {
-  leads: LiveLead[];
-  loading: boolean;
-  empty: string;
-  loadingLabel: string;
-}) {
-  return (
-    <table className="w-full border-collapse text-[13px]">
-      <thead>
-        <tr>
-          {["Lead", "Address", "Urgency", "Scope", ""].map((h) => (
-            <th
-              key={h}
-              className="text-left px-4 py-2.5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-fx-mute bg-fx-paper border-b border-fx-line whitespace-nowrap last:text-right"
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {loading ? (
-          <EmptyRow colSpan={5} message={loadingLabel} />
-        ) : leads.length === 0 ? (
-          <EmptyRow colSpan={5} message={empty} />
-        ) : (
-          leads.map((l) => (
-            <tr key={l.id} className="border-b border-fx-line last:border-0 hover:bg-fx-paper transition-colors">
-              <td className="px-4 py-3 align-middle">
-                <div className="font-medium text-text-primary">{l.name}</div>
-                <MicroLabel className="block mt-0.5">{l.reference}</MicroLabel>
-              </td>
-              <td className="px-4 py-3 align-middle max-w-[200px]">
-                <span className="text-text-primary line-clamp-2">{l.address?.trim() || "—"}</span>
-              </td>
-              <td className="px-4 py-3 align-middle">
-                <LeadUrgencyPill urgency={l.urgency} />
-              </td>
-              <td className="px-4 py-3 align-middle max-w-xs">
-                <span className="text-fx-mute line-clamp-2 text-[12px]">{l.scope?.trim() || "—"}</span>
-              </td>
-              <td className="px-4 py-3 align-middle text-right">
-                <OpenLink href="/leads" />
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
-  );
-}
-
-function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} className="px-4 py-12 text-center text-fx-mute">
-        {message}
-      </td>
-    </tr>
-  );
-}
-
-function OpenLink({ href }: { href: string }) {
+  const partes = resumo.map((r) => r?.trim()).filter(Boolean) as string[];
   return (
     <Link
       href={href}
-      className="text-[12px] font-medium text-fx-mute hover:text-text-primary px-2 py-1 rounded hover:bg-fx-paper transition-colors"
+      title={completo}
+      className="flex min-w-0 items-center gap-3 border-b border-fx-line px-4 py-2.5 transition-colors last:border-0 hover:bg-fx-paper"
     >
-      Open
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate text-[13px] font-medium text-text-primary">{titulo}</span>
+          <MicroLabel className="shrink-0">{referencia}</MicroLabel>
+        </div>
+        <div className="mt-0.5 truncate text-[12px] text-fx-mute">{partes.join(" · ") || "—"}</div>
+      </div>
+      {selo ? <div className="shrink-0">{selo}</div> : null}
+      {valor ? <span className="w-[72px] shrink-0 text-right text-[13px] font-medium tabular-nums text-text-primary">{valor}</span> : null}
     </Link>
+  );
+}
+
+function ListaVazia({ message }: { message: string }) {
+  return <p className="m-0 px-4 py-8 text-center text-[13px] text-fx-mute">{message}</p>;
+}
+
+function JobsTable({ jobs, loading, empty, loadingLabel }: { jobs: LiveJob[]; loading: boolean; empty: string; loadingLabel: string }) {
+  if (loading) return <ListaVazia message={loadingLabel} />;
+  if (jobs.length === 0) return <ListaVazia message={empty} />;
+  return (
+    <div className="flex flex-col">
+      {jobs.map((j) => {
+        const pc = extractUkPostcode(j.property_address ?? "");
+        const janela = formatWindow(j.scheduled_start_at, j.scheduled_end_at);
+        const valor = formatGbp(Number(j.client_price) + (Number(j.extras_amount) || 0));
+        return (
+          <LinhaViva
+            key={j.id}
+            href={`/jobs/${j.id}`}
+            titulo={j.title}
+            referencia={j.reference}
+            resumo={[j.client_name, j.partner_name || "Unassigned", janela, pc]}
+            completo={[`${j.title} (${j.reference})`, `Client: ${j.client_name}`, j.property_address ? `Address: ${j.property_address}` : null, `Partner: ${j.partner_name || "Unassigned"}`, `Window: ${janela}`, `Value: ${valor}`].filter(Boolean).join("\n")}
+            selo={<JobStatusPill status={j.status} />}
+            valor={valor}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function QuotesTable({ quotes, loading, empty, loadingLabel }: { quotes: LiveQuote[]; loading: boolean; empty: string; loadingLabel: string }) {
+  if (loading) return <ListaVazia message={loadingLabel} />;
+  if (quotes.length === 0) return <ListaVazia message={empty} />;
+  return (
+    <div className="flex flex-col">
+      {quotes.map((q) => {
+        const valor = formatGbp(Number(q.total_value) || 0);
+        const endereco = q.property_address?.trim() ? shortAddress(q.property_address) : null;
+        return (
+          <LinhaViva
+            key={q.id}
+            href={`/quotes?search=${encodeURIComponent(q.reference)}`}
+            titulo={q.title}
+            referencia={q.reference}
+            resumo={[q.client_name, q.source_account_name, endereco]}
+            completo={[`${q.title} (${q.reference})`, `Client: ${q.client_name}`, q.source_account_name?.trim() ? `Account: ${q.source_account_name}` : null, q.property_address?.trim() ? `Address: ${q.property_address}` : null, `Value: ${valor}`].filter(Boolean).join("\n")}
+            selo={<QuoteStatusPill status={q.status} />}
+            valor={valor}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function LeadsTable({ leads, loading, empty, loadingLabel }: { leads: LiveLead[]; loading: boolean; empty: string; loadingLabel: string }) {
+  if (loading) return <ListaVazia message={loadingLabel} />;
+  if (leads.length === 0) return <ListaVazia message={empty} />;
+  return (
+    <div className="flex flex-col">
+      {leads.map((l) => (
+        <LinhaViva
+          key={l.id}
+          href="/crm?side=b2c"
+          titulo={l.name}
+          referencia={l.reference}
+          resumo={[l.scope, l.address]}
+          completo={[`${l.name} (${l.reference})`, l.scope?.trim() ? `Wants: ${l.scope}` : null, l.address?.trim() ? `Postcode: ${l.address}` : null].filter(Boolean).join("\n")}
+          selo={<LeadUrgencyPill urgency={l.urgency} />}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -553,15 +463,6 @@ function LeadUrgencyPill({ urgency }: { urgency: LeadUrgency }) {
     default:
       return <Pill tone="ghost">Low</Pill>;
   }
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
 }
 
 function shortAddress(addr: string): string {

@@ -24,6 +24,7 @@ import { pulseMoney as formatCurrency } from "@/lib/pulse-money-display";
 import { getSupabase } from "@/services/base";
 import { SectionCard, Pill } from "@/components/fx/primitives";
 import { Modal } from "@/components/ui/modal";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { PULSE_FORECAST_PAIR_CARD_CLASS } from "@/lib/pulse-layout";
 import { localYmd } from "@/lib/date-range-filter";
 import {
@@ -93,7 +94,7 @@ const STATUS_LABEL: Record<StatusKey, string> = {
   unassigned: "Unassigned",
   scheduled: "Scheduled",
   in_progress: "In Progress",
-  final_check: "Final Checks",
+  final_check: "Final review",
 };
 
 const RESULT_COLORS = {
@@ -169,7 +170,6 @@ function bucketForStatus(status: string): StatusKey | null {
     case "in_progress":
       return "in_progress";
     case "final_check":
-    case "awaiting_payment":
     case "need_attention":
       return "final_check";
     default:
@@ -223,6 +223,9 @@ export function TodaysFlow() {
   const [forecastLoading, setForecastLoading] = useState(true);
   const [resultsLoading, setResultsLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<MonthBucket | null>(null);
+  /** Sem `finance_overview` o gráfico de resultados mostra os números, mas o mês não abre. */
+  const { can } = useAdminConfig();
+  const canSeeDetails = can("finance_overview");
 
   useEffect(() => {
     let cancelled = false;
@@ -423,6 +426,7 @@ export function TodaysFlow() {
   const isForecast = mode === "forecast";
 
   const openMonthFromClick = (data: unknown) => {
+    if (!canSeeDetails) return;
     const raw = data as (MonthBucket & { payload?: MonthBucket }) | undefined;
     const entry = raw?.payload ?? raw;
     if (!entry?.key) return;
@@ -434,7 +438,7 @@ export function TodaysFlow() {
       <SectionCard
         className={PULSE_FORECAST_PAIR_CARD_CLASS}
         bodyClassName="flex-1 min-h-0 px-5 py-4"
-        title={isForecast ? "Jobs Forecasting" : "Monthly Results"}
+        title={isForecast ? "Job forecast" : "Monthly results"}
         subtitle={
           isForecast
             ? `Next ${FORECAST_DAYS} days · ${forecastRangeLabel}`
@@ -454,7 +458,7 @@ export function TodaysFlow() {
                 <Pill
                   className="bg-[#0B1F3A]/10 text-[#0B1F3A] dark:bg-white/10 dark:text-white"
                 >
-                  Faturamento · {formatCurrency(resultsTotals.revenue)}
+                  Revenue · {formatCurrency(resultsTotals.revenue)}
                 </Pill>
                 <Pill tone="coral">
                   All costs · {formatCurrency(resultsTotals.allCosts)} · {resultsTotals.costPct.toFixed(0)}%
@@ -545,7 +549,7 @@ export function TodaysFlow() {
                 data={resultsData}
                 barCategoryGap={6}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                style={{ cursor: "pointer" }}
+                style={canSeeDetails ? { cursor: "pointer" } : undefined}
               >
                 <XAxis
                   dataKey="label"
@@ -560,7 +564,7 @@ export function TodaysFlow() {
                 />
                 <Tooltip
                   cursor={{ fill: "var(--chart-cursor-overlay)" }}
-                  content={<ResultsHoverHint />}
+                  content={<ResultsHoverHint clickable={canSeeDetails} />}
                 />
                 <Legend wrapperStyle={{ display: "none" }} />
                 {/* Bottom → top: faturamento (navy), all costs (orange), net/lucro (green) */}
@@ -570,8 +574,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.revenue}
                   radius={[0, 0, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
                 <Bar
                   dataKey="allCosts"
@@ -579,8 +583,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.allCosts}
                   radius={[0, 0, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
                 <Bar
                   dataKey="netBar"
@@ -588,8 +592,8 @@ export function TodaysFlow() {
                   stackId="rev"
                   fill={RESULT_COLORS.net}
                   radius={[2, 2, 0, 0]}
-                  onClick={(data) => openMonthFromClick(data)}
-                  cursor="pointer"
+                  onClick={canSeeDetails ? (data) => openMonthFromClick(data) : undefined}
+                  cursor={canSeeDetails ? "pointer" : undefined}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -598,7 +602,7 @@ export function TodaysFlow() {
       </SectionCard>
 
       <Modal
-        open={!!selectedMonth}
+        open={canSeeDetails && !!selectedMonth}
         onClose={() => setSelectedMonth(null)}
         title={selectedMonth ? format(selectedMonth.monthStart, "MMMM yyyy") : "Month"}
         subtitle={
@@ -617,9 +621,11 @@ export function TodaysFlow() {
 function ResultsHoverHint({
   active,
   payload,
+  clickable = true,
 }: {
   active?: boolean;
   payload?: Array<{ payload?: MonthBucket }>;
+  clickable?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const entry = payload[0]?.payload;
@@ -633,7 +639,7 @@ function ResultsHoverHint({
       </div>
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
-          <span className="text-fx-mute">Faturamento</span>
+          <span className="text-fx-mute">Revenue</span>
           <span className="tabular-nums font-medium text-text-primary">
             {formatCurrency(entry.revenue)}
           </span>
@@ -651,7 +657,9 @@ function ResultsHoverHint({
           </span>
         </div>
       </div>
-      <div className="text-fx-mute mt-2 pt-1.5 border-t border-fx-line">Click for full breakdown</div>
+      {clickable ? (
+        <div className="text-fx-mute mt-2 pt-1.5 border-t border-fx-line">Click for full breakdown</div>
+      ) : null}
     </div>
   );
 }
@@ -664,7 +672,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
     <div className="px-5 py-4 space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <MetricTile
-          label="Faturamento"
+          label="Revenue"
           value={formatCurrency(month.revenue)}
           swatch={RESULT_COLORS.revenue}
         />
@@ -707,7 +715,7 @@ function MonthResultsDetail({ month }: { month: MonthBucket }) {
           </span>
         </div>
         <div className="divide-y divide-fx-line">
-          <CostRow label="Faturamento" value={month.revenue} />
+          <CostRow label="Revenue" value={month.revenue} />
           <CostRow label="− Partner cost" value={-month.partnerCost} />
           <CostRow label="= Gross margin" value={month.gross} strong />
           <CostRow label="− Workforce" value={-month.workforce} />

@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { useId } from "react";
 import { Check } from "lucide-react";
 
@@ -65,10 +66,11 @@ export function ZendeskTicketField({ value, onChange, helperText, className }: P
         aria-describedby={`${inputId}-help`}
       />
 
+      <div className="mt-2 flex items-center gap-1.5">
       <button
         type="button"
         onClick={() => toggleNoTicket(!value.noTicket)}
-        className="mt-2 inline-flex items-start gap-2 text-xs text-text-secondary hover:text-text-primary group"
+        className="inline-flex items-start gap-2 text-xs text-text-secondary hover:text-text-primary group"
       >
         <span
           id={checkboxId}
@@ -84,12 +86,13 @@ export function ZendeskTicketField({ value, onChange, helperText, className }: P
           {value.noTicket && <Check className="h-3 w-3" strokeWidth={3} />}
         </span>
         <span className="leading-tight text-left">
-          <span className="font-medium">No ticket — create a new one</span>
-          <span className="block text-[11px] text-text-tertiary mt-0.5">
-            {helperText ?? "A new Zendesk ticket will be opened with team@getfixfy.com as requester and a comment containing the work details."}
-          </span>
+          <span className="font-medium">No ticket: create a new one</span>
         </span>
       </button>
+      <FixfyHintIcon
+        text={helperText ?? "A new Zendesk ticket will be opened with team@getfixfy.com as requester and a comment containing the work details."}
+      />
+      </div>
     </div>
   );
 }

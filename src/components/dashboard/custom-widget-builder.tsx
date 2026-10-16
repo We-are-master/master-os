@@ -479,9 +479,9 @@ function TableBuilder({ onAdd, onClose }: { onAdd: (w: WidgetConfig) => void; on
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
 const CUSTOM_TYPES: { type: CustomType; label: string; description: string; icon: React.ElementType }[] = [
-  { type: "custom_metric", label: "Custom Metric",  description: "A single number — count, sum or average",            icon: Hash },
-  { type: "custom_chart",  label: "Custom Chart",   description: "Bar, line or area chart grouped by month",           icon: BarChart2 },
-  { type: "custom_table",  label: "Custom Table",   description: "A live table with configurable columns & filters",   icon: Table2 },
+  { type: "custom_metric", label: "Custom metric",  description: "A single number — count, sum or average",            icon: Hash },
+  { type: "custom_chart",  label: "Custom chart",   description: "Bar, line or area chart grouped by month",           icon: BarChart2 },
+  { type: "custom_table",  label: "Custom table",   description: "A live table with configurable columns & filters",   icon: Table2 },
 ];
 
 export function CustomWidgetBuilder({ open, onClose, onAdd }: Props) {

@@ -48,10 +48,10 @@ export function LiveMapPartnersPanel({
   return (
     <div className="w-[260px] max-w-[92vw] rounded-xl border border-border bg-card/95 px-3 py-2.5 shadow-md backdrop-blur-sm dark:border-border dark:bg-card/95">
       <div className="flex items-center justify-between gap-2 pb-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">
           Partners
         </span>
-        <span className="text-[10px] text-[#64748B]">
+        <span className="text-[10px] text-text-tertiary">
           {totalActive} live
           {lastUpdatedAt ? ` · ${new Date(lastUpdatedAt).toLocaleTimeString()}` : ""}
         </span>
@@ -73,10 +73,10 @@ export function LiveMapPartnersPanel({
               className={cn(
                 "flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-[11.5px] transition-colors",
                 active
-                  ? "bg-[#020040]/5 text-[#020040]"
+                  ? "bg-primary/5 text-text-primary"
                   : empty
                     ? "cursor-default text-[#94A3B8]"
-                    : "text-[#020040] hover:bg-[#FAFAFB]",
+                    : "text-text-primary hover:bg-surface-secondary",
               )}
             >
               <span className="flex items-center gap-2">
@@ -97,18 +97,18 @@ export function LiveMapPartnersPanel({
       </div>
 
       {selectedStatus && listForSelected.length > 0 ? (
-        <div className="mt-2 border-t border-[#E4E4E8] pt-1.5">
+        <div className="mt-2 border-t border-border pt-1.5">
           <ul className="flex flex-col gap-0.5">
             {listForSelected.slice(0, PANEL_LIST_LIMIT).map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
                   onClick={() => onPartnerClick(p.id)}
-                  className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-[11px] text-[#020040] hover:bg-[#FAFAFB]"
+                  className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-[11px] text-text-primary hover:bg-surface-secondary"
                 >
                   <span className="truncate font-medium">{p.name}</span>
                   {typeof p.jobsInWindow === "number" && p.jobsInWindow > 0 ? (
-                    <span className="text-[10px] text-[#64748B]">
+                    <span className="text-[10px] text-text-tertiary">
                       {p.jobsInWindow} job{p.jobsInWindow === 1 ? "" : "s"}
                     </span>
                   ) : null}
@@ -117,7 +117,7 @@ export function LiveMapPartnersPanel({
             ))}
           </ul>
           {listForSelected.length > PANEL_LIST_LIMIT ? (
-            <p className="px-1.5 pt-1 text-[10px] text-[#64748B]">
+            <p className="px-1.5 pt-1 text-[10px] text-text-tertiary">
               +{listForSelected.length - PANEL_LIST_LIMIT} more
             </p>
           ) : null}

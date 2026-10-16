@@ -224,7 +224,7 @@ function getSelfBillDisplayStatus(sb: SelfBill, todayYmd: string): SelfBillDispl
   if (DRAFT_DB_STATUSES.has(sb.status)) return { label: "Draft", variant: "default" };
   if (selfBillCountsAsReady(sb)) {
     if (isSelfBillOverdue(sb, todayYmd)) return { label: "Overdue", variant: "danger" };
-    return { label: "Ready to Pay", variant: "info" };
+    return { label: "Ready to pay", variant: "info" };
   }
   return { label: sb.status, variant: "default" };
 }
@@ -1242,7 +1242,7 @@ function SelfBillPageInner() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Total to pay</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.totalPayableSum)}</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">{formatCurrency(totals.totalPayableSum)}</p>
               <p className="text-[11px] text-text-secondary">
                 {totals.totalReadyCount} ready + {totals.totalOverdueCount} overdue
               </p>
@@ -1254,7 +1254,7 @@ function SelfBillPageInner() {
           <button type="button" className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5 text-left hover:border-border transition-colors" onClick={() => setActiveTab("ready_to_pay")}>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Ready to Pay</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.readyDueSum)}</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">{formatCurrency(totals.readyDueSum)}</p>
               <p className="text-[11px] text-text-secondary">{totals.readyCount} self-bill{totals.readyCount !== 1 ? "s" : ""} · {kpiPeriodDesc}</p>
             </div>
             <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-600 dark:text-blue-400">
@@ -1274,7 +1274,7 @@ function SelfBillPageInner() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-border-light bg-card px-3 py-2.5">
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Weekly run rate</p>
-              <p className="text-[20px] font-bold tabular-nums leading-tight text-[#020040]">{formatCurrency(totals.avgPerWeek)}</p>
+              <p className="text-[20px] font-bold tabular-nums leading-tight text-text-primary">{formatCurrency(totals.avgPerWeek)}</p>
               <p className="text-[11px] text-text-secondary">Avg payout per week · {kpiPeriodDesc}</p>
             </div>
             <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600">
@@ -1304,7 +1304,7 @@ function SelfBillPageInner() {
                 onChange={(e) => setSearch(e.target.value)}
               />
               <div className="flex rounded-lg border border-border-light p-0.5 bg-surface-tertiary" title="Source">
-                {([{ id: "all", label: "All" }, { id: "partner", label: "Partners" }, { id: "internal", label: "Internal" }] as const).map(({ id, label }) => (
+                {([{ id: "all", label: "All" }, { id: "partner", label: "Partners" }, { id: "internal", label: "Workforce" }] as const).map(({ id, label }) => (
                   <button key={id} type="button" className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${originFilter === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary"}`} onClick={() => setOriginFilter(id)}>
                     {label}
                   </button>
@@ -1392,13 +1392,13 @@ function SelfBillPageInner() {
               </div>
               <div className="text-right">
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Amount Due</p>
-                <p className="text-sm font-semibold tabular-nums text-[#ED4B00]">
+                <p className="text-sm font-semibold tabular-nums text-text-primary">
                   {formatCurrency(filtered.reduce((s, sb) => s + computeSelfBillAmountDue(sb, jobsBySelfBillId[sb.id], partnerPaidByJobId, null, visitsBySelfBillId[sb.id]), 0))}
                 </p>
               </div>
               <div className="text-right">
                 <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">Net Payout</p>
-                <p className="text-sm font-semibold tabular-nums text-[#020040] dark:text-text-primary">
+                <p className="text-sm font-semibold tabular-nums text-text-primary dark:text-text-primary">
                   {formatCurrency(filtered.filter((sb) => !isSelfBillPayoutVoided(sb)).reduce((s, sb) => s + Number(sb.net_payout ?? 0), 0))}
                 </p>
               </div>
@@ -1930,12 +1930,12 @@ export function SelfBillDetailDrawer({
   const cancelFeeTotals = selfBillCancellationFeeTotals(jobs);
   const workforceBreakdown = sb.bill_origin === "internal" ? sb.payout_breakdown : null;
 
-  const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; count?: number }> = [
-    { id: "details", label: "Details" },
-    { id: "jobs", label: "Jobs", count: jobs.length },
-    { id: "invoices", label: "Invoices", count: linkedInvoices.length || undefined },
-    { id: "payment", label: "Payment" },
-    { id: "activity", label: "Activity" },
+  const drawerTabs: Array<{ id: "details" | "jobs" | "invoices" | "payment" | "activity"; label: string; hint?: string; count?: number }> = [
+    { id: "details", label: "Details", hint: "Review the self-bill and its payee." },
+    { id: "jobs", label: "Jobs", hint: "Review jobs included in this self-bill.", count: jobs.length },
+    { id: "invoices", label: "Invoices", hint: "Review linked customer invoices.", count: linkedInvoices.length || undefined },
+    { id: "payment", label: "Payment", hint: "Review payment details and available payment actions." },
+    { id: "activity", label: "Activity", hint: "Review recorded events for this self-bill." },
   ];
 
   const isDraft = DRAFT_DB_STATUSES.has(sb.status);
@@ -2133,7 +2133,7 @@ export function SelfBillDetailDrawer({
                 onClick={() => setTab(item.id)}
                 className={cn(
                   "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-left text-sm transition-colors",
-                  tab === item.id ? "font-semibold text-[#ED4B00]" : "font-medium text-text-secondary",
+                  tab === item.id ? "font-semibold text-text-primary" : "font-medium text-text-secondary",
                 )}
               >
                 <span className="inline-flex items-center gap-1.5">
@@ -2144,7 +2144,7 @@ export function SelfBillDetailDrawer({
                     </span>
                   ) : null}
                 </span>
-                {tab === item.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#ED4B00]" /> : null}
+                {tab === item.id ? <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" /> : null}
               </button>
             ))}
           </div>
@@ -2320,7 +2320,7 @@ export function SelfBillDetailDrawer({
                   <p className="text-[12px] text-text-secondary">Gross total</p>
                   <p className="text-[12px] text-text-primary tabular-nums">{formatCurrency(grossTotal)}</p>
                 </div>
-                <div className="flex items-center justify-between bg-[#020040] px-3 py-2.5">
+                <div className="flex items-center justify-between bg-primary px-3 py-2.5">
                   <p className="text-[13px] font-semibold text-white">Net payout to partner</p>
                   <p className="text-[15px] font-semibold text-white tabular-nums">{formatCurrency(sb.net_payout)}</p>
                 </div>
@@ -2349,7 +2349,7 @@ export function SelfBillDetailDrawer({
                   <div className="my-1 border-t border-border" />
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-text-primary">Due to partner</span>
-                    <span className={cn("font-semibold tabular-nums", sheetDue > 0.02 ? "text-[#ED4B00]" : "text-emerald-700 dark:text-emerald-400")}>
+                    <span className={cn("font-semibold tabular-nums", sheetDue > 0.02 ? "text-text-primary" : "text-emerald-700 dark:text-emerald-400")}>
                       {formatCurrency(sheetDue)}
                     </span>
                   </div>
@@ -2483,7 +2483,7 @@ export function SelfBillDetailDrawer({
                 ].map(({ label, value, highlight }) => (
                   <div key={label} className="flex items-center justify-between">
                     <span className="text-text-secondary">{label}</span>
-                    <span className={cn("font-semibold tabular-nums", highlight ? "text-[#ED4B00]" : "text-text-primary")}>{value}</span>
+                    <span className={cn("font-semibold tabular-nums", highlight ? "text-text-primary" : "text-text-primary")}>{value}</span>
                   </div>
                 ))}
               </div>

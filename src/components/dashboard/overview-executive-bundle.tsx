@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSupabase } from "@/services/base";
 import { getCompanySettings } from "@/services/company";
 import { useDashboardDateRange } from "@/hooks/use-dashboard-date-range";
+import { useAdminConfigOptional } from "@/hooks/use-admin-config";
 import { formatCurrency, cn } from "@/lib/utils";
 import { jobBillableRevenue, jobDirectCost, jobProfit } from "@/lib/job-financials";
 import { listCommissionTiers } from "@/services/tiers";
@@ -866,9 +867,9 @@ export function OverviewExecutiveBundle() {
 
   return (
     <div className="space-y-4">
-      <Card padding="none" className="overflow-hidden border-border-light bg-[#FAFAFB] shadow-sm ring-1 ring-border-light/20">
+      <Card padding="none" className="overflow-hidden border-border-light bg-surface-secondary shadow-sm ring-1 ring-border-light/20">
         {/* Header — always locked to current month */}
-        <div className="px-4 py-2.5 border-b border-border-light flex items-center justify-between gap-2 bg-[#FAFAFB]">
+        <div className="px-4 py-2.5 border-b border-border-light flex items-center justify-between gap-2 bg-surface-secondary">
           <p className="text-xs font-bold text-text-primary tracking-tight">
             Monthly Overview — <span className="text-primary">{currentMonthLabel}</span>
           </p>
@@ -1372,6 +1373,9 @@ export function OverviewExecutiveBundle() {
  */
 function DailyOperationsDetails({ data }: { data: ReturnType<typeof useDailyOperations> }) {
   const [open, setOpen] = useState(false);
+  // Detalhe dia a dia é drill-down financeiro: sem `finance_overview` fica só o número do bloco.
+  const canSeeDetails = useAdminConfigOptional()?.can("finance_overview") ?? false;
+  if (!canSeeDetails) return null;
   return (
     <div className="space-y-2">
       <button

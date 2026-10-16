@@ -36,7 +36,7 @@ export function ModalFooter({
         type="button"
         onClick={onCancel}
         disabled={submitting}
-        className="w-full sm:w-auto bg-transparent px-4 py-[9px] text-[13px] font-medium rounded-lg cursor-pointer transition-colors hover:bg-[#FAFAFB] disabled:cursor-not-allowed"
+        className="w-full sm:w-auto bg-transparent px-4 py-[9px] text-[13px] font-medium rounded-lg cursor-pointer transition-colors hover:bg-surface-secondary disabled:cursor-not-allowed"
         style={{ border: "0.5px solid #D4D4D8", color: "#020040" }}
       >
         Cancel

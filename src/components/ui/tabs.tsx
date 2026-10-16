@@ -1,5 +1,6 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import type { JobsManagementTabAccent } from "@/lib/job-status-ui";
@@ -8,6 +9,7 @@ interface Tab {
   id: string;
   label: string;
   count?: number;
+  hint?: string;
   /** When set (Jobs management), active tab underline + count chip use this colour family. */
   accent?: JobsManagementTabAccent;
 }
@@ -20,66 +22,44 @@ interface TabsProps {
   className?: string;
 }
 
+/**
+ * Fixfy OS UNO tabs (VOS UNO §11): every tab looks the same. Inactive 500
+ * `text-tertiary`, active 600 `text-primary` with the 2px coral rule; counts are
+ * plain 11px text. The per-tab accents are kept as a type only so call sites compile.
+ */
+const UNO_TAB = {
+  activeText: "text-text-primary font-semibold",
+  line: "bg-[var(--accent)]",
+  countActive: "text-text-tertiary",
+  countInactive: "text-text-tertiary",
+};
 const TAB_ACCENT: Record<
   JobsManagementTabAccent,
   { activeText: string; line: string; countActive: string; countInactive: string }
 > = {
-  neutral: {
-    activeText: "text-primary",
-    line: "bg-primary",
-    countActive: "bg-primary/10 text-primary",
-    countInactive: "bg-surface-tertiary text-text-tertiary",
-  },
-  red: {
-    activeText: "text-red-600 dark:text-red-400",
-    line: "bg-red-500",
-    countActive: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-200",
-    countInactive: "bg-red-50/90 text-red-700/80 dark:bg-red-950/25 dark:text-red-300/80",
-  },
-  green: {
-    activeText: "text-emerald-600 dark:text-emerald-400",
-    line: "bg-emerald-500",
-    countActive: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
-    countInactive: "bg-emerald-50/90 text-emerald-800/80 dark:bg-emerald-950/25 dark:text-emerald-300/80",
-  },
-  blue: {
-    activeText: "text-blue-600 dark:text-blue-400",
-    line: "bg-blue-500",
-    countActive: "bg-blue-100 text-blue-900 dark:bg-blue-950/40 dark:text-blue-200",
-    countInactive: "bg-blue-50/90 text-blue-800/80 dark:bg-blue-950/25 dark:text-blue-300/80",
-  },
-  violet: {
-    activeText: "text-violet-600 dark:text-violet-400",
-    line: "bg-violet-500",
-    countActive: "bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-200",
-    countInactive: "bg-violet-50/90 text-violet-800/80 dark:bg-violet-950/25 dark:text-violet-300/80",
-  },
-  amber: {
-    activeText: "text-amber-600 dark:text-amber-400",
-    line: "bg-amber-500",
-    countActive: "bg-amber-100 text-amber-950 dark:bg-amber-950/35 dark:text-amber-200",
-    countInactive: "bg-amber-50/90 text-amber-900/80 dark:bg-amber-950/25 dark:text-amber-300/80",
-  },
-  emerald: {
-    activeText: "text-emerald-600 dark:text-emerald-400",
-    line: "bg-emerald-600",
-    countActive: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
-    countInactive: "bg-emerald-50/90 text-emerald-800/80 dark:bg-emerald-950/25 dark:text-emerald-300/80",
-  },
-  slate: {
-    activeText: "text-slate-600 dark:text-slate-400",
-    line: "bg-slate-500",
-    countActive: "bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-100",
-    countInactive: "bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400",
-  },
+  neutral: UNO_TAB,
+  red: UNO_TAB,
+  green: UNO_TAB,
+  blue: UNO_TAB,
+  violet: UNO_TAB,
+  amber: UNO_TAB,
+  emerald: UNO_TAB,
+  slate: UNO_TAB,
 };
 
 export function Tabs({ tabs, activeTab, onChange, variant = "default", className }: TabsProps) {
+  const selected = tabs.find((tab) => tab.id === activeTab);
+  const help = selected?.hint ? (
+    <span className="inline-flex shrink-0 items-center px-2">
+      <FixfyHintIcon text={selected.hint} label={selected.label} />
+    </span>
+  ) : null;
+
   if (variant === "quote-drawer") {
     return (
       <div
         className={cn(
-          "flex shrink-0 gap-1 border-b border-fx-line px-7 pt-2.5",
+          "flex h-10 shrink-0 items-stretch gap-2 border-b border-fx-line px-6",
           className,
         )}
       >
@@ -89,16 +69,15 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              "relative inline-flex items-center gap-1.5 rounded-t-md px-3 pb-2.5 pt-2 text-[13.5px] font-medium transition-colors",
-              activeTab === tab.id ? "text-fx-ink" : "text-fx-mute hover:text-fx-ink",
+              "relative inline-flex items-center gap-2 px-[11px] py-2 text-[13px] font-medium transition-colors",
+              activeTab === tab.id ? "text-fx-ink font-semibold" : "text-fx-mute hover:text-fx-ink",
             )}
           >
             {tab.label}
             {tab.count !== undefined ? (
               <span
                 className={cn(
-                  "rounded-full px-1.5 py-0.5 font-mono text-[10.5px] leading-none",
-                  activeTab === tab.id ? "bg-fx-coral-50 text-fx-coral-p" : "bg-fx-paper-2 text-fx-slate",
+                  "text-[11px] font-medium tabular-nums text-fx-mute",
                 )}
               >
                 {tab.count}
@@ -107,12 +86,13 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             {activeTab === tab.id ? (
               <motion.div
                 layoutId="quote-drawer-tab-underline"
-                className="absolute bottom-0 left-2.5 right-2.5 h-0.5 rounded-sm bg-fx-coral"
+                className="absolute -bottom-px left-[11px] right-[11px] h-0.5 rounded-t-sm bg-fx-coral"
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
               />
             ) : null}
           </button>
         ))}
+        {help}
       </div>
     );
   }
@@ -127,16 +107,17 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
         className,
       )}
     >
-      <div className="inline-flex flex-nowrap items-stretch gap-0 min-w-max">
+      <div className="inline-flex h-10 flex-nowrap items-stretch gap-2 min-w-max -ml-[11px]">
         {tabs.map((tab) => {
           const accent = tab.accent ? TAB_ACCENT[tab.accent] : TAB_ACCENT.neutral;
           return (
           <button
             key={tab.id}
+            type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              "relative shrink-0 snap-start whitespace-nowrap px-3 py-2.5 text-sm font-medium transition-colors duration-200 text-left sm:px-4",
-              activeTab === tab.id ? accent.activeText : "text-text-secondary hover:text-text-primary"
+              "relative shrink-0 snap-start whitespace-nowrap px-[11px] py-2 text-[13px] font-medium transition-colors duration-150 text-left",
+              activeTab === tab.id ? accent.activeText : "text-text-tertiary hover:text-text-primary"
             )}
           >
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
@@ -144,7 +125,7 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
               {tab.count !== undefined && (
                 <span
                   className={cn(
-                    "shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md",
+                    "shrink-0 text-[11px] font-medium tabular-nums",
                     activeTab === tab.id ? accent.countActive : accent.countInactive,
                   )}
                 >
@@ -155,13 +136,14 @@ export function Tabs({ tabs, activeTab, onChange, variant = "default", className
             {activeTab === tab.id && (
               <motion.div
                 layoutId="tab-underline"
-                className={cn("absolute bottom-0 left-0 right-0 h-0.5", accent.line)}
+                className={cn("absolute -bottom-px left-[11px] right-[11px] h-0.5 rounded-t-sm", accent.line)}
                 transition={{ type: "spring", damping: 25, stiffness: 300 }}
               />
             )}
           </button>
         );
         })}
+        {help}
       </div>
     </div>
   );

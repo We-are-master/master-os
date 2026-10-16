@@ -15,7 +15,7 @@ import {
   sortPricingAddonsDisplay,
   sortPricingPresetsDisplay,
 } from "@/lib/catalog-pricing-presets";
-import { resolveAccountSell, resolvePartnerPay } from "@/lib/catalog-pricing-floor-ceiling";
+import { accountAllowsBelowStandard, resolveAccountSell, resolvePartnerPay } from "@/lib/catalog-pricing-floor-ceiling";
 
 export type CatalogLineKind = "base" | "addon";
 
@@ -85,9 +85,10 @@ function pickClientBase(
     }
   }
 
-  const client = resolveAccountSell(floorClient, clientOverride);
+  const abaixoDaTabela = accountAllowsBelowStandard(account);
+  const client = resolveAccountSell(floorClient, clientOverride, abaixoDaTabela);
   const partner = resolvePartnerPay(ceilingPartner, partnerOverride);
-  if (clientSource === "custom" && client <= floorClient) clientSource = "standard";
+  if (clientSource === "custom" && (abaixoDaTabela ? client === floorClient : client <= floorClient)) clientSource = "standard";
   if (partnerSource === "custom" && partner >= ceilingPartner) partnerSource = "standard";
 
   return { client, partner, clientSource, partnerSource };
@@ -125,9 +126,10 @@ function pickAddonLine(
     }
   }
 
-  const client = resolveAccountSell(floorClient, clientOverride);
+  const abaixoDaTabela = accountAllowsBelowStandard(account);
+  const client = resolveAccountSell(floorClient, clientOverride, abaixoDaTabela);
   const partner = resolvePartnerPay(ceilingPartner, partnerOverride);
-  if (clientSource === "custom" && client <= floorClient) clientSource = "standard";
+  if (clientSource === "custom" && (abaixoDaTabela ? client === floorClient : client <= floorClient)) clientSource = "standard";
   if (partnerSource === "custom" && partner >= ceilingPartner) partnerSource = "standard";
 
   return { client, partner, clientSource, partnerSource };

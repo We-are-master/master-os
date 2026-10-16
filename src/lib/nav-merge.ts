@@ -1,3 +1,4 @@
+import { updatedNavigationLabel } from "./nav-labels";
 import type { NavGroup, NavItem } from "@/lib/constants";
 
 function markItemHrefsDeep(item: NavItem, sink: Set<string>) {
@@ -31,24 +32,39 @@ export function mergeNewNavItems(
 
   const findGroup = (label: string) => result.find((g) => g.label === label);
 
+  // Item que o código mudou de grupo (Schedule foi para baixo do Pulse em
+  // 15/10/2026): a cópia salva no grupo antigo sai, senão aparece duas vezes.
+  const grupoCanonico = new Map<string, string>();
+  canonical.forEach((g) => g.items.forEach((i) => grupoCanonico.set(i.href, g.label)));
+  for (const g of result) {
+    g.items = g.items.filter((i) => {
+      const certo = grupoCanonico.get(i.href);
+      return !certo || certo === g.label;
+    });
+  }
+
   for (const cGroup of canonical) {
     let match = findGroup(cGroup.label);
     if (!match) {
       match = { label: cGroup.label, items: [] };
       result.push(match);
     }
-    for (const cItem of cGroup.items) {
+    for (const [cIndex, cItem] of cGroup.items.entries()) {
       const local = match!.items.find((i) => i.href === cItem.href);
       if (!local) {
-        match!.items.push({
-          ...cItem,
-          children: cItem.children?.map((ch) => ({ ...ch })),
-        });
+        // Item novo entra ao lado do vizinho que o precede no canônico, não no
+        // fim do grupo: a nav salva no banco é antiga e empurrava todo item
+        // novo para baixo (Leads do site caía depois de Schedule).
+        const novo = { ...cItem, children: cItem.children?.map((ch) => ({ ...ch })) };
+        const anterior = cGroup.items.slice(0, cIndex).reverse().find((c) => match!.items.some((i) => i.href === c.href));
+        const pos = anterior ? match!.items.findIndex((i) => i.href === anterior.href) + 1 : Math.min(cIndex, match!.items.length);
+        match!.items.splice(pos, 0, novo);
         markItemHrefsDeep(cItem, storedHrefs);
         continue;
       }
 
       storedHrefs.add(cItem.href);
+      local.label = updatedNavigationLabel(cItem.href, local.label, cItem.label);
       // Stored navs saved before a permission key was added to the canonical
       // item won't carry it — backfill so the filter can act on them.
       if (!local.permission && cItem.permission) local.permission = cItem.permission;

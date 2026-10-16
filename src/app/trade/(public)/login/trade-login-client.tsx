@@ -118,14 +118,14 @@ export function TradeLoginClient() {
 
   return (
     <div className="tp-root">
-      <section className="tp-brand" aria-label="Fixfy Trade">
+      <section className="tp-brand" aria-label="Fixfy trade">
         <div className="tp-brand__inner">
           <p className="tp-brand__help">
             Need help?{" "}
             <a href="mailto:support@getfixfy.com">Contact support</a>
           </p>
 
-          <div className="tp-wordmark" aria-label="Fixfy Trade">
+          <div className="tp-wordmark" aria-label="Fixfy trade">
             <span className="tp-wordmark__fix">fix</span>
             <span className="tp-wordmark__trade">Trade</span>
           </div>
@@ -219,7 +219,7 @@ export function TradeLoginClient() {
 
           {tab === "create" ? (
             <div className="tp-create-panel">
-              <h2 className="tp-auth__title">Join Fixfy Trade</h2>
+              <h2 className="tp-auth__title">Join Fixfy trade</h2>
               <p>
                 <strong>More revenue. Less admin. Guaranteed work pipeline.</strong> Apply in minutes
                 and start receiving jobs matched to your trade — partners on Fixfy Trade grow
@@ -237,7 +237,7 @@ export function TradeLoginClient() {
                 Already a partner?{" "}
                 <button
                   type="button"
-                  className="border-0 bg-transparent p-0 font-bold text-[#ed4b00] cursor-pointer"
+                  className="border-0 bg-transparent p-0 font-bold text-text-primary cursor-pointer"
                   onClick={() => setTab("signin")}
                 >
                   Sign in with your work email
@@ -282,7 +282,7 @@ export function TradeLoginClient() {
               </p>
               <button
                 type="button"
-                className="mt-3 w-full border-0 bg-transparent text-sm text-[#6b6b85] underline cursor-pointer"
+                className="mt-3 w-full border-0 bg-transparent text-sm text-text-tertiary underline cursor-pointer"
                 onClick={() => {
                   setSent(false);
                   setCode("");
@@ -329,7 +329,7 @@ export function TradeLoginClient() {
                 New to Fixfy?{" "}
                 <button
                   type="button"
-                  className="border-0 bg-transparent p-0 font-bold text-[#ed4b00] cursor-pointer"
+                  className="border-0 bg-transparent p-0 font-bold text-text-primary cursor-pointer"
                   onClick={() => setTab("create")}
                 >
                   Start your application

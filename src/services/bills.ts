@@ -310,3 +310,14 @@ export async function archiveBillsByIds(ids: string[]): Promise<void> {
   if (error) throw error;
   await removeBillIdsFromPayRunItems(ids);
 }
+
+/**
+ * Exclui de vez (dono, 15/10/2026): some do Expenses, do Pay Run, do runway e
+ * dos KPIs. Diferente do Void, que arquiva e deixa restaurar.
+ */
+export async function deleteBillsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await removeBillIdsFromPayRunItems(ids);
+  const { error } = await getSupabase().from("bills").delete().in("id", ids);
+  if (error) throw error;
+}

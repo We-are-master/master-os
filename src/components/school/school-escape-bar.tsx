@@ -27,8 +27,8 @@ export function SchoolEscapeBar({ className }: { className?: string }) {
         className={cn(
           "inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-semibold shrink-0 transition-colors",
           onSchoolHome
-            ? "border-[#FBD9C4] bg-[#FFF5EE] text-[#E94A02]"
-            : "border-[#FBD9C4] bg-gradient-to-b from-[#FFF5EE] to-[#FFEFE4] text-[#E94A02] hover:bg-[#FFE8D9] hover:border-[#F5C4A8]",
+            ? "border-[#FBD9C4] bg-[#FFF5EE] text-text-primary"
+            : "border-[#FBD9C4] bg-gradient-to-b from-[#FFF5EE] to-[#FFEFE4] text-text-primary hover:bg-[#FFE8D9] hover:border-[#F5C4A8]",
         )}
       >
         <GraduationCap className="h-4 w-4" />

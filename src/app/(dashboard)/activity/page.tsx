@@ -97,7 +97,7 @@ export default function ActivityLogPage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Activity log" subtitle={`Last ${PAGE_SIZE} events from audit trail`}>
+        <PageHeader title="Audit log" subtitle={`Last ${PAGE_SIZE} events from audit trail`}>
           <Link
             href="/"
             className="inline-flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-primary transition-colors"

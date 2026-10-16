@@ -14,6 +14,7 @@ import {
   type PartnerCoverageFields,
 } from "@/lib/partner-coverage";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import { dataEmLondres, elegiveisParaJob } from "@/lib/capacity";
 
 // Shared partner matching for distributing work (leads / job offers) to partners.
 // Trade match + portal prefs + positive coverage (radius or postcodes) + excluded postcodes.
@@ -38,6 +39,17 @@ export interface MatchWorkArgs {
    * don't cover the booking slot. Partners with no availability configured pass.
    */
   availabilitySlot?: JobSlot;
+  /**
+   * Job com serviço do catálogo (plano de 29/09/2026): o casamento é exato pelo
+   * catálogo e respeita disponibilidade, folga, máx. por dia, valor mínimo e
+   * jobs ativos do parceiro (elegibilidade-parceiro.ts). `categoria` é o
+   * degrau 2 da oferta: qualquer serviço da mesma categoria.
+   */
+  degrau?: "servico" | "categoria";
+  /** O próprio job (não conta na carga do dia quando já existe). */
+  jobId?: string | null;
+  /** O que o parceiro recebe: compara com o valor mínimo dele. */
+  partnerCost?: number | null;
 }
 
 const PARTNER_MATCH_SELECT =
@@ -67,9 +79,33 @@ export async function matchPartnerIdsForWork(supabase: SupabaseClient, args: Mat
     longitude: lng,
   };
 
+  // Job com serviço do catálogo: as regras novas decidem quem pode receber.
+  const estrito = args.kind === "job" && !!args.catalogServiceId?.trim();
+  let permitidos: Set<string> | null = null;
+  if (estrito) {
+    const slot = args.availabilitySlot ?? {};
+    const data = slot.scheduledDate?.slice(0, 10) || (slot.startAt ? dataEmLondres(slot.startAt) : null);
+    const el = await elegiveisParaJob(
+      supabase,
+      {
+        id: args.jobId ?? undefined,
+        status: "auto_assigning",
+        catalog_service_id: args.catalogServiceId!.trim(),
+        data,
+        startAt: slot.startAt ?? null,
+        endAt: slot.endAt ?? null,
+        partner_cost: args.partnerCost ?? null,
+      },
+      args.degrau ?? "servico",
+    );
+    permitidos = new Set(el.elegiveis.map((p) => p.id));
+  }
+
   return partners
     .filter((p) => {
-      if (!partnerMatchesTypeOfWork(p, args.serviceType ?? "", args.catalogServiceId)) return false;
+      if (permitidos) {
+        if (!permitidos.has(p.id)) return false;
+      } else if (!partnerMatchesTypeOfWork(p, args.serviceType ?? "", args.catalogServiceId)) return false;
       const prefs = p.job_preferences ?? null;
       if (args.kind === "lead" && prefs && prefs.receiveLeads === false) return false;
       if (args.emergency && prefs && prefs.receiveEmergency === false) return false;

@@ -11,6 +11,7 @@
  * preço combinado; "Potential earnings £X+" quando tem hourly no meio.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { arquivoDeEstado } from "./lib/estado.mjs";
 for (const arquivo of [".env.local", ".env"]) {
   try {
     for (const linha of readFileSync(arquivo, "utf8").split("\n")) {
@@ -22,7 +23,8 @@ for (const arquivo of [".env.local", ".env"]) {
 
 const ENVIAR = process.argv.includes("--enviar");
 const MAX_ENVIOS_POR_RODADA = 30;
-const SENT_PATH = "scripts/.tomorrow-sent.json";
+// FIXFY_STATE_DIR no Railway (volume); sem ela, scripts/.tomorrow-sent.json como sempre.
+const SENT_PATH = arquivoDeEstado(".tomorrow-sent.json");
 
 const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }] =
   await Promise.all([
@@ -140,7 +142,7 @@ for (const [partnerId, lista] of porParceiro) {
 
   const { data: partnerRow } = await supabase
     .from("partners")
-    .select("id, company_name, contact_name, email, partner_address_latitude, partner_address_longitude")
+    .select("*")
     .eq("id", partnerId)
     .maybeSingle();
   const p = partnerRow as { company_name: string | null; contact_name: string | null; email: string | null; partner_address_latitude: number | null; partner_address_longitude: number | null } | null;
@@ -257,6 +259,10 @@ for (const [partnerId, lista] of porParceiro) {
     const { error } = await new Resend(resendKey!).emails.send({
       from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy <ops@getfixfy.com>",
       to: [p.email.trim()],
+      // Cópias que o parceiro pediu (mig 328).
+      ...(((p as { job_cc_emails?: string[] | null }).job_cc_emails ?? []).filter((e) => /.+@.+\..+/.test(e)).length
+        ? { cc: ((p as { job_cc_emails?: string[] | null }).job_cc_emails ?? []).filter((e) => /.+@.+\..+/.test(e)) }
+        : {}),
       // A resposta do parceiro vira ticket: o digest sai pelo Resend (vários
       // jobs, nenhum ticket para pendurar side conversation), mas a conversa
       // volta para o Zendesk, onde o time e o Harvey já trabalham.

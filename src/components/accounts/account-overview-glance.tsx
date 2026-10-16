@@ -63,7 +63,7 @@ export function AccountOverviewGlance({
             {legacyRevenue > 0 ? (
               <span className="text-text-secondary">
                 {" "}
-                · incl. {formatCurrency(legacyRevenue)} pre–Master OS
+                · incl. {formatCurrency(legacyRevenue)} before the OS
               </span>
             ) : null}
           </p>
@@ -71,7 +71,7 @@ export function AccountOverviewGlance({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#020040]/5 px-3 py-1 text-xs font-medium text-[#020040]">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/5 px-3 py-1 text-xs font-medium text-text-primary">
           <Briefcase className="h-3.5 w-3.5 shrink-0" />
           <span className="tabular-nums">{insights.totalJobsAllTime}</span> jobs
         </span>
@@ -79,7 +79,7 @@ export function AccountOverviewGlance({
           Since <span className="tabular-nums font-semibold">{customerSince}</span>
         </span>
         {insights.avgTicket > 0 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ED4B00]/8 px-3 py-1 text-xs font-medium text-[#ED4B00]">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--pick-bg)] px-3 py-1 text-xs font-medium text-text-primary">
             <TrendingUp className="h-3.5 w-3.5 shrink-0" />
             <span className="tabular-nums">{formatCurrency(insights.avgTicket)}</span> avg
           </span>
@@ -89,15 +89,15 @@ export function AccountOverviewGlance({
         </span>
       </div>
 
-      <div className="h-[2px] rounded-full bg-[#ED4B00]/70" />
+      <div className="h-[2px] rounded-full bg-[var(--pick-bg)]" />
 
       <div>
         <p className="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-2">
-          Master OS · Billable {formatCurrency(account.total_revenue)}
+          Billed in the OS {formatCurrency(account.total_revenue)}
         </p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-text-secondary">
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-[#020040] shrink-0" />
+            <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
             Invoiced <strong className="tabular-nums text-text-primary">{formatCurrency(invoicedAmt)}</strong>
           </span>
           <span className="flex items-center gap-1.5">

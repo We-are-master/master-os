@@ -144,9 +144,9 @@ export function AccountHistorySection({
       <div className="rounded-2xl border border-border-light bg-white p-5 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">Year breakdown</p>
+            <p className="text-xs font-bold text-text-primary uppercase tracking-wider">Year breakdown</p>
             <p className="text-[11px] text-text-tertiary mt-1">
-              Completed jobs and revenue by calendar year — legacy imports plus Master OS.
+              Completed jobs and revenue by calendar year — older imports plus the OS.
             </p>
           </div>
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-text-tertiary shrink-0" /> : null}
@@ -199,7 +199,7 @@ export function AccountHistorySection({
       {isAdmin ? (
         <div className="rounded-2xl border border-border-light bg-white p-5 space-y-4">
           <div>
-            <p className="text-xs font-bold text-[#020040] uppercase tracking-wider">
+            <p className="text-xs font-bold text-text-primary uppercase tracking-wider">
               Previous system history
             </p>
             <p className="text-[11px] text-text-tertiary mt-1">
@@ -215,7 +215,7 @@ export function AccountHistorySection({
                   className={cn(
                     "flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm",
                     editingId === row.id
-                      ? "border-[#ED4B00]/40 bg-[#ED4B00]/5"
+                      ? "border-text-primary bg-[var(--pick-bg)]"
                       : "border-border-light",
                   )}
                 >
@@ -345,7 +345,7 @@ export function AccountHistorySection({
         </div>
       ) : (
         <p className="text-xs text-text-tertiary px-1">
-          Only admins can edit pre–Master OS history.
+          Only admins can edit history from before the OS.
         </p>
       )}
     </div>

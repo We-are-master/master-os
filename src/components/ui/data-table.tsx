@@ -155,7 +155,7 @@ export function DataTable<T>({
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const supportsColumnConfig = Boolean(configStorageKey) && columns.length > 1;
   /** Zebra stripe on `<tr>` only so tint spans every column (gear picker + trailing cells). */
-  const zebraRowTint = "bg-[#F5F5F7] dark:bg-white/[0.04]";
+  const zebraRowTint = "bg-surface-secondary dark:bg-white/[0.04]";
 
   useEffect(() => {
     if (!configStorageKey) {
@@ -333,11 +333,11 @@ export function DataTable<T>({
         )}
         ref={sortMenuRef}
       >
-        <table className={cn("w-full min-w-[1080px]", tableClassName)}>
+        <table className={cn("uno-tbl w-full min-w-[900px]", tableClassName)}>
           <thead>
             <tr className="border-b border-border-light">
               {selectable && (
-                <th className="w-12 px-2 sm:px-3 py-2">
+                <th className="uno-selcol w-10">
                   <Checkbox
                     checked={allSelected}
                     indeterminate={someSelected && !allSelected}
@@ -490,7 +490,7 @@ export function DataTable<T>({
                     </button>
                     {columnMenuOpen ? (
                       <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border-light bg-card shadow-lg p-3 space-y-2">
-                        <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide">Columns</p>
+                        <p className="text-[11px] font-medium text-text-tertiary">Columns</p>
                         <div className="max-h-56 overflow-auto space-y-1.5">
                           {columns.map((col) => {
                             const checked = !hiddenColumns.has(col.key);
@@ -598,16 +598,16 @@ export function DataTable<T>({
                             "border-b border-border-light/50 transition-colors duration-150",
                             onRowClick && "cursor-pointer",
                             isChecked
-                              ? "bg-primary/[0.04]"
+                              ? "uno-row-sel"
                               : isRowSelected
-                                ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
+                                ? "uno-row-sel"
                                 : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
                             isZebra && zebraRowTint,
                             rowClassName?.(item),
                           )}
                         >
                           {selectable && (
-                            <td className="w-12 px-2 sm:px-3 py-1.5">
+                            <td className="uno-selcol w-10">
                               <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                             </td>
                           )}
@@ -665,16 +665,16 @@ export function DataTable<T>({
                         "border-b border-border-light/50 transition-colors duration-150",
                         onRowClick && "cursor-pointer",
                         isChecked
-                          ? "bg-primary/[0.04]"
+                          ? "uno-row-sel"
                           : isRowSelected
-                            ? "bg-primary/[0.03] border-l-[3px] border-l-primary"
+                            ? "uno-row-sel"
                             : "hover:bg-surface-hover border-l-[3px] border-l-transparent",
                         isZebra && zebraRowTint,
                         rowClassName?.(item)
                       )}
                     >
                       {selectable && (
-                        <td className="w-12 px-2 sm:px-3 py-1.5">
+                        <td className="uno-selcol w-10">
                           <Checkbox checked={isChecked} onChange={() => toggleOne(id)} />
                         </td>
                       )}

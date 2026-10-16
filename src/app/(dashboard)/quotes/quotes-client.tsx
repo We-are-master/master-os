@@ -13,6 +13,7 @@ const QUOTES_DEFAULT_DATE_FILTER: DateFilterValue = {
 };
 import { PageTransition, StaggerContainer } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
+import { JobActionsMenu } from "@/components/jobs/job-actions-menu";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -470,14 +471,14 @@ function computeBidSpotlight(bids: QuoteBid[], selectedId: string | null): { bid
 }
 
 const statusLabels: Record<string, string> = {
-  draft: "New",
-  in_survey: "Bidding",
-  bidding: "Bidding",
-  quote_ready: "Quote Ready",
-  awaiting_customer: "Approval",
-  awaiting_payment: "Payment",
+  draft: "Draft",
+  in_survey: "Sourcing",
+  bidding: "Sourcing",
+  quote_ready: "Ready to send",
+  awaiting_customer: "Awaiting approval",
+  awaiting_payment: "Awaiting payment",
   rejected: "Rejected",
-  converted_to_job: "Converted to Job",
+  converted_to_job: "Converted to job",
 };
 
 const statusConfig: Record<string, { variant: "default" | "primary" | "success" | "warning" | "danger" | "info"; dot?: boolean }> = {
@@ -681,7 +682,7 @@ function QuoteBiddingSlaCell({
   return (
     <div
       className="flex flex-col gap-0.5 tabular-nums leading-tight"
-      title={`Past the ${slaHoursLabel} Bidding SLA — send to customer as soon as possible.${approxHint}`}
+      title={`Past the ${slaHoursLabel} Sourcing SLA — send to customer as soon as possible.${approxHint}`}
     >
       <Badge variant="danger" size="sm" className="w-fit px-1.5 py-0 text-[10px]">
         Overdue
@@ -701,7 +702,7 @@ function getStageGuidance(status: string): {
     case "draft":
       return {
         headline: "New quote — choose a path",
-        detail: "Partner path: Start Bidding. Manual path: price it and Send to Customer (Awaiting Approval).",
+        detail: "Partner path: Start sourcing. Manual path: price it and Send quote (Awaiting Approval).",
       };
     case "in_survey":
     case "bidding":
@@ -1123,7 +1124,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     const ids = ["draft", "bidding", "quote_ready", "awaiting_customer", "awaiting_payment"];
     return ids.map((id) => ({
       id,
-      title: id === "draft" ? "New" : (statusLabels[id] ?? id),
+      title: id === "draft" ? "Drafts" : (statusLabels[id] ?? id),
       color: id === "awaiting_payment" ? "bg-amber-500" : id === "awaiting_customer" ? "bg-blue-500" : id === "quote_ready" ? "bg-emerald-500" : "bg-primary",
       items: filteredQuotes.filter((q) => {
         if (id === "bidding") return q.status === "bidding" || q.status === "in_survey";
@@ -1395,12 +1396,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     const closed =
       (statusCounts.converted_to_job ?? 0) + (statusCounts.rejected ?? 0);
     return [
-      { id: "draft", label: "New", count: quoteFunnelCounts.draft },
-      { id: "bidding", label: "Bidding", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
-      { id: "quote_ready", label: "Quote Ready", count: statusCounts.quote_ready ?? 0 },
-      { id: "awaiting_customer", label: "Approval", count: statusCounts.awaiting_customer ?? 0 },
-      { id: "awaiting_payment", label: "Payment", count: statusCounts.awaiting_payment ?? 0 },
-      { id: "closed", label: "Closed", count: closed },
+      { id: "draft", label: "Drafts", hint: "Quotes being prepared before partner sourcing or customer review.", count: quoteFunnelCounts.draft },
+      { id: "bidding", label: "Sourcing", hint: "Quotes in partner bidding or survey stages.", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
+      { id: "quote_ready", label: "Ready to send", hint: "Quotes ready for review before being sent to the customer.", count: statusCounts.quote_ready ?? 0 },
+      { id: "awaiting_customer", label: "Awaiting approval", hint: "Quotes awaiting the customer's decision.", count: statusCounts.awaiting_customer ?? 0 },
+      { id: "awaiting_payment", label: "Awaiting payment", hint: "Quotes awaiting the required customer payment.", count: statusCounts.awaiting_payment ?? 0 },
+      { id: "closed", label: "Closed", hint: "Quotes that have reached a closed outcome.", count: closed },
     ];
   }, [statusCounts, quoteFunnelCounts]);
 
@@ -1446,6 +1447,10 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               entityType:  "quote",
               subject,
               commentBody: lines.join("\n"),
+              // Um ticket por pedido: com o cliente, o OS reusa o ticket aberto dele (ONE_TICKET_JOB_REUSE_ON).
+              clientId:    formData.client_id ?? null,
+              clientEmail: formData.client_email ?? null,
+              clientPhone: (formData as { client_phone?: string | null }).client_phone ?? null,
               ticketFormId: ZENDESK_QUOTE_TICKET_FORM_ID || undefined,
               customFields: buildZendeskCustomFields([
                 [ZENDESK_FIELD_SCOPE, formData.scope],
@@ -1460,6 +1465,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
           }
           formData.external_source = "zendesk";
           formData.external_ref    = String(j.ticketId);
+          if (j.reused) toast.success(`Linked to the customer's open Zendesk ticket #${j.ticketId}`);
         } catch (err) {
           toast.error(err instanceof Error ? err.message : "Zendesk ticket creation failed");
           return false;
@@ -1727,7 +1733,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   trades: [trade],
-                  title: "New Job Invitation",
+                  title: "New job invitation",
                   body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
                   data: { type: "quote_invite", quoteId: patched.id },
                 }),
@@ -1952,6 +1958,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
         const baseJobRow = {
           title: formData.title,
+          // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+          catalog_service_id: (quoteToConvert as { catalog_service_id?: string | null }).catalog_service_id ?? undefined,
           client_id: formData.client_id,
           client_address_id: formData.client_address_id,
           property_id: quoteToConvert.property_id ?? undefined,
@@ -2159,7 +2167,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 trades: [quote.service_type],
-                title: "New Job Invitation",
+                title: "New job invitation",
                 body: `${quote.title} — ${quote.property_address ?? quote.client_name}`,
                 data: { type: "quote_invite", quoteId: quote.id },
               }),
@@ -2382,7 +2390,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       },
       {
         key: "client_name",
-        label: "Accounts",
+        label: "Account",
         minWidth: "8.5rem",
         sortable: true,
         sortOptions: quoteSortTextCol("client_name", "Accounts"),
@@ -2407,7 +2415,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       },
       {
         key: "service_type",
-        label: "Type of work",
+        label: "Service",
         minWidth: "10.5rem",
         sortable: true,
         sortOptions: quoteSortTextCol("service_type", "Type of work"),
@@ -2440,7 +2448,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
 
     const biddingSlaColumn: Column<Quote> = {
       key: "bidding_sla",
-      label: "SLA",
+      label: "Response deadline",
       minWidth: "6.75rem",
       headerClassName: "normal-case",
       sortable: true,
@@ -2454,7 +2462,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
     };
     const avgBidColumn: Column<Quote> = {
       key: "avg_bid",
-      label: "AVG Bid",
+      label: "Average bid",
       minWidth: "5.5rem",
       align: "right" as const,
       sortable: true,
@@ -2605,11 +2613,9 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         <PageHeader
           title="Quotes"
           infoTooltip={
-            "Headline KPIs reflect all active (non-deleted) quotes — the same pool as the stage tab counts.\n\n" +
-            "Total Quoted sums quote value for Approval + Payment (with the customer). Bidding shows the same count as the Bidding tab.\n\n" +
-            "SLA overdue counts open Bidding quotes past the configured SLA window (Settings → Setup).\n\n" +
-            "Tabs: New → Bidding → Approval → Payment → Closed (Win vs Lost labelled per row).\n\n" +
-            "New holds API / intake drafts. From New: Start Bidding (partners) or Send (awaiting approval)."
+            "Prepare quotes, source partner bids and track customer approval and payment. " +
+            "Indicators and stage counts include all active quotes. Total quoted covers quotes awaiting approval or payment. " +
+            "Overdue sourcing uses the response deadline set in Business settings."
           }
         >
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2651,7 +2657,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         {kpisVisible ? (
         <StaggerContainer className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
           <KpiCard
-            title="Total Quoted"
+            title="Total quoted"
             value={kpiSummary.totalSentToCustomerValue}
             format="currency"
             icon={BarChart3}
@@ -2661,17 +2667,17 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             compact
           />
           <KpiCard
-            title="Bidding"
+            title="Sourcing"
             value={(statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0)}
             format="number"
             icon={Gavel}
             accent="amber"
-            description="Number of quotes in Bidding (includes legacy “survey” rows). Matches the Bidding tab badge."
+            description="Number of quotes in Sourcing (includes legacy “survey” rows). Matches the Sourcing tab badge."
             descriptionAsTooltip
             compact
           />
           <KpiCard
-            title="Approval"
+            title="Awaiting approval"
             value={kpiSummary.awaitingCustomerValue}
             format="currency"
             icon={Mail}
@@ -2686,12 +2692,12 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             format="number"
             icon={Clock}
             accent="amber"
-            description={`Open quotes in Bidding past the ${biddingSlaHoursLabelPretty} SLA window (company-wide). Matches “Past SLA” in the Bidding tab snapshot.`}
+            description={`Open quotes in Sourcing past the ${biddingSlaHoursLabelPretty} SLA window (company-wide). Matches “Past SLA” in the Sourcing tab snapshot.`}
             descriptionAsTooltip
             compact
           />
           <KpiCard
-            title="Conversion Rate"
+            title="Conversion rate"
             value={quoteToJobConversion.pct}
             format="percent"
             icon={BarChart3}
@@ -2774,8 +2780,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
             <div className="mb-4 flex flex-col gap-2 rounded-xl border border-border-light bg-gradient-to-br from-card to-surface-hover/60 px-3 py-3 dark:from-card dark:to-surface-secondary/25">
               <div className="flex flex-wrap items-center gap-2">
                 <Clock className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                <p className="text-xs font-semibold text-text-primary">Bidding SLA snapshot · {biddingSlaHoursLabelPretty} target</p>
-                <FixfyHintIcon text="Uses the SLA hours from Settings → Setup. Counts every open Bidding quote in the company (not limited by BU filter). Start time prefers the audit trail when available." />
+                <p className="text-xs font-semibold text-text-primary">Sourcing SLA snapshot · {biddingSlaHoursLabelPretty} target</p>
+                <FixfyHintIcon text="Uses the SLA hours from Settings → Business settings. Counts every open Sourcing quote in the company (not limited by BU filter). Start time prefers the audit trail when available." />
                 {buFilter.selectedBuId ? (
                   <span className="text-[10px] text-text-tertiary">BU filter applies to the table only.</span>
                 ) : null}
@@ -2785,7 +2791,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Open in bidding</p>
                   <p className="text-lg font-bold tabular-nums text-text-primary">{biddingSlaRollup.total}</p>
                 </div>
-                <div title={`Longer than the ${biddingSlaHoursLabelPretty} Bidding SLA window (still in Bidding)`}>
+                <div title={`Longer than the ${biddingSlaHoursLabelPretty} Sourcing SLA window (still in Sourcing)`}>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Past SLA</p>
                   <p
                     className={cn(
@@ -3042,7 +3048,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
               className={cn(
                 "flex min-h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-semibold transition-all",
                 routingCreateEntry === "bidding"
-                  ? "bg-[#1DB87A] text-white shadow-sm"
+                  ? "bg-success text-white shadow-sm"
                   : "text-text-secondary hover:bg-surface-hover",
               )}
             >
@@ -3251,12 +3257,12 @@ function PartnerBidMiniDash({
 }
 
 /** Quote funnel — New → Bids → Quote Ready → Approval → Payment (`in_survey` treats as Bidding step). */
-const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; short: string; icon: typeof ClipboardList }[] = [
-  { id: "draft", label: "New", short: "New", icon: ClipboardList },
-  { id: "bidding", label: "Bidding", short: "Bids", icon: Gavel },
-  { id: "quote_ready", label: "Quote Ready", short: "Ready", icon: FileCheck },
-  { id: "awaiting_customer", label: "Approval", short: "Approval", icon: UserRound },
-  { id: "awaiting_payment", label: "Payment", short: "Payment", icon: CheckCircle2 },
+const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; hint?: string; short: string; icon: typeof ClipboardList }[] = [
+  { id: "draft", label: "Drafts", hint: "Quotes being prepared before partner sourcing or customer review.", short: "Draft", icon: ClipboardList },
+  { id: "bidding", label: "Sourcing", hint: "Quotes in partner bidding or survey stages.", short: "Sourcing", icon: Gavel },
+  { id: "quote_ready", label: "Ready to send", hint: "Quotes ready for review before being sent to the customer.", short: "Ready", icon: FileCheck },
+  { id: "awaiting_customer", label: "Awaiting approval", hint: "Quotes awaiting the customer's decision.", short: "Approval", icon: UserRound },
+  { id: "awaiting_payment", label: "Awaiting payment", hint: "Quotes awaiting the required customer payment.", short: "Payment", icon: CheckCircle2 },
 ];
 
 /** Segment progress — New → Bids → Quote Ready → Approval → Payment. */
@@ -4184,23 +4190,23 @@ function QuoteDetailDrawer({
   const routingDraft = isDraftRoutingPhase(quote);
   const drawerTabs = isLateStageQuote
     ? [
-        { id: "overview", label: "Review & Send" },
-        { id: "details", label: "Details" },
-        { id: "history", label: "History" },
+        { id: "overview", label: "Proposal", hint: "Review the proposal and the actions available at its current stage." },
+        { id: "details", label: "Details", hint: "Review the quote details and scope of work." },
+        { id: "history", label: "Activity", hint: "Review recorded quote events." },
       ]
     : routingDraft
       ? [
-          { id: "overview", label: "New" },
-          { id: "history", label: "History" },
+          { id: "overview", label: "Details", hint: "Review the proposal and the actions available at its current stage." },
+          { id: "history", label: "Activity", hint: "Review recorded quote events." },
         ]
       : [
-          { id: "overview", label: "Review & Send" },
+          { id: "overview", label: "Proposal", hint: "Review the proposal and the actions available at its current stage." },
           {
             id: "bids",
-            label: "Bids",
+            label: "Partner bids",
             ...(bidsReceivedCount > 0 ? { count: bidsReceivedCount } : {}),
           },
-          { id: "history", label: "History" },
+          { id: "history", label: "Activity", hint: "Review recorded quote events." },
         ];
 
   const showProposalStatStrip =
@@ -4987,138 +4993,128 @@ function QuoteDetailDrawer({
             <FixfyHintIcon text="Includes PDF plus images. Off by default — use when the client should see the same photos partners received." />
           </label>
         ) : null}
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-fx-line bg-fx-paper dark:bg-surface-secondary/40">
-            <FileText className="h-4 w-4 text-fx-slate" aria-hidden />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1">
-              <p className="text-[13.5px] font-medium text-fx-ink">Customer PDF</p>
-              <FixfyHintIcon text="Matches the PDF attached when you email the client. Uses saved scope, line items and figures — use Save Quote to refresh before preview or download." />
-            </div>
-            <p className="text-xs text-fx-mute">Uses saved figures</p>
-          </div>
-          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-fx-ink"
-              onClick={() => {
-                window.open(
-                  `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`,
-                  "_blank",
-                  "noopener,noreferrer",
-                );
-              }}
-            >
-              Preview
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-fx-ink"
-              icon={<Download className="h-3.5 w-3.5" />}
-              onClick={() => {
-                const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
-                const a = document.createElement("a");
-                a.href = url;
-                a.rel = "noopener";
-                a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-              }}
-            >
-              Download
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-fx-mute">Move this quote</p>
-          <div
-            className={cn(
-              "flex flex-wrap items-center gap-2",
-              "[&_button]:shrink-0",
-            )}
-          >
-            {(drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment") && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={sendState === "sending" || !sendStep3Ready}
-                icon={
-                  sendState === "sending" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )
-                }
-                onClick={() => void handleSendToCustomer()}
-                title={
-                  drawerQuoteStatus === "awaiting_payment"
-                    ? "Saves the latest figures and emails the updated PDF to the customer"
-                    : "Saves the latest proposal and emails the PDF (Accept / Reject links stay the same)"
-                }
-              >
-                {sendState === "sending" ? "Saving…" : "Resend Quote"}
-              </Button>
-            )}
-            {overviewActions.map((action) => {
-              const sendToCustomerClick = async () => {
-                if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
-                  toast.error(
-                    "Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).",
-                  );
-                  return;
-                }
-                await handleSendToCustomer();
-              };
-              const showMarkAsSent =
-                action.status === "awaiting_customer" &&
-                ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
-              return (
-                <Fragment key={action.status}>
-                  <Button
-                    variant={action.primary ? "primary" : "outline"}
-                    size="sm"
-                    disabled={proposalSaving}
-                    icon={<action.icon className="h-3.5 w-3.5" />}
-                    onClick={async () => {
-                      if (action.status === "approve_quote") {
-                        onApproveQuote(quote);
-                        return;
-                      }
-                      if (action.status !== "awaiting_customer") {
-                        const result = await Promise.resolve(onStatusChange(quote, action.status));
-                        if (result === false) return;
-                        return;
-                      }
-                      await sendToCustomerClick();
-                    }}
-                  >
-                    {action.label}
-                  </Button>
-                  {showMarkAsSent ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={proposalSaving}
-                      icon={<MailCheck className="h-3.5 w-3.5" />}
-                      title="Save proposal, move to Awaiting Customer, and record that the PDF was already delivered (no email from this app)"
-                      onClick={() => void handleMarkAsSentExternally()}
-                    >
-                      Mark as sent
-                    </Button>
-                  ) : null}
-                </Fragment>
+        {(() => {
+          const downloadPdf = () => {
+            const url = `/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}&download=1`;
+            const a = document.createElement("a");
+            a.href = url;
+            a.rel = "noopener";
+            a.download = `${String(quote.reference ?? "quote").replace(/\//g, "-")}_quote.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          };
+          const runAction = async (action: (typeof overviewActions)[number]) => {
+            if (action.status === "approve_quote") {
+              onApproveQuote(quote);
+              return;
+            }
+            if (action.status !== "awaiting_customer") {
+              await Promise.resolve(onStatusChange(quote, action.status));
+              return;
+            }
+            if (!sendStep1Ready || !sendStep2Ready || !sendStep3Ready) {
+              toast.error(
+                "Complete the customer proposal above (scope or line items, at least one start date, deposit, and customer email).",
               );
-            })}
-          </div>
-        </div>
+              return;
+            }
+            await handleSendToCustomer();
+          };
+          const primary = overviewActions.find((x) => x.primary) ?? null;
+          const others = overviewActions.filter((x) => x !== primary);
+          const canResend = drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment";
+          const canMarkSent =
+            overviewActions.some((x) => x.status === "awaiting_customer") &&
+            ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
+          return (
+            <div className="flex items-center justify-end gap-2">
+              <JobActionsMenu
+                placement="up"
+                groups={[
+                  {
+                    key: "pdf",
+                    label: "Customer PDF",
+                    icon: FileText,
+                    items: [
+                      {
+                        key: "preview",
+                        label: "Preview PDF",
+                        hint: "Uses the saved figures. Save Quote first to refresh.",
+                        icon: FileText,
+                        onSelect: () =>
+                          window.open(`/api/quotes/send-pdf?quoteId=${encodeURIComponent(quote.id)}`, "_blank", "noopener,noreferrer"),
+                      },
+                      { key: "download", label: "Download PDF", icon: Download, onSelect: downloadPdf },
+                    ],
+                  },
+                  {
+                    key: "send",
+                    label: "Send",
+                    icon: Send,
+                    items: [
+                      ...(canResend
+                        ? [{
+                            key: "resend",
+                            label: "Resend quote",
+                            hint:
+                              drawerQuoteStatus === "awaiting_payment"
+                                ? "Saves the latest figures and emails the updated PDF"
+                                : "Saves the proposal and emails the PDF again",
+                            icon: Send,
+                            disabled: sendState === "sending" || !sendStep3Ready,
+                            title: "Add the customer email first",
+                            onSelect: () => void handleSendToCustomer(),
+                          }]
+                        : []),
+                      ...(canMarkSent
+                        ? [{
+                            key: "mark_sent",
+                            label: "Mark as sent",
+                            hint: "The PDF went out another way. No email from the OS.",
+                            icon: MailCheck,
+                            disabled: proposalSaving,
+                            onSelect: () => void handleMarkAsSentExternally(),
+                          }]
+                        : []),
+                    ],
+                  },
+                  {
+                    key: "move",
+                    label: "Move quote",
+                    icon: ArrowRight,
+                    items: others.map((x) => ({
+                      key: x.status,
+                      label: x.label,
+                      icon: x.icon,
+                      danger: x.status === "rejected",
+                      disabled: proposalSaving,
+                      onSelect: () => void runAction(x),
+                    })),
+                  },
+                ]}
+              />
+              {primary ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  disabled={proposalSaving || sendState === "sending"}
+                  icon={
+                    sendState === "sending" && primary.status === "awaiting_customer" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <primary.icon className="h-3.5 w-3.5" />
+                    )
+                  }
+                  onClick={() => void runAction(primary)}
+                >
+                  {sendState === "sending" && primary.status === "awaiting_customer" ? "Sending…" : primary.label}
+                </Button>
+              ) : null}
+            </div>
+          );
+        })()}
       </div>
     ) : undefined;
 
@@ -5455,12 +5451,12 @@ function QuoteDetailDrawer({
               {routingDraft ? (
                 <div className="space-y-3 border-b border-fx-line px-7 py-5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[#020040]">Job on this draft</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-primary">Job on this draft</p>
                     <FixfyHintIcon text="Pick the trade, pin the site on the map, then describe scope — or use the Account card above first. Finish with Partner bid or Manual quote." />
                   </div>
                   <div>
                     <TypeOfWorkPicker
-                      label="Type of work"
+                      label="Service"
                       labelClassName="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary"
                       catalog={routingTypeOfWorkCatalog}
                       value={routingTitleDraft}
@@ -5683,7 +5679,7 @@ function QuoteDetailDrawer({
 
               {convertedJob && (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200">
-                  <div className="flex items-center gap-2 mb-2"><Briefcase className="h-4 w-4 text-emerald-600" /><label className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Converted to Job</label></div>
+                  <div className="flex items-center gap-2 mb-2"><Briefcase className="h-4 w-4 text-emerald-600" /><label className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Converted to job</label></div>
                   <a href={`/jobs?jobId=${convertedJob.id}`} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-card border border-border hover:border-primary/50 text-sm font-semibold text-primary">
                     <Briefcase className="h-4 w-4" /> {convertedJob.reference}
                   </a>
@@ -6011,7 +6007,7 @@ function QuoteDetailDrawer({
                           className={cn(
                             "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                             depositInputMode === "percent"
-                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              ? "bg-primary text-white dark:bg-primary dark:text-white"
                               : "text-text-secondary hover:text-text-primary",
                           )}
                         >
@@ -6028,7 +6024,7 @@ function QuoteDetailDrawer({
                           className={cn(
                             "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                             depositInputMode === "amount"
-                              ? "bg-[#020040] text-white dark:bg-primary dark:text-white"
+                              ? "bg-primary text-white dark:bg-primary dark:text-white"
                               : "text-text-secondary hover:text-text-primary",
                           )}
                         >
@@ -6167,7 +6163,7 @@ function QuoteDetailDrawer({
                     if (result === false) return;
                   }}
                 >
-                  Start Bidding
+                  Start sourcing
                 </Button>
               )}
               <div className="p-3 rounded-xl bg-surface-hover border border-border-light">
@@ -6667,7 +6663,7 @@ function QuoteDetailDrawer({
           setInvitePartnerOpen(false);
           setInvitePartnerScopeEditing(false);
         }}
-        title="Invite Partners"
+        title="Invite partners"
         subtitle="Select partners to send this quote request"
         size="lg"
         scrollBody={false}
@@ -6862,8 +6858,8 @@ function QuoteDetailDrawer({
                       className={cn(
                         "group flex min-h-[4rem] w-full min-w-0 touch-manipulation items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none transition-colors sm:gap-3 sm:px-3.5 sm:py-3",
                         isSelected
-                          ? "border-primary bg-[#020040]/[0.04] ring-2 ring-[#020040]/20 dark:bg-primary/[0.08] dark:border-primary dark:ring-primary/35"
-                          : "border-border-light bg-transparent hover:bg-surface-hover hover:border-[#020040]/30 dark:hover:bg-surface-secondary/40",
+                          ? "border-primary bg-primary/[0.04] ring-2 ring-text-primary/20 dark:bg-primary/[0.08] dark:border-primary dark:ring-primary/35"
+                          : "border-border-light bg-transparent hover:bg-surface-hover hover:border-primary/30 dark:hover:bg-surface-secondary/40",
                       )}
                     >
                       <Avatar name={p.company_name} size="md" src={p.avatar_url ?? undefined} className="shrink-0" />
@@ -6877,7 +6873,7 @@ function QuoteDetailDrawer({
                       <div className="flex shrink-0 flex-row items-center gap-2.5">
                         <div className="flex min-h-[24px] w-[4.25rem] items-center justify-center sm:justify-end">
                           {isTradeMatch ? (
-                            <span className="inline-flex rounded-full border border-[#020040]/25 bg-[#020040]/6 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-[#020040] dark:border-primary/40 dark:bg-primary/15 dark:text-primary">
+                            <span className="inline-flex rounded-full border border-primary/25 bg-primary/6 px-2 py-px text-[9px] font-bold uppercase tracking-wide text-text-primary dark:border-primary/40 dark:bg-primary/15 dark:text-primary">
                               Match
                             </span>
                           ) : null}
@@ -6887,8 +6883,8 @@ function QuoteDetailDrawer({
                           className={cn(
                             "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
                             isSelected
-                              ? "border-[#020040] bg-[#020040] text-white dark:border-primary dark:bg-primary"
-                              : "border-border bg-card group-hover:border-[#020040]/35 dark:bg-surface-secondary",
+                              ? "border-primary bg-primary text-white dark:border-primary dark:bg-primary"
+                              : "border-border bg-card group-hover:border-primary/35 dark:bg-surface-secondary",
                           )}
                         >
                           {isSelected ? <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden /> : null}
@@ -6976,7 +6972,7 @@ function QuoteDetailDrawer({
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         trades: [trade],
-                        title: "New Job Invitation",
+                        title: "New job invitation",
                         body: `${patched.title} — ${patched.property_address ?? patched.client_name ?? ""}`,
                         data: { type: "quote_invite", quoteId: quote.id },
                       }),
@@ -7262,7 +7258,7 @@ async function reconcileQuoteAfterSendPdf(
   const final = refreshed ?? optimistic;
   onQuoteUpdate?.(final);
   if (final.status === "bidding") {
-    toast.error("PDF was sent but the quote is still in Bidding. Try again or contact support.");
+    toast.error("PDF was sent but the quote is still in Sourcing. Try again or contact support.");
   }
   return final;
 }
@@ -7276,33 +7272,33 @@ function getQuoteActions(quote: Quote) {
       }
       if (isManual) {
         return [
-          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
           { label: "Reject", status: "rejected", icon: XCircle, primary: false },
         ];
       }
       return [
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: true },
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: false },
+        { label: "Start bidding", status: "bidding", icon: Send, primary: true },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "in_survey":
       if (isManual) {
         return [
-          { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-          { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+          { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+          { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
           { label: "Reject", status: "rejected", icon: XCircle, primary: false },
         ];
       }
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Start Bidding", status: "bidding", icon: Send, primary: false },
-        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Start bidding", status: "bidding", icon: Send, primary: false },
+        { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "bidding":
       return [
-        { label: "Send to Customer", status: "awaiting_customer", icon: Mail, primary: true },
-        { label: "Back to New", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "awaiting_customer":
@@ -7312,7 +7308,7 @@ function getQuoteActions(quote: Quote) {
       ];
     case "awaiting_payment":
       return [
-        { label: "Mark as Paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
+        { label: "Mark as paid", status: "mark_as_paid", icon: CheckCircle2, primary: true },
         { label: "Reopen", status: "draft", icon: RotateCcw, primary: false },
       ];
     case "rejected":
@@ -8139,7 +8135,7 @@ function MarginCalculator({
           </p>
         </div>
 
-        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-[#ED4B00]/25 bg-[#ED4B00]/[0.05] px-2.5 py-2 ring-1 ring-inset ring-[#ED4B00]/10 sm:px-3 dark:border-[#ED4B00]/30 dark:bg-[#ED4B00]/[0.08]">
+        <div className="flex min-h-[4.5rem] flex-col justify-between rounded-lg border border-text-primary bg-[#ED4B00]/[0.05] px-2.5 py-2 ring-1 ring-inset ring-text-primary/20 sm:px-3 dark:border-text-primary dark:bg-[#ED4B00]/[0.08]">
           <p className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary leading-none">
             Sell price
           </p>
@@ -8197,7 +8193,7 @@ function MarginCalculator({
         <div className="grid grid-cols-4 items-center gap-1 text-[9px] font-medium leading-none">
           <span className="tabular-nums text-text-tertiary">5%</span>
           <span className="text-center text-amber-600 dark:text-amber-400">10% min</span>
-          <span className="text-center text-[#ED4B00]">40% target</span>
+          <span className="text-center text-text-primary">40% target</span>
           <span className="text-right tabular-nums text-text-tertiary">{MARGIN_SLIDER_MAX_MARKUP_PCT}%</span>
         </div>
         {markupPct > MARGIN_SLIDER_MAX_MARKUP_PCT ? (
@@ -8493,7 +8489,7 @@ function ManualQuoteReviewModal({
             loading={sending}
             disabled={sending}
             onClick={() => void onSend()}
-            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+            className="w-full border-0 bg-primary text-white hover:bg-primary-hover sm:w-auto"
           >
             Send to customer
           </Button>
@@ -8565,7 +8561,7 @@ function ManualQuoteReviewModal({
 
           <div className="flex items-center justify-between border-t border-border-light pt-2.5">
             <span className="text-sm font-semibold text-text-primary">Total (client)</span>
-            <span className="text-base font-bold tabular-nums text-[#ED4B00]">
+            <span className="text-base font-bold tabular-nums text-text-primary">
               {formatCurrency(snapshot.lineSellTotal > 0 ? snapshot.lineSellTotal : snapshot.linePartnerTotal)}
             </span>
           </div>
@@ -9347,8 +9343,8 @@ function CreateQuoteForm({
         </div>
       ) : null}
       {continuationQuote ? (
-        <div className="rounded-xl border border-[#020040]/18 bg-[#020040]/[0.04] px-3 py-2.5 dark:bg-[#020040]/14">
-          <p className="text-sm font-semibold text-[#020040]">Review & send · {continuationQuote.reference}</p>
+        <div className="rounded-xl border border-primary/18 bg-primary/[0.04] px-3 py-2.5 dark:bg-primary/14">
+          <p className="text-sm font-semibold text-text-primary">Review & send · {continuationQuote.reference}</p>
           <p className="mt-1 text-[11px] leading-snug text-text-secondary">
             Saves your line items and emails the PDF to the customer — quote moves to Approval when the send succeeds.
           </p>
@@ -9387,7 +9383,7 @@ function CreateQuoteForm({
         <>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              Scope <span className="text-[#ED4B00]">*</span>
+              Scope <span className="text-text-primary">*</span>
             </label>
             <textarea
               value={scopeText}
@@ -9465,7 +9461,7 @@ function CreateQuoteForm({
               <div className="mb-2 space-y-2 flex flex-col items-center">
                 <div className="flex w-full max-w-lg flex-col items-center gap-2">
                   <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide text-center">
-                    Partners <span className="text-[#ED4B00]">*</span>
+                    Partners <span className="text-text-primary">*</span>
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                     <button
@@ -9608,7 +9604,7 @@ function CreateQuoteForm({
               </div>
               <p className="mt-0.5 text-sm font-semibold tabular-nums text-text-primary">{formatCurrency(linePartnerTotal)}</p>
             </div>
-            <div className="rounded-lg bg-[#ED4B00]/10 px-2 py-1.5 dark:bg-[#ED4B00]/15">
+            <div className="rounded-lg bg-[var(--pick-bg)] px-2 py-1.5 dark:bg-[var(--pick-bg)]">
               <div className="flex items-center gap-1 text-text-tertiary">
                 <PoundSterling className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
                 <span className="text-[9px] font-medium uppercase tracking-wide">Gross margin</span>
@@ -9616,7 +9612,7 @@ function CreateQuoteForm({
               <p
                 className={cn(
                   "mt-0.5 text-sm font-bold tabular-nums",
-                  createProposalMarginAbs < 0 ? "text-red-600" : "text-[#ED4B00]",
+                  createProposalMarginAbs < 0 ? "text-red-600" : "text-text-primary",
                 )}
               >
                 {formatCurrency(createProposalMarginAbs)}
@@ -9630,7 +9626,7 @@ function CreateQuoteForm({
               <p
                 className={cn(
                   "mt-0.5 text-sm font-bold tabular-nums",
-                  createProposalMarginPct < 0 ? "text-red-600" : "text-[#ED4B00]",
+                  createProposalMarginPct < 0 ? "text-red-600" : "text-text-primary",
                 )}
               >
                 {createProposalMarginPct}%
@@ -9717,7 +9713,7 @@ function CreateQuoteForm({
                     { description: "", quantity: "1", partnerUnitCost: "0", unitPrice: "0", notes: "" },
                   ])
                 }
-                className="text-[11px] font-medium text-[#ED4B00] hover:underline"
+                className="text-[11px] font-medium text-text-primary hover:underline"
               >
                 + Add item
               </button>
@@ -9838,7 +9834,7 @@ function CreateQuoteForm({
                   className={cn(
                     "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                     depositRequiredEnabled
-                      ? "bg-[#020040] text-white"
+                      ? "bg-primary text-white"
                       : "text-text-secondary hover:text-text-primary",
                   )}
                 >
@@ -9850,7 +9846,7 @@ function CreateQuoteForm({
                   className={cn(
                     "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                     !depositRequiredEnabled
-                      ? "bg-[#020040] text-white"
+                      ? "bg-primary text-white"
                       : "text-text-secondary hover:text-text-primary",
                   )}
                 >
@@ -9870,7 +9866,7 @@ function CreateQuoteForm({
                       className={cn(
                         "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                         depositInputMode === "percent"
-                          ? "bg-[#020040] text-white"
+                          ? "bg-primary text-white"
                           : "text-text-secondary hover:text-text-primary",
                       )}
                     >
@@ -9887,7 +9883,7 @@ function CreateQuoteForm({
                       className={cn(
                         "rounded-md px-2.5 py-1 text-[10px] font-semibold transition-colors",
                         depositInputMode === "amount"
-                          ? "bg-[#020040] text-white"
+                          ? "bg-primary text-white"
                           : "text-text-secondary hover:text-text-primary",
                       )}
                     >
@@ -9969,7 +9965,7 @@ function CreateQuoteForm({
         <>
           <div>
             <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-              Scope <span className="text-[#ED4B00]">*</span>
+              Scope <span className="text-text-primary">*</span>
             </label>
             <textarea
               value={scopeText}
@@ -10137,7 +10133,7 @@ function CreateQuoteForm({
               routingInviteBusy ||
               submitBusy
             }
-            className="w-full border-0 bg-[#ED4B00] text-white hover:bg-[#d84300] sm:w-auto"
+            className="w-full border-0 bg-primary text-white hover:bg-primary-hover sm:w-auto"
           >
             {continuationQuote
               ? "Review & send to customer"

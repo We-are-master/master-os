@@ -1,5 +1,6 @@
 "use client";
 
+import { splitEqually } from "@/lib/invoice-payment-plan";
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
@@ -18,8 +19,10 @@ import {
   JobCreateModalPricingControl,
   JobCreateModalPricingFields,
   JobCreateModalExtraPayment,
-  JOB_CREATE_MODAL_STEPS,
-  JOB_CREATE_MODAL_SECTION_IDS,
+  JobCreateModalChargeMode,
+  chargeNowPercent,
+  type JobChargeMode,
+  type JobCreateModalSectionId,
 } from "@/components/jobs/job-create-modal-sections";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
 import { createJobPayment } from "@/services/job-payments";
@@ -37,7 +40,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { PartnerRouteView } from "@/components/jobs/partner-route-view";
 import { JobsMapView } from "@/components/jobs/jobs-map-view";
-import { cn, formatCurrency, formatCurrencyPrecise, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
+import { cn, formatCurrency, formatCurrencyPrecise, formatDate, formatRelativeTime, getErrorMessage, parseIsoDateOnly } from "@/lib/utils";
 import { toast } from "sonner";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useBuFilter } from "@/hooks/use-bu-filter";
@@ -116,7 +119,7 @@ import {
   JOB_STATUSES_UNASSIGN_WHEN_PARTNER_CLEARED,
 } from "@/lib/job-partner-assign";
 import { applyJobDbCompat, prepareJobRowForUpdate } from "@/lib/job-schema-compat";
-import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, isJobOnHoldComplaint, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
+import { JOB_STATUS_BADGE_VARIANT, JOBS_MANAGEMENT_TAB_ACCENTS, isJobOnHoldComplaint, COMPLAINT_ROW_CLASS, jobOnHoldDisplayBadge, jobPartnerListKind } from "@/lib/job-status-ui";
 import type { BadgeVariant } from "@/components/ui/badge";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { setJobsNavQueue } from "@/lib/jobs-nav-queue";
@@ -127,6 +130,7 @@ import {
   formatHourMinuteAmPm,
   jobFinishYmd,
   jobScheduleYmd,
+  compactJobSchedule,
 } from "@/lib/schedule-calendar";
 import { formatBritishDate } from "@/lib/utils/date";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
@@ -135,13 +139,14 @@ import { JobModalScheduleFields } from "@/components/shared/job-modal-schedule-f
 import { createJobOrSeries } from "@/services/job-recurrence-series";
 import { createPaymentPlan } from "@/services/invoice-payment-plan";
 import { createSelfBillPaymentPlan } from "@/services/self-bill-payment-plan";
-import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
+import { ensureWeeklySelfBillForJob, setJobPartnerInstalments } from "@/services/self-bills";
 import {
   partnerCapForJobForm,
   partnerPlanRowsFromClientSchedule,
 } from "@/lib/partner-payment-plan-create";
 import {
   defaultPaymentPlanRows,
+  PaymentPlanEditor,
   type PaymentPlanEditorRow,
 } from "@/components/finance/payment-plan-editor";
 import { templateFromDrafts, validateInstallmentsSum } from "@/lib/invoice-payment-plan";
@@ -199,6 +204,10 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
+import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentState } from "@/lib/job-payment-badge";
+import { overdueInvoiceIds } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
@@ -702,13 +711,13 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   auto_assigning: { label: "Assigning", variant: JOB_STATUS_BADGE_VARIANT.auto_assigning, dot: true },
   scheduled: { label: "Scheduled", variant: JOB_STATUS_BADGE_VARIANT.scheduled, dot: true },
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late, dot: true },
-  in_progress: { label: "In Progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
-  on_hold: { label: "On Hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
-  final_check: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
-  awaiting_payment: { label: "Awaiting Payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
-  need_attention: { label: "Final Check", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
-  completed: { label: "Paid & Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
-  cancelled: { label: "Lost & Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
+  in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress, dot: true },
+  on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold, dot: true },
+  final_check: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.final_check, dot: true },
+  awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment, dot: true },
+  need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
+  completed: { label: "Paid & completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
+  cancelled: { label: "Lost & cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted, dot: true },
 };
 
@@ -1291,6 +1300,29 @@ function JobsPageContent() {
     };
   }, [data]);
 
+  // Coluna Payment: quais faturas dos jobs da lista estão vencidas, pela regra da aba Overdue do Finance.
+  const [overdueInvoiceIdSet, setOverdueInvoiceIdSet] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    const ids = invoiceIdsToCheckForOverdue(data);
+    if (ids.length === 0) {
+      setOverdueInvoiceIdSet(new Set());
+      return;
+    }
+    let cancelled = false;
+    void overdueInvoiceIds(ids).then(
+      (set) => {
+        if (!cancelled) setOverdueInvoiceIdSet(set);
+      },
+      () => {
+        if (!cancelled) setOverdueInvoiceIdSet(new Set());
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
   const sortedDataForTable = useMemo(() => {
     if (!jobsListSortKey) return scheduleSortedData;
     const mul = jobsListSortDir === "asc" ? 1 : -1;
@@ -1526,7 +1558,7 @@ function JobsPageContent() {
       },
       {
         id: "final_check",
-        title: "Final checks",
+        title: "Final review",
         color: "bg-violet-500",
         items: scheduleSortedData.filter((j) => j.status === "final_check" || j.status === "need_attention"),
       },
@@ -1698,12 +1730,12 @@ function JobsPageContent() {
     // "Active jobs" hidden for now: it is the union of the tabs beside it, so it
     // duplicated every row and made the strip read as eight filters when there
     // are seven. `status === "all"` still works from a link.
-    { id: "action_required", label: "Action Required", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
-    { id: "scheduled", label: "Scheduled", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
-    { id: "in_progress", label: "In Progress", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
-    { id: "final_check", label: "Final Checks", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting Payment", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
-    { id: "closed", label: "Closed", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
+    { id: "action_required", label: "Action required", hint: "Jobs requiring an operational action. Open a job to review the reason.", count: actionRequiredTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.action_required },
+    { id: "scheduled", label: "Scheduled", hint: "Jobs in the scheduled queue under the current filters.", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
+    { id: "in_progress", label: "In progress", hint: "Jobs currently being carried out.", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
+    { id: "final_check", label: "Final review", hint: "Jobs awaiting review of completion details and reports.", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
+    { id: "awaiting_payment", label: "Awaiting payment", hint: "Jobs awaiting customer payment under the current workflow.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "closed", label: "Closed", hint: "Closed jobs. Use the outcome filter to distinguish completed, cancelled and lost work.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
   useEffect(() => {
@@ -1761,6 +1793,10 @@ function JobsPageContent() {
       paymentPlanTemplate?: PaymentPlanTemplate | null;
       partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       recordExtraPaymentReceived?: { amount: number; note?: string };
+      /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
+      chargeNow?: { percent: number };
+      /** Avulso parcelado: o cron pede cada parcela por e-mail na data dela (mig 326). */
+      instalmentsAutoCharge?: boolean;
     },
   ) => {
     // ─── Zendesk: open a new ticket when the modal asked us to ──────────
@@ -1794,6 +1830,10 @@ function JobsPageContent() {
             entityType:  "job",
             subject,
             commentBody: lines.join("\n"),
+            // Um ticket por pedido: com o cliente, o OS reusa o ticket aberto dele (ONE_TICKET_JOB_REUSE_ON).
+            clientId:    formData.client_id ?? null,
+            clientEmail: (formData as { client_email?: string }).client_email ?? null,
+            clientPhone: (formData as { client_phone?: string }).client_phone ?? null,
             ticketFormId: ZENDESK_JOB_TICKET_FORM_ID || undefined,
             customFields: buildZendeskCustomFields([
               [ZENDESK_FIELD_JOB_DATE, formData.scheduled_date ? String(formData.scheduled_date).slice(0, 10) : null],
@@ -1816,6 +1856,7 @@ function JobsPageContent() {
         }
         formData.external_source = "zendesk";
         formData.external_ref    = String(j.ticketId);
+        if (j.reused) toast.success(`Linked to the customer's open Zendesk ticket #${j.ticketId}`);
       } catch (err) {
         toast.error(getErrorMessage(err, "Zendesk ticket creation failed"));
         return;
@@ -1972,11 +2013,15 @@ function JobsPageContent() {
                 materials_cost: firstJob.materials_cost,
               });
               if (partnerCap > 0.02) {
-                await createSelfBillPaymentPlan(
-                  selfBillId,
-                  partnerCap,
-                  partnerPaymentPlanTemplate.installments,
-                );
+                /**
+                 * Datas combinadas com o parceiro (dono, 15/10/2026): self-bill próprio do
+                 * job, já em Ready, com as parcelas nas datas acordadas. Antes o plano caía
+                 * no balde da quinzena e dividia o balde inteiro.
+                 */
+                const proprio = (await setJobPartnerInstalments(firstJob.id, true)) ?? selfBillId;
+                await createSelfBillPaymentPlan(proprio, partnerCap, partnerPaymentPlanTemplate.installments);
+                await refreshSelfBillPayoutState(proprio);
+                firstJob = { ...firstJob, self_bill_id: proprio };
               }
             }
           } catch (invErr) {
@@ -2087,7 +2132,7 @@ function JobsPageContent() {
         images: capJobImagesArray(coerceJobImagesArray(formData.images)),
         external_source: formData.external_source ?? null,
         external_ref:    formData.external_ref    ?? null,
-      });
+      }, { awaitSelfBill: Boolean(opts?.paymentPlanTemplate?.enabled) });
       if (opts?.pendingSitePhotos?.length) {
         try {
           await attachSitePhotosToJob(result.id, opts.pendingSitePhotos);
@@ -2111,6 +2156,67 @@ function JobsPageContent() {
           toast.error("Job created, but failed to record the extra payment as received. Add it manually from the job.");
         });
       }
+      if (opts?.paymentPlanTemplate?.enabled && opts.paymentPlanTemplate.installments.length > 0) {
+        // Uma fatura só, com as parcelas dentro dela.
+        try {
+          const { invoice } = await ensureDraftInvoiceForJob(result);
+          const parcelas = opts.paymentPlanTemplate.installments;
+          if (invoice) {
+            await createPaymentPlan(invoice.id, Number(invoice.amount ?? 0), parcelas);
+            const auto = opts.instalmentsAutoCharge !== false;
+            await getSupabase().from("invoices").update({ instalments_auto_charge: auto }).eq("id", invoice.id);
+            void logAudit({
+              entityType: "job",
+              entityId: result.id,
+              entityRef: result.reference,
+              action: "note",
+              fieldName: "instalments",
+              userId: profile?.id,
+              userName: profile?.full_name ?? undefined,
+              metadata: {
+                title: `Client pays in ${parcelas.length} instalments`,
+                detail: `${parcelas.map((p) => `£${Number(p.amount).toFixed(2)} on ${formatDate(p.due_date)}`).join(" · ")}. ${
+                  auto ? "Charged automatically by email on each date." : "Charged manually."
+                } Invoice ${invoice.reference ?? ""}.`,
+              },
+            });
+          }
+          /**
+           * Parceiro parcelado também (dono, 15/10/2026): o job sai do self-bill da
+           * quinzena e vai para um só dele, com as parcelas espelhando as do cliente.
+           */
+          const sb = getSupabase();
+          const { error: flagErr } = await sb
+            .from("jobs")
+            .update({ partner_paid_in_instalments: true })
+            .eq("id", result.id);
+          if (flagErr) throw flagErr;
+          if (result.partner_id?.trim()) {
+            const { data: fresh } = await sb.from("jobs").select("*").eq("id", result.id).maybeSingle();
+            const job = (fresh ?? { ...result, partner_paid_in_instalments: true }) as Job;
+            const antigo = job.self_bill_id?.trim() || null;
+            const novo = await ensureWeeklySelfBillForJob({ ...job, partner_paid_in_instalments: true });
+            if (antigo && antigo !== novo) await refreshSelfBillPayoutState(antigo).catch(() => undefined);
+          }
+        } catch (planErr) {
+          console.error("one-off instalment plan setup failed", planErr);
+          toast.error(getErrorMessage(planErr, "Job created, but the instalments could not be saved. Add them from the job."));
+        }
+      }
+      if (opts?.chargeNow) {
+        const pct = opts.chargeNow.percent;
+        void fetch(`/api/jobs/${result.id}/charge-on-create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ percent: pct }),
+        })
+          .then(async (res) => {
+            const j = (await res.json().catch(() => ({}))) as { to?: string; error?: string };
+            if (res.ok) toast.success(`Payment request sent to ${j.to ?? "the client"}`);
+            else toast.error(`Job created, but the payment request was not sent: ${j.error ?? "unknown error"}`);
+          })
+          .catch(() => toast.error("Job created, but the payment request was not sent."));
+      }
       setCreateOpen(false);
       toast.success("Job created");
       setJobsNavQueue([result.id]);
@@ -2133,7 +2239,7 @@ function JobsPageContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             partnerId: result.partner_id,
-            title: "Job Assigned",
+            title: "Job assigned",
             body: `${result.title} — ${result.property_address}`,
             data: { type: "job_assigned", jobId: result.id },
           }),
@@ -2723,13 +2829,16 @@ function JobsPageContent() {
       render: (item) => (
         <div className="min-w-0 leading-tight">
           <p className="text-[13px] font-semibold text-text-primary truncate">{item.reference}</p>
-          <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{normalizeTypeOfWork(item.title) || item.title}</p>
+          {/* Uma linha só (15/10/2026): nome comprido não pode mudar a altura da linha. */}
+          <p className="max-w-[9rem] truncate text-[10px] text-text-tertiary" title={normalizeTypeOfWork(item.title) || item.title}>
+            {normalizeTypeOfWork(item.title) || item.title}
+          </p>
         </div>
       ),
     },
     {
       key: "client_name",
-      label: "Client / Property",
+      label: "Client",
       minWidth: "160px",
       cellClassName: "min-w-[10rem] max-w-[14rem] sm:max-w-[16rem]",
       sortable: true,
@@ -2837,12 +2946,10 @@ function JobsPageContent() {
               ) : null
             }
           >
-            <div className="flex items-start gap-2 min-w-0">
-              <Avatar name={item.client_name} size="sm" className="shrink-0 mt-0.5" src={logo} />
-              <div className="min-w-0 leading-tight">
-                <p className="text-[13px] font-medium text-text-primary truncate">{item.client_name}</p>
-                <p className="text-[10px] text-text-tertiary line-clamp-2 break-words">{item.property_address}</p>
-              </div>
+            {/* Só o avatar da conta e o nome (15/10/2026); endereço, telefone e scope ficam no hover. */}
+            <div className="flex items-center gap-2 min-w-0">
+              <Avatar name={item.client_name} size="xs" className="shrink-0" src={logo} />
+              <p className="m-0 min-w-0 truncate text-[13px] font-medium text-text-primary">{item.client_name}</p>
             </div>
           </HoverPreview>
         );
@@ -2851,38 +2958,39 @@ function JobsPageContent() {
     {
       key: "schedule",
       label: "Schedule",
-      minWidth: "200px",
-      cellClassName: "min-w-[12.5rem] max-w-[16rem]",
+      minWidth: "190px",
+      cellClassName: "min-w-[11.5rem]",
       sortable: true,
       sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
-        const line = formatJobScheduleListLabel(item);
+        /**
+         * Uma linha (15/10/2026). O chip SUBSTITUI a data quando ela diz menos que ele:
+         * hoje, amanhã, em 2 dias ou atrasado (data passada e job ainda não feito).
+         * Fora disso, a data. A janela de chegada vem sempre depois.
+         */
         const detail = formatJobScheduleLine(item);
-        const secondaryLine = jobManagementScheduleSecondaryLine(item);
+        const ag = compactJobSchedule(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        const timingKind = getJobScheduleTimingKind(item);
-        const hasChip = Boolean(timingKind);
+        if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
+        const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
+        const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
+        // Sem chip "On site" (dono, 15/10/2026): só os de data.
+        const chip: { texto: string; cls: string } | null = atrasado
+            ? { texto: "Late", cls: "bg-[var(--danger-light,#fee2e2)] text-[var(--bad,#dc2626)]" }
+            : ag.relative === "Today"
+              ? { texto: "Today", cls: "bg-[var(--success-light)] text-[var(--ok)]" }
+              : ag.relative === "Tomorrow" || ag.relative === "In 2 days"
+                ? { texto: ag.relative, cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
+                : null;
         return (
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-              {hasChip ? (
-                <JobScheduleTimingChip job={item} title={detail} />
-              ) : line ? (
-                <span
-                  className="text-[11px] text-text-secondary leading-snug whitespace-normal break-words"
-                  title={detail ?? undefined}
-                >
-                  {line}
-                </span>
-              ) : (
-                <span className="text-[11px] text-text-tertiary">—</span>
-              )}
-            </div>
-            {isOnsiteInProgress ? (
-              <ScheduleInProgressLiveSecondary job={item} />
-            ) : secondaryLine ? (
-              <p className="mt-0.5 text-[10px] text-text-tertiary leading-tight">{secondaryLine}</p>
-            ) : null}
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? `${ag.date}${ag.time ? ` · ${ag.time}` : ""}`}>
+            {chip ? (
+              <span className={cn("inline-flex h-[22px] items-center rounded-md px-2 text-[11px] font-medium", chip.cls)}>{chip.texto}</span>
+            ) : (
+              <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
+            )}
+            {/* Com chip, ele ocupa a célula toda; data e horário ficam no hover (15/10/2026). */}
+            {ag.time && !chip ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
           </div>
         );
       },
@@ -2942,14 +3050,12 @@ function JobsPageContent() {
           const st = effectiveJobStatusForDisplay(item);
           const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
-            <div className="inline-flex flex-col items-start gap-0.5">
+            <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true}>{c.label}</Badge>
+                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
                 <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
               </div>
-              {st === "on_hold" ? (
-                <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-              ) : null}
             </div>
           );
         }
@@ -2967,8 +3073,9 @@ function JobsPageContent() {
           const variantTag = JOB_STATUS_BADGE_VARIANT[statusKey];
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={variantTag} dot>{lbl}</Badge>
+              <Badge variant={variantTag} dot className={LIST_CHIP_CLASS}>{lbl}</Badge>
               <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
             </div>
           );
         }
@@ -2976,14 +3083,12 @@ function JobsPageContent() {
         const onHoldBadge = jobOnHoldDisplayBadge(item);
         const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex flex-col items-start gap-0.5">
+          <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot}>{c.label}</Badge>
+              <Badge variant={c.variant} dot={c.dot} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
               <JobOverdueBadge job={item} />
+                <JobCardRefusedBadge job={item} />
             </div>
-            {st === "on_hold" ? (
-              <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(item)}</p>
-            ) : null}
           </div>
         );
       },
@@ -3006,7 +3111,7 @@ function JobsPageContent() {
     },
     {
       key: "margin_percent",
-      label: "Job Amount",
+      label: "Job amount",
       minWidth: "112px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
@@ -3021,7 +3126,7 @@ function JobsPageContent() {
     },
     {
       key: "amount_due",
-      label: "Amount Due",
+      label: "Amount due",
       minWidth: "96px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
@@ -3040,17 +3145,18 @@ function JobsPageContent() {
     },
     {
       key: "finance_status",
-      label: "Finance",
-      minWidth: "88px",
+      label: "Payment",
+      minWidth: "124px",
       cellClassName: "whitespace-nowrap",
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
-      render: (item) => {
-        const fs = item.finance_status ?? "unpaid";
-        return <Badge variant={fs === "paid" ? "success" : fs === "partial" ? "warning" : "default"} size="sm">{fs === "paid" ? "Paid" : fs === "partial" ? "Partial" : "Unpaid"}</Badge>;
-      },
+      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} className={LIST_CHIP_CLASS} />,
     },
+    // A seta de avançar fase saiu da lista (dono, 15/10/2026); a coluna fica só no
+    // Final checks, com a bolinha do report.
+    ...(status === "final_check"
+      ? ([
     {
       key: "actions",
       label: "",
@@ -3085,7 +3191,9 @@ function JobsPageContent() {
             }}
           />
         ),
-    },
+    }
+        ] as Column<Job>[])
+      : []),
   ];
 
   const partnerCostColumn: Column<Job> = useMemo(
@@ -3125,16 +3233,16 @@ function JobsPageContent() {
     [jobMarginFooter],
   );
 
-  const replaceFinanceWithTicket = useCallback(
-    (cols: Column<Job>[]) => cols.map((c) => (c.key === "finance_status" ? zendeskTicketColumn : c)),
+  const addTicketAfterPayment = useCallback(
+    (cols: Column<Job>[]) => cols.flatMap((c) => (c.key === "finance_status" ? [c, zendeskTicketColumn] : [c])),
     [zendeskTicketColumn],
   );
 
-  /** Closed keeps Amount Due + Finance. Other tabs: partner Cost instead of Amount Due, Ticket instead of Finance (margin only in footer). */
+  /** Closed keeps Amount Due + Payment. Other tabs: partner Cost instead of Amount Due, then Payment and Ticket (margin only in footer). */
   const tableColumns = useMemo(() => {
     if (status === "closed") return columns;
-    return replaceFinanceWithTicket(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
-  }, [columns, status, replaceFinanceWithTicket, partnerCostColumn]);
+    return addTicketAfterPayment(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
+  }, [columns, status, addTicketAfterPayment, partnerCostColumn]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
@@ -3213,19 +3321,19 @@ function JobsPageContent() {
   const scheduleWindowLine = scheduleWindowHintLine(scheduleDatePreset, scheduleRange);
   const jobsPageInfoTooltip = useMemo(() => {
     const parts = [
-      "Track and manage jobs.",
-      "First KPI = active pipeline (Action Required through Final Checks). Avg time = mean wall-clock duration from scheduled anchor (start of booking) to first transition into Final Checks (audit), in the same schedule window.",
-      "On Active jobs, Revenue & Cost sum the Job Amount and partner Cost columns in the list.",
-      "On other tabs, Avg ticket & margin use the same schedule window as the list when Dates is set.",
+      "Manage assignments, visits, reports and customer payments.",
+      "Active jobs covers the operational pipeline through Final review. Average duration runs from the scheduled start to the first recorded Final review.",
+      "Revenue and cost use job amounts and partner costs.",
+      "Average job value and margin use the same date window as the list.",
     ];
     if (scheduleWindowLine) parts.push(scheduleWindowLine);
     return parts.join("\n\n");
   }, [scheduleWindowLine]);
 
   return (
-    <PageTransition className="flex min-h-0 flex-col -mt-2 sm:-mt-3 lg:-mt-4 h-[calc(100dvh-6rem)] max-h-[calc(100dvh-6rem)] lg:h-[calc(100dvh-7rem)] lg:max-h-[calc(100dvh-7rem)] overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col gap-5 pt-2 sm:pt-3 lg:pt-4">
-        <PageHeader title="Jobs Management" infoTooltip={jobsPageInfoTooltip}>
+    <PageTransition className="flex min-h-0 flex-col h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)] overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
+        <PageHeader title="Jobs" infoTooltip={jobsPageInfoTooltip}>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DateRangeFilter
               value={{
@@ -3358,7 +3466,6 @@ function JobsPageContent() {
                 {(
                   [
                     { id: "list", icon: List, label: "List" },
-                    { id: "kanban", icon: LayoutGrid, label: "Kanban" },
                     { id: "map", icon: MapIcon, label: "Map" },
                     // Route only exists for one partner's day: no partner filter, no button.
                     ...(routeViewEligible ? [{ id: "route", icon: RouteIcon, label: "Route" }] : []),
@@ -3485,7 +3592,15 @@ function JobsPageContent() {
               // On hold tints the whole line: the status chip alone was easy to
               // miss when scanning a page of rows for what is stuck.
               rowClassName={(j) =>
-                j.status === "on_hold" ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]" : undefined
+                cn(
+                  // Altura fixa (15/10/2026, padrão do vertex-saas): nada na célula muda a altura da linha.
+                  "h-[41px] [&>td]:py-0",
+                  isJobOnHoldComplaint(j)
+                    ? COMPLAINT_ROW_CLASS
+                    : j.status === "on_hold"
+                      ? "bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-500/[0.07]"
+                      : undefined,
+                )
               }
               page={page}
               totalPages={totalPages}
@@ -3569,6 +3684,7 @@ function JobsPageContent() {
                             <div className="flex flex-wrap items-center gap-1 min-w-0">
                               <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
                               <JobOverdueBadge job={j} />
+                              <JobCardRefusedBadge job={j} />
                             </div>
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
@@ -3917,6 +4033,9 @@ const JOBS_KANBAN_DROP_STATUS: Record<string, Job["status"] | undefined> = {
   awaiting_payment: "awaiting_payment",
 };
 
+/** Status e Payment da lista com a mesma largura (dono, 15/10/2026): o Payment é o padrão. */
+const LIST_CHIP_CLASS = "min-w-[112px] justify-center";
+
 export default function JobsPage() {
   return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-text-tertiary">Loading...</div>}><JobsPageContent /></Suspense>;
 }
@@ -3928,6 +4047,15 @@ function isHousekeepWorkLabel(value: string | null | undefined): boolean {
 }
 
 /* ========== CREATE JOB MODAL ========== */
+/** Ordem do modal de criar job: o cliente vem primeiro porque a conta dele decide preço e cobrança. */
+const CREATE_JOB_STEPS: { id: JobCreateModalSectionId; label: string }[] = [
+  { id: "client", label: "Client" },
+  { id: "work", label: "Service" },
+  { id: "scope", label: "Scope" },
+  { id: "partner", label: "Partner" },
+  { id: "access", label: "Charges" },
+];
+
 function CreateJobModal({ open, onClose, onCreate }: {
   open: boolean;
   onClose: () => void;
@@ -3940,6 +4068,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
       partnerPaymentPlanTemplate?: PaymentPlanTemplate | null;
       /** Smart pricing: record extra charge as deposit received after job is created. */
       recordExtraPaymentReceived?: { amount: number; note?: string };
+      /** Manda a cobrança por e-mail assim que o job nasce (percentual do total). */
+      chargeNow?: { percent: number };
+      /** Avulso parcelado: o cron pede cada parcela por e-mail na data dela (mig 326). */
+      instalmentsAutoCharge?: boolean;
     },
   ) => void;
 }) {
@@ -3971,6 +4103,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
     billed_hours: "2",
     extra_payment: "",
     extra_payment_received: false,
+    charge_mode: "completion" as JobChargeMode,
+    charge_percent: "50",
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
@@ -3984,6 +4118,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
   const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
   const [paymentPlanEnabled, setPaymentPlanEnabled] = useState(false);
+  /** Avulso parcelado: cobrar cada parcela sozinho, por e-mail, na data. */
+  const [instalmentsAutoCharge, setInstalmentsAutoCharge] = useState(true);
   const [paymentPlanRows, setPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
   const [partnerPaymentPlanEnabled, setPartnerPaymentPlanEnabled] = useState(true);
   const [partnerPaymentPlanRows, setPartnerPaymentPlanRows] = useState<PaymentPlanEditorRow[]>([]);
@@ -3997,6 +4133,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
   // ─── mig 159/160: resolve per-account / per-partner pricing overrides ──
   // Resolve account_id from the picked client (clients.source_account_id).
   const [effectiveAccountId, setEffectiveAccountId] = useState<string | null>(null);
+  /** Para qual cliente o `effectiveAccountId` já foi lido (null no meio da leitura). */
+  const [accountResolvedForClientId, setAccountResolvedForClientId] = useState<string | null>(null);
+  /** `accounts.collection_mode` da conta do cliente, e de qual conta ele é. */
+  const [accountCollectionMode, setAccountCollectionMode] = useState<{ accountId: string; mode: string | null } | null>(null);
+  /** Só para mostrar de quem é o cliente; nenhuma regra lê isso. */
+  const [accountName, setAccountName] = useState<{ accountId: string; name: string } | null>(null);
   useEffect(() => {
     const cid = clientAddress.client_id?.trim();
     if (!cid) {
@@ -4014,6 +4156,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
         if (cancelled) return;
         const aid = (data as { source_account_id?: string | null } | null)?.source_account_id?.trim() ?? null;
         setEffectiveAccountId(aid);
+        setAccountResolvedForClientId(cid);
       });
     return () => { cancelled = true; };
   }, [clientAddress.client_id]);
@@ -4027,16 +4170,42 @@ function CreateJobModal({ open, onClose, onCreate }: {
     let cancelled = false;
     getSupabase()
       .from("accounts")
-      .select("payment_terms")
+      .select("payment_terms, collection_mode, company_name")
       .eq("id", aid)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return;
-        const terms = (data as { payment_terms?: string | null } | null)?.payment_terms?.trim() ?? null;
-        setAccountPaymentTerms(terms);
+        const row = data as { payment_terms?: string | null; collection_mode?: string | null; company_name?: string | null } | null;
+        setAccountName({ accountId: aid, name: row?.company_name?.trim() || "Account" });
+        setAccountPaymentTerms(row?.payment_terms?.trim() ?? null);
+        setAccountCollectionMode({ accountId: aid, mode: row?.collection_mode ?? null });
       });
     return () => { cancelled = true; };
   }, [effectiveAccountId]);
+
+  /**
+   * Cliente que paga no cartão sempre paga antes (dono, 14/10/2026): sem conta, ou conta com
+   * `collection_mode = card_upfront`. Para ele o padrão é sinal de 50% e "On completion" some.
+   * Enquanto a conta do cliente não foi lida fica false, para não trocar o modo à toa.
+   */
+  const clientPaysUpfront = (() => {
+    const cid = clientAddress.client_id?.trim();
+    if (!cid || accountResolvedForClientId !== cid) return false;
+    if (!effectiveAccountId) return true;
+    if (accountCollectionMode?.accountId !== effectiveAccountId) return false;
+    return accountCollectionMode.mode === "card_upfront";
+  })();
+  const chargeModeAutoSet = useRef(false);
+  useEffect(() => {
+    if (clientPaysUpfront && form.charge_mode === "completion") {
+      chargeModeAutoSet.current = true;
+      setForm((p) => ({ ...p, charge_mode: "deposit", charge_percent: p.charge_percent?.trim() ? p.charge_percent : "50" }));
+    } else if (!clientPaysUpfront && chargeModeAutoSet.current && form.charge_mode === "deposit") {
+      // Trocou para um cliente de conta com fatura: volta ao padrão dele.
+      chargeModeAutoSet.current = false;
+      setForm((p) => ({ ...p, charge_mode: "completion" }));
+    }
+  }, [clientPaysUpfront, form.charge_mode]);
 
   const selectedCatalogService = catalogServices.find((s) => s.id === form.catalog_service_id);
   const serviceHasStackableAddons = selectedCatalogService ? catalogHasStackableAddons(selectedCatalogService) : false;
@@ -4343,7 +4512,13 @@ function CreateJobModal({ open, onClose, onCreate }: {
     const extrasTotal = Math.round((accessSurcharge + manualExtra) * 100) / 100;
     const jobInvoiceTotal = Math.round((clientPriceOut + extrasTotal) * 100) / 100;
     const extraAlreadyReceived = isHourly && form.extra_payment_received && manualExtra > 0.02;
-    const scheduledDeposit = extraAlreadyReceived ? manualExtra : 0;
+    // Cobrança na criação: sinal (%) ou total agora. Série recorrente usa o payment plan, não isto.
+    // Cliente que paga no cartão nunca fica para depois: sem modo escolhido, vale o sinal de 50%.
+    const chargeModeOut = clientPaysUpfront && form.charge_mode === "completion" ? "deposit" : form.charge_mode;
+    const chargePct = form.job_kind === "recurring" ? 0 : chargeNowPercent(chargeModeOut, form.charge_percent);
+    const chargeNowAmount = Math.round(jobInvoiceTotal * chargePct) / 100;
+    const scheduledDeposit = extraAlreadyReceived ? manualExtra : chargePct > 0 ? chargeNowAmount : 0;
+    const chargeNow = chargePct > 0 && chargeNowAmount > 0.02 ? { percent: chargePct } : undefined;
     const scheduledFinal = Math.max(0, Math.round((jobInvoiceTotal - scheduledDeposit) * 100) / 100);
 
     const partnerCapPreview = partnerCapForJobForm({
@@ -4351,7 +4526,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       materials_cost: Number(form.materials_cost) || 0,
     });
 
-    if (form.job_kind === "recurring" && paymentPlanEnabled) {
+    const planActive = (form.job_kind === "recurring" || form.charge_mode === "instalments") && paymentPlanEnabled;
+    if (planActive) {
       if (paymentPlanRows.length < 1) {
         toast.error("Add at least one installment to the payment plan.");
         return;
@@ -4381,15 +4557,14 @@ function CreateJobModal({ open, onClose, onCreate }: {
     }
 
     const paymentPlanTemplate =
-      form.job_kind === "recurring" && paymentPlanEnabled
+      planActive
         ? templateFromDrafts(
             true,
             paymentPlanRows.map(({ amount, due_date }) => ({ amount, due_date })),
           )
         : null;
     const partnerPaymentPlanTemplate =
-      form.job_kind === "recurring" &&
-      paymentPlanEnabled &&
+      planActive &&
       partnerPaymentPlanEnabled &&
       form.partner_id?.trim() &&
       partnerCapPreview > 0.02
@@ -4466,6 +4641,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       : {
           pendingSitePhotos,
           recordExtraPaymentReceived,
+          chargeNow,
+          ...(paymentPlanTemplate?.enabled ? { paymentPlanTemplate, instalmentsAutoCharge } : {}),
         });
     setSitePhotoFiles([]);
     setPaymentPlanEnabled(false);
@@ -4500,6 +4677,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
       billed_hours: "2",
       extra_payment: "",
       extra_payment_received: false,
+      charge_mode: "completion" as JobChargeMode,
+      charge_percent: "50",
       in_ccz: false,
       has_free_parking: true,
       assignment_mode: "manual",
@@ -4549,6 +4728,28 @@ function CreateJobModal({ open, onClose, onCreate }: {
     if (form.job_kind !== "recurring" || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
     queueMicrotask(() => setPaymentPlanRows(defaultPaymentPlanRows(invoiceTotalPreview, 4)));
   }, [form.job_kind, invoiceTotalPreview, paymentPlanRows.length]);
+
+  /**
+   * Job de um dia só pago em parcelas (15/10/2026): Instalments liga o plano.
+   * Padrão: 3 parcelas iguais a cada 2 semanas a partir da data do job.
+   */
+  const oneOffInstalments = form.job_kind !== "recurring" && form.charge_mode === "instalments";
+  useEffect(() => {
+    if (form.job_kind === "recurring") return;
+    queueMicrotask(() => setPaymentPlanEnabled(oneOffInstalments));
+    if (!oneOffInstalments || paymentPlanRows.length > 0 || invoiceTotalPreview <= 0) return;
+    const start = form.scheduled_date?.trim() || new Date().toISOString().slice(0, 10);
+    const amounts = splitEqually(invoiceTotalPreview, 3);
+    queueMicrotask(() =>
+      setPaymentPlanRows(
+        amounts.map((amount, i) => {
+          const d = new Date(`${start}T12:00:00`);
+          d.setDate(d.getDate() + i * 14);
+          return { key: `inst-${i}-${Date.now()}`, amount, due_date: d.toISOString().slice(0, 10) };
+        }),
+      ),
+    );
+  }, [oneOffInstalments, form.job_kind, form.scheduled_date, invoiceTotalPreview, paymentPlanRows.length]);
 
   useEffect(() => {
     if (!paymentPlanEnabled || partnerPlanCustomized || paymentPlanRows.length === 0 || partnerCapPreview <= 0) return;
@@ -4625,7 +4826,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const activeSection = useModalScrollSpy([...JOB_CREATE_MODAL_SECTION_IDS], scrollRef, open);
+  const activeSection = useModalScrollSpy(CREATE_JOB_STEPS.map((st) => st.id), scrollRef, open);
   const scrollToSection = (id: string) => {
     const root = scrollRef.current;
     if (!root) return;
@@ -4637,11 +4838,11 @@ function CreateJobModal({ open, onClose, onCreate }: {
     <Modal
       open={open}
       onClose={onClose}
-      title="New Job"
-      subtitle="Create a new job"
+      title="New job"
+      subtitle="Pick the client first. Their account sets the price and how they pay."
       size="compact"
       layout="wizard"
-      topSteps={JOB_CREATE_MODAL_STEPS}
+      topSteps={CREATE_JOB_STEPS}
       activeStep={activeSection}
       onStepClick={scrollToSection}
       footer={
@@ -4668,9 +4869,9 @@ function CreateJobModal({ open, onClose, onCreate }: {
           <Button
             type="submit"
             form="create-job-form"
-            className="bg-[#ED4B00] hover:bg-[#d84300] text-white border-[#ED4B00] hover:border-[#d84300]"
+            className="bg-primary hover:bg-primary-hover text-white border-primary hover:border-primary-hover"
           >
-            Create Job
+            Create job
           </Button>
         </FixfyModalFooter>
       }
@@ -4684,7 +4885,89 @@ function CreateJobModal({ open, onClose, onCreate }: {
           ref={scrollRef}
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-5 @sm:px-5 space-y-6 min-w-0"
         >
-          <JobCreateModalSection id="work" title="Work & rate" badge="required">
+          <JobCreateModalSection id="client" title="Client and date" badge="required">
+            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
+            {clientAddress.client_id?.trim() && accountResolvedForClientId === clientAddress.client_id.trim() ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border-light bg-surface-hover/40 px-3 py-2 text-xs">
+                <span className="rounded-md bg-[#020040] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  {effectiveAccountId ? "B2B" : "B2C"}
+                </span>
+                <span className="font-semibold text-text-primary">
+                  {effectiveAccountId
+                    ? accountName?.accountId === effectiveAccountId
+                      ? accountName.name
+                      : "Account"
+                    : "Fixfy · direct client"}
+                </span>
+                <span className="text-text-tertiary">
+                  {clientPaysUpfront
+                    ? "Pays by card upfront"
+                    : accountPaymentTerms
+                      ? `Invoice · ${accountPaymentTerms}`
+                      : "Invoice on completion"}
+                </span>
+              </div>
+            ) : null}
+            <ZendeskTicketField value={zendesk} onChange={setZendesk} />
+            <JobModalScheduleFields
+              jobKind={form.job_kind}
+              scheduledDate={form.scheduled_date}
+              arrivalFrom={form.arrival_from}
+              arrivalWindowMins={form.arrival_window_mins}
+              endDate={form.end_date}
+              endTime={form.end_time}
+              recurrence={recurrence}
+              onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
+              onChange={(field, value) => update(field, value)}
+              startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
+              requiredFieldClassName={requiredFieldClass}
+              paymentPlan={
+                form.job_kind === "recurring"
+                  ? {
+                      enabled: paymentPlanEnabled,
+                      onEnabledChange: setPaymentPlanEnabled,
+                      rows: paymentPlanRows,
+                      onRowsChange: setPaymentPlanRows,
+                      totalAmount: invoiceTotalPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                      label: "Client payment plan",
+                    }
+                  : undefined
+              }
+              partnerPaymentPlan={
+                form.job_kind === "recurring" && paymentPlanEnabled
+                  ? {
+                      enabled: partnerPaymentPlanEnabled,
+                      onEnabledChange: setPartnerPaymentPlanEnabled,
+                      rows: partnerPaymentPlanRows,
+                      onRowsChange: (rows) => {
+                        setPartnerPlanCustomized(true);
+                        setPartnerPaymentPlanRows(rows);
+                      },
+                      totalAmount: partnerCapPreview,
+                      accountPaymentTerms,
+                      orgCtx: paymentOrgCtx,
+                      customized: partnerPlanCustomized,
+                      onCustomizedChange: setPartnerPlanCustomized,
+                      partnerCap: partnerCapPreview,
+                      onSyncFromClient: () => {
+                        setPartnerPlanCustomized(false);
+                        setPartnerPaymentPlanRows(
+                          partnerPlanRowsFromClientSchedule(
+                            paymentPlanRows,
+                            invoiceTotalPreview,
+                            partnerCapPreview,
+                          ),
+                        );
+                      },
+                    }
+                  : undefined
+              }
+            />
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="work" title="Service and price" badge="required">
             <p className="text-[11px] font-semibold text-text-tertiary -mt-1">Rate Type</p>
             <div className="flex gap-1 rounded-lg border border-border-light bg-card p-0.5">
               <button
@@ -4697,7 +4980,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition-all",
                   form.job_type === "fixed"
-                    ? "bg-[#1DB87A] text-white shadow-sm"
+                    ? "bg-success text-white shadow-sm"
                     : "text-text-secondary hover:bg-surface-hover",
                 )}
               >
@@ -4719,35 +5002,12 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 <span className="truncate">{pricingModeLabel("hourly")}</span>
               </button>
             </div>
-            {form.job_type === "fixed" ? (
-              // O acordo por trás do preço fixo (mig 281): Day rate e Half day
-              // são o MESMO fixed; o rótulo é o que o parceiro lê no email.
-              <div className="flex flex-wrap gap-1">
-                {[
-                  { id: "fixed", label: "Fixed price" },
-                  { id: "daily", label: "Day rate" },
-                  { id: "half_day", label: "Half day" },
-                ].map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => update("rate_basis", b.id)}
-                    className={cn(
-                      "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                      (form.rate_basis ?? "fixed") === b.id
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border-light text-text-secondary hover:bg-surface-hover",
-                    )}
-                  >
-                    {b.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             <div
               className={cn(
                 "grid gap-2 min-w-0",
-                catalogPricingPresetOptions.length > 0 ? "grid-cols-1 @md:grid-cols-2" : "grid-cols-1",
+                catalogPricingPresetOptions.length > 0 || form.job_type === "fixed"
+                  ? "grid-cols-1 @md:grid-cols-[minmax(0,1fr)_minmax(0,11rem)]"
+                  : "grid-cols-1",
               )}
             >
               <div className="min-w-0 space-y-1">
@@ -4821,6 +5081,25 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   </>
                 )}
               </div>
+              {form.job_type === "fixed" ? (
+                // O acordo por trás do preço fixo (mig 281): Day rate e Half day são o
+                // MESMO fixed; o rótulo é o que o parceiro lê no email.
+                <div className="min-w-0 space-y-1">
+                  <label htmlFor="create-job-rate-basis" className="block text-[11px] font-medium text-text-secondary">
+                    Rate
+                  </label>
+                  <select
+                    id="create-job-rate-basis"
+                    value={form.rate_basis ?? "fixed"}
+                    onChange={(e) => update("rate_basis", e.target.value)}
+                    className="h-9 w-full rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary"
+                  >
+                    <option value="fixed">Fixed price</option>
+                    <option value="daily">Day rate</option>
+                    <option value="half_day">Half day</option>
+                  </select>
+                </div>
+              ) : null}
               {catalogPricingPresetOptions.length > 0 && !isStackablePricing ? (
                 <div className="space-y-1 min-w-0">
                   <div className="flex items-center gap-1">
@@ -4865,11 +5144,15 @@ function CreateJobModal({ open, onClose, onCreate }: {
             <section className="rounded-xl border border-dashed border-border-light bg-surface-hover/10 p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold text-text-tertiary">Additionals</p>
-                  <p className="text-[10.5px] text-text-tertiary leading-snug">
-                    {form.job_type === "fixed"
-                      ? "Optional: stack a property size and addons on top of your client/partner amounts above."
-                      : "Optional: pick a property size and addons to layer on top of the smart price."}
+                  <p className="m-0 inline-flex items-center gap-1 text-[11px] font-semibold text-text-tertiary">
+                    Additionals
+                    <FixfyHintIcon
+                      text={
+                        form.job_type === "fixed"
+                          ? "Optional: stack a property size and addons on top of your client and partner amounts above."
+                          : "Optional: pick a property size and addons to layer on top of the smart price."
+                      }
+                    />
                   </p>
                 </div>
                 <button
@@ -4923,7 +5206,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
                           selected
-                            ? "border-[#1DB87A]/50 bg-[#1DB87A]/10 text-[#157a55]"
+                            ? "border-success bg-success-light text-success"
                             : "border-border-light bg-card text-text-secondary hover:border-primary/30",
                         )}
                       >
@@ -4990,127 +5273,6 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 }
               />
             ) : null}
-          </JobCreateModalSection>
-
-          <JobCreateModalSection id="client" title="Client & schedule" badge="required">
-            <ClientAddressPicker value={clientAddress} onChange={setClientAddress} />
-            <ZendeskTicketField value={zendesk} onChange={setZendesk} />
-            <JobModalScheduleFields
-              jobKind={form.job_kind}
-              scheduledDate={form.scheduled_date}
-              arrivalFrom={form.arrival_from}
-              arrivalWindowMins={form.arrival_window_mins}
-              endDate={form.end_date}
-              endTime={form.end_time}
-              recurrence={recurrence}
-              onRecurrenceChange={(patch) => setRecurrence((p) => ({ ...p, ...patch }))}
-              onChange={(field, value) => update(field, value)}
-              startDateRequired={form.job_kind !== "one_off" || !!form.scheduled_date?.trim()}
-              requiredFieldClassName={requiredFieldClass}
-              paymentPlan={
-                form.job_kind === "recurring"
-                  ? {
-                      enabled: paymentPlanEnabled,
-                      onEnabledChange: setPaymentPlanEnabled,
-                      rows: paymentPlanRows,
-                      onRowsChange: setPaymentPlanRows,
-                      totalAmount: invoiceTotalPreview,
-                      accountPaymentTerms,
-                      orgCtx: paymentOrgCtx,
-                      label: "Client payment plan",
-                    }
-                  : undefined
-              }
-              partnerPaymentPlan={
-                form.job_kind === "recurring" && paymentPlanEnabled
-                  ? {
-                      enabled: partnerPaymentPlanEnabled,
-                      onEnabledChange: setPartnerPaymentPlanEnabled,
-                      rows: partnerPaymentPlanRows,
-                      onRowsChange: (rows) => {
-                        setPartnerPlanCustomized(true);
-                        setPartnerPaymentPlanRows(rows);
-                      },
-                      totalAmount: partnerCapPreview,
-                      accountPaymentTerms,
-                      orgCtx: paymentOrgCtx,
-                      customized: partnerPlanCustomized,
-                      onCustomizedChange: setPartnerPlanCustomized,
-                      partnerCap: partnerCapPreview,
-                      onSyncFromClient: () => {
-                        setPartnerPlanCustomized(false);
-                        setPartnerPaymentPlanRows(
-                          partnerPlanRowsFromClientSchedule(
-                            paymentPlanRows,
-                            invoiceTotalPreview,
-                            partnerCapPreview,
-                          ),
-                        );
-                      },
-                    }
-                  : undefined
-              }
-            />
-          </JobCreateModalSection>
-
-          <JobCreateModalSection id="access" title="Access & charges" badge="optional">
-            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={isHousekeepJob || !cczEligible}
-                onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
-                className={cn(
-                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-2 min-w-0",
-                  (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
-                  form.in_ccz && cczEligible
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
-                )}
-              >
-                <div>
-                  <p className="text-xs font-medium text-text-primary leading-snug">
-                    {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
-                  </p>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    {!cczEligible && !isHousekeepJob
-                      ? "Only EC/WC/W/SW1/SE1 postcodes"
-                      : inCczPreview
-                        ? `+${formatCurrency(accessFees.cczFeeGbp)} applied`
-                        : "No charge applied"}
-                  </p>
-                </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
-                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
-                </span>
-              </button>
-              <button
-                type="button"
-                disabled={isHousekeepJob}
-                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
-                className={cn(
-                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
-                  "flex items-center justify-between gap-2 min-w-0",
-                  isHousekeepJob && "opacity-50 cursor-not-allowed",
-                  !form.has_free_parking
-                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
-                    : "bg-[#fafaf8] border-[#e0ddd8]",
-                )}
-              >
-                <div>
-                  <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
-                  <p className="text-[10px] text-text-tertiary leading-snug">
-                    {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
-                  </p>
-                </div>
-                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
-                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
-                </span>
-              </button>
-            </div>
-            <p className="text-[10px] text-text-tertiary leading-snug">
-              Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
-            </p>
           </JobCreateModalSection>
 
           <JobCreateModalSection id="scope" title="Scope" badge="required">
@@ -5194,7 +5356,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
             </div>
           </JobCreateModalSection>
 
-          <JobCreateModalSection id="partner" title="Partner allocation" badge="optional">
+          <JobCreateModalSection id="partner" title="Partner" badge="optional">
             {!form.catalog_service_id ? (
               <p className="text-[10px] text-amber-700 dark:text-amber-400 leading-snug">
                 Select type of work above first — partner-specific prices load in Pricing above.
@@ -5207,7 +5369,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "manual"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5223,7 +5385,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 className={cn(
                   "text-left rounded-lg border px-2.5 py-1.5 text-sm transition-colors min-w-0",
                   form.assignment_mode === "auto"
-                    ? "border-[#1DB87A]/40 bg-[#1DB87A]/10 text-[#157a55]"
+                    ? "border-success bg-success-light text-success"
                     : "border-border bg-card text-text-secondary",
                 )}
               >
@@ -5242,7 +5404,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
                   <label
                     className={cn(
                       "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
-                      !form.partner_id ? "border-[#1DB87A]/40 bg-[#1DB87A]/10" : "border-border hover:border-[#1DB87A]/35",
+                      !form.partner_id ? "border-success bg-success-light" : "border-border hover:border-success",
                     )}
                   >
                     <div className="min-w-0">
@@ -5269,10 +5431,10 @@ function CreateJobModal({ open, onClose, onCreate }: {
                         className={cn(
                           "flex items-center justify-between gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors",
                           selected
-                          ? "border-[#1DB87A]/40 bg-[#1DB87A]/10"
+                          ? "border-success bg-success-light"
                             : match
-                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-[#1DB87A]/35"
-                            : "border-border hover:border-[#1DB87A]/35",
+                            ? "border-amber-300 bg-amber-50/70 dark:border-amber-500/70 dark:bg-amber-950/50 hover:border-success"
+                            : "border-border hover:border-success",
                         )}
                       >
                         <div className="min-w-0">
@@ -5305,6 +5467,105 @@ function CreateJobModal({ open, onClose, onCreate }: {
                 </div>
               </div>
             )}
+          </JobCreateModalSection>
+
+          <JobCreateModalSection id="access" title="Charges" badge="optional">
+            {form.job_kind !== "recurring" ? (
+              <JobCreateModalChargeMode
+                mode={form.charge_mode}
+                percent={form.charge_percent}
+                total={invoiceTotalPreview}
+                onModeChange={(v) => setForm((p) => ({ ...p, charge_mode: v }))}
+                onPercentChange={(v) => setForm((p) => ({ ...p, charge_percent: v }))}
+                paysUpfront={clientPaysUpfront}
+                instalmentsEditor={
+                  <div className="space-y-1.5">
+                    <PaymentPlanEditor
+                      enabled
+                      onEnabledChange={(v) => {
+                        if (!v) setForm((prev) => ({ ...prev, charge_mode: "completion" }));
+                      }}
+                      rows={paymentPlanRows}
+                      onRowsChange={setPaymentPlanRows}
+                      totalAmount={invoiceTotalPreview}
+                      accountPaymentTerms={accountPaymentTerms}
+                      orgCtx={paymentOrgCtx}
+                    />
+                    <label className="flex cursor-pointer items-center gap-2 text-[12px] font-medium text-text-primary">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-[var(--brand,#020040)]"
+                        checked={instalmentsAutoCharge}
+                        onChange={(e) => setInstalmentsAutoCharge(e.target.checked)}
+                      />
+                      Charge each instalment automatically
+                      <FixfyHintIcon text="On each date the client gets an email with a pay link for that instalment. Overdue ones get the usual reminders. Off: you send each one yourself." />
+                    </label>
+                    <p className="m-0 inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+                      Partner paid in the same split
+                      <FixfyHintIcon text="The partner gets a self-bill of their own for this job, split in the same proportion and on the same dates as the client. Each partner instalment is paid on its date, even if the client is late." />
+                    </p>
+                  </div>
+                }
+              />
+            ) : null}
+            <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={isHousekeepJob || !cczEligible}
+                onClick={() => cczEligible && setForm((prev) => ({ ...prev, in_ccz: !prev.in_ccz }))}
+                className={cn(
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
+                  (isHousekeepJob || !cczEligible) && "opacity-50 cursor-not-allowed",
+                  form.in_ccz && cczEligible
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-xs font-medium text-text-primary leading-snug">
+                    {!cczEligible && !isHousekeepJob ? "CCZ (central London)" : inCczPreview ? "CCZ fee applied" : "Apply CCZ"}
+                  </p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    {!cczEligible && !isHousekeepJob
+                      ? "Only EC/WC/W/SW1/SE1 postcodes"
+                      : inCczPreview
+                        ? `+${formatCurrency(accessFees.cczFeeGbp)} applied`
+                        : "No charge applied"}
+                  </p>
+                </div>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", form.in_ccz && cczEligible ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", form.in_ccz && cczEligible && "translate-x-5")} />
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isHousekeepJob}
+                onClick={() => setForm((prev) => ({ ...prev, has_free_parking: !prev.has_free_parking }))}
+                className={cn(
+                  "rounded-lg border px-2.5 py-1.5 text-left transition-all shadow-sm",
+                  "flex items-center justify-between gap-2 min-w-0",
+                  isHousekeepJob && "opacity-50 cursor-not-allowed",
+                  !form.has_free_parking
+                    ? "bg-[#ecfff6] border-[#1DB87A] shadow-[0_6px_16px_rgba(29,184,122,0.18)]"
+                    : "bg-[#fafaf8] border-[#e0ddd8]",
+                )}
+              >
+                <div>
+                  <p className="text-xs font-medium text-text-primary leading-snug">{form.has_free_parking ? "Add parking" : "Parking fee applied"}</p>
+                  <p className="text-[10px] text-text-tertiary leading-snug">
+                    {form.has_free_parking ? "No charge applied" : `+${formatCurrency(accessFees.parkingFeeGbp)} applied`}
+                  </p>
+                </div>
+                <span className={cn("flex-shrink-0 h-7 w-12 rounded-full border-2 p-0.5 transition-colors shadow-inner", !form.has_free_parking ? "border-[#1DB87A] bg-[#1DB87A]" : "border-[#9c948a] bg-[#e8e4de]")}>
+                  <span className={cn("block h-5 w-5 rounded-full bg-white shadow-md transition-transform", !form.has_free_parking && "translate-x-5")} />
+                </span>
+              </button>
+            </div>
+            <p className="text-[10px] text-text-tertiary leading-snug">
+              Parking surcharge: <span className="font-semibold text-text-primary">{formatCurrency(accessSurchargePreview)}</span>
+            </p>
           </JobCreateModalSection>
         </div>
       </form>

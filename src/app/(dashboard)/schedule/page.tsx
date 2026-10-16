@@ -95,9 +95,9 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant }> = {
   late: { label: "Late", variant: JOB_STATUS_BADGE_VARIANT.late },
   in_progress: { label: "In progress", variant: JOB_STATUS_BADGE_VARIANT.in_progress },
   on_hold: { label: "On hold", variant: JOB_STATUS_BADGE_VARIANT.on_hold },
-  final_check: { label: "Final check", variant: JOB_STATUS_BADGE_VARIANT.final_check },
+  final_check: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.final_check },
   awaiting_payment: { label: "Awaiting payment", variant: JOB_STATUS_BADGE_VARIANT.awaiting_payment },
-  need_attention: { label: "Need attention", variant: JOB_STATUS_BADGE_VARIANT.need_attention },
+  need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled },
   deleted: { label: "Deleted", variant: JOB_STATUS_BADGE_VARIANT.deleted },
@@ -928,11 +928,11 @@ export default function SchedulePage() {
   return (
     <PageTransition
       className={cn(
-        "flex flex-col min-w-0 gap-4 -mt-2 sm:-mt-3 lg:-mt-4",
+        "flex flex-col min-w-0 gap-4 ",
         // Map and Kanban are full-height boards: the page itself never scrolls,
         // each column (or the map) scrolls inside its own box.
         (view === "map" || view === "kanban") &&
-          "min-h-0 overflow-hidden gap-2 sm:gap-3 h-[calc(100dvh-7rem)] max-h-[calc(100dvh-7rem)] lg:h-[calc(100dvh-8rem)] lg:max-h-[calc(100dvh-8rem)]",
+          "min-h-0 overflow-hidden gap-2 sm:gap-3 h-[calc(100dvh-106px)] max-h-[calc(100dvh-106px)] lg:h-[calc(100dvh-106px)] lg:max-h-[calc(100dvh-106px)]",
       )}
     >
       <BeaconHeader
@@ -983,7 +983,7 @@ export default function SchedulePage() {
                   type="button"
                   className={cn(
                     LIVE_MAP_TOOLBAR_BTN_CLASS,
-                    "border-[#020040]/20 bg-[#020040]/5 text-[#020040] hover:bg-[#020040]/10",
+                    "border-primary/20 bg-primary/5 text-text-primary hover:bg-primary/10",
                   )}
                   onClick={backToLondon}
                 >

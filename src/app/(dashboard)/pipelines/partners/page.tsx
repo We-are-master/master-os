@@ -26,7 +26,7 @@ interface Applicant {
 const columns: KanbanColumn<Applicant>[] = [
   {
     id: "new",
-    title: "New Application",
+    title: "New application",
     color: "bg-stone-400",
     items: [
       { id: "1", name: "Marcus Williams", trade: "Electrician", location: "Manhattan, NY", date: "Mar 7" },
@@ -37,7 +37,7 @@ const columns: KanbanColumn<Applicant>[] = [
   },
   {
     id: "docs",
-    title: "Document Verification",
+    title: "Document verification",
     color: "bg-amber-500",
     items: [
       { id: "5", name: "Robert Chen", trade: "Electrician", location: "Manhattan, NY", date: "Mar 4", status_detail: "License Pending" },
@@ -46,7 +46,7 @@ const columns: KanbanColumn<Applicant>[] = [
   },
   {
     id: "background",
-    title: "Background Check",
+    title: "Background check",
     color: "bg-indigo-500",
     items: [
       { id: "7", name: "James Thompson", trade: "Plumber", location: "Brooklyn, NY", date: "Mar 2" },
@@ -54,7 +54,7 @@ const columns: KanbanColumn<Applicant>[] = [
   },
   {
     id: "training",
-    title: "Training & Induction",
+    title: "Training & induction",
     color: "bg-primary",
     items: [
       { id: "8", name: "Michelle Park", trade: "Technician", location: "Manhattan, NY", date: "Feb 28", progress: 65 },
@@ -64,7 +64,7 @@ const columns: KanbanColumn<Applicant>[] = [
   },
   {
     id: "ready",
-    title: "Ready to Onboard",
+    title: "Ready to onboard",
     color: "bg-emerald-500",
     items: [
       { id: "11", name: "Carlos Rivera", trade: "Plumber", location: "Manhattan, NY", date: "Feb 20" },
@@ -116,11 +116,11 @@ function ApplicantCard({ item }: { item: Applicant }) {
 
 const PARTNER_STAGES = ["new", "docs", "background", "training", "ready"] as const;
 const partnerStageConfig: Record<string, { title: string }> = {
-  new: { title: "New Application" },
-  docs: { title: "Document Verification" },
-  background: { title: "Background Check" },
-  training: { title: "Training & Induction" },
-  ready: { title: "Ready to Onboard" },
+  new: { title: "New application" },
+  docs: { title: "Document verification" },
+  background: { title: "Background check" },
+  training: { title: "Training & induction" },
+  ready: { title: "Ready to onboard" },
 };
 
 export default function PartnerPipelinePage() {
@@ -136,15 +136,15 @@ export default function PartnerPipelinePage() {
   return (
     <PageTransition>
       <div className="space-y-5">
-        <PageHeader title="Partner Onboarding Pipeline" subtitle="Track partner applications through the onboarding process.">
+        <PageHeader title="Partner onboarding" subtitle="Track partner applications through the onboarding process.">
           <Button variant="outline" size="sm" icon={<Filter className="h-3.5 w-3.5" />}>Filter</Button>
           <Button size="sm" icon={<UserPlus className="h-3.5 w-3.5" />}>Invite Partner</Button>
         </PageHeader>
 
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KpiCard title="Total Applicants" value={24} format="number" change={12} changeLabel="this month" icon={Users} accent="blue" />
-          <KpiCard title="In Progress" value={11} format="number" description="Across all stages" icon={Clock} accent="amber" />
-          <KpiCard title="Ready to Onboard" value={3} format="number" description="Activate now" icon={CheckCircle2} accent="emerald" />
+          <KpiCard title="Total applicants" value={24} format="number" change={12} changeLabel="this month" icon={Users} accent="blue" />
+          <KpiCard title="In progress" value={11} format="number" description="Across all stages" icon={Clock} accent="amber" />
+          <KpiCard title="Ready to onboard" value={3} format="number" description="Activate now" icon={CheckCircle2} accent="emerald" />
           <KpiCard title="Avg. Time to Onboard" value="8 Days" change={-15} changeLabel="faster" icon={Clock} accent="primary" />
         </StaggerContainer>
 

@@ -68,6 +68,12 @@ export interface CreateTicketResult {
   ok:      boolean;
   /** Numeric ticket id when ok=true. */
   id?:     number;
+  /**
+   * Zendesk's encoded id (e.g. "ZRGGKR-JXX2N"). Zendesk prints it hidden in
+   * its own notifications and threads a reply that quotes it back into this
+   * ticket, so an email we send ourselves can carry it too.
+   */
+  encodedId?: string;
   /** HTTP status from Zendesk (when reached). */
   status?: number;
   /** Error detail when ok=false. */
@@ -141,12 +147,12 @@ export async function createTicket(args: CreateTicketArgs): Promise<CreateTicket
       console.error(`[zendesk.createTicket] failed (${res.status}):`, text.slice(0, 500));
       return { ok: false, status: res.status, error: text.slice(0, 500) };
     }
-    const json = (await res.json().catch(() => ({}))) as { ticket?: { id?: number } };
+    const json = (await res.json().catch(() => ({}))) as { ticket?: { id?: number; encoded_id?: string } };
     const id = json.ticket?.id;
     if (!id) {
       return { ok: false, status: res.status, error: "Zendesk response missing ticket.id" };
     }
-    return { ok: true, id, status: res.status };
+    return { ok: true, id, encodedId: json.ticket?.encoded_id || undefined, status: res.status };
   } catch (err) {
     console.error("[zendesk.createTicket] network error:", err);
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
@@ -431,7 +437,7 @@ export async function removeTicketTags(ticketId: string | number, tags: string[]
  */
 export async function getTicketRequester(
   ticketId: string | number,
-): Promise<{ ok: boolean; requesterId?: number; requesterEmail?: string; status?: number; error?: string }> {
+): Promise<{ ok: boolean; requesterId?: number; requesterEmail?: string; channel?: string; status?: number; error?: string }> {
   if (!isZendeskConfigured()) return { ok: false, error: "Zendesk not configured" };
 
   const url = `${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json?include=users`;
@@ -445,7 +451,7 @@ export async function getTicketRequester(
       return { ok: false, status: res.status, error: text.slice(0, 300) };
     }
     const json = (await res.json().catch(() => ({}))) as {
-      ticket?: { requester_id?: number };
+      ticket?: { requester_id?: number; via?: { channel?: string } };
       users?: Array<{ id?: number; email?: string }>;
     };
     const requesterId = json.ticket?.requester_id;
@@ -456,6 +462,7 @@ export async function getTicketRequester(
       status: res.status,
       requesterId,
       requesterEmail: match?.email ? match.email.trim().toLowerCase() : undefined,
+      channel: json.ticket?.via?.channel,
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
@@ -502,11 +509,23 @@ export async function getTicketCustomFieldValue(
 
 export type ZendeskTicketSnapshot = {
   subject: string | null;
+  /** new | open | pending | hold | solved | closed */
+  status: string | null;
   /** Custom field id → string value (non-empty only). */
   fields: Record<number, string>;
 };
 
 /** Load ticket subject + custom fields in one GET (job ingest / repair). */
+/**
+ * O ticket nasceu no WhatsApp (conversa do Harvey)? Comentário público ali vai
+ * para o WhatsApp do cliente, então os avisos do job viram nota interna
+ * (dono, 07/10/2026). Na dúvida (erro de leitura), responde false.
+ */
+export async function ticketDoWhatsApp(ticketId: string | number): Promise<boolean> {
+  const t = await getTicketRequester(ticketId);
+  return t.ok && t.channel === "whatsapp";
+}
+
 export async function getZendeskTicketSnapshot(
   ticketId: string | number,
 ): Promise<{ ok: boolean; ticket?: ZendeskTicketSnapshot; status?: number; error?: string }> {
@@ -525,6 +544,7 @@ export async function getZendeskTicketSnapshot(
     const json = (await res.json().catch(() => ({}))) as {
       ticket?: {
         subject?: string | null;
+        status?: string | null;
         custom_fields?: Array<{ id?: number; value?: unknown }>;
       };
     };
@@ -542,6 +562,7 @@ export async function getZendeskTicketSnapshot(
       status: res.status,
       ticket: {
         subject: raw?.subject?.trim() || null,
+        status: raw?.status ?? null,
         fields,
       },
     };
@@ -833,6 +854,8 @@ export interface SideConversationParams {
   toEmail: string;
   /** Optional recipient display name. */
   toName?: string | null;
+  /** E-mails extras que recebem a mesma mensagem (partners.job_cc_emails, mig 328). */
+  extraEmails?: string[];
   /**
    * Optional Zendesk user id of the recipient. When set, Zendesk threads the
    * side conv under that user's organisation view (mirrored from
@@ -897,7 +920,7 @@ export async function createSideConversation(
       subject: params.subject,
       body: params.bodyText ?? stripHtml(params.htmlBody),
       html_body: params.htmlBody,
-      to: [recipient],
+      to: [recipient, ...(params.extraEmails ?? []).filter((e) => e && e !== params.toEmail).map((email) => ({ email }))],
       ...(params.attachmentIds?.length ? { attachment_ids: params.attachmentIds } : {}),
     },
   };
@@ -944,6 +967,8 @@ export async function replyToSideConversation(params: {
   toEmail?: string;
   toName?: string;
   toUserId?: string | number | null;
+  /** E-mails extras do parceiro (mig 328). */
+  extraEmails?: string[];
 }): Promise<SideConversationResult> {
   if (!isZendeskConfigured()) {
     return { ok: false, error: "Zendesk not configured" };
@@ -964,7 +989,7 @@ export async function replyToSideConversation(params: {
       const n = Number(params.toUserId);
       if (Number.isFinite(n)) recipient.user_id = n;
     }
-    message.to = [recipient];
+    message.to = [recipient, ...(params.extraEmails ?? []).filter((e) => e && e !== params.toEmail).map((email) => ({ email }))];
   }
   if (params.attachmentIds?.length) message.attachment_ids = params.attachmentIds;
   const body = { message };
@@ -1198,4 +1223,20 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Chamada crua à API (busca de usuário, grupo, org): quem usa trata o JSON. */
+export async function zendeskApi<T = Record<string, unknown>>(
+  caminho: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
+  const res = await fetch(`${baseUrl()}/${caminho.replace(/^\//, "")}`, {
+    method: init.method ?? "GET",
+    headers: { Authorization: authHeader(), "Content-Type": "application/json" },
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Zendesk ${init.method ?? "GET"} ${caminho.split("?")[0]} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return (res.status === 204 ? {} : await res.json()) as T;
 }

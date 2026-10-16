@@ -1,0 +1,365 @@
+/**
+ * Os três e-mails de quem começou a reservar no site e não pagou.
+ *
+ *   1  30 minutos depois de parar     "o seu preço está guardado"
+ *   2  9h30 do dia seguinte ao 1      "alguma dúvida?", com o que está incluso
+ *      (limpeza fala de cômodo e checklist; conserto fala do trabalho feito)
+ *   3  9h30 do dia seguinte ao 2      10% com código já aplicado
+ *
+ * Texto aprovado pelo dono em 24/09/2026; voz do Victor desde 15/10/2026 (a
+ * resposta continua caindo no ticket do lead). Parente das campanhas
+ * (`campanha-layout`), com cabeçalho branco e logo pequeno, laranja só no botão, tudo em
+ * tabela e estilo em linha. Os ícones do e-mail 2 são PNG em
+ * `public/email/abandono/`, porque o Gmail não mostra SVG.
+ *
+ * Quem decide QUANDO cada um sai é `src/lib/site-leads/agenda.ts`; quem decide
+ * SE sai (pagou, descadastrou, respondeu, conversa aberta com o time) é o
+ * motor, na hora do envio.
+ *
+ * `ticketRef` é o encoded id do ticket do lead no Zendesk. Vai escondido no fim
+ * do e-mail, entre colchetes, como o Zendesk faz nos e-mails dele: a resposta
+ * que cita o e-mail cai no ticket do lead, mesmo enviada para o hello@.
+ */
+
+import { appBaseUrl } from "@/lib/app-base-url";
+import { CLIENT_BRAND, escapeHtml } from "@/lib/emails/client-email-layout";
+
+const WHATSAPP_GREEN = "#1FA855";
+const EMPRESA = "Getfixfy Ltd · 124 City Road, London EC1V 2NX";
+
+/**
+ * Cabeçalho navy em degradê (com um brilho laranja no canto) e logo branco
+ * pequeno, alinhado ao texto: a faixa de 600px das campanhas gritava demais.
+ * `public/email/abandono/fixfy-logo-white.png` (420x149) vem do
+ * `fixfy-primary-white` do site, o de engrenagem limpa. Mostrado em 130px,
+ * nítido em tela retina. O Outlook ignora o degradê e mostra o navy liso.
+ */
+const LOGO_LARGURA = 130;
+const LOGO_ALTURA = Math.round((149 / 420) * LOGO_LARGURA);
+
+export type ReservaAbandonada = {
+  firstName?: string | null;
+  service: {
+    /** "2 bed deep clean", "handyman half day". Vai no meio da frase. */
+    name: string;
+    /** "a 2 bed deep clean". Vai no assunto do e-mail 1. */
+    withArticle: string;
+  };
+  /**
+   * Limpeza fala de cômodo e checklist; conserto, pintura e certificado não.
+   * O e-mail 2 muda as promessas conforme isso. Padrão: limpeza.
+   */
+  kind?: "cleaning" | "trade";
+  /** Linhas curtas do cartão da reserva: "2 bedrooms", "Up to 3.5 hours". */
+  details?: string[];
+  postcode?: string | null;
+  /** Em libras, com VAT. */
+  price: number;
+  /** Reabre o mesmo serviço, tamanho e postcode. */
+  resumeUrl: string;
+  whatsappUrl: string;
+  unsubscribeUrl: string;
+  /** Só no e-mail 3. */
+  /**
+   * Só no e-mail 3. Com `expiresAt` é o código ÚNICO da pessoa (48 h, uso
+   * único); sem ele é o cupom FIXO da Stripe (COMEBACK10), que não expira por
+   * pessoa, então o e-mail não promete prazo nem "personal" (DMCC: prazo falso
+   * é prática enganosa).
+   */
+  promo?: { code: string; percentOff: number; discountedPrice: number; expiresAt?: Date | null };
+  /** Base dos ícones e do logo. Padrão: o próprio OS. */
+  assetBase?: string;
+  /** Encoded id do ticket do lead no Zendesk ("ZRGGKR-JXX2N"). Sem ele, a resposta vira ticket novo. */
+  ticketRef?: string | null;
+};
+
+export type EmailPronto = { subject: string; preheader: string; html: string; text: string };
+
+export function formatarLibras(v: number): string {
+  const inteiro = Math.round(v * 100) % 100 === 0;
+  return `£${v.toLocaleString("en-GB", { minimumFractionDigits: inteiro ? 0 : 2, maximumFractionDigits: 2 })}`;
+}
+
+/** "Saturday 26 September at 10:00", no horário de Londres. */
+export function formatarValidade(d: Date): string {
+  const dia = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", day: "numeric", month: "long" }).format(d);
+  const hora = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+  return `${dia} at ${hora}`;
+}
+
+// ---------------------------------------------------------------- peças
+
+/** O encoded id do Zendesk só com o formato dele; qualquer outra coisa não entra no e-mail. */
+function refDoTicket(ref: string | null | undefined): string | null {
+  const r = String(ref ?? "").trim().toUpperCase();
+  return /^[A-Z0-9]{4,12}-[A-Z0-9]{3,12}$/.test(r) ? r : null;
+}
+
+/**
+ * O encoded id escondido (mesma cor do fundo, 1px), como o Zendesk faz: some
+ * para quem lê e volta na citação da resposta. Não é `display:none` porque há
+ * cliente de e-mail que corta o que está oculto ao citar.
+ */
+function refEscondida(ref: string | null | undefined): string {
+  const r = refDoTicket(ref);
+  return r
+    ? `<span class="zd_encoded_id" aria-hidden="true" style="color:${CLIENT_BRAND.canvas}; font-size:1px; line-height:1px;">[${escapeHtml(r)}]</span>`
+    : "";
+}
+
+function preheaderOculto(texto: string): string {
+  return `<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:${CLIENT_BRAND.canvas}; opacity:0;">${escapeHtml(texto)}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>`;
+}
+
+function p(html: string, extra = ""): string {
+  return `<p style="margin:0 0 16px; font-size:16px; line-height:26px; color:${CLIENT_BRAND.body};${extra}">${html}</p>`;
+}
+
+function cartaoDaReserva(d: ReservaAbandonada, comDesconto: boolean): string {
+  const linhas = [...(d.details ?? []), d.postcode ? d.postcode.toUpperCase() : null].filter(Boolean) as string[];
+  const preco = comDesconto && d.promo
+    ? `<div style="font-size:14px; line-height:20px; color:${CLIENT_BRAND.gray}; text-decoration:line-through;">${formatarLibras(d.price)}</div>
+       <div style="font-size:26px; line-height:32px; font-weight:800; color:${CLIENT_BRAND.navy};">${formatarLibras(d.promo.discountedPrice)}</div>
+       <div style="font-size:12px; line-height:18px; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.percentOff}% off applied</div>`
+    : `<div style="font-size:26px; line-height:32px; font-weight:800; color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</div>
+       <div style="font-size:12px; line-height:18px; color:${CLIENT_BRAND.gray};">Fixed price, the total you pay</div>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px; background:${CLIENT_BRAND.canvas}; border:1px solid ${CLIENT_BRAND.line}; border-radius:12px;">
+    <tr>
+      <td valign="middle" style="padding:18px 20px;">
+        <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.gray}; margin-bottom:4px;">Your saved booking</div>
+        <div style="font-size:17px; line-height:24px; font-weight:700; color:${CLIENT_BRAND.navy}; text-transform:capitalize;">${escapeHtml(d.service.name)}</div>
+        ${linhas.length ? `<div style="font-size:14px; line-height:21px; color:${CLIENT_BRAND.body}; margin-top:2px;">${linhas.map(escapeHtml).join(" &middot; ")}</div>` : ""}
+      </td>
+      <td valign="middle" align="right" style="padding:18px 20px; white-space:nowrap;">${preco}</td>
+    </tr>
+  </table>`;
+}
+
+function botao(texto: string, url: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 26px;">
+    <tr><td class="btn-mobile" style="border-radius:10px; background:${CLIENT_BRAND.orange};">
+      <a href="${escapeHtml(url)}" style="display:inline-block; padding:16px 34px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; border-radius:10px;">${escapeHtml(texto)}</a>
+    </td></tr>
+  </table>`;
+}
+
+function blocoWhatsApp(pergunta: string, url: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px; border-top:1px solid ${CLIENT_BRAND.line};">
+    <tr><td style="padding:22px 0 0;">
+      <p style="margin:0 0 12px; font-size:15px; line-height:22px; color:${CLIENT_BRAND.ink}; font-weight:600;">${escapeHtml(pergunta)}</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+        <tr><td class="btn-mobile" style="border-radius:10px; border:1.5px solid ${WHATSAPP_GREEN};">
+          <a href="${escapeHtml(url)}" style="display:inline-block; padding:12px 24px; font-size:15px; font-weight:700; color:${WHATSAPP_GREEN}; text-decoration:none; border-radius:10px;">Chat with us on WhatsApp</a>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>`;
+}
+
+function listaComIcones(itens: Array<{ icone: string; texto: string }>, base: string): string {
+  const linhas = itens.map((i) => `<tr>
+      <td width="52" valign="middle" style="padding:7px 0;"><img src="${base}/email/abandono/${i.icone}.png" width="40" height="40" alt="" style="display:block; width:40px; height:40px; border:0;"></td>
+      <td valign="middle" style="padding:7px 0; font-size:15px; line-height:22px; color:${CLIENT_BRAND.ink}; font-weight:600;">${escapeHtml(i.texto)}</td>
+    </tr>`).join("");
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:2px 0 20px;">${linhas}</table>`;
+}
+
+function caixaDoCodigo(d: ReservaAbandonada): string {
+  if (!d.promo) return "";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px; background:${CLIENT_BRAND.softOrangeBg}; border:2px dashed ${CLIENT_BRAND.orange}; border-radius:12px;">
+    <tr><td align="center" style="padding:20px;">
+      <div style="font-size:11px; letter-spacing:0.12em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange};">${d.promo.expiresAt ? "Your personal code · already applied" : "We've applied code"}</div>
+      <div style="font-family:ui-monospace,Menlo,Consolas,monospace; font-size:28px; line-height:36px; font-weight:700; color:${CLIENT_BRAND.navy}; letter-spacing:0.04em; margin:8px 0 4px;">${escapeHtml(d.promo.code)}</div>
+      ${d.promo.expiresAt ? `<div style="font-size:13px; line-height:20px; color:${CLIENT_BRAND.body};">Valid until <b>${escapeHtml(formatarValidade(d.promo.expiresAt))}</b></div>` : ""}
+    </td></tr>
+  </table>`;
+}
+
+function montar(opts: { preheader: string; etiqueta: string; titulo: string; nome: string; corpo: string; base: string; unsubscribeUrl: string; ticketRef?: string | null }): string {
+  const logo = `${opts.base}/email/abandono/fixfy-logo-white.png`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="x-apple-disable-message-reformatting" />
+<meta name="color-scheme" content="light only" />
+<meta name="supported-color-schemes" content="light" />
+<title>&#8203;</title>
+<style>
+  :root { color-scheme: light only; supported-color-schemes: light; }
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; display: block; }
+  body { margin: 0 !important; padding: 0 !important; width: 100% !important; background-color: ${CLIENT_BRAND.canvas} !important; }
+  @media screen and (max-width: 600px) {
+    .container { width: 100% !important; }
+    .px-mobile { padding-left: 22px !important; padding-right: 22px !important; }
+    .h1-mobile { font-size: 25px !important; line-height: 32px !important; }
+    .btn-mobile, .btn-mobile a { display: block !important; text-align: center !important; }
+  }
+</style>
+</head>
+<body bgcolor="${CLIENT_BRAND.canvas}" style="margin:0; padding:0; background-color:${CLIENT_BRAND.canvas}; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+${preheaderOculto(opts.preheader)}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${CLIENT_BRAND.canvas}" style="background-color:${CLIENT_BRAND.canvas};">
+  <tr><td align="center" style="padding:28px 16px 40px;">
+    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:14px; overflow:hidden; box-shadow:0 1px 3px rgba(2,0,64,0.08);">
+      <tr><td class="px-mobile" bgcolor="${CLIENT_BRAND.navy}" style="padding:30px 40px; background-color:${CLIENT_BRAND.navy}; background-image:radial-gradient(circle at 100% 0%, rgba(237,75,0,0.32) 0%, rgba(237,75,0,0) 42%), linear-gradient(135deg, #020040 0%, #0A0960 58%, #1B1478 100%);">
+        <a href="https://www.getfixfy.com" style="text-decoration:none;"><img src="${logo}" alt="Fixfy" width="${LOGO_LARGURA}" height="${LOGO_ALTURA}" style="display:block; width:${LOGO_LARGURA}px; height:${LOGO_ALTURA}px; border:0;"></a>
+      </td></tr>
+      <tr><td class="px-mobile" style="padding:28px 40px 6px;">
+        <div style="font-size:11px; letter-spacing:0.14em; text-transform:uppercase; font-weight:700; color:${CLIENT_BRAND.orange}; margin-bottom:12px;">${escapeHtml(opts.etiqueta)}</div>
+        <h1 class="h1-mobile" style="margin:0 0 20px; font-size:28px; line-height:35px; font-weight:800; letter-spacing:-0.02em; color:${CLIENT_BRAND.navy};">${escapeHtml(opts.titulo)}</h1>
+        ${p(`Hi ${escapeHtml(opts.nome)},`)}
+        ${opts.corpo}
+        <p style="margin:0 0 30px; font-size:16px; line-height:24px; color:${CLIENT_BRAND.ink}; font-weight:600;">Victor Braz<br><span style="font-weight:400; font-size:14px; color:${CLIENT_BRAND.gray};">Operations Director, Fixfy</span></p>
+      </td></tr>
+    </table>
+    <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
+      <tr><td class="px-mobile" align="center" style="padding:22px 40px 0; font-size:12px; line-height:19px; color:${CLIENT_BRAND.gray};">
+        You are receiving this because you started a booking at getfixfy.com.<br>
+        ${EMPRESA}<br>
+        <a href="${escapeHtml(opts.unsubscribeUrl)}" style="color:${CLIENT_BRAND.gray}; text-decoration:underline;">Unsubscribe</a>
+        ${refEscondida(opts.ticketRef)}
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`;
+}
+
+function primeiroNome(d: ReservaAbandonada): string {
+  const n = d.firstName?.trim().split(/\s+/)[0];
+  return n ? n.charAt(0).toUpperCase() + n.slice(1) : "there";
+}
+
+function rodapeTexto(d: ReservaAbandonada): string {
+  const ref = refDoTicket(d.ticketRef);
+  return `\n\nVictor Braz\nOperations Director, Fixfy\n\nYou are receiving this because you started a booking at getfixfy.com.\n${EMPRESA}\nUnsubscribe: ${d.unsubscribeUrl}${ref ? `\n\n[${ref}]` : ""}`;
+}
+
+// ---------------------------------------------------------------- os três
+
+export function email1(d: ReservaAbandonada): EmailPronto {
+  const nome = primeiroNome(d);
+  const base = d.assetBase ?? appBaseUrl();
+  // Curto de propósito: no celular o assunto corta perto de 40 caracteres. O serviço e o preço vão no preheader.
+  const subject = "You're almost there!";
+  const preheader = `Finish your booking: ${d.service.name} · ${formatarLibras(d.price)} fixed price`;
+  const corpo = [
+    p(`I noticed you started booking ${escapeHtml(d.service.withArticle)} and did not finish, so we have kept your details saved. There is no need to start again.`),
+    cartaoDaReserva(d, false),
+    p(`Your fixed price is <b style="color:${CLIENT_BRAND.navy};">${formatarLibras(d.price)}</b>, and that's what you pay. Nothing gets added at checkout.`),
+    p("Nothing's confirmed yet. You can pick up exactly where you left off."),
+    botao("Finish my booking", d.resumeUrl),
+    blocoWhatsApp("Got a question first? Message us.", d.whatsappUrl),
+  ].join("");
+  const text = `Hi ${nome},
+
+I noticed you started booking ${d.service.withArticle} and did not finish, so we have kept your details saved. There is no need to start again.
+
+Your fixed price is ${formatarLibras(d.price)}, and that's what you pay. Nothing gets added at checkout.
+
+Nothing's confirmed yet. You can pick up exactly where you left off.
+
+Finish my booking: ${d.resumeUrl}
+
+Got a question first? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Booking saved", titulo: "Your fixed price is waiting", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
+}
+
+export function email2(d: ReservaAbandonada): EmailPronto {
+  const nome = primeiroNome(d);
+  const base = d.assetBase ?? appBaseUrl();
+  const subject = "Anything we can help with?";
+  const limpeza = (d.kind ?? "cleaning") === "cleaning";
+  const preheader = "Clear pricing, report photos, secure payment and a 14-day guarantee.";
+  const fotos = limpeza ? "Photos of every room once the service is complete" : "Photos of the finished work once the job is complete";
+  const garantia = limpeza
+    ? "If anything on the agreed checklist isn't done right, tell us within 14 days and we'll come back and put it right, free."
+    : "If any of the agreed work isn't done right, tell us within 14 days and we'll come back and put it right, free.";
+  const itens = [
+    { icone: "price", texto: "A clear fixed price, the total you pay" },
+    { icone: "photos", texto: fotos },
+    { icone: "guarantee", texto: "A 14-day Fixfy guarantee" },
+    { icone: "secure", texto: "Secure payment through Stripe" },
+    { icone: "nohidden", texto: "No hidden charges" },
+  ];
+  const corpo = [
+    p("If you paused because you wanted to know a little more first, here is what you can expect from us:"),
+    listaComIcones(itens, base),
+    p(garantia),
+    p("Your details are still saved, so it's about a minute to finish."),
+    botao("Finish my booking", d.resumeUrl),
+    blocoWhatsApp("Rather talk to someone first?", d.whatsappUrl),
+  ].join("");
+  const text = `Hi ${nome},
+
+If you paused because you wanted to know a little more first, here is what you can expect from us:
+
+- A clear fixed price, the total you pay
+- ${fotos}
+- A 14-day Fixfy guarantee
+- Secure payment through Stripe
+- No hidden charges
+
+${garantia}
+
+Your details are still saved, so it's about a minute to finish.
+
+Finish my booking: ${d.resumeUrl}
+
+Rather talk to someone first? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+  return { subject, preheader, text, html: montar({ preheader, etiqueta: "Before you book", titulo: "Everything included, nothing hidden", nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }) };
+}
+
+export function email3(d: ReservaAbandonada): EmailPronto {
+  if (!d.promo) throw new Error("email3 precisa do código de desconto");
+  const nome = primeiroNome(d);
+  const base = d.assetBase ?? appBaseUrl();
+  const pct = d.promo.percentOff;
+  const unico = Boolean(d.promo.expiresAt);
+  const validade = d.promo.expiresAt ? formatarValidade(d.promo.expiresAt) : "";
+  const subject = `Get ${pct}% OFF to finish your booking`;
+  // O preço no preheader: é a primeira coisa que aparece na caixa de entrada, antes de abrir.
+  const precos = `${formatarLibras(d.price)} is now ${formatarLibras(d.promo.discountedPrice)}`;
+  const preheader = unico
+    ? `${precos} with your personal code, valid for 48 hours.`
+    : `${precos} with code ${d.promo.code}, already applied.`;
+  const navy = (t: string) => `<b style="color:${CLIENT_BRAND.navy};">${t}</b>`;
+  const frasesDoCodigo = unico
+    ? `Your unique code is ${navy(escapeHtml(d.promo.code))}, and it has already been applied to your booking. The discount is valid until ${navy(escapeHtml(validade))}. After that time, the code will expire automatically.`
+    : `We've applied code ${navy(escapeHtml(d.promo.code))} to your booking.`;
+  const corpo = [
+    p(`This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${navy(`${pct}% discount`)} to your saved ${escapeHtml(d.service.name)} booking.`),
+    cartaoDaReserva(d, true),
+    p(`Original price: ${formatarLibras(d.price)}<br>Your discounted price: ${navy(formatarLibras(d.promo.discountedPrice))}`),
+    caixaDoCodigo(d),
+    p(frasesDoCodigo),
+    p("The button below takes you back to where you stopped, with the discount already on."),
+    botao(`Finish my booking with ${pct}% off`, d.resumeUrl),
+    blocoWhatsApp("Any question before you confirm?", d.whatsappUrl),
+  ].join("");
+  const text = `Hi ${nome},
+
+This is my last note about your booking. I have applied a ${unico ? "personal " : ""}${pct}% discount to your saved ${d.service.name} booking.
+
+Original price: ${formatarLibras(d.price)}
+Your discounted price: ${formatarLibras(d.promo.discountedPrice)}
+
+${unico ? `Your unique code is ${d.promo.code}, and it has already been applied to your booking.
+
+The discount is valid until ${validade}. After that time, the code will expire automatically.` : `We've applied code ${d.promo.code} to your booking.`}
+
+Finish my booking with ${pct}% off: ${d.resumeUrl}
+
+Any question before you confirm? Message us on WhatsApp: ${d.whatsappUrl}${rodapeTexto(d)}`;
+  return {
+    subject,
+    preheader,
+    text,
+    html: montar({ preheader, etiqueta: unico ? `${pct}% off · 48 hours` : `${pct}% off`, titulo: `${pct}% off, already applied`, nome, corpo, base, unsubscribeUrl: d.unsubscribeUrl, ticketRef: d.ticketRef }),
+  };
+}

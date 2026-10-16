@@ -43,10 +43,12 @@ export function isAccountOrgBiweeklyGridTerms(
   if (!raw) return false;
   if (isDueOnReceiptTerms(raw)) return false;
   if (/every\s+2\s+weeks?\s+cutoff/i.test(raw)) return false;
-  if (/every\s+2\s*weeks\s+on\s+friday/i.test(raw)) return true;
+  if (!/every\s+2\s*weeks\s+on\s+friday/i.test(raw)) return false;
+  // Só o texto explícito da grade quinzenal entra aqui. Antes, qualquer termo fora dos
+  // presets de parceiro ("45 days", "Every 7 days") era normalizado para "Every 2 weeks
+  // on Friday" e caía na grade da empresa (Homyze vencia 16/10 em vez de 23/11).
   const orgNorm = normalizePartnerPayoutStandardTerms(orgStandardTerms ?? ORG_PARTNER_PAYOUT_STANDARD_TERMS);
-  const accountNorm = normalizePartnerPayoutStandardTerms(raw);
-  return isBiweeklyFridayPayoutTerms(accountNorm) && accountNorm === orgNorm;
+  return isBiweeklyFridayPayoutTerms(orgNorm);
 }
 
 /**

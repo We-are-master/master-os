@@ -57,6 +57,8 @@ type QuoteSummary = {
   /** Distinguishes the three token surfaces (customer accept/reject, partner bid, partner report). */
   tokenKind?: "customer" | "partner_bid" | "partner_report";
   linkedJob?: LinkedJob | null;
+  /** Por que o report não abre (15/10/2026): cancelado, outro parceiro, já concluído. */
+  reportBlock?: { motivo: string; mensagem: string } | null;
   bidContext?: BidContext | null;
 };
 
@@ -114,6 +116,7 @@ function QuoteRespondContent() {
             photoUrls: data.photoUrls ?? [],
             tokenKind: data.tokenKind ?? "customer",
             linkedJob: data.linkedJob ?? null,
+            reportBlock: data.reportBlock ?? null,
             bidContext: data.bidContext ?? null,
           });
         }
@@ -140,14 +143,19 @@ function QuoteRespondContent() {
   }
 
   if (token === "invalid" || token === "expired") {
+    const motivo = searchParams.get("motivo");
     return (
       <FixfyPublicStatus
         variant="warning"
-        title="Invalid or expired link"
+        title={motivo === "sem_parceiro" ? "This job has no partner right now" : motivo === "job_removido" ? "This job was removed" : "Invalid or expired link"}
         message={
-          token === "expired"
-            ? "This link has expired. Contact the office for a fresh link."
-            : "This link is not valid. Contact the office if you need a new job or report link."
+          motivo === "sem_parceiro"
+            ? "Nobody is assigned to this job at the moment, so there is no report to send. Contact the Fixfy team if you did this job."
+            : motivo === "job_removido"
+              ? "This job is no longer in our system. Contact the Fixfy team if you need help."
+              : token === "expired"
+                ? "This link has expired. Contact the office for a fresh link."
+                : "This link is not valid. Contact the office if you need a new job or report link."
         }
       />
     );
@@ -273,6 +281,7 @@ function QuoteRespondContent() {
             template={pickReportTemplate({
               serviceType: job.serviceType ?? summary.serviceType ?? null,
               title: job.title ?? summary.title,
+              categorySlug: (job as { categorySlug?: string | null }).categorySlug ?? null,
             })}
             onSubmitted={() =>
               setResult({
@@ -298,11 +307,14 @@ function QuoteRespondContent() {
   // A partner-typed token where the assignment doesn't match anymore (job
   // reassigned to someone else, or job not yet created) → explicit message.
   if (token && summary?.tokenKind === "partner_report" && !summary.linkedJob) {
+    const b = summary.reportBlock;
+    const titulo =
+      b?.motivo === "cancelado" ? "This job was cancelled" : b?.motivo === "concluido" ? "This job is closed" : b?.motivo === "outro_parceiro" ? "This job is no longer yours" : "Link no longer valid";
     return (
       <FixfyPublicStatus
-        variant="warning"
-        title="Link no longer valid"
-        message="This report link is no longer linked to an active assignment. Please contact the office for an updated link."
+        variant={b?.motivo === "concluido" ? "success" : "warning"}
+        title={titulo}
+        message={b?.mensagem ?? "This report link is no longer linked to an active assignment. Please contact the office for an updated link."}
       />
     );
   }
@@ -427,7 +439,7 @@ function QuoteRespondContent() {
                   rows={4}
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-[#ED4B00] focus:outline-none focus:ring-2 focus:ring-[#ED4B00]/25"
+                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-text-primary focus:outline-none focus:ring-2 focus:ring-text-primary/20"
                   style={{ borderColor: FIXFY_BORDER, color: FIXFY_NAVY }}
                   placeholder="e.g. Going with another provider, budget changed, timeline no longer works..."
                 />

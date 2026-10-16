@@ -119,6 +119,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     onApprove,
     submitting,
     hourlySlot,
+    cardCharge,
     paymentSchedule,
     rawFinalReport,
     rawStartReport,
@@ -431,6 +432,34 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               />
 
               {hourlySlot ? <div className="px-6 pb-[18px]">{hourlySlot}</div> : null}
+
+              {cardCharge && cardCharge.amountGbp > 0.02 ? (
+                <div className="mx-6 mb-[18px] rounded-xl border border-border-light bg-surface/60 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-[13px] text-text-primary min-w-0">
+                    {cardCharge.onHold ? (
+                      <>Card charge on hold: approving will <b>not</b> charge the saved card.</>
+                    ) : (
+                      <>
+                        On approve we charge <b>£{cardCharge.amountGbp.toFixed(2)}</b> to the saved card
+                        {cardCharge.last4 ? (
+                          <> {cardCharge.brand ? `${cardCharge.brand.toUpperCase()} ` : ""}ending <b>{cardCharge.last4}</b></>
+                        ) : null}
+                        . If it is refused, the job stays in final check.
+                      </>
+                    )}
+                  </p>
+                  <label htmlFor="final-review-card-hold" className="flex items-center gap-2 text-[12.5px] text-text-secondary cursor-pointer">
+                    <input
+                      id="final-review-card-hold"
+                      type="checkbox"
+                      className="rounded border-border"
+                      checked={cardCharge.onHold}
+                      onChange={(e) => cardCharge.onHoldChange(e.target.checked)}
+                    />
+                    Hold the charge
+                  </label>
+                </div>
+              ) : null}
 
               {paymentSchedule ? (
                 <PaymentScheduleSection

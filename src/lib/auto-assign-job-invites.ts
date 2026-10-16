@@ -1,3 +1,4 @@
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
@@ -261,6 +262,7 @@ export async function broadcastAutoAssignInvites(
           priceDisplay,
           partnerNotes,
           acceptUrl,
+          portalUrl: `${resolvePartnerTradePortalBaseUrl()}/?screen=available`,
         });
 
         const sc = await createSideConversation({
@@ -318,6 +320,15 @@ export async function dispatchAutoAssignJobInvites(
   if (!args.partnerIds.length) return { pushSent: 0 };
 
   const supabase = args.supabase ?? createServiceClient();
+
+  // Auto-accept: parceiro com a chave ligada leva o job direto, sem oferta.
+  try {
+    const { tentarAutoAceite } = await import("@/lib/auto-accept");
+    const auto = await tentarAutoAceite(supabase, args.jobId, args.partnerIds);
+    if (auto) return { pushSent: 0 };
+  } catch (err) {
+    console.error("[dispatchAutoAssignJobInvites] auto-accept falhou, segue a oferta:", err);
+  }
   const scope = args.scope?.trim() || "(no scope provided)";
 
   let pushSent = 0;
@@ -473,6 +484,8 @@ export async function previewAutoAssignInvitePartners(
         startAt: job.scheduled_start_at,
         endAt: job.scheduled_end_at,
       },
+      jobId: job.id,
+      partnerCost: (job as { partner_cost?: number | null }).partner_cost ?? null,
     });
   }
 
@@ -601,6 +614,8 @@ export async function ensureAndDispatchAutoAssignInvites(
         startAt: job.scheduled_start_at,
         endAt: job.scheduled_end_at,
       },
+      jobId: job.id,
+      partnerCost: (job as { partner_cost?: number | null }).partner_cost ?? null,
     });
 
     if (partnerIds.length === 0) {

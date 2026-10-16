@@ -1,5 +1,6 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveServerSupabase } from "./request-scope";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,6 +11,9 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 let cachedClient: SupabaseClient | null = null;
 
 export function createClient(): SupabaseClient {
+  // Dentro de uma rota que registrou o cliente do pedido (ver request-scope), vale ele.
+  const doPedido = resolveServerSupabase();
+  if (doPedido) return doPedido;
   if (cachedClient) return cachedClient;
   if (!SUPABASE_URL?.trim() || !SUPABASE_ANON_KEY?.trim()) {
     throw new Error(

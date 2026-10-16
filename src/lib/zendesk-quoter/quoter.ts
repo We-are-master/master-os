@@ -17,8 +17,10 @@
  */
 import { executarPriceCheck, type ResultadoPriceCheck } from "@/lib/orcamentista/price-check";
 import { organizacaoDoTicket } from "@/lib/organizacoes/do-ticket";
-import { updateTicket, ZENDESK_REPLY_STATUS_FIELD_ID, ZENDESK_REPLY_STATUS_SENT_VALUE } from "@/lib/zendesk";
+import { addTicketTags, updateTicket, ZENDESK_REPLY_STATUS_FIELD_ID, ZENDESK_REPLY_STATUS_SENT_VALUE } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
+import { detectarB2B } from "@/lib/b2b-deteccao";
+import { linkDaTabelaB2B } from "@/lib/catalogo-b2b";
 import { acharJobDoTicket } from "./achar-job";
 import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL } from "@/lib/type-of-work";
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
@@ -30,6 +32,16 @@ import { soOqueENovo } from "./sem-citacao";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
 
 const MAX_IMAGENS = 6;
+
+/**
+ * Rascunho de PREÇO desligado por padrão (dono, 10/10/2026: "tá gastando muito crédito,
+ * só fica lá os que os partners quote"). No modo enxuto o Harvey só lê o pedido (até 3
+ * fotos em baixa resolução) e descobre o tipo de serviço, para a quote nascer no OS e ir
+ * para os parceiros cotarem. Não monta preço nem o bloco "pronto para o cliente".
+ * HARVEY_QUOTE_DRAFT=1 volta ao rascunho completo.
+ */
+export const rascunhoDePrecoLigado = () => process.env.HARVEY_QUOTE_DRAFT?.trim() === "1";
+const MAX_IMAGENS_ENXUTO = 3;
 const MAX_BYTES_IMAGEM = 4 * 1024 * 1024;
 
 function baseUrl(): string {
@@ -232,9 +244,9 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
           : "No readable images attached."
       }`,
     },
-    ...ticket.imagens.map((img) => ({
+    ...(rascunhoDePrecoLigado() ? ticket.imagens : ticket.imagens.slice(-MAX_IMAGENS_ENXUTO)).map((img) => ({
       type: "image_url",
-      image_url: { url: img.dataUrl, detail: "high" },
+      image_url: { url: img.dataUrl, detail: rascunhoDePrecoLigado() ? "high" : "low" },
     })),
   ];
 
@@ -303,6 +315,20 @@ export function montarNotaInterna(
   resultado: ResultadoPriceCheck,
   quoteRef?: string | null,
 ): string {
+  if (!rascunhoDePrecoLigado()) {
+    // Modo enxuto: sem preço. O preço vem do lance do parceiro.
+    const l: string[] = [
+      "📨 QUOTE REQUEST logged (no AI price draft: the price comes from the partners' quotes)",
+      ...(quoteRef ? [`Quote ${quoteRef} created in the OS (Quotes).`] : []),
+      "",
+      `What I read: ${pedido.quoteRequest}`,
+    ];
+    if (pedido.missingInfo.length > 0) {
+      l.push("", "⚠️ Ask the customer (missing info):");
+      for (const m of pedido.missingInfo) l.push(`• ${m}`);
+    }
+    return l.join("\n");
+  }
   const linhas: string[] = [
     "🤖 AI QUOTE DRAFT — internal only (phase 1: review and send manually)",
     ...(quoteRef ? [`Quote ${quoteRef} created in the OS (Quotes → New).`] : []),
@@ -520,7 +546,9 @@ export async function garantirQuoteNoOs(
     return null;
   }
 
-  const total = resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
+  // Modo enxuto: a quote nasce sem valor; quem põe preço é o lance do parceiro.
+  const comPreco = rascunhoDePrecoLigado();
+  const total = comPreco && resultado.quote.total > 0 ? arredonda2(resultado.quote.total) : 0;
   /**
    * Quote que vai ser transmitida nasce em `bidding`, e não em `draft`.
    *
@@ -570,7 +598,7 @@ export async function garantirQuoteNoOs(
       catalog_service_id: catalogServiceId,
       status: transmite ? "bidding" : "draft",
       total_value: total,
-      cost: arredonda2(resultado.quote.materialsCost),
+      cost: comPreco ? arredonda2(resultado.quote.materialsCost) : 0,
       sell_price: total,
       margin_percent: 0,
       partner_cost: 0,
@@ -601,6 +629,41 @@ export async function garantirQuoteNoOs(
 }
 
 const arredonda2 = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * A tabela combinada com a conta (`account_service_prices`), para a quote B2B usar o
+ * preço da conta e não o pricebook genérico (Fase 2, dono 09/10/2026). Só entra na nota
+ * interna: quem manda o preço ao cliente continua sendo a equipe.
+ */
+async function precosCombinadosDaConta(accountId: string): Promise<string | null> {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("account_service_prices")
+    .select("use_standard, fixed_price, hourly_rate, preset_overrides, catalog_service_id, service:service_catalog(name, pricing_presets)")
+    .eq("account_id", accountId)
+    .is("deleted_at", null);
+  const linhas: string[] = [];
+  for (const r of (data ?? []) as Array<{
+    use_standard: boolean | null;
+    fixed_price: number | null;
+    hourly_rate: number | null;
+    preset_overrides: Record<string, { fixed_price?: number }> | null;
+    service: { name?: string; pricing_presets?: Array<{ id: string; label?: string }> } | { name?: string; pricing_presets?: Array<{ id: string; label?: string }> }[] | null;
+  }>) {
+    if (r.use_standard) continue;
+    const svc = Array.isArray(r.service) ? r.service[0] : r.service;
+    const faixas = Object.entries(r.preset_overrides ?? {})
+      .map(([id, o]) => {
+        const label = svc?.pricing_presets?.find((p) => p.id === id)?.label ?? id.slice(0, 6);
+        return typeof o.fixed_price === "number" ? `${label} £${o.fixed_price.toFixed(2)}` : null;
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+    linhas.push(`- ${svc?.name ?? "Service"}: ${faixas.length ? faixas.join(" · ") : r.fixed_price != null ? `£${Number(r.fixed_price).toFixed(2)}` : r.hourly_rate != null ? `£${Number(r.hourly_rate).toFixed(2)}/h` : "custom"}`);
+  }
+  if (!linhas.length) return null;
+  return ["── Agreed prices for this account (use these, not the generic pricebook) ──", ...linhas].join("\n");
+}
 
 export async function cotarTicket(ticketId: number, postar: boolean): Promise<ResultadoDoQuoter> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -673,8 +736,20 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
     return null;
   });
 
+  const tabelaDaConta = org.ok ? await precosCombinadosDaConta(org.id).catch(() => null) : null;
+  // Fase 3: sem conta e com cara de empresa, a equipe recebe o aviso e o link da tabela de parceiro.
+  const b2b = org.ok ? null : detectarB2B({ texto: `${ticket.subject}\n${ticket.thread}`, email: ticket.requesterEmail });
+  const avisoB2b = b2b?.potencial
+    ? [
+        `🏢 Looks like a business (${b2b.sinais.join(", ")}). Offer a partner account: partner price list ${linkDaTabelaB2B(null)}`,
+        "Collect company name, contact and role, work email, portfolio size and area, then create the account as Onboarding for approval.",
+      ].join("\n")
+    : null;
+  if (avisoB2b && postar && !ticket.tags.includes("b2b_potential")) await addTicketTags(ticketId, ["b2b_potential"]).catch(() => null);
   const nota = [
     montarNotaInterna(ticket, pedido, resultado, quoteRef),
+    ...(tabelaDaConta ? ["", "──────────", tabelaDaConta] : []),
+    ...(avisoB2b ? ["", "──────────", avisoB2b] : []),
     ...(convite ? ["", "──────────", convite.nota] : []),
     ...(aviso ? ["", "──────────", aviso] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
@@ -1042,6 +1117,22 @@ type ResultadoConfirmacao =
 
 const soLetras = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * Domínio que não identifica parceiro nenhum (22/09/2026).
+ *
+ * O nosso aparece em quase todo ticket (link do app.getfixfy.com, e-mail do
+ * hello@), então um parceiro cadastrado com e-mail @getfixfy.com casava com
+ * tudo: o "oktest" fechou 8 tickets desde 21/08, entre eles um "Job Request",
+ * dois "Checkatrade Express" e as reservas do site, e carimbou parceiro
+ * confirmado em job sem parceiro. E-mail gratuito tem o mesmo defeito: um
+ * parceiro @outlook.com casaria com qualquer ticket que cite "outlook".
+ */
+const DOMINIOS_QUE_NAO_IDENTIFICAM = new Set([
+  "getfixfy", "fixfy", "wearemaster", "zendesk",
+  "gmail", "googlemail", "outlook", "hotmail", "icloud", "yahoo", "live", "msn",
+  "btinternet", "aol", "protonmail", "proton", "me", "mac", "sky", "virginmedia", "talktalk",
+]);
+
 async function acharParceiroNoTexto(
   texto: string,
 ): Promise<{ id: string; nome: string } | null> {
@@ -1056,7 +1147,9 @@ async function acharParceiroNoTexto(
     // "landlordcertification", que é como a empresa assina no e-mail.
     const dominio = soLetras((p.email ?? "").split("@")[1]?.split(".")[0] ?? "");
     if (nome.length >= 6 && alvo.includes(nome)) return { id: p.id, nome: p.company_name };
-    if (dominio.length >= 6 && alvo.includes(dominio)) return { id: p.id, nome: p.company_name };
+    if (dominio.length >= 6 && !DOMINIOS_QUE_NAO_IDENTIFICAM.has(dominio) && alvo.includes(dominio)) {
+      return { id: p.id, nome: p.company_name };
+    }
   }
   return null;
 }
@@ -1112,8 +1205,16 @@ export async function confirmarBookingDeParceiro(
   const tRes = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers });
   if (!tRes.ok) return { status: "nao_e_parceiro" };
   const { ticket } = (await tRes.json()) as {
-    ticket: { subject: string; description?: string; html_description?: string };
+    ticket: { subject: string; description?: string; html_description?: string; tags?: string[] };
   };
+  // Ticket que o próprio OS abriu (job do site, do RPA, da API) é do job, não
+  // e-mail de parceiro: a primeira mensagem é a nossa nota com o link do OS.
+  if ((ticket.tags ?? []).includes("os-created")) return { status: "nao_e_parceiro" };
+  // Confirmação de parceiro diz que confirmou, no assunto ("your booking with
+  // Landlord Certification is confirmed"). Sem isso, qualquer ticket que citasse
+  // um parceiro fechava: 6 "Gentle Reminder – Payment Due" (cobrança!), uma
+  // self-bill, um "Job Request" de cliente e "TICKET 21/09 Monday" (22/09/2026).
+  if (!/\bconfirm/i.test(ticket.subject ?? "")) return { status: "nao_e_parceiro" };
   const texto = `${ticket.subject ?? ""} ${ticket.description ?? ""}`;
 
   const parceiro = await acharParceiroNoTexto(texto);

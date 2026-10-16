@@ -19,10 +19,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
+import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
+import { assinarFotos, urlsDeFoto } from "@/lib/stefane/run-external-report";
+import { baixarFotosDoJob } from "@/lib/emails/fotos-anexadas";
+import { avisarNoTicketDoJob } from "@/lib/um-ticket/aviso-do-job";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
   getZendeskTicketId,
   getTicketRequester,
+  ticketDoWhatsApp,
   setTicketRequester,
   isZendeskConfigured,
   updateTicket as zdUpdateTicket,
@@ -212,7 +217,11 @@ export async function dispatchJobCreatedZendesk(args: {
   // has a real customer) and file it under the account's Zendesk organization.
   // Mirrors the quote send-pdf flow.
   const TEAM_REQUESTER = "team@getfixfy.com";
-  if (clientEmail.includes("@") && clientEmail.toLowerCase() !== TEAM_REQUESTER) {
+  // Job pago na conversa do Harvey usa o ticket do WhatsApp: lá o solicitante já
+  // é o cliente e comentário público sai no WhatsApp dele. A confirmação vira
+  // nota interna (dono, 07/10/2026) e o solicitante não muda.
+  const viaWhatsApp = await ticketDoWhatsApp(ticketId);
+  if (!viaWhatsApp && clientEmail.includes("@") && clientEmail.toLowerCase() !== TEAM_REQUESTER) {
     try {
       const cur = await getTicketRequester(ticketId);
       if (cur.ok && cur.requesterEmail === TEAM_REQUESTER) {
@@ -268,7 +277,7 @@ export async function dispatchJobCreatedZendesk(args: {
 
   let mainPosted = false;
   try {
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: true });
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !viaWhatsApp });
     mainPosted = true;
   } catch (err) {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
@@ -333,6 +342,8 @@ async function dispatchJobTerminalNotice(args: {
       id, reference, title, status,
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
+      client_id, client_name, final_report, partner_timer_ended_at, completed_date,
+      scheduled_date, scheduled_start_at,
       clients ( full_name, source_account_id )
     `)
     .eq("id", args.jobId)
@@ -347,26 +358,9 @@ async function dispatchJobTerminalNotice(args: {
   if (job.status !== args.status) return { ok: true }; // status drifted — skip
   if ((job as Record<string, unknown>)[sentColumn]) return { ok: true };
 
-  /**
-   * O aviso de CONCLUSÃO à conta está desligado (dono, 14/09/2026).
-   *
-   * Ele é comentário público no ticket, então quem recebe é o requester, que
-   * num job de conta é a própria plataforma. Fica atrás de uma chave em vez de
-   * sair do código porque a decisão é "por enquanto": religar é definir
-   * `JOB_COMPLETION_NOTICE_ENABLED=1`, e nada mais.
-   *
-   * A carimbagem do `completion_notice_sent_at` fica de fora de propósito. Se
-   * marcássemos como enviado, o dia em que a chave voltar não existiria mais
-   * nada para mandar, e o silêncio de agora viraria silêncio permanente.
-   *
-   * O aviso de CANCELAMENTO não é afetado: aquele o cliente precisa receber.
-   *
-   * O status aqui é `awaiting_payment`, e não `completed`: desde o #637 o aviso
-   * sai no fim do final check, porque neste sistema `completed` quer dizer
-   * pagamento lançado, não trabalho entregue.
-   */
-  if (args.status === "awaiting_payment" && process.env.JOB_COMPLETION_NOTICE_ENABLED?.trim() !== "1") {
-    return { ok: true };
+  // Job concluído: e-mail no ticket do job, com as fotos do relatório (dono, 14/10/2026).
+  if (args.status === "awaiting_payment") {
+    return enviarAvisoDeConclusao(supabase, job as unknown as JobDaConclusao, Number(ticketId));
   }
 
   /**
@@ -382,21 +376,15 @@ async function dispatchJobTerminalNotice(args: {
   const orgName = await loadAccountOrganizationName(supabase, clientRow?.source_account_id);
   const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
 
-  const html =
-    args.status === "awaiting_payment"
-      ? buildJobCompletedHtml({
-          customerName: clientName,
-          reference: String(job.reference ?? ""),
-          title: String(job.title ?? ""),
-        })
-      : buildJobCancelledHtml({
-          customerName: clientName,
-          reference: String(job.reference ?? ""),
-          title: String(job.title ?? ""),
-        });
+  const html = buildJobCancelledHtml({
+    customerName: clientName,
+    reference: String(job.reference ?? ""),
+    title: String(job.title ?? ""),
+  });
 
   try {
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: true });
+    // Ticket do WhatsApp (job pago na conversa do Harvey): nota interna, como a confirmação.
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !(await ticketDoWhatsApp(ticketId)) });
   } catch (err) {
     return {
       ok: false,
@@ -409,6 +397,100 @@ async function dispatchJobTerminalNotice(args: {
 
   await supabase.from("jobs").update({ [sentColumn]: new Date().toISOString() }).eq("id", args.jobId);
   return { ok: true, posted: true };
+}
+
+/** Passou disso desde o fim do trabalho, o aviso não sai: é job antigo, não notícia. */
+const CONCLUSAO_JANELA_DIAS = 7;
+
+type JobDaConclusao = {
+  id: string;
+  reference: string | null;
+  title: string | null;
+  client_id: string | null;
+  client_name: string | null;
+  final_report: unknown;
+  partner_timer_ended_at: string | null;
+  completed_date: string | null;
+  scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  clients?: { full_name?: string | null; source_account_id?: string | null } | { full_name?: string | null; source_account_id?: string | null }[] | null;
+};
+
+/**
+ * "Job concluído" ao cliente (dono, 14/10/2026: "envia email mesmo ticket pra
+ * todos com job concluido e fotos de report"). Liga sozinho; desliga com
+ * `JOB_COMPLETION_NOTICE_ENABLED=0`.
+ *
+ * Era um comentário público sem fotos, desligado desde 14/09 porque no job de
+ * conta o requester é a plataforma. Agora o destinatário sai do mesmo
+ * resolvedor da fatura (conta no B2B, cliente no B2C) e a entrega é a do
+ * `avisarNoTicketDoJob`: comentário público se ele é o requester, senão
+ * conversa lateral no mesmo ticket.
+ *
+ * Os jobs que já estavam em Awaiting Payment não recebem nada de surpresa:
+ * passou de 7 dias desde o fim do trabalho, não sai.
+ */
+async function enviarAvisoDeConclusao(
+  supabase: SupabaseClient,
+  job: JobDaConclusao,
+  ticketId: number,
+): Promise<{ ok: boolean; posted?: boolean; skipped?: string; error?: string }> {
+  if (process.env.JOB_COMPLETION_NOTICE_ENABLED?.trim() === "0") return { ok: true, skipped: "off" };
+  if (!Number.isFinite(ticketId) || ticketId <= 0) return { ok: true, skipped: "no_ticket" };
+
+  const fim = resolveJobCompletionInstant(job as never);
+  if (fim && Date.now() - fim.getTime() > CONCLUSAO_JANELA_DIAS * 86_400_000) {
+    return { ok: true, skipped: "finished_more_than_7_days_ago" };
+  }
+
+  // Trava antes de mandar: o sync-status pode chegar duas vezes no mesmo minuto.
+  const { data: claimed } = await supabase
+    .from("jobs")
+    .update({ completion_notice_sent_at: new Date().toISOString() })
+    .eq("id", job.id)
+    .is("completion_notice_sent_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) return { ok: true, skipped: "already_sent" };
+
+  try {
+    const relRaw = job.clients;
+    const rel = Array.isArray(relRaw) ? (relRaw[0] ?? null) : (relRaw ?? null);
+    const billing = await resolveNominalBillingParty(supabase, {
+      clientId: job.client_id ?? "",
+      fallbackName: rel?.full_name ?? job.client_name ?? "",
+    });
+    const orgName = await loadAccountOrganizationName(supabase, rel?.source_account_id);
+    const nome = resolveCustomerGreetingName(orgName, billing.displayName || rel?.full_name || "");
+
+    // Fotos do "depois", assinadas (o bucket é privado) e anexadas: até 6.
+    const assinadas = await assinarFotos(supabase, urlsDeFoto(job.final_report)).catch(() => [] as string[]);
+    const fotos = await baixarFotosDoJob(assinadas);
+    const anexos = fotos.map((f, i) => ({
+      filename: `${job.reference ?? "job"}-after-${i + 1}.${f.filename.split(".").pop() ?? "jpg"}`,
+      content: f.bytes,
+      contentType: f.contentType,
+    }));
+
+    const html = buildJobCompletedHtml({
+      customerName: nome,
+      reference: String(job.reference ?? ""),
+      title: String(job.title ?? ""),
+      photoCount: anexos.length,
+    });
+    await avisarNoTicketDoJob({
+      ticketId,
+      para: { email: billing.documentEmail ?? null, nome: billing.displayName || null },
+      assunto: `Job completed · ${job.reference ?? ""}`,
+      html,
+      anexos,
+    });
+    return { ok: true, posted: true };
+  } catch (err) {
+    // Devolve a trava: a próxima sincronização tenta de novo.
+    await supabase.from("jobs").update({ completion_notice_sent_at: null }).eq("id", job.id);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export function dispatchJobCompletedZendesk(jobId: string, client?: SupabaseClient) {

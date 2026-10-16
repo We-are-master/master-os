@@ -119,7 +119,7 @@ export function NotificationsMenu() {
         type="button"
         onClick={togglePanel}
         className={cn(
-          "relative h-9 w-9 rounded-lg flex items-center justify-center transition-colors",
+          "relative h-[27px] w-[27px] rounded-lg flex items-center justify-center transition-colors",
           open
             ? "bg-surface-tertiary text-text-primary ring-1 ring-primary/40"
             : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
@@ -128,7 +128,7 @@ export function NotificationsMenu() {
         aria-haspopup="dialog"
         title="Notifications"
       >
-        <Bell className="h-[18px] w-[18px]" />
+        <Bell className="h-[15px] w-[15px]" />
         {unread > 0 && (
           <span
             className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-surface"

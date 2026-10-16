@@ -119,8 +119,8 @@ export default function PpmPage() {
     <PageTransition>
       <div className="space-y-6">
         <PageHeader
-          title="PPM Plans"
-          subtitle="Planned preventive maintenance schedules per account/property. Drives the portal's Live View calendar and the PPM tab in PropertyDrawer."
+          title="Maintenance plans"
+          subtitle="Manage planned maintenance schedules for accounts and properties."
         >
           <Button
             onClick={() => setDrawerOpen(true)}

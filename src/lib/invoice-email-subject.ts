@@ -10,12 +10,18 @@ export function resolveInvoiceCcEmail(companyEmail?: string | null): string {
   );
 }
 
+/** "Your invoice INV-2026-904 is ready": o mesmo título no assunto do e-mail e no topo do PDF. */
+export function invoiceReadyTitle(reference: string): string {
+  return `Your invoice ${displayBillingReference(reference)} is ready`;
+}
+
 export function buildInvoiceEmailSubject(
   invoice: Pick<Invoice, "reference" | "status" | "amount" | "amount_paid" | "stripe_payment_status" | "stripe_paid_at">,
-  jobReference: string,
+  _jobReference?: string,
 ): string {
   if (isInvoicePaymentVerified(invoice)) {
-    return `Payment receipt — ${displayBillingReference(invoice.reference)}`;
+    return `Payment receipt · ${displayBillingReference(invoice.reference)}`;
   }
-  return `${jobReference} Your billing is ready`;
+  // Um título só para toda fatura, igual ao do PDF (dono, 13/10/2026).
+  return invoiceReadyTitle(invoice.reference);
 }

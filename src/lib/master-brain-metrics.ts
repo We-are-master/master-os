@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeBiddingSlaRollup, formatMinutesAsAge, type BiddingSlaAnchorQuote } from "@/lib/quote-bidding-sla";
 import { biddingSlaMsFromHours, resolveBiddingSlaHoursFromCompanyRow } from "@/lib/frontend-setup";
+import { STATUS_ABERTO, ymdDeLondres } from "@/lib/placar-diario";
 
 export type OpsSnapshot = {
   generatedAt: string;
@@ -14,15 +15,12 @@ export type OpsSnapshot = {
   recentLines: string[];
 };
 
-function ymdUtc(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 /**
  * Aggregate operational metrics for daily brief / Fixfy Brain context (service role client).
  */
 export async function fetchOpsSnapshot(admin: SupabaseClient): Promise<OpsSnapshot> {
-  const todayUtc = ymdUtc(new Date());
+  // "Hoje" é o dia de Londres, não o UTC.
+  const todayUtc = ymdDeLondres(new Date());
 
   const [
     jobsTotal,
@@ -38,7 +36,9 @@ export async function fetchOpsSnapshot(admin: SupabaseClient): Promise<OpsSnapsh
       .from("jobs")
       .select("id", { count: "exact", head: true })
       .is("deleted_at", null)
-      .neq("status", "completed"),
+      // "Aberto" é o que ainda pede trabalho. Antes era `neq completed`, que contava
+      // cancelado e job já aprovado esperando pagamento (brief desligado em 05/10/2026).
+      .in("status", [...STATUS_ABERTO]),
     admin
       .from("jobs")
       .select("id", { count: "exact", head: true })
@@ -46,12 +46,12 @@ export async function fetchOpsSnapshot(admin: SupabaseClient): Promise<OpsSnapsh
       .eq("scheduled_date", todayUtc),
     admin.from("quotes").select("id", { count: "exact", head: true }).eq("status", "awaiting_customer"),
     admin.from("service_requests").select("id", { count: "exact", head: true }).eq("status", "new"),
-    admin.from("invoices").select("amount").eq("status", "pending").is("deleted_at", null).limit(2000),
+    admin.from("invoices").select("amount, amount_paid").in("status", ["pending", "overdue", "partially_paid"]).is("deleted_at", null).limit(2000),
     admin.from("audit_logs").select("entity_type, action, entity_ref, new_value, created_at").order("created_at", { ascending: false }).limit(6),
   ]);
 
-  const invRows = (invPendingRows.data ?? []) as { amount?: number }[];
-  const pendingAmount = invRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const invRows = ((invPendingRows.data ?? []) as { amount?: number; amount_paid?: number }[]).filter((r) => Number(r.amount ?? 0) - Number(r.amount_paid ?? 0) > 0.02);
+  const pendingAmount = invRows.reduce((s, r) => s + (Number(r.amount) || 0) - (Number(r.amount_paid) || 0), 0);
 
   const recent = (audits.data ?? []) as {
     entity_type: string;
@@ -82,10 +82,10 @@ export async function fetchOpsSnapshot(admin: SupabaseClient): Promise<OpsSnapsh
 export function snapshotToPromptBlock(s: OpsSnapshot): string {
   return [
     `Snapshot generated at (UTC): ${s.generatedAt}`,
-    `Jobs (non-deleted): ${s.jobsTotal} total, ${s.jobsNotCompleted} not completed, ${s.jobsScheduledToday} linked to today (date/start).`,
+    `Jobs (non-deleted): ${s.jobsTotal} total, ${s.jobsNotCompleted} open (unassigned, scheduled, in progress, on hold or in final check), ${s.jobsScheduledToday} scheduled today (London).`,
     `Quotes awaiting customer: ${s.quotesAwaitingCustomer}.`,
     `New service requests: ${s.requestsNew}.`,
-    `Pending invoices: ${s.invoicesPending} (≈ £${s.invoicesPendingAmount.toFixed(2)} outstanding).`,
+    `Unpaid invoices: ${s.invoicesPending} (≈ £${s.invoicesPendingAmount.toFixed(2)} outstanding, pending and overdue).`,
     s.recentLines.length ? `Recent audit highlights:\n- ${s.recentLines.join("\n- ")}` : "No recent audit lines.",
   ].join("\n");
 }

@@ -174,15 +174,20 @@ export function buildServicePricingView(service: CatalogService): ServicePricing
         ? { pay: base[0].pay, charge: base[0].charge, unit: base[0].unit }
         : null;
 
+  // With several base options, the count leads: "Base price · 1 add-on" read as
+  // if the Painter had no options at all, while it had three.
+  const addonCount = `${addonRows.length} add-on${addonRows.length === 1 ? "" : "s"}`;
   const subline = missing
     ? "no price set"
     : single
       ? single.sub
-      : stackable && addonRows.length > 0
-        ? `Base price · ${addonRows.length} add-on${addonRows.length === 1 ? "" : "s"}`
-        : variable
-          ? `Pricing bands (${base.length})`
-          : "Base price";
+      : stackable && base.length > 1
+        ? `${base.length} options · ${addonCount}`
+        : stackable && addonRows.length > 0
+          ? `Base price · ${addonCount}`
+          : variable
+            ? `Pricing bands (${base.length})`
+            : "Base price";
 
   const allLines = [
     ...(single ? [single] : base),

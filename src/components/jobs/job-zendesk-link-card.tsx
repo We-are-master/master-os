@@ -203,7 +203,7 @@ export function JobZendeskLinkCard({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="e.g. 12345"
-            className="w-full rounded-md border border-[#D8D8DD] px-3 py-2 text-[14px]"
+            className="w-full rounded-md border border-[var(--line-2)] px-3 py-2 text-[14px]"
             autoFocus
           />
           <p className="text-[11px]" style={{ color: "#6B6B70" }}>

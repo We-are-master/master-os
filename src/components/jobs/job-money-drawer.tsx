@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogAddonChargeOption } from "@/lib/catalog-line-pricing";
-import { Drawer } from "@/components/ui/drawer";
+import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, type SelectOptionGroup } from "@/components/ui/select";
@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { PARTNER_PAY_LEDGER_LABEL_OPTIONS } from "@/lib/partner-pay-record";
 import { isJobExtraDiscountExtraType } from "@/lib/job-extra-discount";
 import { parseMoneyInput } from "@/lib/parse-money-input";
+import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 import {
   isPartnerCancellationFeeExtraType,
   partnerAddOnlySelectOptions,
@@ -791,12 +792,11 @@ export function JobMoneyDrawer({
   ];
 
   return (
-    <Drawer
+    <Modal
       open={open && !!flow}
       onClose={onClose}
       title={flowTitle(flow, isPartnerExtraFlow ? undefined : extraType)}
-      width="w-[min(100vw,400px)]"
-      className="bg-surface"
+      size="md"
       footer={
         isClientStripe ? (
           <div className="px-5 py-4">
@@ -906,7 +906,7 @@ export function JobMoneyDrawer({
                         variant="outline"
                         icon={<Copy className="h-3 w-3" />}
                         onClick={() => {
-                          void navigator.clipboard.writeText(inv.stripe_payment_link_url!);
+                          void navigator.clipboard.writeText(invoicePayLinkForClient(inv.reference, inv.stripe_payment_link_url));
                           toast.success("Copied");
                         }}
                       />
@@ -915,7 +915,7 @@ export function JobMoneyDrawer({
                         size="sm"
                         variant="primary"
                         icon={<ExternalLink className="h-3 w-3" />}
-                        onClick={() => window.open(inv.stripe_payment_link_url!, "_blank", "noopener,noreferrer")}
+                        onClick={() => window.open(invoicePayLinkForClient(inv.reference, inv.stripe_payment_link_url), "_blank", "noopener,noreferrer")}
                       />
                     </div>
                   </li>
@@ -1247,6 +1247,6 @@ export function JobMoneyDrawer({
           </>
         )}
       </form>
-    </Drawer>
+    </Modal>
   );
 }

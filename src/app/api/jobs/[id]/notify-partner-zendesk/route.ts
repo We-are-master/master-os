@@ -8,6 +8,7 @@ import {
 } from "@/lib/notify-partner-job-zendesk-server";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
+import { depoisDaResposta } from "@/lib/depois-da-resposta";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -114,11 +115,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
    * precisa saber que alguém vai bater na porta dele.
    */
   if ((body.kind ?? "assigned") === "assigned" && status < 400) {
-    void dispatchJobCreatedZendesk({ jobId, client: supabase }).catch((e) =>
-      console.error("[notify-partner-zendesk] confirmação da conta falhou:", e),
+    // Depois da resposta, e não com `void`: `void` morre na Vercel quando a
+    // resposta sai, e era por isso que a atribuição direta nunca confirmava
+    // nada ao cliente (0 de 47 jobs, 14/10/2026).
+    await depoisDaResposta("notify-partner-zendesk: confirmação da conta", () =>
+      dispatchJobCreatedZendesk({ jobId, client: supabase }),
     );
-    void enviarConfirmacaoDoCliente(supabase, jobId).catch((e) =>
-      console.error("[notify-partner-zendesk] confirmação do cliente falhou:", e),
+    await depoisDaResposta("notify-partner-zendesk: confirmação do cliente", () =>
+      enviarConfirmacaoDoCliente(supabase, jobId),
     );
   }
 

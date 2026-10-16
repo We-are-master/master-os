@@ -49,6 +49,15 @@ export function jobPartnerShortLinkEntityRef(
  * is updated (target_path refreshed) and returned — so callers can rely on
  * one stable short URL per logical entity.
  */
+/**
+ * Link do report POR JOB (dono, 15/10/2026): não carrega parceiro. O /r/ assina no clique
+ * para o parceiro que estiver no job naquele momento, então trocar de parceiro não quebra
+ * o link e o mesmo link serve no e-mail, no WhatsApp e no portal.
+ */
+export function jobReportShortLinkEntityRef(jobId: string): string {
+  return `job:${jobId}:report`;
+}
+
 export async function upsertShortLink(input: UpsertShortLinkInput): Promise<{ slug: string; shortPath: string }> {
   const admin = createServiceClient();
 

@@ -12,6 +12,9 @@ import type { Job } from "@/types/database";
 import { createServiceClient } from "@/lib/supabase/service";
 import { putJobOnHoldFromZendesk } from "@/lib/job-on-hold-from-zendesk";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
+import { criarJobDeRetrabalho } from "@/lib/retrabalho";
+
+const supabaseDoServico = () => createServiceClient();
 
 function baseUrl(): string {
   return `https://${process.env.ZENDESK_SUBDOMAIN}.zendesk.com/api/v2`;
@@ -147,13 +150,21 @@ export async function tratarReclamacao(
     });
     if (hold.ok && (hold.action === "put_on_hold" || hold.action === "already_on_hold")) {
       const oQueFez = hold.action === "put_on_hold" ? "put ON HOLD" : "was already on hold";
+      // Fase 4: o parceiro que executou volta para consertar, a £0 (atrás de HARVEY_REMEDIAL_JOBS=1).
+      let retrabalho = "";
+      if (process.env.HARVEY_REMEDIAL_JOBS?.trim() === "1") {
+        const r = await criarJobDeRetrabalho(supabaseDoServico(), job, resumo, ticket.id).catch((e) => ({ ok: false as const, erro: String(e) }));
+        retrabalho = r.ok
+          ? ` Remedial job ${r.reference} ${r.jaExistia ? "already exists" : `created at £0${r.oferecidoA ? ` and offered to ${r.oferecidoA} for 24h (then back to the team)` : ", unassigned"}`}.`
+          : ` Could not create the remedial job (${r.erro}).`;
+      }
       return {
         acao: "hold",
         reference: job.reference,
         como,
         nota:
           `⚠️ HARVEY — complaint matched ${job.reference} via ${como}. Job ${oQueFez} ` +
-          `(reason: complaint) and the partner was notified. Review and reply to the customer.`,
+          `(reason: complaint) and the partner was notified.${retrabalho} Review and reply to the customer.`,
       };
     }
     return {

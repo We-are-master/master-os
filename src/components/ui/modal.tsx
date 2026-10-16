@@ -4,10 +4,13 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
 import { X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { FixfyModalTopSteps, type FixfyModalStep } from "@/components/ui/fixfy-modal";
 
 interface ModalProps {
+  /** Opt-in focus containment for contextual help dialogs. */
+  manageFocus?: boolean;
   open: boolean;
   onClose: () => void;
   title: string;
@@ -31,13 +34,15 @@ interface ModalProps {
 }
 
 const sizeStyles = {
-  sm: "max-w-md",
-  md: "max-w-lg",
-  lg: "max-w-2xl",
+  // VOS UNO dialog widths: sm 440 · md 560 · ml 600 · lg 760.
+  sm: "max-w-[440px]",
+  md: "max-w-[560px]",
+  lg: "max-w-[760px]",
   compact: "max-w-[600px]",
 };
 
 export function Modal({
+  manageFocus = false,
   open,
   onClose,
   title,
@@ -54,6 +59,39 @@ export function Modal({
   onStepClick,
   layout = "default",
 }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!open || !manageFocus) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') ?? []);
+    (focusable()[0] ?? dialog)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      } else if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) { event.preventDefault(); dialog?.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+          event.preventDefault(); first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      previous?.focus();
+    };
+  }, [open, manageFocus, onClose]);
+
   const isWizard = layout === "wizard";
   const effectiveScrollBody = isWizard ? false : scrollBody;
 
@@ -92,50 +130,42 @@ export function Modal({
             animate="visible"
             exit="exit"
             onClick={handleOverlayClose}
-            className="absolute inset-0 bg-black/30 dark:bg-black/65 glass"
+            className="absolute inset-0 bg-[rgba(10,10,31,0.36)] dark:bg-black/55"
           />
           <motion.div
+            ref={dialogRef}
+            role={manageFocus ? "dialog" : undefined}
+            aria-modal={manageFocus ? true : undefined}
+            aria-labelledby={manageFocus ? titleId : undefined}
+            tabIndex={manageFocus ? -1 : undefined}
             variants={modalTransition}
             initial="hidden"
             animate="visible"
             exit="exit"
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              "relative w-full min-h-0 flex flex-col max-h-[min(90dvh,100dvh-2rem)] bg-card rounded-xl shadow-modal border border-fx-line overflow-hidden my-auto",
+              "relative w-full min-h-0 flex flex-col max-h-[min(88dvh,100dvh-2rem)] bg-card rounded-2xl shadow-modal border border-[var(--line-soft)] overflow-hidden my-auto",
               effectiveScrollBody ? "h-fit" : "h-[min(90dvh,100dvh-2rem)] min-h-0",
               sizeStyles[size],
               className,
             )}
           >
-            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-fx-line px-[22px] py-4 sm:pl-[26px] sm:pr-[22px]">
-              <span className="absolute left-0 top-0 bottom-0 w-[4px] bg-fx-coral" aria-hidden />
-              <div className="flex min-w-0 flex-1 items-start gap-2.5 pl-0.5 pr-1">
-                {headerLeading ? (
-                  <span className="mt-0.5 shrink-0 text-fx-navy dark:text-primary" aria-hidden>
-                    {headerLeading}
-                  </span>
-                ) : null}
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-extrabold text-text-primary leading-tight tracking-[-0.02em]">
-                    {title}
-                  </h2>
-                  {subtitle ? (
-                    <p
-                      className="mt-0.5 text-[13px] leading-snug text-text-secondary break-words line-clamp-3"
-                      title={subtitle}
-                    >
-                      {subtitle}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
+            {/* VOS UNO title bar: 36px, 4% ink wash, hairline, 13/600 title, 24px close. No accent line, no eyebrow. */}
+            <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--line-soft)] bg-[color-mix(in_srgb,var(--text-primary)_4%,var(--card-bg))] pl-4 pr-2">
+              {headerLeading ? (
+                <span className="flex shrink-0 text-text-secondary [&_svg]:h-4 [&_svg]:w-4" aria-hidden>
+                  {headerLeading}
+                </span>
+              ) : null}
+              <h2 id={titleId} className="m-0 min-w-0 truncate text-[13px] font-semibold text-text-primary">{title}</h2>
+              {subtitle ? <FixfyHintIcon text={subtitle} /> : null}
               <button
                 type="button"
                 onClick={onClose}
-                className="ml-auto flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] border-none bg-surface-hover text-text-secondary transition-colors hover:bg-border hover:text-text-primary"
+                className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-text-tertiary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
                 aria-label="Close"
               >
-                <X className="h-[18px] w-[18px]" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
@@ -149,6 +179,7 @@ export function Modal({
 
             <div
               className={cn(
+                "uno-modal-body",
                 isWizard
                   ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                   : effectiveScrollBody

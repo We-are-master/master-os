@@ -7,7 +7,8 @@ import {
   maybeCompleteAwaitingPaymentJob,
 } from "@/lib/sync-job-after-invoice-paid";
 import { syncInvoiceCollectionStagesForJob } from "@/lib/invoice-collection";
-import { isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
+import { isJobPaymentsDeletedAtMissing, isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
+import { jobPagoSemAcao } from "@/lib/fila-de-acao";
 
 const EPS = 0.02;
 
@@ -90,6 +91,8 @@ export async function applyOsPayLinkPayment(
     }
     await maybeCompleteAwaitingPaymentJob(admin, job.id);
     await syncInvoiceCollectionStagesForJob(admin, job.id);
+    // Job fechado: tira o Action Required do ticket (nada mais a cobrar).
+    await jobPagoSemAcao(admin, { jobId: job.id });
   }
 
   return fullyPaid;
@@ -135,7 +138,18 @@ async function applyToJobLedger(
     linked_invoice_id: inv.id,
   }));
 
-  const { error } = await admin.from("job_payments").insert(rows);
+  let { error } = await admin.from("job_payments").insert(rows);
+  /**
+   * Banco sem `job_payments.linked_invoice_id` (a migration 080 nunca foi aplicada
+   * em produção, medido em 13/10/2026): o insert falhava, o erro só ia para o log e
+   * NENHUM pagamento por cartão feito pelo link do OS era creditado. Sem a coluna, o
+   * pagamento entra sem o vínculo (igual a `createJobPayment` em services/job-payments)
+   * e o sync fecha a fatura pelo razão do job. A referência da fatura continua na nota.
+   */
+  if (error && isSupabaseMissingColumnError(error, "linked_invoice_id")) {
+    const semVinculo = rows.map(({ linked_invoice_id: _fora, ...resto }) => resto);
+    ({ error } = await admin.from("job_payments").insert(semVinculo));
+  }
   if (error) {
     console.error("applyOsPayLinkPayment: job_payments insert failed", inv.id, error);
     return false;

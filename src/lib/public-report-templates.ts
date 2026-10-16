@@ -14,7 +14,6 @@ import { isCertificateTypeOfWork } from "@/lib/type-of-work";
 
 export type ReportTemplate = "general" | "gardener" | "cleaner" | "certificate";
 
-const GARDENER_KEYWORDS = ["garden", "lawn", "hedge", "landscap"];
 /**
  * `tenancy` e `domestic` entraram em 14/08/2026 e não são detalhe.
  *
@@ -29,10 +28,27 @@ const GARDENER_KEYWORDS = ["garden", "lawn", "hedge", "landscap"];
  */
 const CLEANER_KEYWORDS  = ["clean", "housekeep", "sanitiz", "sanitis", "tenancy", "domestic"];
 
+/**
+ * Formulário pela CATEGORIA do serviço (dono, 15/10/2026): Cleaning → limpeza,
+ * Certificates → certificado, General Maintenance → trades. Jardinagem saiu: a
+ * Fixfy não faz esse job. Sem categoria (job sem serviço ligado) vale a palavra.
+ */
+export function templateFromCategorySlug(slug: string | null | undefined): ReportTemplate | null {
+  const s = (slug ?? "").trim().toLowerCase();
+  if (s === "cleaning") return "cleaner";
+  if (s === "certificates") return "certificate";
+  if (s === "general-maintenance") return "general";
+  return null;
+}
+
 export function pickReportTemplate(input: {
   serviceType?: string | null;
   title?:       string | null;
+  /** `service_categories.slug` do serviço do job (jobs.catalog_service_id → service_catalog.category_id). */
+  categorySlug?: string | null;
 }): ReportTemplate {
+  const daCategoria = templateFromCategorySlug(input.categorySlug);
+  if (daCategoria) return daCategoria;
   const haystack = `${input.serviceType ?? ""} ${input.title ?? ""}`.toLowerCase();
   /**
    * CERTIFICADO PRIMEIRO — aprendido no JOB-9406 (17/08/2026): "2 Bed
@@ -44,7 +60,6 @@ export function pickReportTemplate(input: {
   if (isCertificateTypeOfWork(input.serviceType) || isCertificateTypeOfWork(input.title)) {
     return "certificate";
   }
-  if (GARDENER_KEYWORDS.some((k) => haystack.includes(k))) return "gardener";
   if (CLEANER_KEYWORDS.some((k) => haystack.includes(k))) return "cleaner";
   return "general";
 }

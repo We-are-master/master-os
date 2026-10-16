@@ -2,13 +2,17 @@
  * Ingestão de contatos: find-or-create em `clients`.
  *
  *   POST /api/contacts/ingest
- *   X-API-Key: MASTER_OS_LEAD_WEBHOOK_API_KEY
- *   { account_id, contacts: [{ name, email, phone, postcode, address, notes }] }
+ *   X-API-Key: MASTER_OS_LEAD_WEBHOOK_API_KEY (ou MASTER_OS_JOB_WEBHOOK_API_KEY)
+ *   { account_id, contacts: [{ name, email, phone, postcode, address, notes, marketing_opt_out }] }
  *   → { created, updated, skipped, results: [{ id, action }] }
  *
  * Quem chama é o RPA do Checkatrade, por dois caminhos: o lead (uma pessoa que
  * perguntou, não um job) e o Express job aceito, que enriquece a linha do
  * cliente com o postcode que `POST /api/jobs` não guarda.
+ *
+ * Desde 23/09/2026 também o site B2C: nome e e-mail de quem começou a reservar,
+ * na conta Fixfy, com a chave de job que ele já usa. `marketing_opt_out` ("Don't
+ * email me offers") vira a etiqueta `no-marketing`, que o pós-venda respeita.
  *
  * Reconstruída em 2026-08-11. A rota não estava no repositório, e nada no git
  * mostra que já esteve: era arquivo não rastreado e sumiu. O efeito passou
@@ -24,15 +28,13 @@
  * cada campo só é preenchido quando está vazio no banco.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
-import { decideDispatch } from "@/lib/agent/sales/dispatch-gate";
-import { firstName } from "@/lib/agent/sales/lead-brief";
-import { despacharUm, dentroDaJanela, ContaBloqueada } from "@/lib/agent/sales/dispatch-one";
+import { apiKeyAllowed, tagsAfterOptOut } from "@/lib/contacts-ingest";
+import { ajustesDoHarvey, janelaAberta } from "@/lib/harvey-wa/ajustes";
 import type { CatalogService } from "@/types/database";
+import { decidirLead, mandarPrimeiroContato, mandarPrimeiroContatoPorEmail, registrarLeadNoOs, templateDoLeadConfigurado, type LinhaDeCliente } from "@/lib/harvey-wa/primeiro-contato";
 
 type ContactPayload = {
   name?: string | null;
@@ -41,15 +43,9 @@ type ContactPayload = {
   postcode?: string | null;
   address?: string | null;
   notes?: string | null;
+  /** Site B2C: "Don't email me offers" marcado. Vira a etiqueta `no-marketing`. */
+  marketing_opt_out?: boolean | null;
 };
-
-function secretsMatch(provided: string | null, expected: string): boolean {
-  if (!provided) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
 
 /** "+44 7712 345678" e "07712345678" são a mesma pessoa. Compara só os dígitos. */
 function phoneKey(raw: string | null | undefined): string | null {
@@ -66,11 +62,12 @@ function leadMarker(notes: string | null | undefined): string | null {
 }
 
 export async function POST(req: NextRequest) {
-  const expected = process.env.MASTER_OS_LEAD_WEBHOOK_API_KEY?.trim();
-  if (!expected) {
+  // Chave de lead (RPA do Checkatrade) ou de job (site B2C, lead do primeiro passo da reserva).
+  const keys = [process.env.MASTER_OS_LEAD_WEBHOOK_API_KEY, process.env.MASTER_OS_JOB_WEBHOOK_API_KEY];
+  if (!keys.some((k) => k?.trim())) {
     return NextResponse.json({ error: "MASTER_OS_LEAD_WEBHOOK_API_KEY not configured." }, { status: 500 });
   }
-  if (!secretsMatch(req.headers.get("x-api-key"), expected)) {
+  if (!apiKeyAllowed(req.headers.get("x-api-key"), keys)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
@@ -114,7 +111,7 @@ export async function POST(req: NextRequest) {
     if (marker) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("notes", `%checkatrade-lead:${marker}%`)
         .is("deleted_at", null)
         .limit(1);
@@ -123,7 +120,7 @@ export async function POST(req: NextRequest) {
     if (!existing && key) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("phone", `%${key}`)
         .is("deleted_at", null)
         .limit(1);
@@ -132,7 +129,7 @@ export async function POST(req: NextRequest) {
     if (!existing && email) {
       const { data } = await sb
         .from("clients")
-        .select("id,full_name,email,phone,address,postcode,notes")
+        .select("id,full_name,email,phone,address,postcode,notes,tags")
         .ilike("email", email)
         .is("deleted_at", null)
         .limit(1);
@@ -158,6 +155,7 @@ export async function POST(req: NextRequest) {
           source: "direct",
           status: "active",
           ...(body.account_id ? { source_account_id: body.account_id } : {}),
+          ...(c.marketing_opt_out ? { tags: tagsAfterOptOut([], true) } : {}),
         })
         .select("id")
         .single();
@@ -190,6 +188,8 @@ export async function POST(req: NextRequest) {
     fill("phone", c.phone);
     fill("address", c.address);
     fill("postcode", c.postcode);
+    const tags = tagsAfterOptOut(existing.tags, c.marketing_opt_out);
+    if (tags) patch.tags = tags;
 
     // Notas são acumuladas, não substituídas: cada enquiry é um fato novo sobre
     // a mesma pessoa, e o marcador de um lead antigo tem que sobreviver para o
@@ -226,13 +226,13 @@ export async function POST(req: NextRequest) {
   // mais que o mesmo lead vinte minutos depois.
   //
   // Nada aqui pode alterar o status devolvido. Se o despacho falhar, o contato
-  // continua gravado e o `sales-dispatch.mts` o pega na varredura seguinte, que
+  // continua gravado e o `scripts/harvey-wa/leads-checkatrade.mts` o pega na varredura seguinte, que
   // é justamente por que o lote continua existindo.
   const novos = results.filter((r) => r.action === "created").map((r) => r.id);
-  if (novos.length && process.env.RESPONDIO_DISPATCH_ON_INGEST === "1") {
-    void despacharNovos(novos).catch(() => {
-      // já logado lá dentro
-    });
+  // O primeiro contato sai pelo WhatsApp do Zendesk, como mensagem do Harvey
+  // (o respond.io saiu do ar). Desligado até HARVEY_WA_LEADS_ON_INGEST=1.
+  if (novos.length && process.env.HARVEY_WA_LEADS_ON_INGEST === "1" && templateDoLeadConfigurado()) {
+    void contatarPeloHarvey(novos, body.account_id ?? null).catch((e) => console.error(`[contacts/ingest] harvey: ${String(e).slice(0, 160)}`));
   }
 
   return NextResponse.json(
@@ -241,60 +241,27 @@ export async function POST(req: NextRequest) {
   );
 }
 
-/**
- * Manda o template para leads recém-criados, um a um.
- *
- * Roda solto, sem prender a resposta ao RPA: o RPA está no meio de um ciclo de
- * board disputando Express job contra o relógio, e não pode esperar por uma
- * chamada de WhatsApp.
- */
-async function despacharNovos(ids: string[]) {
-  const template = process.env.RESPONDIO_TEMPLATE_NAME;
-  if (!template) return;
-  if (!dentroDaJanela()) return;
-
+/** Primeiro contato do Harvey para os leads recém-criados (template pelo Zendesk). */
+async function contatarPeloHarvey(ids: string[], contaId: string | null) {
   const sb = createServiceClient();
-  const { data: catRows } = await sb
-    .from("service_catalog").select("*").is("deleted_at", null).eq("is_active", true);
-  const catalog = (catRows ?? []) as CatalogService[];
-
-  const { data: rows } = await sb
-    .from("clients")
-    .select("id,full_name,email,phone,postcode,address,notes")
-    .in("id", ids);
-
-  for (const r of rows ?? []) {
-    try {
-      const brief = parseLeadBrief({
-        id: r.id as string,
-        name: (r.full_name as string | null) ?? null,
-        email: r.email as string | null,
-        phone: r.phone as string | null,
-        postcode: r.postcode as string | null,
-        address: r.address as string | null,
-        notes: r.notes as string | null,
-      });
-      const d = decideDispatch(brief, catalog);
-      if (!d.dispatch) continue;
-
-      const res = await despacharUm(brief, d, firstName(brief.name) ?? "there", {
-        template,
-        languageCode: process.env.RESPONDIO_TEMPLATE_LANG ?? "en",
-        // 544116 = Whatsapp Business 07, o numero ativo desde 28/08/2026 (perfil
-        // Fixfy). O 539660 (…20) fica de reserva; trocar de numero e trocar
-        // este default OU o env RESPONDIO_CHANNEL_ID, que vence.
-        channelId: Number(process.env.RESPONDIO_CHANNEL_ID ?? 544116),
-        agentUserId: Number(process.env.RESPONDIO_AGENT_USER_ID ?? 1174769),
-      });
-      console.log(`[contacts/ingest] despacho ${brief.name}: ${res.kind}`);
-    } catch (err) {
-      // Conta bloqueada para tudo: continuar só queimaria os próximos leads
-      // com envios que não podem chegar.
-      if (err instanceof ContaBloqueada) {
-        console.error(`[contacts/ingest] conta bloqueada, despacho interrompido: ${err.message}`);
-        return;
-      }
-      console.error(`[contacts/ingest] despacho falhou: ${String(err).slice(0, 160)}`);
+  const { data: catRows } = await sb.from("service_catalog").select("*").is("deleted_at", null).eq("is_active", true);
+  const catalogo = (catRows ?? []) as CatalogService[];
+  const { data: rows } = await sb.from("clients").select("id,full_name,email,phone,postcode,address,notes").in("id", ids);
+  // O lead entra na página Leads na hora, a qualquer hora (sem publicar aos parceiros).
+  for (const r of (rows ?? []) as LinhaDeCliente[]) {
+    await registrarLeadNoOs(sb, r, catalogo, contaId).catch((e) => console.error(`[contacts/ingest] lead ${r.id}: ${String(e).slice(0, 160)}`));
+  }
+  // Janela dos templates: ajuste na tela /agents/harvey (padrão 8h-20h). Fora dela o lote pega depois.
+  if (!janelaAberta(await ajustesDoHarvey())) return;
+  for (const r of (rows ?? []) as LinhaDeCliente[]) {
+    const d = decidirLead(r, catalogo);
+    if (d.kind === "pular") continue;
+    if (d.kind === "email") {
+      const e = await mandarPrimeiroContatoPorEmail(d.contato);
+      console.log(`[contacts/ingest] harvey e-mail ${d.contato.nome}: ${e.kind}${e.kind === "falhou" ? ` (${e.motivo})` : ""}`);
+      continue;
     }
+    const res = await mandarPrimeiroContato(sb, d.contato);
+    console.log(`[contacts/ingest] harvey ${d.contato.nome}: ${res.kind}${res.kind === "falhou" ? ` (${res.motivo})` : ""}`);
   }
 }

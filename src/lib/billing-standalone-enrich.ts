@@ -11,6 +11,7 @@ import {
 import { buildInvoiceAccountMaps } from "@/lib/billing-invoice-account-resolve";
 import { computeLinkedJobsMapsForSelfBillIds } from "@/lib/billing-selfbill-actions";
 import { isSelfBillClosed } from "@/services/self-bills";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import type { Invoice, SelfBill } from "@/types/database";
 import type { CustomerPaymentRow } from "@/lib/billing-invoice-list-data";
 import type { PayrollRunwayRow, PipelineJobRunwayRow } from "@/lib/billing-standalone-fetch";
@@ -70,6 +71,16 @@ const PERF_MARKS = [
 
 export function billingPerfMark(name: string): void {
   if (process.env.NODE_ENV !== "development") return;
+  // Só no navegador: na rota do pacote as etapas correm em paralelo e as marcas não se aplicam.
+  if (typeof window === "undefined") return;
+  try {
+    billingPerfMarkUnsafe(name);
+  } catch {
+    // Medição é diagnóstico: nunca pode derrubar a carga dos dados.
+  }
+}
+
+function billingPerfMarkUnsafe(name: string): void {
   performance.mark(name);
   if (name === "billing:fetch:end") {
     console.debug("[billing perf] fetch complete");
@@ -114,9 +125,18 @@ export async function fetchPartnerBillingMeta(partnerIds: string[]): Promise<{
   for (let i = 0; i < partnerIds.length; i += PARTNER_TERMS_CHUNK) {
     chunks.push(partnerIds.slice(i, i + PARTNER_TERMS_CHUNK));
   }
-  const results = await Promise.all(
+  let results = await Promise.all(
     chunks.map((chunk) => supabase.from("partners").select("id, payment_terms, avatar_url").in("id", chunk)),
   );
+  /**
+   * `partners.payment_terms` (mig 145) não existe em produção: a consulta falhava inteira e
+   * NENHUM avatar de parceiro chegava à tela. Sem a coluna, vale o prazo padrão da empresa.
+   */
+  if (results.some((r) => r.error && isSupabaseMissingColumnError(r.error, "payment_terms"))) {
+    results = (await Promise.all(
+      chunks.map((chunk) => supabase.from("partners").select("id, avatar_url").in("id", chunk)),
+    )) as typeof results;
+  }
   for (const { data, error } of results) {
     if (error) throw error;
     for (const row of data ?? []) {

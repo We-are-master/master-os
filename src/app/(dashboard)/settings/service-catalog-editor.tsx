@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { formatCurrency, cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { CatalogService, CatalogPricingMode, ServicePricingAddon, ServicePricingPreset } from "@/types/database";
+import type { CatalogService, CatalogPricingMode, ServiceCategory, ServicePricingAddon, ServicePricingPreset } from "@/types/database";
 import { useProfile } from "@/hooks/use-profile";
 import {
   createCatalogService,
   updateCatalogService,
+  listServiceCategories,
+  createServiceCategory,
 } from "@/services/catalog-services";
 import {
   parsePricingAddons,
@@ -55,6 +57,8 @@ const emptyForm = {
   sort_order: "0",
   is_active: true,
   display_icon_key: "",
+  /** Categoria (304). Vazio = ainda sem categoria. */
+  category_id: "",
 };
 
 type PresetFormRow = {
@@ -266,6 +270,45 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   /** When false, updating the service name also refreshes the suggested icon slug (until user picks Automatic or a manual icon). */
   const [catalogIconLocked, setCatalogIconLocked] = useState(false);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  // Variações e extras que o site vende (o site lê os preços daqui, 07/10/2026).
+  const [noSite, setNoSite] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    void fetch("/api/services/website-items")
+      .then((r) => (r.ok ? r.json() : { ids: [] }))
+      .then((j: { ids?: string[] }) => setNoSite(new Set(j.ids ?? [])))
+      .catch(() => {});
+  }, []);
+  /** Item do site não sai daqui: o site perderia o preço (ele fica na última tabela boa). */
+  const protegido = (id: string, label: string) => {
+    if (!noSite.has(id)) return false;
+    toast.error(`"${label || "This item"}" is sold on the website. Change its price instead, or ask to take it off the website first.`);
+    return true;
+  };
+  const [creatingCategory, setCreatingCategory] = useState(false);
+
+  useEffect(() => {
+    void listServiceCategories()
+      .then(setCategories)
+      .catch(() => toast.error("Could not load service categories"));
+  }, []);
+
+  const addCategory = async () => {
+    if (!newCategoryName.trim()) return;
+    setCreatingCategory(true);
+    try {
+      const nova = await createServiceCategory(newCategoryName);
+      setCategories((prev) => [...prev, nova]);
+      setForm((f) => ({ ...f, category_id: nova.id }));
+      setNewCategoryName("");
+      toast.success(`Category "${nova.name}" created`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the category");
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
 
   const notifySaved = useCallback(() => {
     options?.onSaved?.();
@@ -304,6 +347,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      category_id: row.category_id ?? "",
     });
   };
 
@@ -334,6 +378,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: String(row.sort_order ?? 0),
       is_active: row.is_active,
       display_icon_key: explicit ? rawKey : "",
+      category_id: row.category_id ?? "",
     });
     setCreateOpen(true);
   };
@@ -359,6 +404,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
         sort_order: Math.floor(Number(form.sort_order) || 0),
         is_active: form.is_active,
         display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+        category_id: form.category_id || null,
       };
     }
     return {
@@ -381,6 +427,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       sort_order: Math.floor(Number(form.sort_order) || 0),
       is_active: form.is_active,
       display_icon_key: form.display_icon_key.trim() === "" ? null : form.display_icon_key.trim(),
+      category_id: form.category_id || null,
     };
   };
 
@@ -411,6 +458,10 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
     e.preventDefault();
     if (!form.name.trim()) {
       toast.error("Name is required");
+      return;
+    }
+    if (!form.category_id) {
+      toast.error("Choose a category");
       return;
     }
     const presetBuild = buildPresetsForSave();
@@ -446,6 +497,10 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       toast.error("Name is required");
       return;
     }
+    if (!form.category_id) {
+      toast.error("Choose a category");
+      return;
+    }
     const presetBuild = buildPresetsForSave();
     if (!presetBuild.ok) {
       toast.error(presetBuild.message);
@@ -455,6 +510,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
     if (!addonBuild.ok) {
       toast.error(addonBuild.message);
       return;
+    }
+    // Item do site precisa continuar com preço acima de £0 (o site lê daqui).
+    for (const l of [...presetBuild.presets, ...addonBuild.addons] as Array<{ id: string; label: string; fixed_price?: number | null; hourly_rate?: number | null }>) {
+      if (noSite.has(l.id) && !((l.fixed_price ?? l.hourly_rate ?? 0) > 0)) {
+        toast.error(`"${l.label}" is sold on the website and needs a client price above £0.`);
+        return;
+      }
     }
     setSubmitting(true);
     try {
@@ -558,12 +620,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                     className="h-8 text-xs tabular-nums"
                   />
                 </div>
+                {noSite.has(arow.id) ? <SeloSite /> : null}
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-8 w-8 p-0 text-red-600 shrink-0"
-                  onClick={() => setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
+                  onClick={() => !protegido(arow.id, arow.label) && setAddonRows((rows) => rows.filter((_, i) => i !== idx))}
                   aria-label="Remove additional"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -622,10 +685,33 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
           placeholder="e.g. Boiler service"
         />
       </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-0 flex-1 basis-[12rem]">
+          <Select
+            label="Category *"
+            value={form.category_id}
+            onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+            options={[
+              { value: "", label: "Choose a category" },
+              ...categories.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+          />
+        </div>
+        <div className="flex min-w-0 flex-1 basis-[12rem] items-end gap-2">
+          <Input
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            placeholder="New category, e.g. Outdoor"
+          />
+          <Button type="button" variant="outline" size="sm" loading={creatingCategory} disabled={!newCategoryName.trim()} onClick={() => void addCategory()}>
+            Add
+          </Button>
+        </div>
+      </div>
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-[12rem]">
           <Select
-            label="Display Icon"
+            label="Display icon"
             value={form.display_icon_key}
             onChange={(e) => {
               setCatalogIconLocked(true);
@@ -675,7 +761,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
           }
         }}
         options={[
-          { value: "single", label: "Single Value" },
+          { value: "single", label: "Single value" },
           { value: "variable", label: "Variable" },
           { value: "base_plus_addons", label: "Base + additionals" },
         ]}
@@ -684,12 +770,12 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
       {form.pricing_structure === "single" ? (
         <>
           <Select
-            label="Charge Type"
+            label="Charge type"
             value={form.pricing_mode}
             onChange={(e) => setForm((f) => ({ ...f, pricing_mode: e.target.value as CatalogPricingMode }))}
             options={[
-              { value: "fixed", label: "Fixed Price" },
-              { value: "hourly", label: "Hourly Rate" },
+              { value: "fixed", label: "Fixed price" },
+              { value: "hourly", label: "Hourly rate" },
             ]}
           />
           {form.pricing_mode === "fixed" ? (
@@ -872,12 +958,13 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                             className="h-8 text-xs tabular-nums"
                           />
                         </div>
+                        {noSite.has(prow.id) ? <SeloSite /> : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 text-red-600 shrink-0"
-                          onClick={() => setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
+                          onClick={() => !protegido(prow.id, prow.label) && setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
                           aria-label="Remove base"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -1067,13 +1154,14 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
                           {bandSeller > 0 ? ` (${bandMarginPct.toFixed(1)}%)` : ""}
                         </p>
                       </div>
-                      <div className="flex shrink-0 pt-5">
+                      <div className="flex shrink-0 items-center gap-1 pt-5">
+                        {noSite.has(prow.id) ? <SeloSite /> : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0 text-red-600"
-                          onClick={() => setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
+                          onClick={() => !protegido(prow.id, prow.label) && setPresetRows((rows) => rows.filter((_, i) => i !== idx))}
                           aria-label="Remove band"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -1159,7 +1247,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
 
   const modals = (
     <>
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Catalog Service" subtitle="Defaults only — each request/quote can override.">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New catalog service" subtitle="Defaults only — each request/quote can override.">
         <form onSubmit={handleCreate} className="px-6 py-5 space-y-4">
           {FormFields}
           <div className="flex justify-end gap-2 pt-2">
@@ -1173,7 +1261,7 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
         </form>
       </Modal>
 
-      <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit Service" subtitle={editRow?.name}>
+      <Modal open={!!editRow} onClose={() => setEditRow(null)} title="Edit service" subtitle={editRow?.name}>
         <form onSubmit={handleUpdate} className="px-6 py-5 space-y-4">
           {FormFields}
           <div className="flex justify-end gap-2 pt-2">
@@ -1190,4 +1278,16 @@ export function useServiceCatalogEditor(options?: { onSaved?: () => void }) {
   );
 
   return { openCreate, openEdit, openDuplicate, modals };
+}
+
+/** "On website": este preço é o que o site e o Harvey cobram. */
+function SeloSite() {
+  return (
+    <span
+      title="The website, the checkout and Harvey use this price"
+      className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+    >
+      On website
+    </span>
+  );
 }

@@ -76,6 +76,33 @@ export const ZD_STATUS_COMPLETED = 5679178036383;
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
 export const ZD_STATUS_CANCELLED = 5697338496671;
 
+/** 🚨 Complaint — reclamação aberta (macro "Move to Complaint", que também põe a
+ *  tag `in_complaint` e o formulário de reclamação). O OS não grava este status;
+ *  só lê, para não pedir feedback de job que teve reclamação (14/10/2026). */
+export const ZD_STATUS_COMPLAINT = Number(process.env.ZENDESK_STATUS_COMPLAINT_ID?.trim() || "5739880624543");
+
+// ─── WhatsApp (Harvey) ───────────────────────────────────────────────────────
+
+/** 💬 In Conversation (antigo 🟩 WhatsApp). Aposentado em 15/10/2026: tudo entra New/Open
+ *  e a equipe classifica (Lead, quote, job, complaint). Fica aqui só para reconhecer
+ *  tickets antigos que ainda estejam nele; nada novo deve receber este status. */
+export const ZD_STATUS_WHATSAPP = 5799929141919;
+
+/** 🟢 Partner — conversa de parceiro (grupo Partners), fora do Action Required. */
+export const ZD_STATUS_PARTNER = 5722749157407;
+
+/**
+ * Funil de lead (dono, 12/10/2026): status que vivem só no Zendesk, para enxergar a
+ * etapa de cada oportunidade. O OS não sincroniza nenhum deles; só o Harvey grava
+ * To Call e Needs Quote ao passar a conversa para a equipe.
+ */
+export const ZD_STATUS_LEAD = Number(process.env.ZENDESK_STATUS_LEAD_ID?.trim() || "6417913706527");
+export const ZD_STATUS_TO_CALL = Number(process.env.ZENDESK_STATUS_TO_CALL_ID?.trim() || "6417870637599");
+export const ZD_STATUS_NEEDS_QUOTE = Number(process.env.ZENDESK_STATUS_NEEDS_QUOTE_ID?.trim() || "6417917628703");
+/** 🆕 New e 🟡 Open: o ticket ainda não entrou em processo nenhum. */
+export const ZD_STATUS_NEW = 5679191543071;
+export const ZD_STATUS_OPEN = 5679178035743;
+
 // ─── Backwards-compatible aliases ────────────────────────────────────────────
 // Kept so existing imports don't break during the migration. New code should
 // use the lifecycle-named constants above.
@@ -124,3 +151,12 @@ export function baseStatusForCustomStatusId(
   if (customStatusId == null) return null;
   return STATUS_CATEGORY[customStatusId] ?? null;
 }
+
+/**
+ * Tag da fila 🚨 Needs Attention (reclamação e operação, do papel de operação, não de uma
+ * pessoa: dono, 16/10/2026). Era "com_leo"; a view e o gatilho do funil aceitam as duas
+ * durante a troca, e `TAGS_NEEDS_ATTENTION` lê as duas.
+ */
+export const TAG_NEEDS_ATTENTION = "ops_attention";
+/** Tags que ainda contam como Needs Attention (a antiga até os tickets abertos migrarem). */
+export const TAGS_NEEDS_ATTENTION = [TAG_NEEDS_ATTENTION, "com_leo"] as const;

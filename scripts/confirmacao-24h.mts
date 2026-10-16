@@ -5,8 +5,7 @@
  *   npx tsx scripts/confirmacao-24h.mts --enviar              ← manda, se estiver na janela
  *   npx tsx scripts/confirmacao-24h.mts --enviar --agora      ← manda fora da janela também
  *
- * A janela é 18h-22h de LONDRES: antes disso o dia seguinte ainda está sendo
- * arrumado e a promessa muda. `--agora` é a saída para o envio manual.
+ * A janela é 9h-17h de LONDRES (dono, 14/10/2026). `--agora` é a saída para o envio manual.
  *
  * Dry run é o PADRÃO, e é assim de propósito. Em 20/08/2026 duas chamadas de
  * teste numa rota de cron deste repo soltaram o parceiro de 15 jobs e
@@ -24,7 +23,7 @@ import { varrerLembretesDeVespera } from "../src/lib/client-confirmation/sweep-2
 loadEnvLocal();
 
 const enviar = process.argv.includes("--enviar");
-/** Envio manual fora da janela de 18h-22h de Londres. */
+/** Envio manual fora da janela de 9h-17h de Londres. */
 const ignorarJanela = process.argv.includes("--agora");
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,7 +36,7 @@ const { dia, linhas, foraDaJanela } = await varrerLembretesDeVespera(supabase, {
 });
 
 const cabecalho = foraDaJanela
-  ? `FORA DA JANELA (18h-22h de Londres) · nada enviado · use --agora para forçar`
+  ? `FORA DA JANELA (9h-17h de Londres) · nada enviado · use --agora para forçar`
   : enviar
     ? "ENVIO REAL"
     : "DRY RUN (nada foi enviado)";

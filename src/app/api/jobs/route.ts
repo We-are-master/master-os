@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
+import { after, NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { limparScope } from "@/lib/scope-limpo";
@@ -13,8 +14,13 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
+import { depoisDaResposta } from "@/lib/depois-da-resposta";
+import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import {
   createTicket,
+  setTicketRequester,
+  updateTicket as zdUpdateTicket,
+  zendeskApi,
   ZENDESK_REPLY_STATUS_FIELD_ID,
   ZENDESK_REPLY_STATUS_SENT_VALUE,
 } from "@/lib/zendesk";
@@ -32,6 +38,10 @@ import type {
 import { dispatchAutoAssignJobInvites } from "@/lib/auto-assign-job-invites";
 import { autoAssignExpiresAtIso } from "@/lib/auto-assign-offer";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import { CONTA_DO_EXPRESS, expressLigado, mandarTemplateDoExpress } from "@/lib/harvey-wa/express";
+import { umTicketJob } from "@/lib/um-ticket/flags";
+import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 import {
   parseAutoAssignFlag,
   reconcileZendeskJobIngest,
@@ -51,6 +61,8 @@ import {
 import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 import { autoAssignGate, suggestedPartnerMarginPctFor } from "@/lib/auto-assign-gate";
+import { decideApiChargeOnCreate, loadChargeAccount, parseChargeOnCreate } from "@/lib/charge-on-create";
+import { chargeJobOnCreateServer, type ChargeOnCreateResult } from "@/lib/ensure-job-invoice-server";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -206,6 +218,49 @@ export const runtime  = "nodejs";
  *                                    //   Zendesk macro), the job is created
  *                                    //   linked to it (jobs.quote_id) and the
  *                                    //   quote is marked status='converted_to_job'.
+ *     customer_message_html?: string, // with create_zendesk_ticket: right after
+ *                                    //   the ticket is minted, the client
+ *                                    //   (client_email) becomes the requester,
+ *                                    //   so the customer's answers land on the
+ *                                    //   same ticket as the job. Then:
+ *     customer_message_via?: "zendesk" | "email", // "zendesk" (default): the
+ *                                    //   HTML goes out as a PUBLIC reply from
+ *                                    //   the support address. "email": the
+ *                                    //   caller sends its own (branded) email
+ *                                    //   carrying zendesk_encoded_id, and the
+ *                                    //   HTML is kept as an internal note.
+ *                                    //   Response carries customer_requester_set
+ *                                    //   and customer_message_posted.
+ *                                    //   With ticket_id instead (the Harvey
+ *                                    //   WhatsApp conversation): the HTML is
+ *                                    //   only an internal note on that ticket.
+ *     ticket_subject?:  string,      // with create_zendesk_ticket: subject the
+ *                                    //   customer sees (the job reference is
+ *                                    //   appended). Default "JOB · title · client".
+ *     payment_status?:  "paid" | "partial", // the money came in BEFORE the job
+ *                                    //   existed (card paid on the website).
+ *                                    //   Writes payment_status AND its twin
+ *                                    //   finance_status, plus paid_at (now,
+ *                                    //   unless paid_at is sent).
+ *                                    //   `status` is NOT touched: a paid job
+ *                                    //   is still unassigned until someone
+ *                                    //   works it, and the final check is what
+ *                                    //   closes it.
+ *     paid_at?:         string,      // ISO date the money came in. Defaults to
+ *                                    //   now when payment_status is sent.
+ *     payment_amount?:  number,      // how much was taken for THIS job (a
+ *                                    //   booking with 3 services sends the
+ *                                    //   split, not the whole basket).
+ *     stripe_payment_intent_id?: string, // the charge, for reconciliation.
+ *     stripe_customer_id?: string,       // with stripe_payment_method_id: card saved on the
+ *     stripe_payment_method_id?: string, //   deposit; the balance is charged at final review.
+ *     promotion_amount?: number,     // Fixfy promotion paid on the customer's
+ *                                    //   behalf (agent model, mig 313).
+ *                                    //   client_price stays the FULL price;
+ *                                    //   the customer owes client_price +
+ *                                    //   extras - promotion_amount. Stored on
+ *                                    //   jobs.promotion_amount (capped at the
+ *                                    //   price); never touches partner_cost.
  *     report_link?:     string       // Free-text URL where the office submits
  *                                    //   the customer-side report (Drive
  *                                    //   folder, Notion page, internal portal,
@@ -217,6 +272,21 @@ export const runtime  = "nodejs";
  *     internal_notes?:  string       // Free-text, office-only notes (e.g. a
  *                                    //   linked external ticket URL).
  *                                    //   Persisted on jobs.internal_notes.
+ *     charge_on_create?: number|string, // payment request at creation, the
+ *                                    //   same as the create modal (PR #750).
+ *                                    //   1..100 = percent (100 = full),
+ *                                    //   "full" / "charge_full", "deposit_50" /
+ *                                    //   "charge_50", "deposit" (= 50),
+ *                                    //   "on_completion" / "charge_on_completion"
+ *                                    //   (= nothing now). Absent or "" = the
+ *                                    //   ACCOUNT decides: no account or
+ *                                    //   collection_mode "card_upfront" → 50%
+ *                                    //   deposit; "invoice" → nothing.
+ *                                    //   Platforms (email_include_invoice_on_final
+ *                                    //   = false) and jobs paid at booking are
+ *                                    //   never charged. When it charges, the OS
+ *                                    //   ensures the job invoice and emails the
+ *                                    //   "almost there" booking request.
  *   }
  *
  * Behavior:
@@ -241,7 +311,14 @@ export const runtime  = "nodejs";
  *     the Zendesk ticket (client name, postcode from subject when the
  *     address field carries an email, auto_assign checkbox, catalog id).
  *
- * Response: 201 { id, reference, status, report_link, partners_notified? }
+ * Response: 201 { id, reference, status, report_link, partners_notified?,
+ *                charge_on_create? }
+ *
+ *   - charge_on_create: present when a charge was requested or applied by the
+ *     account default: { sent, percent, source?, to?, pay_url?,
+ *     invoice_reference?, reason? }. `pay_url` is `/pay/<INV>?pct=N` (no pct
+ *     when 100) so the caller can also send it on WhatsApp. A failure here
+ *     never undoes the job: sent=false + reason.
  *
  *   - report_link: echoes the value supplied in the request when present
  *     (persisted on jobs.report_link). When the caller didn't send one,
@@ -320,11 +397,22 @@ export async function POST(req: NextRequest) {
   // `let` because create_zendesk_ticket mints a fresh ticket further down
   // (after validation/pricing) and threads its id through the same path an
   // incoming ticket_id would take.
-  let ticketId          = str(body.ticket_id) || null;
+  // The id is all digits, so callers send it as a JSON number as often as a
+  // string. A number used to be dropped here and the job was born unlinked.
+  let ticketId          = ticketIdFrom(body.ticket_id);
   // When true and no ticket_id came in, the OS opens a brand-new Zendesk
   // ticket itself and links it at insert time (external_source/external_ref),
   // so callers like the Checkatrade RPA never touch Zendesk directly.
   const createZendeskTicketIn = body.create_zendesk_ticket === true;
+  // Reserva paga no site: a mensagem ao cliente sai do endereço de suporte pelo
+  // PRÓPRIO ticket do job, com o cliente como solicitante desde o início. Assim a
+  // resposta dele cai na mesma conversa das notas internas, sem ticket paralelo.
+  const customerMessageHtmlIn = str(body.customer_message_html).slice(0, 20000);
+  const customerMessageByEmail = str(body.customer_message_via) === "email";
+  const ticketSubjectIn = str(body.ticket_subject).slice(0, 150);
+  let customerMessagePosted = false;
+  let customerRequesterSet = false;
+  let createdZendeskEncodedId: string | null = null;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
   /**
@@ -341,6 +429,52 @@ export async function POST(req: NextRequest) {
    */
   const imagesIn        = capJobImagesArray(coerceJobImagesArray(body.images));
   const internalNotesIn = nullish(body.internal_notes);
+  // Cobrança na criação (15/10/2026): o pedido é lido aqui; quem decide é a conta, depois do insert.
+  const chargeRequestIn = parseChargeOnCreate(body.charge_on_create);
+
+  /**
+   * Reserva já paga no ato: o site B2C passa o cartão ANTES de o job existir,
+   * então o dinheiro entrou antes da primeira linha no OS.
+   *
+   * Sem isto o job nasce `unpaid`: vira "a receber" de um dinheiro que já está
+   * na conta, entra na conferência da Zia como cobrança em aberto e alguém
+   * acaba mandando link de pagamento a quem já pagou (JOB-9672, 22/09/2026).
+   *
+   * Marca SÓ o dinheiro. O `status` não se mexe: pago não é entregue, e quem
+   * fecha job continua sendo o final check. Job assim nasce `unassigned` e
+   * pago, que é exatamente o que uma compra no site é.
+   *
+   * `payment_status` e `finance_status` são gêmeas (ver types/database.ts):
+   * quem escreve uma escreve a outra na mesma chamada, senão a checagem de
+   * coerência da Zia acusa divergência.
+   */
+  const paymentStatusIn: "paid" | "partial" | null = (() => {
+    const v = str(body.payment_status).toLowerCase();
+    return v === "paid" || v === "partial" ? v : null;
+  })();
+  const paidAtIn = (() => {
+    const bruto = str(body.paid_at);
+    if (!bruto) return null;
+    const d = new Date(bruto);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  })();
+  const paymentAmountIn = (() => {
+    const n = Number(body.payment_amount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+  })();
+  const paymentIntentIn = str(body.stripe_payment_intent_id) || null;
+  // Sinal pago com cartão salvo (site/Harvey, Fase 0): o restante é cobrado no final review.
+  const stripeCustomerIn = str(body.stripe_customer_id) || null;
+  const stripePaymentMethodIn = str(body.stripe_payment_method_id) || null;
+  /**
+   * Promoção da Fixfy (modelo de agente, mig 313): o site manda o preço CHEIO
+   * em client_price e o desconto aqui. Nunca negativa; o teto (o preço) é
+   * aplicado depois que o preço do job é resolvido.
+   */
+  const promotionAmountIn = (() => {
+    const n = num(body.promotion_amount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+  })();
 
   // Distinguish "omitted" from "explicit 0" so we can auto-apply the company
   // margin target when the caller didn't send a partner-side amount. The
@@ -618,7 +752,11 @@ export async function POST(req: NextRequest) {
   // A chave única do auto assign: ligada, TODO job injetado nasce candidato —
   // o portão (completude + piso de margem) decide logo abaixo se entra de
   // verdade ou cai em unassigned (Needs Review). Desligada, nada muda.
-  if (!autoAssign && process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
+  // Exceção: reserva por transferência aguardando o depósito (`hold_for_deposit`)
+  // nunca vai para a oferta; o despacho sai quando a equipe registra o depósito.
+  const aguardandoDeposito = body.hold_for_deposit === true;
+  if (aguardandoDeposito) autoAssign = false;
+  if (!autoAssign && !aguardandoDeposito && process.env.AUTO_ASSIGN_ALL_JOBS === "1") {
     autoAssign = true;
     zendeskCorrections.push("auto_assign_forced_by_global_switch");
   }
@@ -665,8 +803,15 @@ export async function POST(req: NextRequest) {
     serviceType = String((catRow as { name: string }).name).trim();
   }
 
-  // service_type doubles as title when the caller doesn't supply one.
-  const titleResolved = title || serviceType;
+  // service_type doubles as title when the caller doesn't supply one. Sempre um nome do
+  // catálogo (dono, 16/10/2026): o que vier inventado vira General Maintenance (ou pintura/
+  // limpeza/certificado quando o texto bate) e o texto original fica na descrição.
+  const pedidoTitulo = (title || serviceType || "").trim();
+  const { data: catNomes } = await supabase.from("service_catalog").select("name").eq("is_active", true);
+  const titleResolved = tipoDoCatalogo(pedidoTitulo, ((catNomes ?? []) as { name: string }[]).map((c) => String(c.name).trim()));
+  if (pedidoTitulo && pedidoTitulo !== titleResolved && !(description ?? "").toLowerCase().includes(pedidoTitulo.toLowerCase())) {
+    description = description ? `${pedidoTitulo}. ${description}` : pedidoTitulo;
+  }
 
   // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
@@ -775,6 +920,12 @@ export async function POST(req: NextRequest) {
       const catalog = await resolveCatalogServiceForSmartPrice(supabase, null, serviceType);
       if (catalog.ok) {
         resolvedCatalogServiceId = catalog.row.id;
+      } else {
+        // Serviço desativado no catálogo ainda é um serviço: o job fica ligado
+        // à categoria dele (plano de 29/09/2026: todo job com serviço).
+        const { data: inativos } = await supabase.from("service_catalog").select("id, name").is("deleted_at", null);
+        const achado = catalogServiceIdForTypeOfWorkLabel(serviceType, (inativos ?? []) as Pick<CatalogService, "id" | "name">[]);
+        if (achado) resolvedCatalogServiceId = achado;
       }
     }
     const fixedResolved = resolveFixedManualPricing({
@@ -811,6 +962,12 @@ export async function POST(req: NextRequest) {
       console.warn("[api/jobs] auto assign blocked by gate:", gate.missing.join(", "));
     }
   }
+  // Sem serviço do catálogo não há categoria, e sem categoria não há a quem
+  // oferecer (plano de 29/09/2026). O job nasce unassigned com o motivo.
+  if (autoAssign && !resolvedCatalogServiceId && !(catalogServiceIdIn && isValidUUID(catalogServiceIdIn))) {
+    autoAssign = false;
+    autoAssignBlocked = [...(autoAssignBlocked ?? []), "catalog service (type of work not in Settings → Services)"];
+  }
 
   // ─── Partner matching (when auto_assign is on) ──────────────────────
   let matchedPartnerIds: string[] = [];
@@ -823,6 +980,7 @@ export async function POST(req: NextRequest) {
       postcode: propertyPostcode,
       kind: "job",
       availabilitySlot: { scheduledDate: isoDate, startAt: startIso, endAt: endIso },
+      partnerCost: rateType === "hourly" ? null : partnerCost,
     });
   }
 
@@ -871,7 +1029,7 @@ export async function POST(req: NextRequest) {
     progress:           0,
     current_phase:      0,
     job_type:           rateType,
-    finance_status:     "unpaid",
+    finance_status:     paymentStatusIn ?? "unpaid",
     scope:              description,
     images:             imagesIn,
   };
@@ -909,6 +1067,27 @@ export async function POST(req: NextRequest) {
   if (internalNotesIn) {
     jobRow.internal_notes = internalNotesIn;
   }
+  // Promoção da Fixfy: nunca maior que o preço que o cliente veria.
+  const promotionAmount =
+    rateType === "hourly" ? promotionAmountIn : Math.min(promotionAmountIn, Math.max(0, clientPrice));
+  if (promotionAmount > 0) {
+    jobRow.promotion_amount = promotionAmount;
+  }
+  if (paymentStatusIn) {
+    // Sinal (50%): `payment_status` só aceita unpaid/link_sent/paid/refunded no
+    // banco (jobs_payment_status_check); "partial" mora só em `finance_status`
+    // e o valor do sinal vai para job_payments logo abaixo. Gravar "partial"
+    // aqui derrubava TODA reserva com sinal (FX-56UC6M, 08/10/2026: 500).
+    jobRow.payment_status = paymentStatusIn === "partial" ? "unpaid" : paymentStatusIn;
+    if (paymentStatusIn === "paid") jobRow.paid_at = paidAtIn ?? new Date().toISOString();
+    if (paymentAmountIn !== null) jobRow.payment_amount = paymentAmountIn;
+    if (paymentIntentIn) jobRow.stripe_payment_intent_id = paymentIntentIn;
+    if (stripeCustomerIn && stripePaymentMethodIn) {
+      jobRow.stripe_customer_id = stripeCustomerIn;
+      jobRow.stripe_payment_method_id = stripePaymentMethodIn;
+      jobRow.card_charge_status = "saved";
+    }
+  }
   if (autoAssignBlocked) {
     const aviso = `NEEDS REVIEW · auto assign blocked: ${autoAssignBlocked.join(", ")}.`;
     jobRow.internal_notes = jobRow.internal_notes
@@ -916,14 +1095,49 @@ export async function POST(req: NextRequest) {
       : aviso;
   }
 
-  const { data: inserted, error: insErr } = await supabase
+  let { data: inserted, error: insErr } = await supabase
     .from("jobs")
     .insert(jobRow)
     .select("id, reference, status")
     .single();
+  /**
+   * Sem a migration 313 a coluna `promotion_amount` não existe e o insert
+   * inteiro cairia. O job entra assim mesmo, com a promoção escrita na nota
+   * interna para ninguém cobrar o cliente por ela.
+   */
+  if (insErr && promotionAmount > 0 && isSupabaseMissingColumnError(insErr, "promotion_amount")) {
+    delete jobRow.promotion_amount;
+    const aviso = `FIXFY PROMOTION £${promotionAmount.toFixed(2)} paid on the customer's behalf: the customer owes the price less this (apply migration 313 to store it).`;
+    jobRow.internal_notes = jobRow.internal_notes ? `${aviso}\n${String(jobRow.internal_notes)}` : aviso;
+    ({ data: inserted, error: insErr } = await supabase
+      .from("jobs")
+      .insert(jobRow)
+      .select("id, reference, status")
+      .single());
+  }
   if (insErr || !inserted) {
     console.error("[api/jobs] insert failed:", insErr?.message);
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
+  }
+
+  // Pagou antes do job (site, WhatsApp): o dinheiro entra no MESMO livro que o
+  // pay link usa (job_payments). Sem isto o final check não via o pagamento e
+  // o job caía em awaiting_payment cobrando de novo quem já pagou (29/09/2026).
+  if (paymentStatusIn) {
+    // Pago por inteiro sem valor informado = preço menos a promoção da Fixfy.
+    const valorPago =
+      paymentAmountIn ?? (paymentStatusIn === "paid" ? Math.max(0, clientPrice - promotionAmount) : null);
+    if (valorPago && valorPago > 0) {
+      const { error: payErr } = await supabase.from("job_payments").insert({
+        job_id: (inserted as { id: string }).id,
+        type: paymentStatusIn === "paid" ? "customer_final" : "customer_deposit",
+        amount: Math.round(valorPago * 100) / 100,
+        payment_date: (paidAtIn ?? new Date().toISOString()).slice(0, 10),
+        payment_method: "stripe",
+        note: `Paid at booking${paymentIntentIn ? ` · Stripe payment ${paymentIntentIn}` : ""}`,
+      });
+      if (payErr) console.error("[api/jobs] job_payments (paid at booking) failed:", payErr.message);
+    }
   }
 
   void geocodeUkAddressServer(propertyAddress)
@@ -956,6 +1170,86 @@ export async function POST(req: NextRequest) {
   // had sent ticket_id. Best-effort: a Zendesk outage must not block an
   // already-recorded job.
   let createdZendeskTicketId: number | null = null;
+  // ─── Um ticket por pedido (ONE_TICKET_JOB_REUSE_ON) ─────────────────
+  // O cliente já tem um ticket aberto do pedido (lead, cotação, conversa do
+  // WhatsApp): o job entra nele em vez de abrir "JOB-… · …" com a Fixfy Team de
+  // solicitante. Só com UM ticket aberto (dois = não chuta) e nunca no Express,
+  // que precisa do ticket novo para o template de boas-vindas.
+  let reusedZendeskTicketId: number | null = null;
+  const ehExpress = expressLigado() && str(body.account_id) === CONTA_DO_EXPRESS();
+  if (createZendeskTicketIn && !ticketId && umTicketJob() && !ehExpress) {
+    const achado = await acharTicketDoPedido(supabase, {
+      jobId: String(inserted.id),
+      semVinculo: true,
+      clientId,
+      email: clientEmail,
+      telefone: clientPhone,
+      exigirUnico: true,
+    });
+    if (achado.tipo === "ticket") {
+      const { error: linkErr } = await supabase
+        .from("jobs")
+        .update({ external_source: "zendesk", external_ref: String(achado.id) })
+        .eq("id", inserted.id);
+      if (linkErr) {
+        console.error("[api/jobs] reuse ticket: link write failed:", linkErr.message);
+        zendeskCorrections.push("zendesk_ticket_link_write_failed");
+      } else {
+        ticketId = String(achado.id);
+        reusedZendeskTicketId = achado.id;
+        try {
+          await zdUpdateTicket({
+            ticketId: achado.id,
+            commentBody: [
+              `Job ${inserted.reference} created in the OS for this request (linked here, no new ticket).`,
+              `Job in the OS: ${appBaseUrl()}/jobs/${inserted.id}`,
+              `Scheduled: ${`${isoDate} ${arrivalTime || ""}`.trim() || "-"}`,
+              clientPrice ? `Value: £${clientPrice}` : null,
+            ].filter(Boolean).join("\n"),
+            publicComment: false,
+            additionalTags: ["os-job-linked"],
+          });
+        } catch (err) {
+          console.error("[api/jobs] reuse ticket: note failed:", err);
+        }
+        // A mensagem ao cliente (reserva paga no site) sai no ticket do pedido.
+        if (customerMessageHtmlIn && clientEmail && clientEmail !== "team@getfixfy.com" && !customerMessageByEmail) {
+          try {
+            await entregarEmailNoTicket({
+              ticket: achado,
+              para: { email: clientEmail, nome: clientName || null },
+              assunto: ticketSubjectIn ? `${ticketSubjectIn} (${inserted.reference})` : `Your booking ${inserted.reference}`,
+              html: customerMessageHtmlIn,
+            });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] reuse ticket: customer message failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        } else if (customerMessageHtmlIn) {
+          try {
+            await zdUpdateTicket({
+              ticketId: achado.id,
+              htmlBody: `<p><b>Booking confirmation${clientEmail ? ` emailed to the customer (${clientEmail})` : ""}:</b></p>${customerMessageHtmlIn}`,
+              publicComment: false,
+            });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] reuse ticket: customer message note failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        }
+        // Quem manda o próprio e-mail precisa do encoded id para a resposta voltar a este ticket.
+        if (customerMessageByEmail) {
+          createdZendeskEncodedId = await zendeskApi<{ ticket: { encoded_id?: string } }>(`tickets/${achado.id}.json`)
+            .then((r) => r.ticket?.encoded_id ?? null)
+            .catch(() => null);
+        }
+      }
+    } else if (achado.tipo === "ambiguo") {
+      console.log(`[api/jobs] ${inserted.reference}: cliente com vários tickets abertos (${achado.ids.join(", ")}), abre ticket novo como antes`);
+    }
+  }
   if (createZendeskTicketIn && !ticketId) {
     const osJobUrl = `${appBaseUrl()}/jobs/${inserted.id}`;
     const detailLines = [
@@ -972,7 +1266,9 @@ export async function POST(req: NextRequest) {
         ? [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: ZENDESK_REPLY_STATUS_SENT_VALUE }]
         : undefined;
     const tRes = await createTicket({
-      subject: `${inserted.reference} · ${titleResolved} · ${clientName}`,
+      subject: ticketSubjectIn
+        ? `${ticketSubjectIn} (${inserted.reference})`
+        : `${inserted.reference} · ${titleResolved} · ${clientName}`,
       // Private internal note (same rationale as create-ticket-for-entity):
       // the requester is the team placeholder, and the opening "created from
       // OS" details must never surface as a customer-facing reply.
@@ -986,6 +1282,7 @@ export async function POST(req: NextRequest) {
     });
     if (tRes.ok && tRes.id) {
       createdZendeskTicketId = tRes.id;
+      createdZendeskEncodedId = tRes.encodedId ?? null;
       ticketId = String(tRes.id);
       const { error: linkErr } = await supabase
         .from("jobs")
@@ -995,24 +1292,103 @@ export async function POST(req: NextRequest) {
         console.error("[api/jobs] create_zendesk_ticket: link write failed:", linkErr.message);
         zendeskCorrections.push("zendesk_ticket_link_write_failed");
       }
+      // A nota de abertura continua interna. Quando o job for agendado, a
+      // confirmação do dispatchJobCreatedZendesk vai para este mesmo ticket (o
+      // solicitante já é o cliente, então ela não troca nada).
+      if (customerMessageHtmlIn && clientEmail && clientEmail !== "team@getfixfy.com") {
+        const set = await setTicketRequester({
+          ticketId: tRes.id,
+          email:    clientEmail,
+          name:     clientName || null,
+          // O CLIENTE, nunca a conta: o external_id do usuário sai daqui
+          // (ver o caso dos 22 e-mails em zendesk-lifecycle).
+          entityId: clientId || String(inserted.id),
+        });
+        customerRequesterSet = set.ok;
+        if (!set.ok) {
+          console.error("[api/jobs] customer requester failed:", set.error);
+          zendeskCorrections.push("customer_requester_failed");
+        }
+        // "email": quem chamou manda o próprio e-mail (com o encoded id, para a
+        // resposta voltar para cá) e o ticket guarda a cópia como nota interna.
+        // "zendesk": a mensagem sai daqui como resposta pública.
+        if (set.ok || customerMessageByEmail) {
+          try {
+            await zdUpdateTicket({
+              ticketId: tRes.id,
+              htmlBody: customerMessageByEmail
+                ? `<p><b>Booking confirmation emailed to the customer (${clientEmail}):</b></p>${customerMessageHtmlIn}`
+                : customerMessageHtmlIn,
+              publicComment: !customerMessageByEmail,
+            });
+            customerMessagePosted = true;
+          } catch (err) {
+            console.error("[api/jobs] customer message failed:", err);
+            zendeskCorrections.push("customer_message_failed");
+          }
+        }
+      }
     } else {
       console.error("[api/jobs] create_zendesk_ticket failed (continuing without ticket):", tRes.error);
       zendeskCorrections.push("zendesk_ticket_create_failed");
     }
+  } else if (ticketId && customerMessageHtmlIn && !reusedZendeskTicketId) {
+    // Ticket que já existia (o da conversa do Harvey no WhatsApp, 07/10/2026):
+    // o solicitante já é o cliente e nada público sai daqui. A cópia da
+    // confirmação fica como nota interna, para a equipe ver no mesmo ticket.
+    try {
+      await zdUpdateTicket({
+        ticketId,
+        htmlBody: `<p><b>Booking confirmation${clientEmail ? ` emailed to the customer (${clientEmail})` : ""}:</b></p>${customerMessageHtmlIn}`,
+        publicComment: false,
+      });
+      customerMessagePosted = true;
+    } catch (err) {
+      console.error("[api/jobs] customer message on existing ticket failed:", err);
+      zendeskCorrections.push("customer_message_failed");
+    }
   }
 
-  // ─── Zendesk dispatch (fire-and-forget; idempotent) ─────────────────
+  // ─── Express do Checkatrade: boas-vindas no WhatsApp (07/10/2026) ─────
+  // Job da conta Checkatrade com telefone e ticket novo = Express que o Ruben
+  // aceitou. Sai o template pela linha do Zendesk e a nota vai no ticket do job;
+  // quando o cliente responde, o ticket do job vira a conversa. Desligado até
+  // HARVEY_WA_EXPRESS_ON=1. Esperado aqui (não `void`): na Vercel o que fica
+  // solto depois da resposta morre.
+  if (expressLigado() && createdZendeskTicketId && str(body.account_id) === CONTA_DO_EXPRESS()) {
+    const r = await mandarTemplateDoExpress(supabase, {
+      jobId: String(inserted.id),
+      referencia: String(inserted.reference ?? ""),
+      ticketId: createdZendeskTicketId,
+      nome: clientName,
+      telefone: clientPhone,
+      titulo: titleResolved,
+      dataIso: isoDate || null,
+    }).catch((e) => ({ kind: "falhou" as const, motivo: String(e) }));
+    if (r.kind === "falhou") zendeskCorrections.push("express_whatsapp_failed");
+  }
+
+  // ─── Zendesk dispatch (depois da resposta; idempotent) ───────────────
   // Sync ticket custom_status_id and post the customer-facing booking
   // confirmation + open the partner side conversation. The DB trigger
   // (mig 166/167) is the backup path — both call the same idempotent
   // helpers, so duplicate execution is safe.
+  //
+  // `after()` e não `void Promise.all(...)`: na Vercel a função congela assim
+  // que a resposta sai, e o sync solto morria no meio. O ticket do job criado
+  // pelo site (JOB-9675, #50730, 23/09/2026) ficou em New em vez de
+  // Unassigned; no :3000 do Mac, processo longo, o mesmo código terminava.
+  // allSettled: uma falha não pode encerrar a espera das outras duas.
   if (ticketId) {
-    void Promise.all([
-      syncJobZendeskStatus(inserted.id, supabase),
-      dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
-      syncJobZendeskFormFields(inserted.id, supabase),
-    ]).catch((err) => {
-      console.error("[api/jobs] Zendesk dispatch failed:", err);
+    after(async () => {
+      const results = await Promise.allSettled([
+        syncJobZendeskStatus(inserted.id, supabase),
+        dispatchJobCreatedZendesk({ jobId: inserted.id, client: supabase }),
+        syncJobZendeskFormFields(inserted.id, supabase),
+      ]);
+      for (const r of results) {
+        if (r.status === "rejected") console.error("[api/jobs] Zendesk dispatch failed:", r.reason);
+      }
     });
   }
 
@@ -1022,12 +1398,14 @@ export async function POST(req: NextRequest) {
   // manda é a política da conta (mig 259); a Fantastic está desligada porque
   // ela paga o call-out quando o cliente não está.
   //
-  // Fire-and-forget: a checagem de entrega no WhatsApp leva segundos e quem
-  // criou o job não pode esperar por ela. O resultado, inclusive o motivo de
-  // não ter mandado, fica em `client_confirmation_sent_at` / `_skipped`.
-  void enviarConfirmacaoDoCliente(supabase, String(inserted.id)).catch((err) => {
-    console.error("[api/jobs] client confirmation failed:", err);
-  });
+  // Depois da resposta: quem criou o job não espera pelo WhatsApp. O resultado,
+  // inclusive o motivo de não ter mandado, fica em `client_confirmation_sent_at`
+  // / `_skipped`. `after()` (via depoisDaResposta) e não `void`: `void` morre na
+  // Vercel. E roda depois da rota fixa abaixo, então job que nasce com parceiro
+  // roteado já é visto com parceiro.
+  await depoisDaResposta("api/jobs: confirmação do cliente", () =>
+    enviarConfirmacaoDoCliente(supabase, String(inserted.id)),
+  );
 
   // ─── Rota fixa: atribui o parceiro do serviço e avisa na hora ────────
   // Roda antes do leilão e o dispensa: onde há parceiro nomeado para o
@@ -1079,6 +1457,36 @@ export async function POST(req: NextRequest) {
     }).catch((err) => console.error("[api/jobs] auto-assign invites failed:", err));
   }
 
+  // ─── Cobrança na criação (o mesmo do modal, PR #750) ─────────────────
+  // ESPERADA antes da resposta: na Vercel a função congela depois dela, e um
+  // `void` aqui nunca mandaria o e-mail. Roda depois do ticket ligado, para o
+  // e-mail cair no ticket do pedido quando o um-ticket estiver ligado. Falhar
+  // aqui nunca desfaz o job: volta sent=false com o motivo.
+  let chargeOnCreate: ChargeOnCreateResult | undefined;
+  {
+    const chargeAccount = await loadChargeAccount(supabase, clientId).catch(() => null);
+    const decision = decideApiChargeOnCreate({
+      request: chargeRequestIn,
+      account: chargeAccount,
+      paidAtBooking: paymentStatusIn,
+    });
+    if (decision.charge) {
+      chargeOnCreate = await chargeJobOnCreateServer(supabase, {
+        jobId: String(inserted.id),
+        percent: decision.percent,
+        source: decision.source,
+      });
+      if (!chargeOnCreate.sent) console.warn("[api/jobs] charge_on_create not sent:", inserted.reference, chargeOnCreate.reason);
+    } else if (decision.requested && decision.reason) {
+      chargeOnCreate = {
+        sent: false,
+        percent: chargeRequestIn.kind === "charge" ? chargeRequestIn.percent : 0,
+        source: "requested",
+        reason: decision.reason,
+      };
+    }
+  }
+
   return NextResponse.json(
     {
       id:          inserted.id,
@@ -1093,6 +1501,12 @@ export async function POST(req: NextRequest) {
       ...(autoAssignBlocked ? { warning: "auto_assign_blocked", auto_assign_blocked: autoAssignBlocked } : {}),
       ...(zendeskCorrections.length ? { zendesk_corrections: zendeskCorrections } : {}),
       ...(createdZendeskTicketId ? { zendesk_ticket_id: createdZendeskTicketId } : {}),
+      ...(reusedZendeskTicketId ? { zendesk_ticket_id: reusedZendeskTicketId, zendesk_ticket_reused: true } : {}),
+      ...(createdZendeskEncodedId ? { zendesk_encoded_id: createdZendeskEncodedId } : {}),
+      ...(customerMessageHtmlIn
+        ? { customer_requester_set: customerRequesterSet, customer_message_posted: customerMessagePosted }
+        : {}),
+      ...(chargeOnCreate ? { charge_on_create: chargeOnCreate } : {}),
     },
     { status: 201 },
   );
@@ -1237,7 +1651,7 @@ async function fetchAccountServiceOverride(
 ): Promise<AccountServicePrice | null> {
   const { data, error } = await supabase
     .from("account_service_prices")
-    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides")
+    .select("id, account_id, catalog_service_id, use_standard, fixed_price, hourly_rate, default_hours, preset_overrides, addon_overrides, allow_below_standard")
     .eq("account_id", accountId)
     .eq("catalog_service_id", catalogServiceId)
     .maybeSingle();
@@ -1250,6 +1664,12 @@ async function fetchAccountServiceOverride(
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** Zendesk ticket id from the body: a string or a positive integer. */
+function ticketIdFrom(v: unknown): string | null {
+  if (typeof v === "number") return Number.isSafeInteger(v) && v > 0 ? String(v) : null;
+  return str(v) || null;
 }
 
 /** Was the field included in the request? Empty strings count as "not sent". */

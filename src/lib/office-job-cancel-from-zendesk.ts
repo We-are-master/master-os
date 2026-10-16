@@ -76,7 +76,7 @@ export async function cancelJobFromZendeskWebhook(
   const { data: jobRow, error: jobErr } = await supabase
     .from("jobs")
     .select(
-      "id, reference, status, partner_id, invoice_id, self_bill_id, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, partner_agreed_value, scheduled_date, scheduled_start_at, scheduled_end_at, partner_timer_started_at, partner_timer_ended_at, office_timer_started_at, office_timer_ended_at",
+      "id, reference, status, partner_id, invoice_id, self_bill_id, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, partner_agreed_value, scheduled_date, scheduled_start_at, scheduled_end_at, partner_timer_started_at, partner_timer_ended_at",
     )
     .eq("external_source", "zendesk")
     .eq("external_ref", ticketId)

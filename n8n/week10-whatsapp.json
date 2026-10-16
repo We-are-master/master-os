@@ -1,0 +1,234 @@
+{
+  "name": "WEEK10 · WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "name": "A cada 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "632018bb-1660-47b0-b4d8-4e27493bebf8"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:3200/api/marketing/campanha/proxima-leva?n=50",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "Próxima leva (OS)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · CRON_SECRET"
+        }
+      },
+      "id": "c1061901-7a0a-4d6e-928f-887754474932"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "itens",
+        "options": {}
+      },
+      "name": "Um por pessoa",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "66a1c33b-95db-4301-99ee-42e8ec66c1e7"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v21.0/1148558111666186/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "neverError": true
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1500
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.corpo) }}"
+      },
+      "name": "Envia template (Meta)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "WhatsApp Cloud · token"
+        }
+      },
+      "id": "d3194d5c-5310-4ec3-8d90-9cca06dad0e2",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Junta o item da leva com o que a Meta respondeu, na mesma ordem.\nconst leva = $('Um por pessoa').all();\nreturn $input.all().map((r, i) => {\n  const j = r.json || {};\n  const id = leva[i].json.id;\n  const wamid = j.messages?.[0]?.id ?? null;\n  const e = j.error ?? null;\n  return { json: { id, wamid, erro: e ? (e.message || JSON.stringify(e)).slice(0, 300) : (wamid ? null : 'sem resposta'), codigo: e?.code ?? null } };\n});"
+      },
+      "name": "Resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        0
+      ],
+      "id": "8f59cb0f-2589-4d54-ae28-f3c7b7696a1f"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "itens",
+        "options": {}
+      },
+      "name": "Junta a leva",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "ff681fc1-4077-4646-877f-a994ba074a12"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3200/api/marketing/campanha/resultado",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ itens: $json.itens }) }}"
+      },
+      "name": "Devolve ao OS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fixfy OS · CRON_SECRET"
+        }
+      },
+      "id": "5e25849b-f482-4bbe-86d2-17c843fc326a"
+    }
+  ],
+  "connections": {
+    "A cada 10 min": {
+      "main": [
+        [
+          {
+            "node": "Próxima leva (OS)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Próxima leva (OS)": {
+      "main": [
+        [
+          {
+            "node": "Um por pessoa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Um por pessoa": {
+      "main": [
+        [
+          {
+            "node": "Envia template (Meta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envia template (Meta)": {
+      "main": [
+        [
+          {
+            "node": "Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado": {
+      "main": [
+        [
+          {
+            "node": "Junta a leva",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Junta a leva": {
+      "main": [
+        [
+          {
+            "node": "Devolve ao OS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London"
+  }
+}

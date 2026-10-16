@@ -1,5 +1,7 @@
 "use client";
 
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatBritishDate } from "@/lib/utils/date";
 import { motion } from "framer-motion";
@@ -513,6 +515,7 @@ export function PipelineScheduleMiniCalendar({
 
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <div className="flex items-center gap-1">
+              <FixfyHintIcon label="Schedule" text="Plan job visits by day, week, month or year and filter by partner." />
               <button
                 type="button"
                 onClick={goPrev}
@@ -696,7 +699,7 @@ export function PipelineScheduleMiniCalendar({
                                 ? "flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-white sm:h-6 sm:w-6"
                                 : "rounded-md px-0.5 text-text-secondary hover:bg-surface-hover/80",
                             )}
-                            title="Open Day view"
+                            title="Open day view"
                           >
                             {day}
                           </button>

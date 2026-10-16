@@ -1,27 +1,31 @@
-import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { billingReferenceShort, displayBillingReference } from "@/lib/billing-reference";
+import assert from "node:assert/strict";
+import { billingReferenceCandidates, billingReferenceShort, displayBillingReference } from "./billing-reference";
 
 describe("billing-reference", () => {
-  it("maps legacy INV to RCP display", () => {
-    assert.equal(displayBillingReference("INV-2026-357"), "RCP-2026-357");
+  it("shows stored RCP rows as INV", () => {
+    assert.equal(displayBillingReference("RCP-2026-904"), "INV-2026-904");
+    assert.equal(displayBillingReference("RC-2026-12"), "INV-2026-12");
   });
 
-  it("keeps RCP and strips short form", () => {
-    assert.equal(billingReferenceShort("RCP-2026-400"), "2026-400");
-    assert.equal(displayBillingReference("RCP-2026-400"), "RCP-2026-400");
+  it("keeps INV and strips short form", () => {
+    assert.equal(billingReferenceShort("INV-2026-357"), "2026-357");
+    assert.equal(displayBillingReference("INV-2026-357"), "INV-2026-357");
   });
 
-  /** Formato novo da migração 272: sem ano, cinco dígitos. */
-  it("keeps the sequence-only reference intact", () => {
+  it("handles the sequence format without a year", () => {
     assert.equal(billingReferenceShort("RCP-63356"), "63356");
-    assert.equal(displayBillingReference("RCP-63356"), "RCP-63356");
+    assert.equal(displayBillingReference("RCP-63356"), "INV-63356");
   });
 
-  /** Uma fatura antiga e uma nova convivem, e nenhuma vira a outra. */
-  it("does not confuse the two formats", () => {
-    assert.equal(displayBillingReference("INV-2026-357"), "RCP-2026-357");
-    assert.equal(displayBillingReference("RCP-63356"), "RCP-63356");
+  it("different invoices never collapse into the same display reference", () => {
     assert.notEqual(displayBillingReference("RCP-63356"), displayBillingReference("RCP-2026-357"));
+  });
+
+  it("finds the same invoice by the old and the new prefix", () => {
+    assert.deepEqual(billingReferenceCandidates("INV-2026-915"), ["INV-2026-915", "RCP-2026-915", "RC-2026-915"]);
+    assert.deepEqual(billingReferenceCandidates("RCP-2026-915"), ["RCP-2026-915", "INV-2026-915", "RC-2026-915"]);
+    assert.ok(billingReferenceCandidates(" rcp-2026-915 ").includes("RCP-2026-915"));
+    assert.deepEqual(billingReferenceCandidates(""), []);
   });
 });

@@ -255,3 +255,47 @@ export function formatJobScheduleLine(job: {
   }
   return null;
 }
+
+/**
+ * Agenda compacta da lista de jobs (dono, 15/10/2026): uma linha "Mon 19 Oct · 9AM–12PM"
+ * e, quando ajuda, um chip relativo ("Today", "Tomorrow", "In 2 days", "Yesterday",
+ * "3 days ago"). Distância maior que uma semana não ganha chip: a data já diz.
+ */
+export function compactJobSchedule(job: {
+  scheduled_date?: string | null;
+  scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
+}): { date: string; time: string | null; relative: string | null; relativeTone: "today" | "soon" | "past" | null } | null {
+  let ymd: string | null = null;
+  if (job.scheduled_start_at) ymd = isoCalendarDateInUk(job.scheduled_start_at);
+  else if (job.scheduled_date) ymd = ymdFromDateOnlyField(job.scheduled_date);
+  if (!ymd) return null;
+  const date = new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+  const hora = (iso: string) =>
+    new Date(iso)
+      .toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Europe/London" })
+      .replace(":00", "")
+      .replace(/\s/g, "")
+      .toUpperCase();
+  const ini = job.scheduled_start_at ? hora(job.scheduled_start_at) : null;
+  const fim = job.scheduled_end_at ? hora(job.scheduled_end_at) : null;
+  const time = ini ? (fim && fim !== ini ? `${ini}–${fim}` : ini) : null;
+
+  const hoje = isoCalendarDateInUk(new Date());
+  let relative: string | null = null;
+  let relativeTone: "today" | "soon" | "past" | null = null;
+  if (hoje) {
+    const dias = Math.round((Date.parse(`${ymd}T12:00:00Z`) - Date.parse(`${hoje}T12:00:00Z`)) / 86_400_000);
+    if (dias === 0) [relative, relativeTone] = ["Today", "today"];
+    else if (dias === 1) [relative, relativeTone] = ["Tomorrow", "soon"];
+    else if (dias > 1 && dias <= 7) [relative, relativeTone] = [`In ${dias} days`, "soon"];
+    else if (dias === -1) [relative, relativeTone] = ["Yesterday", "past"];
+    else if (dias < -1 && dias >= -7) [relative, relativeTone] = [`${-dias} days ago`, "past"];
+  }
+  return { date, time, relative, relativeTone };
+}

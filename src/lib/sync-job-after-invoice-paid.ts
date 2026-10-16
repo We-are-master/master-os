@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Job } from "@/types/database";
-import { customerCollectionsSatisfyBillable, jobBillableRevenue } from "@/lib/job-financials";
+import { customerCollectionsSatisfyBillable, jobCustomerTotal } from "@/lib/job-financials";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
 import { invoiceAmountPaid } from "@/lib/invoice-balance";
@@ -85,7 +85,8 @@ export async function applyManualInvoicePaymentToJobLedger(
     .filter((p) => p.type === "customer_deposit" || p.type === "customer_final")
     .reduce((s, p) => s + Number(p.amount), 0);
 
-  const billable = jobBillableRevenue(job);
+  // O que o cliente deve: preço + extras − promoção da Fixfy (mig 313).
+  const billable = jobCustomerTotal(job);
   const jobRemaining = Math.max(0, billable - customerTotal);
 
   let existingSource: unknown = null;
@@ -123,9 +124,15 @@ export async function applyManualInvoicePaymentToJobLedger(
 
   if (!hasExistingSource && payAmt > EPS) {
     const paidDate = (inv.paid_date as string) || new Date().toISOString().split("T")[0];
+    /**
+     * Fatura de entrada paga à mão vira pagamento de ENTRADA (15/10/2026). Antes ia sempre
+     * como "customer_final": a sincronização usava esse valor para quitar também a fatura
+     * final, e o job aparecia todo pago com só a entrada no banco (achado no JOB-9733).
+     */
+    const ehEntrada = String((inv as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit";
     const paymentRow = {
       job_id: job.id,
-      type: "customer_final",
+      type: ehEntrada ? "customer_deposit" : "customer_final",
       amount: Math.round(payAmt * 100) / 100,
       payment_date: paidDate,
       note: `${sourceLabel} · ${(inv as { reference?: string }).reference ?? invoiceId}`,
@@ -174,6 +181,29 @@ export async function syncJobAfterInvoicePaidToLedger(
   const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
   if (!jobId) return;
   await finalizeJobAfterInvoicePaid(client, jobId);
+  // Entrada de cotação paga à mão faz o mesmo que o webhook do Stripe: cotação convertida e
+  // aviso ao parceiro (15/10/2026). Só age com a cotação em awaiting_payment.
+  const { data: inv } = await client.from("invoices").select("invoice_kind, job_reference").eq("id", invoiceId).maybeSingle();
+  const i = inv as { invoice_kind?: string | null; job_reference?: string | null } | null;
+  if (i?.invoice_kind === "deposit" && i.job_reference) {
+    /**
+     * Só no navegador (o "mark as paid" da tela): a rotina manda e-mail e mora no servidor,
+     * então vai pela rota. No servidor quem chama já roda a rotina: o webhook do Stripe e o
+     * `/api/stripe/check-status` (16/10/2026). Importar o módulo do servidor aqui levava o
+     * envio de e-mail para o pacote do navegador e quebrava o build.
+     */
+    if (typeof window === "undefined") return;
+    try {
+      const res = await fetch("/api/quotes/deposit-paid", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobReference: i.job_reference, origem: sourceLabel === "Stripe" ? "stripe_invoice" : "manual_mark_paid" }),
+      });
+      if (!res.ok) console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up", res.status);
+    } catch (e) {
+      console.error("syncJobAfterInvoicePaidToLedger: deposit follow-up failed", e);
+    }
+  }
 }
 
 /** Bulk mark-paid: ledger rows in parallel, then one finalize pass per unique job. */
@@ -244,8 +274,15 @@ export async function maybeCompleteAwaitingPaymentJob(client: SupabaseClient, jo
    * escreve a outra na mesma chamada: duas escritas separadas é como elas
    * divergem de novo.
    */
+  // Pago (no cartão, transferência, o que for): o chip "Card declined" sai e as
+  // novas tentativas no cartão param (dono, 14/10/2026).
+  const cartao = (job as Job & { card_charge_status?: string | null }).card_charge_status;
+  const limpaCartao =
+    cartao === "refused" || cartao === "requires_action"
+      ? { card_charge_status: "skipped", card_retry_at: null }
+      : {};
   await client
     .from("jobs")
-    .update({ status: "completed", finance_status: "paid", payment_status: "paid" })
+    .update({ status: "completed", finance_status: "paid", payment_status: "paid", ...limpaCartao })
     .eq("id", jobId);
 }

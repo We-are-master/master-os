@@ -113,3 +113,14 @@ export function decidirEnvio(input: {
 export function mensagensAoClienteLigadas(): boolean {
   return process.env.CLIENT_MESSAGING_ENABLED === "1";
 }
+
+/**
+ * Confirmação e remarcação também por WhatsApp? Desligado (dono, 14/10/2026):
+ * "vamos manter apenas por email for now". A confirmação da reserva e a
+ * remarcação saem por e-mail no ticket do job; o WhatsApp fica só para o
+ * lembrete de véspera. Religar é `CONFIRMACAO_WHATSAPP=on`.
+ */
+export function confirmacaoPorWhatsApp(): boolean {
+  const v = process.env.CONFIRMACAO_WHATSAPP?.trim().toLowerCase();
+  return v === "1" || v === "on" || v === "true";
+}

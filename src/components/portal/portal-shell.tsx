@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FileText, ClipboardList, Briefcase, Receipt,
-  MessageSquare, Settings, LogOut, Menu, X, Sun, Moon,
+  MessageSquare, Settings, LogOut, Menu, X,
 } from "lucide-react";
 
 interface PortalShellProps {
@@ -25,54 +25,25 @@ const NAV_ITEMS = [
   { href: "/portal/settings", label: "Settings",  icon: Settings        },
 ];
 
-/**
- * Lightweight theme hook for the portal — same localStorage key
- * (`master-os-theme`) and same `dark` class on <html> as the dashboard,
- * so a portal user toggling the theme also affects the dashboard if
- * they happen to switch tabs (and vice versa). Pure client-side, no
- * provider needed.
- */
-function usePortalTheme() {
-  const [resolved, setResolved] = useState<"light" | "dark">("light");
-
+/** Light only, like the rest of the OS: drops any saved dark preference and keeps the style flag. */
+function usePortalLightOnly() {
   useEffect(() => {
-    const stored = typeof window !== "undefined"
-      ? (localStorage.getItem("master-os-theme") as "light" | "dark" | "system" | null)
-      : null;
-    const initial = stored ?? "system";
-    const sysIsDark = typeof window !== "undefined"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-      : false;
-    const r: "light" | "dark" = initial === "system" ? (sysIsDark ? "dark" : "light") : initial;
-    const minimal = typeof window !== "undefined"
-      && localStorage.getItem("master-os-style") === "minimal";
     queueMicrotask(() => {
-      setResolved(r);
-      document.documentElement.classList.toggle("dark", r === "dark");
-      if (minimal) {
+      document.documentElement.classList.remove("dark");
+      try { localStorage.removeItem("master-os-theme"); } catch { /* ignore */ }
+      if (localStorage.getItem("master-os-style") === "minimal") {
         document.documentElement.setAttribute("data-style", "minimal");
       } else {
         document.documentElement.removeAttribute("data-style");
       }
     });
   }, []);
-
-  const toggle = useCallback(() => {
-    setResolved((cur) => {
-      const next = cur === "dark" ? "light" : "dark";
-      document.documentElement.classList.toggle("dark", next === "dark");
-      try { localStorage.setItem("master-os-theme", next); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
-
-  return { resolved, toggle };
 }
 
 export function PortalShell({ accountName, userEmail, userFullName, children }: PortalShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { resolved, toggle } = usePortalTheme();
+  usePortalLightOnly();
 
   const isActive = (href: string) => {
     if (href === "/portal") return pathname === "/portal";
@@ -123,14 +94,6 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
             <p className="text-xs font-semibold text-text-primary truncate">{userFullName || userEmail}</p>
             <p className="text-xs text-text-tertiary truncate">{userEmail}</p>
           </div>
-          <button
-            type="button"
-            onClick={toggle}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors mb-1"
-          >
-            {resolved === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            {resolved === "dark" ? "Light mode" : "Dark mode"}
-          </button>
           <form action="/api/portal/auth/sign-out" method="POST">
             <button
               type="submit"
@@ -193,14 +156,6 @@ export function PortalShell({ accountName, userEmail, userFullName, children }: 
                 <p className="text-xs font-semibold text-text-primary truncate">{userFullName || userEmail}</p>
                 <p className="text-xs text-text-tertiary truncate">{userEmail}</p>
               </div>
-              <button
-                type="button"
-                onClick={toggle}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors mb-1"
-              >
-                {resolved === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                {resolved === "dark" ? "Light mode" : "Dark mode"}
-              </button>
               <form action="/api/portal/auth/sign-out" method="POST">
                 <button
                   type="submit"

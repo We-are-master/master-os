@@ -3,8 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
 import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
+import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
 import type { QuotePDFData, CompanyBranding } from "@/lib/pdf/quote-template";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { entradaPelaConta, percentualDeEntradaDaConta } from "@/lib/deposito-da-cotacao";
 
 function getServiceSupabase() {
   return createClient(
@@ -119,6 +121,17 @@ async function buildPreview(req: NextRequest, payload?: {
       (docPartyPrev ? (docPartyPrev.documentEmail ?? qPrev.client_email) : qPrev.client_email) ?? "",
     );
 
+    // A prévia mostra a entrada que o envio vai gravar (regra da conta), sem gravar.
+    const pctDaConta = await percentualDeEntradaDaConta(supabase, docPartyPrev?.sourceAccountId ?? null);
+    const entradaPrevista =
+      pctDaConta === undefined
+        ? null
+        : entradaPelaConta({
+            total: Number(quote.total_value ?? 0),
+            entradaAtual: Number(quote.deposit_required ?? 0),
+            percentualDaConta: pctDaConta,
+          });
+
     const pdfData: QuotePDFData = {
       reference: quote.reference,
       title: quote.title,
@@ -130,7 +143,8 @@ async function buildPreview(req: NextRequest, payload?: {
       ownerName: quote.owner_name ?? undefined,
       items,
       notes: settings?.quote_footer_notes ? String(settings.quote_footer_notes) : undefined,
-      depositRequired: Number(depositOverride ?? quote.deposit_required ?? 0) || undefined,
+      depositRequired:
+        Number(depositOverride ?? entradaPrevista?.deposit_required ?? quote.deposit_required ?? 0) || undefined,
       scope:
         typeof scopeOverride === "string" && scopeOverride.trim()
           ? scopeOverride.trim()
@@ -138,6 +152,7 @@ async function buildPreview(req: NextRequest, payload?: {
             ? quote.scope.trim()
             : undefined,
       vatPercent: vatPercentPreview,
+      agentModel: (await resolveClientWorkSchedule(supabase, { clientId: qCid || null })) === "A",
     };
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin;
@@ -149,6 +164,7 @@ async function buildPreview(req: NextRequest, payload?: {
       acceptUrl,
       rejectUrl,
       customMessage: customMessage || undefined,
+      agentModel: pdfData.agentModel,
       context: {
         propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
         postcode: (quote as { postcode?: string | null }).postcode ?? null,

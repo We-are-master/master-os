@@ -115,6 +115,29 @@ function tradePortalLoginUrl(tradePortalBaseUrl: string, email: string, inviteCo
   return `${base}/login?${params.toString()}`;
 }
 
+/**
+ * One-click sign-in link for a partner who already has (or will get) a Trade
+ * Portal account: a fresh portal token behind the portal's
+ * /api/auth/invite/enter, which turns it into a session and opens the portal.
+ * Used by the "you're live" email so activation drops them straight in.
+ */
+export async function createTradePortalAutoLoginUrl(
+  supabase: SupabaseClient,
+  partnerId: string,
+  tradePortalBaseUrl: string,
+  expiresInDays = 7,
+): Promise<string> {
+  const row = await insertPortalTokenWithRetry(supabase, {
+    partner_id: partnerId,
+    token_hash: hashPartnerPortalToken(generatePartnerPortalTokenRaw()),
+    short_code: generatePartnerPortalShortCode(),
+    expires_at: new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString(),
+    requested_doc_ids: null,
+  });
+  const base = tradePortalBaseUrl.replace(/\/$/, "");
+  return `${base}/api/auth/invite/enter?invite=${encodeURIComponent(row.short_code)}`;
+}
+
 async function insertPortalTokenWithRetry(
   supabase: SupabaseClient,
   row: {

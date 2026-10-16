@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   LayoutGrid,
@@ -18,7 +18,7 @@ import { SearchInput } from "@/components/ui/input";
 import { KpiCard, Pill } from "@/components/fx/primitives";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
-import { listCatalogServices } from "@/services/catalog-services";
+import { listCatalogServices, listServiceCategories } from "@/services/catalog-services";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
   buildAllServicePricingViews,
@@ -50,10 +50,10 @@ type PricingArea = "catalog" | "labour" | "materials" | "quote";
 
 function AreaSegment({ area, onChange }: { area: PricingArea; onChange: (a: PricingArea) => void }) {
   const tabs: { id: PricingArea; label: string }[] = [
-    { id: "catalog", label: "Catalog" },
+    { id: "catalog", label: "Catalogue" },
     { id: "labour", label: "Labour" },
     { id: "materials", label: "Materials" },
-    { id: "quote", label: "Quote" },
+    { id: "quote", label: "Estimator" },
   ];
   return (
     <div className="fx-seg">
@@ -304,22 +304,65 @@ function marginTierFromHead(head: { pay: number; charge: number }): MarginTier {
   return "bad";
 }
 
+/** Quantas linhas do serviço o site vende (mapa do site em os_documentos). */
+function WebsiteCell({ view, noSite }: { view: ServicePricingView; noSite: Set<string> }) {
+  const linhas = [...view.base, ...view.addons];
+  const total = linhas.length;
+  const noAr = linhas.filter((l) => noSite.has(l.id)).length;
+  if (noAr === 0) {
+    return (
+      <Pill tone="neutral" dot={false}>
+        Not on website
+      </Pill>
+    );
+  }
+  return (
+    <Pill tone="ok">
+      On website{total > 1 ? ` · ${noAr}/${total}` : ""}
+    </Pill>
+  );
+}
+
+function WebsiteMark({ on }: { on: boolean }) {
+  return on ? (
+    <Pill tone="ok">On website</Pill>
+  ) : (
+    <span className="text-xs text-text-tertiary">Not on website</span>
+  );
+}
+
+/** Linha de título da categoria dentro da tabela de serviços. */
+function FragmentoCategoria({ nome, total, children }: { nome: string; total: number; children: ReactNode }) {
+  return (
+    <>
+      <tr>
+        <td colSpan={8} className="bg-surface-hover/60 py-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+          {nome} <span className="ml-1 font-normal normal-case text-text-tertiary">{total}</span>
+        </td>
+      </tr>
+      {children}
+    </>
+  );
+}
+
 function ServiceListRows({
   views,
   expandedIds,
   onToggle,
   onEdit,
+  noSite,
 }: {
   views: ServicePricingView[];
   expandedIds: Set<string>;
   onToggle: (id: string) => void;
   onEdit: (row: CatalogService) => void;
+  noSite: Set<string>;
 }) {
   return (
     <>
       {views.map((view) => {
         const Icon = entryForSlug(view.slug).Icon;
-        const canExpand = view.addons.length > 0;
+        const canExpand = view.addons.length > 0 || view.base.length > 1;
         const isOpen = expandedIds.has(view.id);
 
         if (view.missing) {
@@ -339,6 +382,9 @@ function ServiceListRows({
               </td>
               <td>
                 <span className="fx-pill fx-pill--ghost">{view.model}</span>
+              </td>
+              <td>
+                <WebsiteCell view={view} noSite={noSite} />
               </td>
               <td className="fx-tbl__num is-mute">—</td>
               <td className="fx-tbl__num is-mute">—</td>
@@ -375,6 +421,7 @@ function ServiceListRows({
             tier={tier}
             onToggle={onToggle}
             onEdit={onEdit}
+            noSite={noSite}
           />
         );
       })}
@@ -393,6 +440,7 @@ function ServiceListRowGroup({
   tier,
   onToggle,
   onEdit,
+  noSite,
 }: {
   view: ServicePricingView;
   Icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
@@ -404,6 +452,7 @@ function ServiceListRowGroup({
   tier: MarginTier;
   onToggle: (id: string) => void;
   onEdit: (row: CatalogService) => void;
+  noSite: Set<string>;
 }) {
   return (
     <>
@@ -427,6 +476,9 @@ function ServiceListRowGroup({
         </td>
         <td>
           <span className="fx-pill fx-pill--ghost">{view.model}</span>
+        </td>
+        <td>
+          <WebsiteCell view={view} noSite={noSite} />
         </td>
         <td className="fx-tbl__num">{formatCurrency(head.pay)}</td>
         <td className="fx-tbl__num">
@@ -452,13 +504,16 @@ function ServiceListRowGroup({
           </button>
         </td>
       </tr>
-      {view.addons.map((addon) => (
+      {[...(view.base.length > 1 ? view.base : []), ...view.addons].map((addon) => (
         <tr key={`${view.id}-${addon.id}`} className="lr-sub" hidden={!isOpen}>
           <td>
-            <div className="lr__subname">＋ {addon.label}</div>
+            <div className="lr__subname">{addon.isAddon ? "＋ " : ""}{addon.label}</div>
           </td>
           <td>
-            <span className="lr__addtag">Add-on</span>
+            <span className="lr__addtag">{addon.isAddon ? "Add-on" : "Option"}</span>
+          </td>
+          <td>
+            <WebsiteMark on={noSite.has(addon.id)} />
           </td>
           <td className="fx-tbl__num">{formatCurrency(addon.pay)}</td>
           <td className="fx-tbl__num">{formatCurrency(addon.charge)}</td>
@@ -518,7 +573,7 @@ function StatusSegment({
   const tabs: { id: ServicesStatusFilter; label: string }[] = [
     { id: "active", label: "Active" },
     { id: "all", label: "All" },
-    { id: "thin", label: "Thin margin" },
+    { id: "thin", label: "Low margin" },
   ];
   return (
     <div className="fx-seg">
@@ -554,6 +609,20 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
   const [statusFilter, setStatusFilter] = useState<ServicesStatusFilter>("active");
   const [search, setSearch] = useState("");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+
+  // Ids das opções e extras que o site vende (coluna Website).
+  const [noSite, setNoSite] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    fetch("/api/services/website-items")
+      .then((r) => (r.ok ? r.json() : { ids: [] }))
+      .then((j: { ids?: string[] }) => setNoSite(new Set(j.ids ?? [])))
+      .catch(() => setNoSite(new Set()));
+  }, []);
+
+  useEffect(() => {
+    void listServiceCategories().then(setCategories).catch(() => setCategories([]));
+  }, []);
 
   const allViews = useMemo(() => buildAllServicePricingViews(data), [data]);
   const kpis = useMemo(() => computeServicesPricingKpis(allViews), [allViews]);
@@ -648,8 +717,8 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
       ) : (
         <PageHeader
           eyebrow="Catalog · Pricing"
-          title="Services"
-          subtitle="What you pay, what you charge, and what you keep — for every service. Click a row to expand add-ons; click edit to change pricing."
+          title="Pricing"
+          subtitle="Manage standard service prices, labour rates and material costs. Account and partner rates override these defaults where configured."
         >
           <AreaSegment area={area} onChange={setArea} />
           {headerActions}
@@ -734,6 +803,7 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
                 <tr>
                   <th>Service</th>
                   <th>Pricing model</th>
+                  <th>Website</th>
                   <th className="fx-tbl__num">You pay</th>
                   <th className="fx-tbl__num">You charge</th>
                   <th>Margin · pay vs keep</th>
@@ -744,17 +814,21 @@ export function ServicesPricingClient({ embedded = false }: { embedded?: boolean
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-sm text-text-tertiary">
+                    <td colSpan={8} className="py-12 text-center text-sm text-text-tertiary">
                       No services match this filter.
                     </td>
                   </tr>
                 ) : (
-                  <ServiceListRows
-                    views={filtered}
-                    expandedIds={expandedIds}
-                    onToggle={toggleExpanded}
-                    onEdit={editor.openEdit}
-                  />
+                  // Agrupado pela categoria (304); serviço sem categoria fica em "No category".
+                  [...categories, { id: "", name: "No category" }].map((cat) => {
+                    const doGrupo = filtered.filter((v) => (v.service.category_id ?? "") === cat.id || (!cat.id && !categories.some((c) => c.id === v.service.category_id)));
+                    if (!doGrupo.length) return null;
+                    return (
+                      <FragmentoCategoria key={cat.id || "none"} nome={cat.name} total={doGrupo.length}>
+                        <ServiceListRows views={doGrupo} expandedIds={expandedIds} onToggle={toggleExpanded} onEdit={editor.openEdit} noSite={noSite} />
+                      </FragmentoCategoria>
+                    );
+                  })
                 )}
               </tbody>
             </table>

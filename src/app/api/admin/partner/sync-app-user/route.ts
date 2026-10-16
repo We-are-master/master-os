@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { assertPartnerLoginTarget, requireStaffPermission } from "@/lib/staff-permission";
 
 /**
  * Ensures a row exists in `public.users` (mobile app profile) for an auth user.
@@ -11,11 +12,8 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
-  const supabase = await import("@/lib/supabase/server").then((m) => m.createClient());
-  const { data: me } = await supabase.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
-  if ((me as { role?: string } | null)?.role !== "admin") {
-    return NextResponse.json({ error: "Forbidden", message: "Admin only" }, { status: 403 });
-  }
+  const gate = await requireStaffPermission(auth, "manage_partners");
+  if (gate instanceof NextResponse) return gate;
 
   let admin;
   try {
@@ -37,6 +35,10 @@ export async function POST(req: NextRequest) {
 
     if (!userId || !isValidUUID(userId)) {
       return NextResponse.json({ error: "Invalid or missing userId" }, { status: 400 });
+    }
+    if (gate.role !== "admin") {
+      const denied = await assertPartnerLoginTarget(admin, userId);
+      if (denied) return denied;
     }
 
     const { data: profile, error: profErr } = await admin

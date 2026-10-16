@@ -74,10 +74,8 @@ export function FixfyHintIcon({
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
@@ -92,7 +90,9 @@ export function FixfyHintIcon({
     const width = Math.min(TOOLTIP_MAX_WIDTH, popover?.offsetWidth || TOOLTIP_MAX_WIDTH);
     const height = popover?.offsetHeight || 120;
 
-    let { top, left } = preferredCoords(rect, placement, width, height);
+    const preferred = preferredCoords(rect, placement, width, height);
+    let top = preferred.top;
+    const left = preferred.left;
     let clamped = clampCoords(top, left, width, height);
 
     const overflowsBottom = top + height > window.innerHeight - VIEWPORT_MARGIN;
@@ -112,14 +112,9 @@ export function FixfyHintIcon({
     if (!tooltipOpen) {
       return;
     }
-    updatePosition();
+    const frame = requestAnimationFrame(updatePosition);
+    return () => cancelAnimationFrame(frame);
   }, [tooltipOpen, text, label, updatePosition]);
-
-  useEffect(() => {
-    if (!tooltipOpen) {
-      setCoords(null);
-    }
-  }, [tooltipOpen]);
 
   useEffect(() => {
     if (!tooltipOpen) return;
@@ -132,6 +127,15 @@ export function FixfyHintIcon({
       window.removeEventListener("scroll", onReposition, true);
     };
   }, [tooltipOpen, updatePosition]);
+
+  useEffect(() => {
+    if (!tooltipOpen) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTooltipOpen(false);
+    };
+    document.addEventListener("keydown", dismiss);
+    return () => document.removeEventListener("keydown", dismiss);
+  }, [tooltipOpen]);
 
   const clearHideTimer = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -161,12 +165,14 @@ export function FixfyHintIcon({
     setModalOpen(true);
   };
 
+  const closeModal = useCallback(() => setModalOpen(false), []);
+
   const circle = (
     <button
       ref={anchorRef}
       type="button"
       tabIndex={nativeTitleOnly ? -1 : 0}
-      aria-label={text}
+      aria-label={label ? `About ${label}` : text}
       aria-describedby={tooltipOpen ? tooltipId : undefined}
       aria-haspopup="dialog"
       title={nativeTitleOnly ? text : undefined}
@@ -185,7 +191,7 @@ export function FixfyHintIcon({
   }
 
   const tooltip =
-    tooltipOpen && mounted && coords
+    tooltipOpen && coords
       ? createPortal(
           <span
             ref={popoverRef}
@@ -222,8 +228,9 @@ export function FixfyHintIcon({
       </span>
       {tooltip}
       <Modal
+        manageFocus
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={closeModal}
         title={label ?? "Info"}
         size="sm"
         rootClassName="z-[210]"

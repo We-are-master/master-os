@@ -169,7 +169,7 @@ export function PartnerServiceRatesTabSection({
           </>
         ) : (
           <>
-            No catalog services match this partner&apos;s trades. Check <strong>Settings → Services</strong> names
+            No catalog services match this partner&apos;s trades. Check <strong>Settings → Pricing</strong> names
             match the trades, then save <strong>Trades &amp; skills</strong> again.
           </>
         )}
@@ -687,7 +687,7 @@ export function PartnerServiceRatesCreateStep({
     return (
       <p className="text-sm text-text-tertiary py-6 text-center max-w-md mx-auto">
         No catalog services match the selected trades. Check{" "}
-        <span className="font-medium text-text-secondary">Settings → Services</span> names match your trade
+        <span className="font-medium text-text-secondary">Settings → Pricing</span> names match your trade
         labels.
       </p>
     );

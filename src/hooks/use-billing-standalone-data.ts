@@ -31,6 +31,7 @@ import {
   resolveBillingStandaloneFilterBounds,
   type BillingStandaloneFilterValue,
 } from "@/lib/billing-standalone-filter";
+import type { BillingBundle } from "@/lib/billing-standalone-bundle";
 import type { YmdBounds } from "@/lib/billing-standalone-period";
 import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
@@ -218,8 +219,50 @@ export function useBillingStandaloneData() {
     [mergeSelfBillJobEnrichment, selfBills],
   );
 
+  /**
+   * Caminho rápido: o pacote inteiro numa chamada (`/api/billing/bundle`). Devolve false
+   * quando a rota falha, e aí a tela cai na carga antiga, consulta a consulta.
+   */
+  const loadFromBundle = useCallback(async (bounds: YmdBounds | null, background: boolean): Promise<boolean> => {
+    let bundle: BillingBundle;
+    try {
+      const qs = bounds ? `?from=${bounds.from}&to=${bounds.to}` : "";
+      const res = await fetch(`/api/billing/bundle${qs}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      bundle = (await res.json()) as BillingBundle;
+      if (!Array.isArray(bundle?.invoices) || !bundle.enrichment) throw new Error("bad payload");
+    } catch (e) {
+      console.warn("billing bundle unavailable, falling back to client fetch", e);
+      return false;
+    }
+    // Invalida qualquer enriquecimento antigo ainda em voo: o pacote é o estado novo.
+    ++enrichGenerationRef.current;
+    selfBillJobsLoadedRef.current = new Set(bundle.selfBillJobsLoadedIds ?? []);
+    setInvoices(bundle.invoices);
+    setSelfBills(bundle.selfBills);
+    setBills(bundle.bills);
+    setInstallmentsByInvoiceId(bundle.installmentsByInvoiceId ?? {});
+    setInstallmentsBySelfBillId(bundle.installmentsBySelfBillId ?? {});
+    setEnrichment(bundle.enrichment);
+    if (bounds === null) fullHistoryLoadedRef.current = true;
+    if (bundle.partial?.length) {
+      console.warn("Billing loaded partially — missing:", bundle.partial.join(", "));
+    }
+    if (!hasLoadedOnceRef.current) {
+      hasLoadedOnceRef.current = true;
+      setHasLoadedOnce(true);
+    }
+    if (!background) setLoading(false);
+    setRefreshing(false);
+    return true;
+  }, []);
+
   const loadData = useCallback(async (opts?: { background?: boolean; bounds?: YmdBounds | null }) => {
-    const background = opts?.background ?? false;
+    /**
+     * Depois da primeira carga, toda recarga é em segundo plano: marcar pago ou aprovar
+     * não troca mais a tela inteira pelo esqueleto de carregamento.
+     */
+    const background = opts?.background ?? hasLoadedOnceRef.current;
     const bounds =
       opts?.bounds !== undefined
         ? opts.bounds
@@ -239,6 +282,8 @@ export function useBillingStandaloneData() {
     // whole pipeline several times — the "sync, sync, sync" slow open. The
     // sync lives on the manual Sync button (handleSync) and can be scheduled
     // server-side; reading a page must not write.
+
+    if (await loadFromBundle(bounds, background)) return;
 
     let invRows: Invoice[] = [];
     let sbRows: SelfBill[] = [];
@@ -377,7 +422,7 @@ export function useBillingStandaloneData() {
     }
 
     void runDeferredEnrichment(invRows, sbRows, generation, bounds);
-  }, [runDeferredEnrichment]);
+  }, [runDeferredEnrichment, loadFromBundle]);
 
   const prefetchFullHistory = useCallback(async () => {
     if (fullHistoryLoadedRef.current || prefetchingRef.current) return;

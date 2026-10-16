@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe";
 import { stopAllSequences } from "@/lib/email-sequences/enroll";
+import { bloquear } from "@/lib/marketing/suppressions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,6 +30,23 @@ async function unsubscribe(token: string): Promise<NextResponse> {
     .update({ status: "unsubscribed", updated_at: new Date().toISOString() })
     .eq("status", "enrolled") // don't resurrect converted/invalid rows
     .ilike("email", email);
+
+  /**
+   * A lista de bloqueio, que é o que faz o pedido valer em TODAS as camadas.
+   *
+   * Sem esta linha a pessoa saía das sequências e continuava na `clients`,
+   * então recebia a próxima campanha pela outra porta. Sair de uma lista e
+   * receber de outra é exatamente como se ganha marcação de spam, e a
+   * marcação cai sobre o domínio que também manda confirmação de job.
+   *
+   * Não deixa a página quebrar: se o bloqueio falhar, quem clicou ainda vê
+   * a confirmação, e o erro fica no log para alguém consertar.
+   */
+  try {
+    await bloquear(email, "unsubscribed", "email_footer");
+  } catch (err) {
+    console.error(`[unsubscribe] falhou gravar o bloqueio de ${email}:`, err);
+  }
 
   return page("You've been unsubscribed. You won't receive any more emails from us.");
 }

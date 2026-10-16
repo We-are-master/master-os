@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { billingReferenceCandidates } from "@/lib/billing-reference";
 import { requireStripe } from "@/lib/stripe";
+import { accountPaysByCard, CARD_ON_FILE_ON } from "@/lib/stripe-card-charge";
 import { createServiceClient } from "@/lib/supabase/service";
-import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { depositAmountFromPercent } from "@/lib/quote-deposit";
-import { valorFixoDoLink } from "@/lib/pay-link-amount";
+import { saldoDoLinkDePagamento, valorFixoDoLink } from "@/lib/pay-link-amount";
+import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
+import { isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
+import { customerBalanceCap, loadJobPromotionAmount } from "@/lib/agent-model/promotion";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,8 +17,8 @@ const EPS = 0.02;
 const MIN_CHARGE_GBP = 0.3;
 
 /**
- * Public pay link: `/pay/RCP-XXXX` charges the invoice's open balance,
- * `/pay/RCP-XXXX?pct=50` charges that percentage of the open balance (deposit).
+ * Public pay link: `/pay/INV-XXXX` charges the invoice's open balance,
+ * `/pay/INV-XXXX?pct=50` charges that percentage of the open balance (deposit).
  *
  * A Checkout Session is created per click with the amount computed NOW, so the
  * URL never goes stale when the invoice amount changes or a partial payment
@@ -38,7 +42,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     const { data: invRow } = await admin
       .from("invoices")
       .select("id, reference, client_name, amount, amount_paid, status, job_reference, stripe_customer_email")
-      .eq("reference", reference)
+      // O cliente pode chegar com o prefixo antigo (RCP-) ou o novo (INV-): é a mesma fatura.
+      .in("reference", billingReferenceCandidates(reference))
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (!invRow) {
@@ -59,8 +66,60 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       return htmlMessage("Invoice cancelled", "This invoice has been cancelled and can no longer be paid. Please contact Fixfy for an up-to-date invoice.", 410);
     }
 
-    const balance = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
-    if (inv.status === "paid" || balance <= EPS) {
+    let jobId = "";
+    let jobClientId: string | null = null;
+    let jobPrice: { client_price?: number | null; extras_amount?: number | null } | null = null;
+    if (inv.job_reference?.trim()) {
+      const { data: jobRow } = await admin
+        .from("jobs")
+        .select("id, client_id, client_price, extras_amount")
+        .eq("reference", inv.job_reference.trim())
+        .maybeSingle();
+      if (jobRow?.id) {
+        jobId = jobRow.id as string;
+        jobClientId = (jobRow as { client_id?: string | null }).client_id ?? null;
+        jobPrice = jobRow as { client_price?: number | null; extras_amount?: number | null };
+      }
+    }
+
+    /**
+     * Promoção da Fixfy (mig 313) nunca é cobrada do cliente.
+     *
+     * O saldo do link é o da fatura, mas fatura criada antes de a promoção
+     * existir no job (ou a preço cheio por engano) cobraria a promoção. Com
+     * promoção no job, o link nunca passa de preço + extras − promoção − o que
+     * já foi pago.
+     */
+    const promotion = jobId && jobPrice ? await loadJobPromotionAmount(admin, jobId) : 0;
+    const [faturasDoJob, pagoNoJob] = jobId
+      ? await Promise.all([
+          countJobInvoices(admin, inv.job_reference!.trim()),
+          sumJobCustomerPayments(admin, jobId),
+        ])
+      : [0, null];
+
+    // Rede de segurança contra fatura com `amount` abaixo do job (RCP-2026-917, 14/10/2026):
+    // fatura única do job cobra o total do job menos o que já entrou, nunca "pago" antes disso.
+    let balance = saldoDoLinkDePagamento({
+      valorFatura: Number(inv.amount ?? 0),
+      pagoFatura: Number(inv.amount_paid ?? 0),
+      faturaPaga: inv.status === "paid",
+      totalDoJob: jobPrice
+        ? Number(jobPrice.client_price ?? 0) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion)
+        : null,
+      pagoNoJob,
+      faturaUnicaDoJob: faturasDoJob === 1,
+    });
+    if (jobPrice && promotion > 0) {
+      const cap = customerBalanceCap({
+        clientPrice: jobPrice.client_price,
+        extrasAmount: jobPrice.extras_amount,
+        promotionAmount: promotion,
+        amountPaid: Math.max(Number(inv.amount_paid ?? 0), pagoNoJob ?? 0),
+      });
+      balance = Math.min(balance, cap);
+    }
+    if (balance <= EPS) {
       return NextResponse.redirect(`${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`, 303);
     }
 
@@ -99,16 +158,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       }
     }
 
-    let jobId = "";
-    if (inv.job_reference?.trim()) {
-      const { data: jobRow } = await admin
-        .from("jobs")
-        .select("id")
-        .eq("reference", inv.job_reference.trim())
-        .maybeSingle();
-      if (jobRow?.id) jobId = jobRow.id as string;
-    }
-
     const metadata: Record<string, string> = {
       pay_link: "os",
       invoice_id: inv.id,
@@ -119,6 +168,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
 
     const clientName = inv.client_name?.trim();
     const stripe = requireStripe();
+
+    // Quem paga no cartão (conta card_upfront ou sem conta) sempre deixa o cartão salvo:
+    // no sinal o restante é cobrado sozinho no final review (Fase 0, dono 09/10/2026); no
+    // pagamento cheio ele fica para extra aprovado ou cancelamento tardio (dono, 14/10/2026).
+    const saveCard = CARD_ON_FILE_ON() && !!jobId && (await accountPaysByCard(admin, jobClientId));
+    let savedCustomerId: string | null = null;
+    if (saveCard && jobClientId) {
+      const { data: cli } = await admin.from("clients").select("stripe_customer_id").eq("id", jobClientId).maybeSingle();
+      savedCustomerId = (cli as { stripe_customer_id?: string | null } | null)?.stripe_customer_id ?? null;
+    }
+    if (saveCard) metadata.save_card = "1";
+    const balanceAfter = Math.max(0, Math.round((balance - amount) * 100) / 100);
     // Metadata stays on the session only (not payment_intent_data): the webhook's
     // legacy payment_intent.succeeded branch marks invoices FULLY paid, which
     // would be wrong for a deposit charge.
@@ -138,7 +199,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
         },
       ],
       metadata,
-      ...(inv.stripe_customer_email?.trim() ? { customer_email: inv.stripe_customer_email.trim() } : {}),
+      ...(saveCard
+        ? {
+            ...(savedCustomerId ? { customer: savedCustomerId } : { customer_creation: "always" as const }),
+            payment_intent_data: { setup_future_usage: "off_session" as const },
+            custom_text: {
+              submit: {
+                message:
+                  pct < 100
+                    ? `You pay the ${pct}% deposit now. Your card is saved securely by Stripe and the remaining balance (£${balanceAfter.toFixed(2)}) is charged automatically when your job is completed and checked. Extra work or materials you approve, or a late-cancellation charge under our booking terms, may also be charged to this card.`
+                    : `You pay in full now. Your card is saved securely by Stripe and is only charged again for extra work or materials you approve, or a late-cancellation charge under our booking terms.`,
+              },
+            },
+          }
+        : {}),
+      ...(!savedCustomerId && inv.stripe_customer_email?.trim() ? { customer_email: inv.stripe_customer_email.trim() } : {}),
       success_url: `${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`,
     });
 
@@ -154,6 +229,41 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     }
     return htmlMessage("Something went wrong", "We could not start the payment. Please try again or contact Fixfy.", 500);
   }
+}
+
+type AdminClient = ReturnType<typeof createServiceClient>;
+
+/** Faturas vivas do job que dividem o total (cancelada e lote semanal não contam). */
+async function countJobInvoices(admin: AdminClient, jobReference: string): Promise<number> {
+  const { data, error } = await admin
+    .from("invoices")
+    .select("id, status, invoice_kind")
+    .eq("job_reference", jobReference)
+    .is("deleted_at", null);
+  if (error) {
+    console.error("Pay link: job invoices read failed", jobReference, error);
+    return 0;
+  }
+  return ((data ?? []) as { status?: string | null; invoice_kind?: string | null }[]).filter(
+    (r) => r.status !== "cancelled" && r.invoice_kind !== "weekly_batch",
+  ).length;
+}
+
+/** Pagamentos de cliente no razão do job; null quando não deu para ler (aí vale só a fatura). */
+async function sumJobCustomerPayments(admin: AdminClient, jobId: string): Promise<number | null> {
+  type Row = { type: string; amount: number; note?: string | null };
+  const base = () =>
+    admin.from("job_payments").select("type, amount, note").eq("job_id", jobId).in("type", ["customer_deposit", "customer_final"]);
+  let { data, error } = await base().is("deleted_at", null);
+  if (error && isJobPaymentsDeletedAtMissing(error)) ({ data, error } = await base());
+  if (error) {
+    console.error("Pay link: job payments read failed", jobId, error);
+    return null;
+  }
+  const total = ((data ?? []) as Row[])
+    .filter((p) => !isLegacyMisclassifiedCustomerPayment(p))
+    .reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  return Math.round(total * 100) / 100;
 }
 
 function htmlMessage(title: string, body: string, status: number): NextResponse {

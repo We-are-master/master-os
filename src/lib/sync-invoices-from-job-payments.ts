@@ -7,7 +7,7 @@ import {
 } from "@/lib/invoice-collection";
 import { isSupabaseMissingColumnError, isJobPaymentsDeletedAtMissing } from "@/lib/supabase-schema-compat";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
-import { jobCustomerBillableRevenueForCollections } from "@/lib/job-financials";
+import { jobCustomerBillableRevenueForCollections, jobCustomerTotal } from "@/lib/job-financials";
 import { syncPaymentPlanFromAmountPaid } from "@/services/invoice-payment-plan";
 
 const EPS = 0.02;
@@ -248,13 +248,16 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   const scheduleTotal = schedDep + schedFin;
   /** Matches `inferInvoiceKind` “combined” heuristic so invoice amount aligns with job ticket + extras. */
   const ticketPlusExtras = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  /** Com promoção da Fixfy (mig 313) a fatura do job é preço + extras − promoção. */
+  const customerTotal = jobCustomerTotal(job);
   const kind = inferInvoiceKind(job, inv);
   let allocated = 0;
   // Invoice covers the full job (or full deposit+final schedule): pool all customer rows so job ledger matches Finance.
   const fullJobInvoice =
     (totalBillable > EPS && nearEqualAmounts(amt, totalBillable)) ||
     (scheduleTotal > EPS && nearEqualAmounts(amt, scheduleTotal)) ||
-    (ticketPlusExtras > EPS && nearEqualAmounts(amt, ticketPlusExtras));
+    (ticketPlusExtras > EPS && nearEqualAmounts(amt, ticketPlusExtras)) ||
+    (customerTotal > EPS && nearEqualAmounts(amt, customerTotal));
   if (fullJobInvoice) {
     allocated = Math.min(depSum + finSum, amt);
   } else if (kind === "deposit") {
@@ -269,7 +272,13 @@ async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: J
   /** When invoice total is slightly above `jobCustomerBillableRevenueForCollections` (e.g. CCZ/parking in invoice but not yet in job row), deposit/final-only allocation can stay 0 — pool customer payments if close enough. */
   const pooled = Math.round(Math.min(depSum + finSum, amt) * 100) / 100;
   const maxJobRevenueHint = Math.max(totalBillable, scheduleTotal, ticketPlusExtras);
-  if (pooled > allocated + EPS && Math.abs(amt - maxJobRevenueHint) <= 50) {
+  /**
+   * Só para fatura única do job ("combined"/"other"). Em fatura de ENTRADA ou FINAL a
+   * tolerância de £50 misturava os pagamentos: final de £50 num job de £100 recebia a
+   * entrada e aparecia paga sem o cliente pagar o restante (15/10/2026, JOB-9736).
+   */
+  const faturaUnica = kind !== "deposit" && kind !== "final";
+  if (faturaUnica && pooled > allocated + EPS && Math.abs(amt - maxJobRevenueHint) <= 50) {
     allocated = pooled;
   }
 

@@ -6,10 +6,10 @@ import { useProfile } from "@/hooks/use-profile";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Menu, LogOut, Moon, Sun, Sparkles,
-  Search, X, History, Monitor, Check, Minus,
+  Menu, LogOut, Sun, Sparkles,
+  Search, X, History, Check, Minus,
 } from "lucide-react";
-import type { Theme, Style } from "@/hooks/use-theme";
+import type { Style } from "@/hooks/use-theme";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { Badge } from "@/components/ui/badge";
 import { jobStatusBadgeVariant, jobStatusLabel } from "@/lib/job-status-ui";
@@ -238,7 +238,7 @@ function GlobalSearch() {
 
   const searchInput = (ref: RefObject<HTMLInputElement | null>, autoFocus?: boolean) => (
     <div className="relative flex items-center">
-      <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-secondary" />
+      <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
       <input
         ref={ref}
         autoFocus={autoFocus}
@@ -251,7 +251,7 @@ function GlobalSearch() {
           if (query.trim().length >= 2) setOpen(true);
         }}
         placeholder="Search"
-        className="h-10 w-full rounded-lg border border-fx-line bg-surface pl-9 pr-10 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
+        className="h-10 w-full rounded-lg border border-fx-line bg-surface pl-9 pr-10 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
       />
       {query ? (
         <button
@@ -274,7 +274,7 @@ function GlobalSearch() {
       {/* Desktop */}
       <div ref={containerRef} className="relative hidden md:block">
         <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-secondary" />
+          <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
           <input
             ref={inputRef}
             value={query}
@@ -286,7 +286,7 @@ function GlobalSearch() {
               if (query.trim().length >= 2) setOpen(true);
             }}
             placeholder="Search"
-            className="h-9 w-full max-w-96 rounded-lg border border-fx-line bg-surface pl-9 pr-16 text-[13px] text-text-primary shadow-sm placeholder:text-text-tertiary transition-all hover:border-fx-line/80 hover:bg-fx-paper focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/15"
+            className="h-[27px] w-full max-w-96 rounded-lg border border-fx-line bg-surface-secondary pl-8 pr-16 text-[12px] text-text-primary placeholder:text-text-tertiary transition-all hover:border-fx-line-2 focus:border-text-tertiary focus:outline-none focus:ring-[3px] focus:ring-text-primary/10"
           />
           {query ? (
             <button
@@ -301,7 +301,7 @@ function GlobalSearch() {
               <X className="h-3.5 w-3.5" />
             </button>
           ) : (
-            <kbd className="absolute right-2.5 select-none rounded-sm border border-fx-line bg-fx-paper px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+            <kbd className="absolute right-2 select-none rounded-sm border border-fx-line bg-fx-paper px-1 py-px font-mono text-[9px] text-text-tertiary">
               ⌘K
             </kbd>
           )}
@@ -326,7 +326,7 @@ function GlobalSearch() {
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
-        className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
+        className="flex h-[27px] w-[27px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
         aria-label="Search"
       >
         <Search className="h-5 w-5" />
@@ -360,10 +360,10 @@ function GlobalSearch() {
   );
 }
 
-// ── Theme menu (appearance + style) ───────────────────────────────────────────
+// ── Style menu (the OS is light only) ───────────────────────────────────────────
 
 function ThemeMenu() {
-  const { theme, resolved, style, setTheme, setStyle } = useTheme();
+  const { style, setStyle } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -381,11 +381,6 @@ function ThemeMenu() {
     };
   }, [open]);
 
-  const appearanceOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
-    { value: "light", label: "Light", icon: Sun },
-    { value: "dark", label: "Dark", icon: Moon },
-    { value: "system", label: "System", icon: Monitor },
-  ];
   const styleOptions: { value: Style; label: string; icon: typeof Sun }[] = [
     { value: "default", label: "Default", icon: Sparkles },
     { value: "minimal", label: "Minimal", icon: Minus },
@@ -423,22 +418,12 @@ function ThemeMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="relative flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
-        title="Theme"
+        className="relative flex h-[27px] w-[27px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
+        title="Style"
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <AnimatePresence mode="wait" initial={false}>
-          {resolved === "dark" ? (
-            <motion.div key="sun" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <Sun className="h-[18px] w-[18px]" />
-            </motion.div>
-          ) : (
-            <motion.div key="moon" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <Moon className="h-[18px] w-[18px]" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <Sparkles className="h-[15px] w-[15px]" />
       </button>
 
       <AnimatePresence>
@@ -451,17 +436,6 @@ function ThemeMenu() {
             className="absolute right-0 z-50 mt-2 w-52 rounded-lg border border-border bg-surface p-1.5 shadow-elevated"
             role="menu"
           >
-            <p className="fx-kk px-2 pb-1 pt-1">Appearance</p>
-            {appearanceOptions.map((o) => (
-              <Row
-                key={o.value}
-                active={theme === o.value}
-                label={o.label}
-                Icon={o.icon}
-                onClick={() => setTheme(o.value)}
-              />
-            ))}
-            <div className="my-1.5 h-px bg-border" />
             <p className="fx-kk px-2 pb-1 pt-1">Style</p>
             {styleOptions.map((o) => (
               <Row
@@ -507,7 +481,7 @@ export function Header() {
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
         <button
           onClick={toggleMobile}
-          className="lg:hidden h-9 w-9 rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
+          className="lg:hidden h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -519,34 +493,34 @@ export function Header() {
         <Link
           href="/activity"
           className={cn(
-            "hidden h-9 w-9 items-center justify-center rounded-lg transition-colors sm:flex",
+            "hidden h-[27px] w-[27px] items-center justify-center rounded-lg transition-colors sm:flex",
             activityLogActive
               ? "bg-primary/15 text-primary"
               : "text-text-secondary hover:bg-surface-tertiary hover:text-text-primary",
           )}
-          title="Activity log"
-          aria-label="Activity log"
+          title="Audit log"
+          aria-label="Audit log"
         >
-          <History className="h-[18px] w-[18px]" />
+          <History className="h-[15px] w-[15px]" />
         </Link>
         <NotificationsMenu />
         <div className="mx-0.5 hidden h-6 w-px bg-border sm:mx-1 sm:block" />
         <div className="flex items-center gap-2.5 pl-1">
           <div className="text-right hidden sm:block">
-            <p className="text-sm font-semibold text-text-primary leading-tight">{displayName}</p>
+            <p className="text-[12px] font-semibold text-text-primary leading-tight">{displayName}</p>
             {displayRole && (
-              <p className="text-[11px] text-text-tertiary">{displayRole}</p>
+              <p className="text-[10px] text-text-tertiary">{displayRole}</p>
             )}
           </div>
-          <Avatar name={displayName} size="sm" />
+          <Avatar name={displayName} size="sm" className="!h-[29px] !w-[29px]" />
         </div>
         <button
           type="button"
           onClick={handleSignOut}
-          className="h-9 w-9 rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
+          className="h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
           title="Sign out"
         >
-          <LogOut className="h-[18px] w-[18px]" />
+          <LogOut className="h-[15px] w-[15px]" />
         </button>
       </div>
     </motion.header>

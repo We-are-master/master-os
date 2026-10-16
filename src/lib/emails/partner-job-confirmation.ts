@@ -161,10 +161,10 @@ function partnerJobEmailSubject(args: {
   const postcode = extractUkPostcode(args.propertyAddress) ?? "—";
   if (args.kind === "offer") {
     const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-    return `Job Offer: ${typeOfWork} ${date} ${postcode} — Tap to Accept`;
+    return `Job offer · ${typeOfWork} · ${date} · ${postcode}`;
   }
   const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-  return `Job Booked: ${typeOfWork} ${date} ${postcode}`;
+  return `Job confirmed · ${typeOfWork} · ${date} · ${postcode}`;
 }
 
 /** e.g. Job Cancelled: General Maintenance - 1 Jun */
@@ -174,7 +174,7 @@ export function partnerJobCancelledEmailSubject(args: {
 }): string {
   const typeOfWork = args.jobTitle.trim() || "Job";
   const date = formatPartnerJobEmailSubjectDate(args.scheduledDate, { includeYear: false });
-  return `Job Cancelled: ${typeOfWork} - ${date}`;
+  return `Job cancelled · ${typeOfWork} · ${date}`;
 }
 
 function partnerJobEmailNotesHtmlBlock(notes: string): string {
@@ -381,7 +381,7 @@ ${partnerEmailLogoHeaderRow()}
 
   const text = `Hi ${data.partnerFirstName || "there"},
 
-New job booked for you.
+Your job is confirmed. Review the schedule, address and scope below before the visit.
 
 Job #${data.jobReference}
 ${data.jobTitle}
@@ -668,7 +668,7 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 } {
   const supportEmail = data.supportEmail ?? "support@getfixfy.com";
   const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
-  const subject = `Booking rescheduled — ${data.jobReference}`;
+  const subject = `Booking rescheduled · ${data.jobReference}`;
 
   const safe = {
     name:    escapeHtml(data.recipientFirstName || "there"),
@@ -705,7 +705,7 @@ ${partnerEmailLogoHeaderRow("16px 40px")}
           fontSize: "26px",
           lineHeight: "34px",
         })}
-        <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Just a quick heads up — your job has been moved to a new date. Please check the updated schedule below and save it to your calendar.</p>
+        <p style="margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:23px; color:#3A3A55;">Quick heads up: this job has moved. The old schedule is crossed out below, the new one is in green. Please update your calendar.</p>
       </td></tr>
 
       <tr><td style="padding:0 40px;" class="px-mobile">
@@ -792,9 +792,9 @@ export function partnerJobOnHoldEmailSubject(args: {
 }): string {
   const shortRef = partnerJobEmailShortRef(args.jobReference);
   if (partnerJobOnHoldIsComplaint(args.presetId)) {
-    return `${shortRef} - Action Required: Complaint`;
+    return `Action required · Complaint for ${shortRef}`;
   }
-  return `${shortRef} - Job On Hold - Awaiting Next Stage`;
+  return `Job on hold · ${shortRef}`;
 }
 
 /**
@@ -922,10 +922,10 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
   let text: string;
 
   if (isComplaint) {
-    preheader = `Job ${safe.ref} — complaint raised. Please respond within 12 hours.`;
+    preheader = `Job ${safe.ref}: complaint raised. Please reply within 12 hours.`;
     bodyMiddle = `
       <tr><td bgcolor="#C8102E" style="background-color:#C8102E; padding:10px 40px; text-align:center;" class="px-mobile">
-        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required — respond within 12 hours</p>
+        <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required · reply within 12 hours</p>
       </td></tr>
 
 ${partnerEmailLogoHeaderRow()}
@@ -933,7 +933,7 @@ ${partnerEmailLogoHeaderRow()}
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
         ${partnerEmailSplitTitleHtml(
           safe.name,
-          "A complaint was raised on this job — we need your help to resolve.",
+          "A complaint was raised on this job. We need your help to resolve it.",
         )}
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
@@ -951,11 +951,11 @@ ${reasonBlockHtml}
         <p style="margin:0 0 12px 0; font-size:15px; font-weight:700; color:#0A0A1F;">What we need from you</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FBEFD6; border-left:3px solid #C47A00; border-radius:6px;">
           <tr><td style="padding:16px 20px;">
-            <p style="margin:0 0 10px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Tap the button below and send us:</p>
+            <p style="margin:0 0 10px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Tap the button below and reply in the complaint journal with:</p>
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
               <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>A short written summary</strong> of what was done and how you can resolve the issue</td></tr>
               <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;"><strong>Photos</strong> of the work area / completed work</td></tr>
-              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Anything relevant — <strong>receipts</strong> for materials, <strong>certificates</strong> (CP12, electrical), etc.</td></tr>
+              <tr><td valign="top" width="20" style="padding:4px 0; font-size:14px; color:#C47A00; font-weight:700;">•</td><td valign="top" style="padding:4px 0; font-size:14px; line-height:21px; color:#0A0A1F;">Anything relevant: <strong>receipts</strong> for materials, <strong>certificates</strong> (CP12, electrical), etc.</td></tr>
             </table>
           </td></tr>
         </table>
@@ -964,10 +964,10 @@ ${reasonBlockHtml}
       <tr><td align="center" style="padding:28px 40px 8px 40px;" class="px-mobile">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
           <tr><td align="center" style="border-radius:10px; background-color:#ED4B00; background-image:linear-gradient(135deg,#ED4B00 0%,#FF7A29 100%);">
-            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Resolve now</a>
+            <a href="${safe.resolveUrl}" target="_blank" style="display:inline-block; padding:16px 40px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; letter-spacing:0.2px; border-radius:10px;">Reply in the journal</a>
           </td></tr>
         </table>
-        <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Takes 2 minutes — add a note and snap a few photos, no app or login needed.</p>
+        <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Opens your partner portal already signed in, on this job. Write what happened and add photos.</p>
       </td></tr>
 
       <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
@@ -980,18 +980,18 @@ ${reasonBlockHtml}
 ${footer}`;
 
     text =
-`ACTION REQUIRED — RESPOND WITHIN 12 HOURS
+`ACTION REQUIRED · REPLY WITHIN 12 HOURS
 
 Hi ${data.partnerFirstName || "there"},
 
-A complaint was raised on this job — we need your help to resolve.
+A complaint was raised on this job. We need your help to resolve it.
 
-Job #${data.jobReference} — ${data.jobTitle}
+Job #${data.jobReference} · ${data.jobTitle}
 Location: ${data.propertyAddress || "—"}
 ${showReason ? `\nWhat the customer reported:\n${rawReason}\n` : ""}
 Payment on hold until resolved.
 
-Resolve now (add a note + photos, no app or login needed):
+Reply in the complaint journal (opens your partner portal, already signed in):
 ${data.resolveUrl}
 
 Please respond within 12 hours.
@@ -1069,6 +1069,8 @@ export interface PartnerJobConfirmationRequestData extends PartnerJobEmailSchedu
   priceDisplay:     string;
   /** Tokenised accept URL — required. */
   acceptUrl:        string;
+  /** Portal de parceiros (oportunidades): ver a oferta, o prazo e as outras. */
+  portalUrl?:       string | null;
   /** Hours within which the partner is expected to accept. Default 24. */
   responseHours?:   number;
   /** Hourly/fixed + type-of-work rules shown before the Accept CTA. */
@@ -1102,6 +1104,7 @@ export function buildPartnerJobConfirmationRequestEmail(
     scope:   escapeHtml(data.scope),
     priceHtml: partnerEmailEarningsPriceHtml(data.priceDisplay, 32),
     accept:  escapeHtml(data.acceptUrl),
+    portal:  escapeHtml(data.portalUrl ?? ""),
     hours:   String(responseHours),
     support: escapeHtml(supportEmail),
     supportTel:     escapeHtml(supportPhone),
@@ -1163,7 +1166,8 @@ ${partnerEmailLogoHeaderRow()}
       </td></tr>
       ${notesBlock}
       <tr><td align="center" style="padding:32px 40px 8px 40px;" class="px-mobile btn-mobile">
-        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>
+        <a href="${safe.accept}" target="_blank" style="display:inline-block; padding:16px 40px; background-color:#10B981; color:#FFFFFF; font-size:15px; font-weight:700; text-decoration:none; border-radius:8px;">Accept Job Now</a>${data.portalUrl ? `
+        <p style="margin:12px 0 0; font-size:13px; line-height:20px;"><a href="${safe.portal}" target="_blank" style="color:#ED4B00; text-decoration:underline;">See it in your partner portal</a></p>` : ""}
       </td></tr>
       <tr><td align="center" style="padding:0 40px 32px 40px;" class="px-mobile">
         <p style="margin:0 0 8px 0; font-size:13px; line-height:20px; color:#6B6B85;">${reportDeadlineNote}</p>
@@ -1198,7 +1202,8 @@ ${data.scope}
 ${partnerNotes ? `\nImportant\n${partnerNotes}\n` : ""}
 ${PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE}
 
-Accept Job Now: ${data.acceptUrl}
+Accept Job Now: ${data.acceptUrl}${data.portalUrl ? `
+See it in your partner portal: ${data.portalUrl}` : ""}
 
 Can't take it? Reply to this email and we'll reallocate.
 Otherwise: ${supportEmail} / ${supportPhone}

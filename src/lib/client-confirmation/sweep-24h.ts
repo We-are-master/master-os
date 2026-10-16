@@ -14,12 +14,10 @@
  * precisa de gesto explícito, não de descuido.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  createRespondIoClient,
-  phoneIdentifier,
-  type RespondIoClient,
-} from "@/lib/respond-io/client";
+import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
+import type { EnvioWhatsApp } from "./send";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
+import { getZendeskTicketId, isZendeskConfigured, updateTicket } from "@/lib/zendesk";
 import { dataPorExtenso, janelaDeChegada } from "./send";
 
 /**
@@ -31,9 +29,8 @@ import { dataPorExtenso, janelaDeChegada } from "./send";
  * lembrete de véspera pularia todo job com "nowhere to send from" sem que
  * nada parecesse errado. Descoberto em 22/08/2026, montando o launchd.
  */
-const template = () => process.env.RESPONDIO_REMINDER_TEMPLATE?.trim() || "24hrs_confirmation";
-const idioma = () => process.env.RESPONDIO_CONFIRMATION_LANG?.trim() || "en";
-const canal = () => Number(process.env.RESPONDIO_CONFIRMATION_CHANNEL_ID ?? 0) || null;
+const template = () => process.env.WHATSAPP_TEMPLATE_REMINDER?.trim() || "booking_reminder";
+const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
 
 /** Status em que faz sentido dizer "chegamos amanhã". */
 const AGENDADOS = ["scheduled", "late"];
@@ -54,25 +51,17 @@ export function horaEmLondres(agora: Date): number {
   );
 }
 
-/** Cedo demais para prometer "chegamos amanhã", e tarde demais para incomodar. */
-export const LEMBRETE_HORA_INICIO = 18;
-export const LEMBRETE_HORA_FIM = 22;
+/**
+ * Horário comercial de Londres, 9h às 17h (dono, 14/10/2026: "o 24 horas na
+ * véspera dentro das 9-5 pelo WhatsApp"). Era 18h-22h.
+ */
+export const LEMBRETE_HORA_INICIO = 9;
+export const LEMBRETE_HORA_FIM = 17;
 
 /**
- * O lembrete só sai das 18h aos 22h de Londres.
- *
- * Antes disso o dia ainda está sendo arrumado: alocação muda, parceiro cai,
- * horário anda. Mandar "chegamos amanhã às 9h" às 10h da manhã da véspera
- * promete um plano que ainda vai mudar, e o cliente recebe a correção depois —
- * ou pior, não recebe. Às 18h o dia seguinte já está fechado.
- *
- * A janela é do relógio de LONDRES, não do relógio da máquina. O launchd dispara
- * no horário local do Mac (São Paulo), e a diferença para Londres muda de 3 para
- * 4 horas duas vezes por ano: um horário fixo no plist andaria sozinho. Quem
- * decide é esta função; o plist só precisa acordar o processo perto da hora.
- *
- * O limite das 22h existe para o Mac que acordou tarde: um WhatsApp à meia-noite
- * não vale o susto. Nesse caso ninguém recebe, e é melhor assim.
+ * O lembrete só sai dentro da janela acima, no relógio de LONDRES, não no da
+ * máquina: a diferença de fuso muda duas vezes por ano, e quem decide é esta
+ * função. O agendador só precisa acordar o processo perto da hora.
  */
 export function dentroDaJanelaDoLembrete(agora: Date): boolean {
   const h = horaEmLondres(agora);
@@ -107,14 +96,15 @@ export function amanhaEmLondres(agora: Date): string {
 const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
   "partner_id, partner_name, client_id, client_name, property_address, " +
-  "client_reminder_sent_at, client_confirmation_sent_at";
+  "client_reminder_sent_at, client_confirmation_sent_at, external_source, external_ref";
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
   opcoes?: {
     agora?: Date;
     enviarDeVerdade?: boolean;
-    client?: RespondIoClient;
+    /** Injeção para teste: no ar quem manda é a Cloud API. */
+    enviar?: EnvioWhatsApp;
     /** Para envio manual fora da janela. O agendador nunca passa isto. */
     ignorarJanela?: boolean;
   },
@@ -148,7 +138,7 @@ export async function varrerLembretesDeVespera(
   }
 
   const linhas: LinhaDaVarredura[] = [];
-  const respond = opcoes?.client ?? (enviar ? createRespondIoClient() : null);
+  const manda: EnvioWhatsApp = opcoes?.enviar ?? enviarAoCliente;
 
   for (const raw of jobs ?? []) {
     const j = raw as unknown as Record<string, unknown>;
@@ -236,25 +226,18 @@ export async function varrerLembretesDeVespera(
       anota("pulado", "client messaging is off (CLIENT_MESSAGING_ENABLED)");
       continue;
     }
-    if (!canal() || !respond) {
-      anota("pulado", "RESPONDIO_CONFIRMATION_CHANNEL_ID is not set");
+    // Sai pelo número do Zendesk desde 08/10/2026 (a Cloud API direta dava #200).
+    if (!canalDoClienteConfigurado()) {
+      anota("pulado", canalDoClienteFaltando());
       continue;
     }
 
     try {
-      const id = phoneIdentifier(decisao.telefone);
-      await respond.createOrUpdateContact(id, { firstName: parametros[0], phone: decisao.telefone });
-      const manda = (params: string[]) =>
-        respond!.sendTemplate(
-          id,
-          { name: template(), languageCode: idioma(), components: [
-            { type: "body", parameters: params.map((text) => ({ type: "text" as const, text })) },
-          ] },
-          canal()!,
-        );
+      const mandarCom = (params: string[]) =>
+        manda({ to: decisao.telefone, name: template(), language: idioma(), bodyParams: params });
       let semEndereco = false;
       try {
-        await manda(parametros);
+        await mandarCom(parametros);
       } catch (err) {
         /**
          * Corrida de aprovação da Meta (31/08): a versão do template com o
@@ -267,13 +250,23 @@ export async function varrerLembretesDeVespera(
         const msg = err instanceof Error ? err.message : "";
         const erroDeTemplate = /param|template|132000|localizable|number of/i.test(msg);
         if (!erroDeTemplate || parametros.length < 4) throw err;
-        await manda(parametros.slice(0, 3));
+        await mandarCom(parametros.slice(0, 3));
         semEndereco = true;
       }
       await supabase
         .from("jobs")
         .update({ client_reminder_sent_at: new Date().toISOString() })
         .eq("id", String(j.id));
+      // Registro no ticket do job (dono, 14/10/2026: "envia dentro do mesmo
+      // ticket"): a mensagem sai pelo WhatsApp, a nota fica no pedido.
+      const ticketDoJob = isZendeskConfigured() ? getZendeskTicketId(j as never) : null;
+      if (ticketDoJob) {
+        await updateTicket({
+          ticketId: ticketDoJob,
+          commentBody: `📱 Day-before reminder sent on WhatsApp to ${decisao.telefone}: ${data}, arrival ${janela}, ${endereco}.`,
+          publicComment: false,
+        }).catch((e) => console.warn("[lembrete-24h] nota no ticket:", e instanceof Error ? e.message : e));
+      }
       anota(
         "enviado",
         `${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,

@@ -1,5 +1,5 @@
 import { getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
-import type { CatalogService } from "@/types/database";
+import type { CatalogService, ServiceCategory } from "@/types/database";
 
 /**
  * Fire-and-forget Zendesk sync after a catalog mutation (server / dashboard only).
@@ -78,6 +78,35 @@ export async function listCatalogServices(params: ListParams): Promise<ListResul
 }
 
 /** Active, non-deleted rows for dropdowns (requests / quotes). */
+/** Categorias do catálogo, na ordem da tela. */
+export async function listServiceCategories(): Promise<ServiceCategory[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("service_categories")
+    .select("id, name, slug, sort, is_active")
+    .eq("is_active", true)
+    .order("sort", { ascending: true })
+    .order("name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ServiceCategory[];
+}
+
+/** Nova categoria (Settings → Services). O slug sai do nome. */
+export async function createServiceCategory(name: string): Promise<ServiceCategory> {
+  const nome = name.trim();
+  if (!nome) throw new Error("Category name is required");
+  const slug = nome.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const supabase = getSupabase();
+  const { data: ultima } = await supabase.from("service_categories").select("sort").order("sort", { ascending: false }).limit(1).maybeSingle();
+  const { data, error } = await supabase
+    .from("service_categories")
+    .insert({ name: nome, slug, sort: ((ultima?.sort as number | undefined) ?? 0) + 10 })
+    .select("id, name, slug, sort, is_active")
+    .single();
+  if (error) throw new Error(error.message.includes("duplicate") ? "A category with this name already exists" : error.message);
+  return data as ServiceCategory;
+}
+
 export async function listCatalogServicesForPicker(): Promise<CatalogService[]> {
   const supabase = getSupabase();
   const { data, error } = await supabase

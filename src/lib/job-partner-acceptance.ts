@@ -9,6 +9,7 @@ import { createSideConversation } from "@/lib/zendesk";
 import { fotosParaEmailDoJob } from "@/lib/emails/fotos-anexadas";
 import { dispatchJobCreatedZendesk } from "@/lib/zendesk-lifecycle";
 import { enviarConfirmacaoDoCliente } from "@/lib/client-confirmation/send";
+import { depoisDaResposta } from "@/lib/depois-da-resposta";
 import type { CatalogService, PartnerServicePrice } from "@/types/database";
 import { closeAllJobOfferSideConversations } from "@/lib/job-offer-side-conversations";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
@@ -294,11 +295,23 @@ export async function processAutoAssignJobAccept(args: {
           args.supabase,
           job,
         );
-        isVitrineEligible = partnerMatchesTypeOfWork(
-          fullPartner as Partner,
-          serviceType,
-          catalogServiceId,
-        );
+        if (catalogServiceId) {
+          // Regra nova (29/09/2026): serviço do catálogo na mesma categoria,
+          // disponibilidade, folga, máx. por dia, valor mínimo. Igual à oferta.
+          const { elegiveisParaJob, paraJobDeEscala } = await import("@/lib/capacity");
+          const el = await elegiveisParaJob(
+            args.supabase,
+            paraJobDeEscala({ ...(job as never as Parameters<typeof paraJobDeEscala>[0]), catalog_service_id: catalogServiceId }),
+            "categoria",
+          );
+          isVitrineEligible = el.elegiveis.some((p) => p.id === args.partnerId);
+        } else {
+          isVitrineEligible = partnerMatchesTypeOfWork(
+            fullPartner as Partner,
+            serviceType,
+            catalogServiceId,
+          );
+        }
       }
     } catch (err) {
       console.error("[processAutoAssignJobAccept] vitrine eligibility check failed:", err);
@@ -514,6 +527,23 @@ export async function sendBookedSideConvReply(args: {
   partnerName: string | null;
 }): Promise<BookedEmailResult> {
   const { job, partner } = args;
+
+  /**
+   * O morador fica sabendo ANTES de qualquer saída antecipada abaixo (14/10/2026).
+   *
+   * A confirmação ao cliente morava dentro do `if (created.ok)` da side
+   * conversation: job sem ticket, parceiro sem e-mail, trava do booked perdida
+   * ou Zendesk fora do ar = cliente sem confirmação, calado. E saía com `void`,
+   * que morre na Vercel quando a resposta sai. O parceiro já está gravado no
+   * job neste ponto (`claimAutoAssignJob` / aceite específico), e o envio é
+   * idempotente (trava atômica em `client_confirmation_sent_at`), então chamar
+   * aqui e na rota de atribuição não manda duas vezes.
+   */
+  const sbDoCliente = args.supabase ?? createServiceClient();
+  await depoisDaResposta("booked reply: confirmação do cliente", () =>
+    enviarConfirmacaoDoCliente(sbDoCliente, job.id),
+  );
+
   // Tudo do parceiro vive na side conversation do ticket, de propósito: Zendesk
   // e OS são o núcleo da operação, e um email por fora criaria uma conversa que
   // ninguém encontra depois. Job sem ticket não é caso de mandar por outro
@@ -605,14 +635,15 @@ export async function sendBookedSideConvReply(args: {
        * vezes. Mover o gatilho, em vez de somar, arriscaria o contrário: o
        * silêncio nos casos que hoje funcionam.
        *
-       * Sem `await`: o parceiro já foi avisado, que é o que trava a operação.
-       * Uma falha de email da conta não pode desfazer a aceitação do job.
+       * Depois da resposta: o parceiro já foi avisado, que é o que trava a
+       * operação. Uma falha de email da conta não pode desfazer a aceitação.
+       * `depoisDaResposta` e não `void`: `void` morre na Vercel.
+       *
+       * A confirmação do CLIENTE saiu daqui (14/10/2026): agora é disparada
+       * no topo desta função, para não depender da side conversation dar certo.
        */
-      void dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }).catch((e) =>
-        console.error("[booked reply] confirmação da conta falhou:", e),
-      );
-      void enviarConfirmacaoDoCliente(supabase, job.id).catch((e) =>
-        console.error("[booked reply] confirmação do cliente falhou:", e),
+      await depoisDaResposta("booked reply: confirmação da conta", () =>
+        dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }),
       );
       return { sent: true, sideConversationId: created.id };
     }

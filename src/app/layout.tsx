@@ -1,31 +1,25 @@
 import type { Metadata } from "next";
-import { Inter, Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Inter } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
   variable: "--font-inter",
 });
 
-const geist = Geist({
+/** Títulos e números grandes, igual ao site (getfixfy.com). */
+const archivo = Archivo({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["500", "600", "700"],
   display: "swap",
-  variable: "--font-geist",
-});
-
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  display: "swap",
-  variable: "--font-geist-mono",
+  variable: "--font-archivo",
 });
 
 export const metadata: Metadata = {
-  title: "Fixfy OS — Operations System",
+  title: "Fixfy OS · Operations System",
   description: "Fixfy internal operations management system",
   // Favicon: src/app/icon.png (+ apple-icon.png) via App Router metadata.
   icons: {
@@ -46,15 +40,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("master-os-theme");var d=t==="dark"||(t!=="light"&&window.matchMedia("(prefers-color-scheme:dark)").matches);if(d)document.documentElement.classList.add("dark");if(localStorage.getItem("master-os-style")==="minimal")document.documentElement.setAttribute("data-style","minimal")}catch(e){}})()`,
-          }}
-        />
-      </head>
-      <body className={`${geist.className} antialiased`} suppressHydrationWarning>
+    <html lang="en" className={`${inter.variable} ${archivo.variable}`} suppressHydrationWarning>
+      <body className={`${inter.className} antialiased`} suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>

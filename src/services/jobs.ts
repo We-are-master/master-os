@@ -1,5 +1,6 @@
 import { getSupabase, queryList, type ListParams, type ListResult } from "./base";
 import { limparScope } from "@/lib/scope-limpo";
+import { jobCustomerTotal } from "@/lib/job-financials";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
 import type { Job } from "@/types/database";
 import { cancelOpenInvoicesForJobCancellation, createInvoice, listInvoicesLinkedToJob } from "./invoices";
@@ -8,7 +9,8 @@ import { createOrAppendJobInvoice } from "./weekly-account-invoice";
 import {
   cancelOpenSelfBillsForJobCancellation,
   ensureWeeklySelfBillForJob,
-  canLinkJobToSelfBill,
+  relinkSelfBillIfMisplaced,
+  canDraftSelfBillForJob,
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
@@ -641,7 +643,8 @@ export async function ensureDraftInvoiceForJob(
     return { invoiceId: job.invoice_id, invoice: (data as import("@/types/database").Invoice) ?? null };
   }
 
-  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  // O cliente deve preço + extras − promoção da Fixfy (mig 313): a fatura nunca cobra a promoção.
+  const billableTotal = jobCustomerTotal(job);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
 
@@ -711,7 +714,16 @@ export async function ensureDraftInvoiceForJob(
 }
 
 export async function createJob(
-  input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">
+  input: Omit<Job, "id" | "reference" | "created_at" | "updated_at">,
+  opts?: {
+    /**
+     * Espera o vínculo do self-bill antes de devolver. Por padrão ele roda em segundo
+     * plano (15/10/2026): job novo ainda não paga nada, e ligar o self-bill custava
+     * umas 10 idas e voltas até o banco com a tela travada. Quem mexe no self-bill
+     * logo em seguida (plano de parcelas) pede para esperar.
+     */
+    awaitSelfBill?: boolean;
+  },
 ): Promise<Job> {
   const supabase = getSupabase();
 
@@ -840,7 +852,8 @@ export async function createJob(
    * "Review & approve" flow transitions it to `pending` (and optionally emails the PDF to the
    * client at that point).
    */
-  const billableTotal = Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0);
+  // O cliente deve preço + extras − promoção da Fixfy (mig 313): a fatura nunca cobra a promoção.
+  const billableTotal = jobCustomerTotal(job);
   const scheduledTotal = Number(job.customer_deposit ?? 0) + Number(job.customer_final_payment ?? 0);
   const invoiceTotal = Math.max(0, Math.max(billableTotal, scheduledTotal));
 
@@ -897,7 +910,12 @@ export async function createJob(
     }
   })();
 
-  const [invoiceIdCreated, selfBillIdCreated] = await Promise.all([invoiceTask, selfBillTask]);
+  const esperarSelfBill = opts?.awaitSelfBill === true || typeof window === "undefined";
+  if (!esperarSelfBill) selfBillTask.catch(() => null);
+  const [invoiceIdCreated, selfBillIdCreated] = await Promise.all([
+    invoiceTask,
+    esperarSelfBill ? selfBillTask : Promise.resolve(job.self_bill_id ?? null),
+  ]);
 
   // `ensureWeeklySelfBillForJob` already writes `jobs.self_bill_id`; only the invoice FK needs linking here.
   if (invoiceIdCreated && !job.invoice_id) {
@@ -923,6 +941,11 @@ export async function createJob(
    */
   void (async () => {
   try {
+    // Vínculo do self-bill em segundo plano: a checagem espera por ele, senão as duas disputam.
+    if (!esperarSelfBill) {
+      const sbBg = await selfBillTask.catch(() => null);
+      if (sbBg && !job.self_bill_id) job = { ...job, self_bill_id: sbBg };
+    }
     // Every job should have a draft invoice (amount may be 0).
     {
       let invoiceId = job.invoice_id ?? null;
@@ -995,9 +1018,9 @@ export async function createJob(
     // Never block job creation at this stage; this pass is best-effort verification/relink.
     console.error("createJob financial docs verification failed:", e);
   }
+    await syncSelfBillAfterJobChange(job).catch(() => {});
   })();
 
-  void syncSelfBillAfterJobChange(job).catch(() => {});
   return job;
 }
 
@@ -1162,7 +1185,18 @@ export async function updateJob(
   if (!row.id?.toString().trim()) {
     throw new Error("Job update returned a row without id — refresh the page.");
   }
-  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canLinkJobToSelfBill(row)) {
+  // Parceiro trocado ou concluído noutra quinzena: o job vai pro documento aberto certo.
+  if (row.self_bill_id?.trim()) {
+    try {
+      const movido = await relinkSelfBillIfMisplaced(row);
+      if (movido) row = { ...row, self_bill_id: movido };
+    } catch (e) {
+      console.error("updateJob: relink self-bill failed", { jobId: row.id, ref: row.reference }, e);
+    }
+  }
+  // Parceiro com data = self-bill em draft na hora (dono, 15/10/2026), como a fatura
+  // nasce em draft quando o job tem preço. Antes só entrava na conclusão.
+  if (row.partner_id?.trim() && !row.self_bill_id?.trim() && canDraftSelfBillForJob(row)) {
     try {
       const sbId = await ensureWeeklySelfBillForJob(row);
       if (sbId) row = { ...row, self_bill_id: sbId };

@@ -78,6 +78,49 @@ const RECON_PATH = join(STATE_DIR, ".reconciliado.json");
  * PASSADAS_ATE_DESISTIR_DO_CARD, e aí sim pedir o dado na nota.
  */
 const CARD_FALHAS_PATH = join(STATE_DIR, ".card-falhas.json");
+/**
+ * Sem saldo na OpenAI o Harvey fica cego e o ciclo fecha com zero, parecendo dia calmo
+ * (07/10 e 09-10/10/2026: 17 tickets sem leitura, um job da Housekeep parado). Avisa por
+ * e-mail na hora, no máximo uma vez por dia.
+ */
+const SEM_SALDO_PATH = join(STATE_DIR, ".sem-saldo-avisado.txt");
+async function avisarSemSaldo(): Promise<void> {
+  const hoje = new Date().toISOString().slice(0, 10);
+  try { if (readFileSync(SEM_SALDO_PATH, "utf8").trim() === hoje) return; } catch { /* primeiro aviso */ }
+  const key = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.RESEND_FROM_EMAIL?.trim();
+  if (!key || !from) return;
+  const { createClient } = await import("@supabase/supabase-js");
+  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SERVICE_ROLE_KEY!);
+  const { data } = await sb.from("company_settings").select("daily_brief_emails").limit(1).maybeSingle();
+  const para = String((data as { daily_brief_emails?: string } | null)?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((e) => e.includes("@"));
+  if (!para.length) return;
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      from,
+      to: para,
+      subject: "Harvey is blind: OpenAI is out of credit",
+      text: "Harvey could not read any ticket in this cycle because the OpenAI account has no credit left.\n\nTop up here: https://platform.openai.com/settings/organization/billing\n\nHe picks the tickets up by himself on the next cycle (5 minutes) after the top-up. You get this email at most once a day.",
+    }),
+  });
+  if (res.ok) {
+    if (!existsSync(dirname(SEM_SALDO_PATH))) mkdirSync(dirname(SEM_SALDO_PATH), { recursive: true });
+    writeFileSync(SEM_SALDO_PATH, hoje);
+    console.log("[harvey] aviso de OpenAI sem saldo enviado por e-mail");
+  }
+}
+
+/** id do ticket → `updated_at` em que o modelo disse "nem quote nem booking". */
+const CLASSIFICADOS_PATH = join(STATE_DIR, ".classificados.json");
+function lerMapa(caminho: string): Record<string, string> {
+  try { return JSON.parse(readFileSync(caminho, "utf8")) as Record<string, string>; } catch { return {}; }
+}
+function gravarMapa(caminho: string, mapa: Record<string, string>): void {
+  if (!existsSync(dirname(caminho))) mkdirSync(dirname(caminho), { recursive: true });
+  writeFileSync(caminho, JSON.stringify(mapa));
+}
 function lerContagem(caminho: string): Record<string, number> {
   try { return JSON.parse(readFileSync(caminho, "utf8")) as Record<string, number>; } catch { return {}; }
 }
@@ -116,7 +159,7 @@ function gravarIds(caminho: string, ids: Set<number>): void {
   writeFileSync(caminho, JSON.stringify([...ids]));
 }
 
-type TicketDaBusca = { id: number; subject: string; description: string; tags: string[] };
+type TicketDaBusca = { id: number; subject: string; description: string; tags: string[]; updated_at?: string };
 
 async function buscarCandidatos(): Promise<TicketDaBusca[]> {
   const desde = new Date(Date.now() - JANELA_DIAS * 864e5).toISOString().slice(0, 10);
@@ -328,7 +371,7 @@ async function ciclo(): Promise<void> {
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
-  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD } =
+  const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD, rascunhoDePrecoLigado } =
     await import("../../src/lib/zendesk-quoter/quoter");
   const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem } = await import("../../src/lib/zendesk-triage");
 
@@ -364,6 +407,11 @@ async function ciclo(): Promise<void> {
       !vistos.has(t.id) &&
       !t.tags.includes(TAG) &&
       !/^\s*JOB-/i.test(t.subject) &&
+      // Ticket aberto pelo próprio OS é do job, não e-mail a triar. O assunto
+      // "JOB-…" já tirava a maioria; a reserva do site nasce "Booking FX-…
+      // (JOB-…)" e escapava: o Harvey leu a nossa confirmação como parceiro
+      // confirmando e fechou o ticket da compra (#50688, #50689, 22/09/2026).
+      !t.tags.includes("os-created") &&
       // "You have N job(s) on Tue 18 Aug" da Housekeep é LEMBRETE diário dos
       // jobs do dia seguinte (dono, 18/08) — não é booking nem pedido de
       // quote. Fica no Action Required pro humano; o Harvey nem gasta
@@ -387,11 +435,17 @@ async function ciclo(): Promise<void> {
        * gente: ele fica no Action Required. O que não pode é virar job
        * sozinho.
        */
-      !/\[whatsapp\]/i.test(t.subject),
+      !/\[whatsapp\]/i.test(t.subject) &&
+      // Conversa do WhatsApp com o cliente (ticket do Sunshine) é do Harvey do WhatsApp;
+      // o do e-mail não comenta nela (Fase 2, 09/10/2026).
+      !t.tags.includes("harvey_wa") &&
+      !t.tags.includes("harvey_wa_lead"),
   );
   console.log(`[harvey] ${new Date().toISOString()} candidatos apos filtros: ${candidatos.length}`);
 
-  let cotados = 0, criados = 0;
+  let cotados = 0, criados = 0, poupadas = 0;
+  const classificados = lerMapa(CLASSIFICADOS_PATH);
+  let classificadosMudou = false;
   for (const t of candidatos.slice(0, MAX_CLASSIFICADOS_POR_CICLO)) {
     if (cotados >= MAX_QUOTES_POR_CICLO && criados >= MAX_JOBS_POR_CICLO) break;
 
@@ -578,11 +632,29 @@ async function ciclo(): Promise<void> {
     }
 
     let quer = { quote: false, booking: false };
-    try {
-      quer = await pedePreco(t, apiKey);
-    } catch (err) {
-      console.error(`[harvey] classificacao falhou no ${t.id}: ${err}`);
-      continue;
+    /**
+     * Ticket que já foi classificado como "nem quote nem booking" e não mudou desde então
+     * não volta ao modelo (10/10/2026). Antes, o mesmo ticket parado era reclassificado a
+     * cada 5 minutos: 5 tickets parados = 1.440 chamadas por dia para a mesma resposta.
+     */
+    const jaNegado = classificados[String(t.id)];
+    if (jaNegado && t.updated_at && jaNegado === t.updated_at) {
+      poupadas++;
+    } else {
+      try {
+        quer = await pedePreco(t, apiKey);
+      } catch (err) {
+        console.error(`[harvey] classificacao falhou no ${t.id}: ${err}`);
+        if (/SemSaldoOpenAI|insufficient_quota|credit_balance/i.test(String(err))) await avisarSemSaldo().catch(() => null);
+        continue;
+      }
+      if (!quer.quote && !quer.booking && t.updated_at) {
+        classificados[String(t.id)] = t.updated_at;
+        classificadosMudou = true;
+      } else if (classificados[String(t.id)]) {
+        delete classificados[String(t.id)];
+        classificadosMudou = true;
+      }
     }
     // Booking confirmado tem prioridade sobre quote: job agendado esperando
     // no OS vale mais que um rascunho de preço.
@@ -657,6 +729,15 @@ async function ciclo(): Promise<void> {
       }
       // Não marca visto: um ticket pode virar pedido de quote num comentário
       // futuro, e a janela de busca é curta o bastante para reavaliar barato.
+      /**
+       * Mas sem mudança no ticket não há o que reavaliar (11/10/2026): o #51021 era lido
+       * como booking, o extrator discordava, e as duas chamadas se repetiam a cada 5 min.
+       * Fica guardado até o `updated_at` mudar.
+       */
+      if (!quer.quote && t.updated_at && classificados[String(t.id)] !== t.updated_at) {
+        classificados[String(t.id)] = t.updated_at;
+        classificadosMudou = true;
+      }
       continue;
     }
 
@@ -672,14 +753,20 @@ async function ciclo(): Promise<void> {
       }
       cotados++;
       console.log(
-        `[harvey] ✔ rascunho interno no #${t.id}: £${r.resultado.quote.total.toFixed(2)} · ` +
+        `[harvey] ✔ ${rascunhoDePrecoLigado() ? `rascunho interno no #${t.id}: £${r.resultado.quote.total.toFixed(2)}` : `pedido de quote registrado no #${t.id} (sem rascunho de preco)`} · ` +
           `${r.pedido.missingInfo.length} pergunta(s) pendente(s) · ${r.resultado.quote.gaps.length} gap(s)`,
       );
     } catch (err) {
       console.error(`[harvey] cotacao falhou no ${t.id}: ${err}`);
     }
   }
-  console.log(`[harvey] ciclo fechado: ${cotados} rascunho(s), ${criados} booking(s) processado(s), ${notasTriagem} triagem(ns)`);
+  if (classificadosMudou) {
+    // Só guarda quem ainda é candidato: o arquivo não cresce para sempre.
+    const vivos = new Set(candidatos.map((c) => String(c.id)));
+    for (const id of Object.keys(classificados)) if (!vivos.has(id)) delete classificados[id];
+    gravarMapa(CLASSIFICADOS_PATH, classificados);
+  }
+  console.log(`[harvey] ciclo fechado: ${cotados} ${rascunhoDePrecoLigado() ? "rascunho(s)" : "pedido(s) de quote registrado(s)"}, ${criados} booking(s) processado(s), ${notasTriagem} triagem(ns)${poupadas ? `, ${poupadas} sem mudanca (modelo poupado)` : ""}`);
 
   // Vigia de OFERTAS em todo ciclo (Fase 3 do auto-flow): expira convites
   // vencidos, convida parceiros novos sem reenviar email a quem já recebeu, e
@@ -698,17 +785,42 @@ async function ciclo(): Promise<void> {
     console.error(`[harvey] vigia de ofertas morreu: ${err}`);
   }
 
+  // Lance que o parceiro mandou por e-mail na side conversation vira lance de
+  // verdade ANTES da varredura de lances, para ela já rascunhar neste ciclo
+  // (lances-por-email.ts, Fase 1 15/10/2026). Mesma porta HARVEY_RASCUNHO_LANCE=1.
+  try {
+    const { lerLancesPorEmail } = await import("../../src/lib/lances-por-email");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const le = await lerLancesPorEmail(createServiceClient(), notaComReserva(postarNotaInterna));
+    if (le.lidas > 0 || le.detalhes.length) {
+      console.log(
+        `[harvey] lances por e-mail (${le.armado ? "ARMADO" : "ensaio"}): ${le.quotes} quote(s), ${le.lidas} e-mail(s) lido(s), ` +
+          `${le.lances} lance(s), ${le.respostas} resposta(s), ${le.outras} outra(s)`,
+      );
+      for (const d of le.detalhes) console.log(`[harvey]   ${d}`);
+    }
+  } catch (err) {
+    console.error(`[harvey] leitor de lances por e-mail morreu: ${err}`);
+  }
+
   // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
   // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
+  // Fase 1: quando é seguro, o preço sai sozinho para o cliente (HARVEY_QUOTE_AUTO_SEND=1).
   try {
     const { varrerLancesParaRascunho } = await import("../../src/lib/quote-lances-sweep");
     const { createServiceClient } = await import("../../src/lib/supabase/service");
-    const { postarNotaInterna: postar } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    // Ticket da conversa com o Harvey ainda nele ("AI agent") recusa nota: vai no ticket do lead.
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const postar = notaComReserva(postarNotaInterna);
     const rl = await varrerLancesParaRascunho(createServiceClient(), postar);
     if (rl.analisados > 0) {
       console.log(
         `[harvey] lances (${rl.armado ? "ARMADO" : "ensaio"}): ${rl.analisados} quote(s), ` +
-          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s)`,
+          `${rl.rascunhados} rascunho(s), ${rl.janelaAberta} na janela, ${rl.semLance} sem lance, ${rl.silenciosas} silenciosa(s), ` +
+          `${rl.perguntasDeEscopo} pergunta(s) de escopo, ${rl.escopoParaGente} escopo(s) para gente, ${rl.enviadasSozinhas} enviada(s) sozinha(s)`,
       );
       for (const d of rl.detalhes) console.log(`[harvey]   ${d}`);
     }

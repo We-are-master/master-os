@@ -13,15 +13,12 @@ import {
   Plus,
   Loader2,
   Pencil,
-  ChevronDown,
-  ChevronRight,
   Archive,
   Ban,
   CalendarRange,
   CalendarDays,
   Sunrise,
   TrendingUp,
-  X,
 } from "lucide-react";
 import { cn, formatCurrency, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -30,7 +27,7 @@ import {
   listBills,
   createBill,
   updateBill,
-  markBillPaid,
+  deleteBillsByIds,
   archiveBillsByIds,
   listBillsInSameSeries,
 } from "@/services/bills";
@@ -54,10 +51,6 @@ type BillsPreset = "all" | "one_off" | "recurring" | "unpaid" | "paid" | "archiv
 
 function kpiEligible(b: Bill): boolean {
   return !b.archived_at && b.status !== "rejected";
-}
-
-function isDebitBill(b: Bill): boolean {
-  return b.category === "debit";
 }
 
 function billRowDisplayStatus(b: Bill): { label: string; variant: "default" | "success" } {
@@ -98,6 +91,9 @@ export default function BillsPage() {
   const [archiveSeriesBusy, setArchiveSeriesBusy] = useState(false);
   /** Per-row archive busy keys (for the X button) */
   const [archiveRowBusyKey, setArchiveRowBusyKey] = useState<string | null>(null);
+  /** Linhas marcadas: chave da linha → ids de todas as cobranças dela (série inteira). */
+  const [selectedRows, setSelectedRows] = useState<Record<string, string[]>>({});
+  const [deleting, setDeleting] = useState(false);
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -244,6 +240,35 @@ export default function BillsPage() {
     }
   };
 
+  /**
+   * Uma linha por conta, como as repeating bills do Xero: início, repetição, fim,
+   * parcelas pagas e total quando tem fim. As ocorrências continuam no banco.
+   */
+  const seriesFacts = (all: Bill[]) => {
+    const live = all.filter((b) => !b.archived_at && b.status !== "rejected");
+    const dated = live.filter((b) => !!b.due_date).sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+    const head = all[0];
+    const startYmd = dated[0]?.due_date ?? null;
+    const endYmd = head?.recurring_series_end_date ?? null;
+    const paidCount = live.filter((b) => b.status === "paid").length;
+    const total = live.reduce((t, b) => t + Number(b.amount ?? 0), 0);
+    // Conta comum nunca é marcada paga (só débito/financiamento), então "próxima" é a
+    // primeira de hoje em diante; sem nenhuma futura, a última em aberto.
+    const todayYmd = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+    const open = dated.filter((b) => b.status !== "paid");
+    const nextBill =
+      open.find((b) => String(b.due_date) >= todayYmd) ?? open[open.length - 1] ?? dated[dated.length - 1] ?? head;
+    return {
+      startYmd,
+      endYmd: head?.is_recurring ? endYmd : null,
+      repeats: head?.is_recurring ? recurrenceLabel(head.recurrence_interval as BillRecurrence | undefined) : "One-off",
+      instalments: head?.is_recurring && endYmd ? { paid: paidCount, count: live.length } : null,
+      seriesTotal: head?.is_recurring && endYmd ? total : null,
+      nextBill,
+      nextDueYmd: nextBill?.status !== "paid" ? nextBill?.due_date ?? null : null,
+    };
+  };
+
   const compactRows = useMemo(() => {
     const rows = displayList.map((item) => {
       if (item.type === "series") {
@@ -263,6 +288,7 @@ export default function BillsPage() {
           children: item.visible,
           /** ALL bill ids in the series (for bulk archive) — includes occurrences outside the period. */
           allBillIds: item.all.map((b) => b.id),
+          ...seriesFacts(item.all),
           isSeries: true,
           expandable: true,
           onToggle: () => setExpandedSeries((s) => ({ ...s, [item.key]: !(s[item.key] ?? false) })),
@@ -281,6 +307,7 @@ export default function BillsPage() {
         status,
         children: [] as Bill[],
         allBillIds: [row.id],
+        ...seriesFacts([row]),
         isSeries: false,
         expandable: false,
         onToggle: () => undefined,
@@ -289,16 +316,6 @@ export default function BillsPage() {
     });
     return rows.sort((a, b) => a.title.localeCompare(b.title));
   }, [displayList, expandedSeries]);
-
-  const handleMarkPaid = async (bill: Bill) => {
-    try {
-      await markBillPaid(bill.id);
-      toast.success("Marked paid — updated in Pay Run and cost views for this line.");
-      load();
-    } catch {
-      toast.error("Failed to mark paid");
-    }
-  };
 
   const openEditBill = (bill: Bill, e?: MouseEvent) => {
     e?.stopPropagation();
@@ -481,16 +498,6 @@ export default function BillsPage() {
           Restore
         </Button>
       ) : null}
-      {!r.archived_at && isDebitBill(r) && r.status !== "paid" && (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="font-semibold"
-          onClick={() => void handleMarkPaid(r)}
-        >
-          Mark paid
-        </Button>
-      )}
       {canVoidBill(r) ? (
         <Button
           variant="ghost"
@@ -510,7 +517,7 @@ export default function BillsPage() {
     <PageTransition>
       <div className="space-y-5 px-1 sm:px-0">
         <PageHeader
-          title="Bills & expenses"
+          title="Expenses"
           infoTooltip="Track recurring and one-off costs. Bills are scheduled automatically — mark paid only for debit/financing lines. Filter by type or payment status."
         >
           <Button
@@ -542,13 +549,13 @@ export default function BillsPage() {
           </div>
           <div className="mt-2.5 grid grid-cols-3 gap-2 sm:gap-3">
             <div className="rounded-lg border border-border-light bg-card/80 backdrop-blur px-3 py-2.5 flex items-start gap-2.5 min-w-0">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#020040]/8 text-[#020040]">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-text-primary">
                 <CalendarRange className="h-3.5 w-3.5" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Monthly</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnMonthly)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnMonthly)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/m</span>
                 </p>
               </div>
@@ -560,7 +567,7 @@ export default function BillsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Weekly</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnWeekly)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnWeekly)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/w</span>
                 </p>
               </div>
@@ -572,7 +579,7 @@ export default function BillsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Daily</p>
                 <p className="mt-0.5 flex items-baseline gap-1 leading-none">
-                  <span className="text-base sm:text-lg font-bold tabular-nums text-[#020040] truncate">{formatCurrency(headlineKpis.burnDaily)}</span>
+                  <span className="text-base sm:text-lg font-bold tabular-nums text-text-primary truncate">{formatCurrency(headlineKpis.burnDaily)}</span>
                   <span className="text-[10px] font-medium text-text-tertiary shrink-0">p/d</span>
                 </p>
               </div>
@@ -583,7 +590,7 @@ export default function BillsPage() {
         <div className="flex flex-wrap gap-1.5">
           {([
             { id: "all", label: "All" },
-            { id: "one_off", label: "One-Off" },
+            { id: "one_off", label: "One-off" },
             { id: "recurring", label: "Recurring" },
             { id: "unpaid", label: "Unpaid" },
             { id: "paid", label: "Paid" },
@@ -614,106 +621,138 @@ export default function BillsPage() {
             No bills for this filter.
           </p>
         ) : (
-          <div className="rounded-xl border border-border-light bg-card overflow-hidden">
-            {compactRows.map((row, index) => (
-              <div key={row.key} className={cn("border-b border-border-light last:border-0", index % 2 === 1 && "bg-[#F5F5F7] dark:bg-white/[0.04]")}>
-                <div className="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-2.5">
-                  <div className="min-w-0 flex items-start gap-2">
-                    <button
-                      type="button"
-                      onClick={row.onToggle}
-                      className={cn("mt-0.5 text-text-tertiary", !row.expandable && "cursor-default")}
-                      aria-label={row.expandable ? "Expand bill row" : "Bill row"}
-                      disabled={!row.expandable}
-                    >
-                      {row.expandable ? (
-                        row.expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronRight className="h-3.5 w-3.5 opacity-40" />
-                      )}
-                    </button>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-text-primary">{row.title}</p>
-                      <p className="mt-0.5 truncate text-[11px] text-text-tertiary">{row.meta}</p>
-                    </div>
-                  </div>
-                  <div className="shrink-0 w-full sm:w-auto flex items-center justify-start sm:justify-end gap-2.5">
-                    <p className="flex items-baseline gap-1 text-sm font-semibold tabular-nums text-text-primary">
-                      <span>{formatCurrency(row.amount)}</span>
-                      {row.amountSuffix ? (
-                        <span className="text-[10px] font-medium text-text-tertiary">{row.amountSuffix}</span>
-                      ) : null}
-                    </p>
-                    <Badge
-                      variant={row.status === "Paid" ? "success" : "default"}
-                      size="sm"
-                      dot
-                    >
-                      {row.status}
-                    </Badge>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleArchiveRow(row.key, row.title, row.isSeries, row.allBillIds);
-                      }}
-                      disabled={archiveRowBusyKey === row.key}
-                      className="inline-flex items-center justify-center h-7 w-7 rounded-md text-text-tertiary hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 disabled:opacity-40 transition-colors shrink-0"
-                      title={
-                        row.isSeries
-                          ? `Archive all ${row.allBillIds.length} occurrences of this bill`
-                          : "Archive this bill"
-                      }
-                      aria-label={
-                        row.isSeries ? "Archive entire bill series" : "Archive bill"
-                      }
-                    >
-                      {archiveRowBusyKey === row.key ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <X className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                {row.expandable && row.expanded ? (
-                  <div className="bg-surface-hover/40 px-3 pb-3 sm:px-4 sm:pb-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">Occurrences</p>
-                      {renderSeriesHeadlineStatusBadge(row.children)}
-                    </div>
-                    <div className="space-y-1.5">
-                      {row.children.map((bill) => (
-                        <div
-                          key={bill.id}
-                          className="rounded-lg border border-border-light bg-card p-2.5"
-                        >
-                          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-text-primary">{bill.description}</p>
-                              <p className="mt-0.5 text-[11px] text-text-tertiary">
-                                {bill.due_date ? formatDate(bill.due_date) : "No due date"} · {billCategoryLabel(bill.category)} ·{" "}
-                                {bill.is_recurring ? recurrenceLabel(bill.recurrence_interval) : "One-off"}
-                              </p>
-                            </div>
-                            <div className="shrink-0 text-left sm:text-right">
-                              <p className="inline-flex items-baseline gap-1 text-sm font-semibold tabular-nums text-text-primary">
-                                <span>{formatCurrency(Number(bill.amount ?? 0))}</span>
-                                {bill.is_recurring && cadenceSuffix(bill.recurrence_interval) ? (
-                                  <span className="text-[10px] font-medium text-text-tertiary">{cadenceSuffix(bill.recurrence_interval)}</span>
-                                ) : null}
-                              </p>
-                              <div className="mt-0.5">{renderStatusBadge(bill)}</div>
-                            </div>
-                          </div>
-                          <div className="mt-2">{renderBillActions(bill)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+          <div className="space-y-2">
+          {Object.keys(selectedRows).length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-[12px]">
+              <span className="font-semibold text-text-primary">
+                {Object.keys(selectedRows).length} selected
+              </span>
+              <span className="text-text-tertiary">
+                · {Object.values(selectedRows).reduce((t, ids) => t + ids.length, 0)} payments
+              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" onClick={() => setSelectedRows({})}>
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  loading={deleting}
+                  onClick={async () => {
+                    const ids = [...new Set(Object.values(selectedRows).flat())];
+                    if (
+                      !window.confirm(
+                        `Delete ${Object.keys(selectedRows).length} bill(s) and all ${ids.length} payment(s)? They disappear from Expenses, pay runs, the runway and KPIs. This cannot be undone.`,
+                      )
+                    )
+                      return;
+                    setDeleting(true);
+                    try {
+                      await deleteBillsByIds(ids);
+                      toast.success("Deleted");
+                      setSelectedRows({});
+                      load();
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Failed to delete");
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
               </div>
-            ))}
+            </div>
+          ) : null}
+          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+            <table className="w-full min-w-[980px] border-collapse text-[12px]">
+              <thead>
+                <tr className="bg-surface-secondary text-[11px] text-text-tertiary">
+                  <th className="w-8 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      checked={compactRows.length > 0 && compactRows.every((r) => selectedRows[r.key])}
+                      onChange={(e) =>
+                        setSelectedRows(
+                          e.target.checked ? Object.fromEntries(compactRows.map((r) => [r.key, r.allBillIds])) : {},
+                        )
+                      }
+                    />
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium">Bill</th>
+                  <th className="px-3 py-2 text-left font-medium">Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Starts</th>
+                  <th className="px-3 py-2 text-left font-medium">Repeats</th>
+                  <th className="px-3 py-2 text-left font-medium">Ends</th>
+                  <th className="px-3 py-2 text-right font-medium">Amount</th>
+                  <th className="px-3 py-2 text-right font-medium">Total</th>
+                  <th className="px-3 py-2 text-left font-medium">Next due</th>
+                  <th className="px-3 py-2 text-center font-medium">Status</th>
+                  <th className="px-3 py-2" aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {compactRows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className={cn("border-t border-border/60 hover:bg-surface-hover", selectedRows[row.key] && "bg-[var(--info-light)]/40")}
+                  >
+                    <td className="w-8 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.title}`}
+                        checked={Boolean(selectedRows[row.key])}
+                        onChange={(e) =>
+                          setSelectedRows((prev) => {
+                            const n = { ...prev };
+                            if (e.target.checked) n[row.key] = row.allBillIds;
+                            else delete n[row.key];
+                            return n;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="max-w-[260px] px-3 py-2">
+                      <p className="m-0 truncate font-semibold text-text-primary" title={row.title}>{row.title}</p>
+                    </td>
+                    <td className="px-3 py-2 text-text-secondary">{row.category}</td>
+                    <td className="px-3 py-2 tabular-nums text-text-secondary">{row.startYmd ? formatDate(row.startYmd) : "—"}</td>
+                    <td className="px-3 py-2 text-text-secondary">{row.repeats}</td>
+                    <td className="px-3 py-2 text-text-secondary">
+                      {row.repeats === "One-off" ? (
+                        "—"
+                      ) : row.endYmd ? (
+                        <span title={`Last payment ${formatDate(row.endYmd)}`}>
+                          {row.instalments ? `${row.instalments.paid} of ${row.instalments.count} paid` : formatDate(row.endYmd)}
+                        </span>
+                      ) : (
+                        "Ongoing"
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-text-primary">
+                      {formatCurrency(row.amount)}
+                      {row.amountSuffix ? <span className="ml-0.5 text-[11px] font-normal text-text-tertiary">{row.amountSuffix}</span> : null}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-text-secondary" title={row.seriesTotal != null ? "All instalments together" : undefined}>
+                      {row.seriesTotal != null ? formatCurrency(row.seriesTotal) : "—"}
+                    </td>
+                    <td className="px-3 py-2 tabular-nums text-text-secondary">{row.nextDueYmd ? formatDate(row.nextDueYmd) : "—"}</td>
+                    <td className="px-3 py-2 text-center">
+                      <Badge variant={row.status === "Paid" ? "success" : "default"} size="sm">
+                        {row.status}
+                      </Badge>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <div className="flex items-center justify-end gap-1">
+                        {row.nextBill ? renderBillActions(row.nextBill) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           </div>
         )}
 
@@ -1200,7 +1239,7 @@ function BillModal({
             disabled={Boolean(initial?.is_recurring && seriesSiblings && seriesSiblings.length > 1)}
             options={[
               { value: "weekly", label: "Weekly" },
-              { value: "weekly_friday", label: "Every Friday" },
+              { value: "weekly_friday", label: "Every friday" },
               { value: "biweekly_friday", label: "Every 2 Fridays" },
               { value: "monthly", label: "Monthly" },
               { value: "quarterly", label: "Quarterly" },

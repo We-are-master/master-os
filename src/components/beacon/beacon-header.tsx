@@ -1,6 +1,8 @@
 "use client";
 
 import { List, LayoutGrid, Map as MapIcon } from "lucide-react";
+import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { OS_PAGE_HELP } from "@/lib/os-copy";
 import { cn } from "@/lib/utils";
 import { LiveIndicator } from "@/components/fx/primitives";
 import {
@@ -63,8 +65,9 @@ export function BeaconHeader({ view, onViewChange, liveCount, filters, onFilters
       <div className="flex flex-col gap-0.5 min-w-0">
         <div className="flex items-center gap-3 min-w-0">
           <h1 className="text-[26px] font-semibold tracking-[-0.015em] leading-[1.2] text-text-primary m-0">
-            Live Operations
+            Live operations
           </h1>
+          <FixfyHintIcon label="Live operations" text={OS_PAGE_HELP["Live operations"]} />
           <LiveIndicator label={`${liveCount} live`} />
         </div>
       </div>

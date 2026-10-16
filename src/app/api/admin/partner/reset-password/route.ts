@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
+import { assertPartnerLoginTarget, requireStaffPermission } from "@/lib/staff-permission";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 /** Generate a password reset link for the partner; they receive email from Supabase (or you can send the link manually). */
@@ -18,11 +19,8 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth instanceof NextResponse) return auth;
 
-  const supabase = await import("@/lib/supabase/server").then((m) => m.createClient());
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", auth.user.id).single();
-  if ((profile as { role?: string } | null)?.role !== "admin") {
-    return NextResponse.json({ error: "Forbidden", message: "Admin only" }, { status: 403 });
-  }
+  const gate = await requireStaffPermission(auth, "manage_partners");
+  if (gate instanceof NextResponse) return gate;
 
   try {
     const body = (await req.json()) as { userId?: string; new_password?: string };
@@ -32,6 +30,10 @@ export async function POST(req: NextRequest) {
     if (!isValidUUID(userId)) return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
 
     const admin = createServiceClient();
+    if (gate.role !== "admin") {
+      const denied = await assertPartnerLoginTarget(admin, userId);
+      if (denied) return denied;
+    }
     const { data: user } = await admin.auth.admin.getUserById(userId);
     if (!user?.user?.email) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });

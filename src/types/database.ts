@@ -35,9 +35,20 @@ export type CatalogPresetOverridesMap = Record<string, CatalogPriceItemOverride>
 export type CatalogAddonOverridesMap = Record<string, CatalogPriceItemOverride>;
 
 /** Price book row: defaults for requests/quotes (always editable per record). */
+/** Categoria do serviço (304): General Maintenance, Cleaning, Certificates... */
+export interface ServiceCategory {
+  id: string;
+  name: string;
+  slug: string;
+  sort: number;
+  is_active: boolean;
+}
+
 export interface CatalogService {
   id: string;
   name: string;
+  /** Categoria (304). Null só em linha antiga que ainda não foi classificada. */
+  category_id?: string | null;
   pricing_mode: CatalogPricingMode;
   fixed_price: number;
   hourly_rate: number;
@@ -326,6 +337,8 @@ export interface AccountServicePrice {
   preset_overrides?: CatalogPresetOverridesMap | null;
   /** Per addon id overrides when use_standard = false. */
   addon_overrides?: CatalogAddonOverridesMap | null;
+  /** Preço combinado abaixo da tabela (mig 310): com a chave, o combinado vale mesmo menor que o catálogo. */
+  allow_below_standard?: boolean | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -529,6 +542,12 @@ export interface Job {
   client_price: number;
   /** Add-ons / upsells on top of client_price (included in revenue & margin). */
   extras_amount?: number;
+  /**
+   * Promoção da Fixfy paga em nome do cliente (mig 313, modelo de agente).
+   * `client_price` fica cheio; o cliente deve client_price + extras − isto.
+   * Nunca reduz o repasse do parceiro nem a comissão. Ausente = 0.
+   */
+  promotion_amount?: number | null;
   partner_cost: number;
   /** Cumulative partner-side extras from "Add extra payout" (labour); Cash Out UI splits from cap. */
   partner_extras_amount?: number | null;
@@ -623,6 +642,8 @@ export interface Job {
   customer_final_payment: number;
   customer_final_paid: boolean;
   self_bill_id?: string;
+  /** Mig 326: parceiro recebe em parcelas, num self-bill próprio do job. */
+  partner_paid_in_instalments?: boolean;
   invoice_id?: string;
   scope?: string;
   /** Office-only notes (e.g. access, client quirks); separate from scope and from system lines in internal_notes. */
@@ -966,14 +987,30 @@ export interface Account {
   contract_url?: string | null;
   /** When clients under this account are linked: who invoices/quotes are addressed to. */
   billing_type?: "end_client" | "account";
+  /** How this account pays: invoice after the job (with the report) or 50% deposit + saved card. */
+  collection_mode?: "invoice" | "card_upfront";
+  /** % de entrada pedido no aceite da cotação (mig 336). 0 = sem entrada; ausente = 50. */
+  quote_deposit_percent?: number | null;
   /** If true, final email to client may include invoice/payment details (see Account UI). */
   email_include_invoice_on_final?: boolean;
   /** If true, final email may attach report PDFs. */
   email_include_report_on_final?: boolean;
+  /** Razão social no "Bill to" da fatura (mig 323). */
+  billing_legal_name?: string | null;
+  /** Fatura com VAT só na taxa da Fixfy (mig 323). */
+  invoice_fee_vat?: boolean;
+  /** Quem recebe cópia de toda fatura desta conta (mig 324). */
+  invoice_cc_emails?: string[];
   /** Business Unit responsible for this account — drives request/quote/job filtering. */
   bu_id?: string | null;
   total_revenue: number;
   active_jobs: number;
+  /** WhatsApp ao cliente final: confirmação, remarcação e véspera (mig 259). NULL = nunca decidido, tratado como desligado. */
+  client_confirmation_whatsapp?: boolean | null;
+  /** WhatsApp de feedback no dia seguinte para clientes desta conta (mig 325). */
+  client_feedback_whatsapp?: boolean | null;
+  /** Lembretes de fatura vencida nos dias 1, 3, 4 e 7 (mig 320). */
+  overdue_reminders?: boolean | null;
   /** Default client cancellation fee (£) for jobs under this account — office may override each cancel. */
   default_client_cancel_fee_gbp?: number | null;
   /** Subset of `service_catalog` rows this account may use (Service rates, job scope). */
@@ -1089,6 +1126,8 @@ export interface SelfBill {
   /** Computed payout due date (YYYY-MM-DD). Null = compute from week_end + partner.payment_terms at runtime. */
   due_date?: string | null;
   /** True when self_bill_payment_installments define payout schedule (mig 235). */
+  /** Mig 326: self-bill próprio de um job parcelado (fora do balde da quinzena). */
+  dedicated_job_id?: string | null;
   payment_plan_active?: boolean;
   /** Last partner send (Resend + Zendesk side conv). Drives Resend button + ticket badge on the billing widget. */
   email_sent_at?: string | null;
@@ -1564,5 +1603,43 @@ export interface AccountPpmPlan {
   notes?: string | null;
   created_at: string;
   updated_at: string;
+  deleted_at?: string | null;
+}
+
+/** CRM B2B (mig 311): etapa do funil, editável pelo escritório. */
+export type CrmStageKind = "open" | "won" | "lost";
+
+export interface CrmStage {
+  id: string;
+  name: string;
+  position: number;
+  /** Chave de cor da paleta do CRM (slate, blue, amber, green, red, violet, orange, teal). */
+  color: string;
+  kind: CrmStageKind;
+  created_at: string;
+  updated_at: string;
+}
+
+/** CRM B2B (mig 311): uma empresa no funil, opcionalmente ligada a uma conta. */
+export interface CrmDeal {
+  id: string;
+  company_name: string;
+  stage_id: string;
+  account_id?: string | null;
+  segment?: string | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  website?: string | null;
+  /** Valor estimado por mês, em libras. */
+  monthly_value?: number | null;
+  next_step?: string | null;
+  next_step_date?: string | null;
+  notes?: string | null;
+  source?: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
   deleted_at?: string | null;
 }

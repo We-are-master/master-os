@@ -12,6 +12,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { Tabs } from "@/components/ui/tabs";
+import { ClientSavedCard } from "@/components/clients/client-saved-card";
+import { ClientNotesCard } from "@/components/clients/client-notes-card";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -32,7 +34,7 @@ import {
   FileText, CheckCircle2, Clock, Loader2, PlusCircle, Star as StarIcon,
   ChevronDown, ChevronRight, ExternalLink,
 } from "lucide-react";
-import { formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
+import { cn, formatCurrency, formatDate, formatRelativeTime, isUuid } from "@/lib/utils";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { CREATE_LINKED_ACCOUNT_OPTION } from "@/lib/client-linked-account";
@@ -165,7 +167,6 @@ function ClientsPageInner() {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [totalSpent, setTotalSpent] = useState(0);
   /** Linked clients ÷ distinct `source_account_id` (0 if none). */
-  const [clientsPerAccountAvg, setClientsPerAccountAvg] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -256,13 +257,6 @@ function ClientsPageInner() {
       const list = (rows ?? []) as { total_spent?: number | null; source_account_id?: string | null }[];
       const total = list.reduce((s, r) => s + Number(r.total_spent ?? 0), 0);
       setTotalSpent(total);
-      const accountIds = new Set<string>();
-      for (const r of list) {
-        const id = r.source_account_id?.trim();
-        if (id) accountIds.add(id);
-      }
-      const linkedCount = list.filter((r) => Boolean(r.source_account_id?.trim())).length;
-      setClientsPerAccountAvg(accountIds.size > 0 ? linkedCount / accountIds.size : 0);
     } catch { /* cosmetic */ }
   }, []);
 
@@ -425,7 +419,7 @@ function ClientsPageInner() {
       },
     },
     {
-      key: "total_spent", label: "Total Spent", align: "right" as const,
+      key: "total_spent", label: "Total spent", align: "right" as const,
       render: (item) => <span className="text-sm font-semibold text-text-primary">{formatCurrency(item.total_spent)}</span>,
     },
     {
@@ -462,7 +456,7 @@ function ClientsPageInner() {
           {accountIdFilter ? (
             <Link
               href="/clients"
-              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[#D8D8DD] bg-white px-3 py-1.5 text-xs font-medium text-[#020040] shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
+              className="inline-flex min-h-8 items-center justify-center rounded-[6px] border-[0.5px] border-[var(--line-2)] bg-white px-3 py-1.5 text-xs font-medium text-text-primary shadow-sm hover:bg-surface-hover dark:bg-card dark:text-text-primary dark:border-border"
             >
               Clear account filter
             </Link>
@@ -914,6 +908,16 @@ function AddressesTab({ client }: { client: Client }) {
 }
 
 /* ============ DETAIL DRAWER ============ */
+/** Seção da Overview do cliente: título pequeno e linha fina em cima (15/10/2026). */
+function OverviewSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3 border-t border-border pt-4">
+      <h4 className="m-0 text-[12px] font-semibold text-text-secondary">{title}</h4>
+      {children}
+    </section>
+  );
+}
+
 function ClientDetailDrawer({
   client,
   sourceAccounts,
@@ -994,10 +998,10 @@ function ClientDetailDrawer({
   };
 
   const drawerTabs = [
-    { id: "overview", label: "Overview" },
-    { id: "history", label: `History (${jobs.length + quotes.length + requests.length})` },
-    { id: "addresses", label: "Addresses" },
-    { id: "edit", label: "Edit" },
+    { id: "overview", label: "Overview", hint: "Review client contact details and status." },
+    { id: "history", label: `Service history (${jobs.length + quotes.length + requests.length})` },
+    { id: "addresses", label: "Addresses", hint: "Manage service addresses linked to this client." },
+    { id: "edit", label: "Details", hint: "Update contact and client information." },
   ];
 
   const totalJobValue = jobs.reduce((s, j) => s + Number(j.client_price), 0);
@@ -1028,82 +1032,74 @@ function ClientDetailDrawer({
                 </div>
               </div>
 
-              {/* Contact Info */}
-              <div className="space-y-2">
-                {client.email && (
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <Mail className="h-4 w-4 text-text-tertiary" />{client.email}
-                  </div>
-                )}
-                {client.phone && (
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <Phone className="h-4 w-4 text-text-tertiary" />{client.phone}
-                  </div>
-                )}
-                {(client.address || client.city) && (
-                  <div className="flex items-center gap-2 text-sm text-text-secondary">
-                    <MapPin className="h-4 w-4 text-text-tertiary" />
-                    {[client.address, client.city, client.postcode].filter(Boolean).join(", ")}
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-sm text-text-secondary">
-                  <Calendar className="h-4 w-4 text-text-tertiary" />
-                  Client since {formatDate(client.created_at)}
-                </div>
-              </div>
-
-              {/* KPI Cards */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30/60 border border-emerald-100">
-                  <p className="text-[10px] font-semibold text-emerald-700 uppercase">Total Spent</p>
-                  <p className="text-lg font-bold text-emerald-700 mt-1">{formatCurrency(client.total_spent)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30/60 border border-blue-100">
-                  <p className="text-[10px] font-semibold text-blue-700 uppercase">Jobs</p>
-                  <p className="text-lg font-bold text-blue-700 mt-1">{client.jobs_count}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30/60 border border-purple-100">
-                  <p className="text-[10px] font-semibold text-purple-700 uppercase">Quotes</p>
-                  <p className="text-lg font-bold text-purple-700 mt-1">{quotes.length}</p>
-                </div>
-              </div>
-
-              {/* Value Summary */}
-              <div className="p-4 rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/10">
-                <p className="text-[10px] font-semibold text-primary uppercase tracking-wide">Lifetime Value</p>
-                <p className="text-2xl font-bold text-text-primary mt-1">{formatCurrency(totalJobValue)}</p>
-                <p className="text-xs text-text-tertiary mt-1">
-                  {formatCurrency(totalQuoteValue)} in quotes
-                  {client.source_account_id && sourceAccounts.length > 0 && (
-                    <> · Source: {sourceAccounts.find((a) => a.id === client.source_account_id)?.name ?? "—"}</>
+              <OverviewSection title="Contact">
+                <div className="space-y-2">
+                  {client.email && (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <Mail className="h-4 w-4 shrink-0 text-text-tertiary" />
+                      <span className="truncate">{client.email}</span>
+                    </div>
                   )}
-                  {!client.source_account_id && <> · {sourceLabels[client.source]} source</>}
-                </p>
-              </div>
+                  {client.phone && (
+                    <div className="flex items-center gap-2 text-sm text-text-secondary">
+                      <Phone className="h-4 w-4 shrink-0 text-text-tertiary" />
+                      {client.phone}
+                    </div>
+                  )}
+                  {(client.address || client.city) && (
+                    <div className="flex items-start gap-2 text-sm text-text-secondary">
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-text-tertiary" />
+                      {[client.address, client.city, client.postcode].filter(Boolean).join(", ")}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-sm text-text-secondary">
+                    <Calendar className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    Client since {formatDate(client.created_at)}
+                    {client.last_job_date ? <span className="text-text-tertiary">· last job {formatRelativeTime(client.last_job_date)}</span> : null}
+                  </div>
+                  <p className="m-0 text-[12px] text-text-tertiary">
+                    {client.source_account_id && sourceAccounts.length > 0
+                      ? <>Account: {sourceAccounts.find((a) => a.id === client.source_account_id)?.name ?? "Unknown"}</>
+                      : <>{sourceLabels[client.source]} source</>}
+                  </p>
+                </div>
+              </OverviewSection>
 
-              {/* Tags */}
+              <OverviewSection title="Numbers">
+                <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-border bg-surface-secondary">
+                  {[
+                    { k: "paid", label: "Paid", value: formatCurrency(client.total_spent) },
+                    { k: "value", label: "Job value", value: formatCurrency(totalJobValue) },
+                    { k: "jobs", label: "Jobs", value: String(client.jobs_count ?? 0) },
+                    { k: "quotes", label: "Quotes", value: String(quotes.length) },
+                  ].map((c, i) => (
+                    <div key={c.k} className={cn("min-w-0 px-3 py-2", i > 0 && "border-l border-border")}>
+                      <p className="m-0 text-[11px] text-text-tertiary">{c.label}</p>
+                      <p className="m-0 mt-0.5 truncate text-[13px] font-semibold tabular-nums text-text-primary">{c.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="m-0 text-[12px] text-text-tertiary">{formatCurrency(totalQuoteValue)} in quotes</p>
+              </OverviewSection>
+
+              <OverviewSection title="Payment">
+                <ClientSavedCard client={client as Parameters<typeof ClientSavedCard>[0]["client"]} />
+              </OverviewSection>
+
+              {client.notes?.trim() ? (
+                <OverviewSection title="Notes">
+                  <ClientNotesCard notes={client.notes} />
+                </OverviewSection>
+              ) : null}
+
               {client.tags && client.tags.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold text-text-tertiary uppercase tracking-wide mb-2">Tags</p>
+                <OverviewSection title="Tags">
                   <div className="flex flex-wrap gap-1.5">
                     {client.tags.map((tag) => (
-                      <span key={tag} className="px-2 py-0.5 rounded-md bg-surface-tertiary text-xs font-medium text-text-secondary">{tag}</span>
+                      <span key={tag} className="inline-flex h-[22px] items-center rounded-md bg-surface-tertiary px-2 text-[11px] font-medium text-text-secondary">{tag}</span>
                     ))}
                   </div>
-                </div>
-              )}
-
-              {/* Notes */}
-              {client.notes && (
-                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30/60 border-l-3 border-amber-400">
-                  <p className="text-[10px] font-semibold text-amber-700 uppercase mb-1">Notes</p>
-                  <p className="text-sm text-text-secondary">{client.notes}</p>
-                </div>
-              )}
-
-              {/* Last Job */}
-              {client.last_job_date && (
-                <p className="text-xs text-text-tertiary">Last job: {formatRelativeTime(client.last_job_date)}</p>
+                </OverviewSection>
               )}
             </div>
           )}
@@ -1568,7 +1564,7 @@ function CreateClientForm({
               <Input
                 value={newSourceForm.industry}
                 onChange={(e) => setNewSourceForm((p) => ({ ...p, industry: e.target.value }))}
-                placeholder="Residential Services"
+                placeholder="Residential services"
               />
             </div>
           </div>
@@ -1681,8 +1677,8 @@ function CreateClientForm({
           { value: "direct", label: "Direct" },
           { value: "referral", label: "Referral" },
           { value: "website", label: "Website" },
-          { value: "partner", label: "Via Partner" },
-          { value: "corporate", label: "Corporate Account" },
+          { value: "partner", label: "Via partner" },
+          { value: "corporate", label: "Corporate account" },
           { value: "other", label: "Other" },
         ]}
       />

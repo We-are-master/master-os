@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { renderToBuffer } from "@react-pdf/renderer";
-import React from "react";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
-import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
-import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
-import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
+import { renderJobReportV2PdfBuffer } from "@/lib/pdf/render-job-report-v2";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
 
 const ALLOWED_ROLES = new Set(["admin", "manager", "operator", "viewer"]);
-const REPORT_BUCKET = "job-reports";
-const SIGN_TTL_SECONDS = 60 * 60;
 
 /**
  * GET /api/jobs/[id]/reports/pdf
@@ -48,60 +41,12 @@ export async function GET(
     return NextResponse.json({ error: "Invalid job id" }, { status: 400 });
   }
 
-  const admin = createServiceClient();
-  const { data: job, error } = await admin
-    .from("jobs")
-    .select(`
-      id, reference, title, property_address, partner_name, client_name,
-      start_report, final_report,
-      start_report_approved_at, final_report_approved_at
-    `)
-    .eq("id", jobId)
-    .maybeSingle();
-
-  if (error || !job) {
-    return NextResponse.json({ error: error?.message ?? "Job not found" }, { status: 404 });
+  const pdf = await renderJobReportV2PdfBuffer(createServiceClient(), jobId);
+  if (!pdf) {
+    return NextResponse.json({ error: "Job not found or no report yet" }, { status: 404 });
   }
-
-  const clientName = String(job.client_name ?? "").trim();
-
-  const startNorm = normalizeReport(job.start_report);
-  const finalNorm = normalizeReport(job.final_report);
-
-  const start = startNorm
-    ? {
-        report: startNorm,
-        signedPhotos: await signAllPhotos(admin, startNorm),
-        approvedAt: (job.start_report_approved_at as string | null) ?? null,
-      }
-    : null;
-  const final = finalNorm
-    ? {
-        report: finalNorm,
-        signedPhotos: await signAllPhotos(admin, finalNorm),
-        approvedAt: (job.final_report_approved_at as string | null) ?? null,
-      }
-    : null;
-
-  const logoUrl = await resolveCompanyPdfLogoDataUri(admin);
-
-  const pdfBuffer = await renderToBuffer(
-    React.createElement(JobReportPDF, {
-      data: {
-        reference:       String(job.reference ?? ""),
-        jobTitle:        String(job.title ?? ""),
-        propertyAddress: String(job.property_address ?? ""),
-        clientName:      clientName || null,
-        partnerName:     (job.partner_name as string | null) ?? null,
-        logoUrl,
-        start,
-        final,
-      },
-    }) as Parameters<typeof renderToBuffer>[0],
-  );
-
-  const safeRef = String(job.reference ?? "report").replace(/\//g, "-");
-  return new Response(new Uint8Array(pdfBuffer), {
+  const safeRef = pdf.reference.replace(/\//g, "-");
+  return new Response(new Uint8Array(pdf.buffer), {
     status: 200,
     headers: {
       "Content-Type":        "application/pdf",
@@ -109,20 +54,4 @@ export async function GET(
       "Cache-Control":       "private, max-age=0, must-revalidate",
     },
   });
-}
-
-async function signAllPhotos(
-  admin: ReturnType<typeof createServiceClient>,
-  report: NormalizedReport,
-): Promise<SignedPhoto[]> {
-  if (report.photosFlat.length === 0) return [];
-  const out: SignedPhoto[] = [];
-  for (const p of report.photosFlat) {
-    const path = jobReportPdfPathFromStoredUrl(p.url) ?? p.url;
-    const { data } = await admin.storage.from(REPORT_BUCKET).createSignedUrl(path, SIGN_TTL_SECONDS);
-    if (data?.signedUrl) {
-      out.push({ url: data.signedUrl, label: p.label });
-    }
-  }
-  return out;
 }

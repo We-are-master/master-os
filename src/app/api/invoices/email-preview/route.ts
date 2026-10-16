@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
 import { parseFrontendSetup, resolveInvoicePlatformFeePct } from "@/lib/frontend-setup";
+import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { Invoice, Job } from "@/types/database";
 
 /**
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, property_address, service_type, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, partner_id, created_at, property_address, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -79,12 +80,12 @@ export async function GET(req: NextRequest) {
       clientName: billing?.displayName ?? inv.client_name,
       jobTitle: job?.title ?? inv.job_reference ?? "Job",
       propertyAddress: job?.property_address ?? null,
-      serviceType: (job as { service_type?: string | null } | null)?.service_type ?? null,
+      serviceType: job?.title ?? null,
       completionDate: job?.completed_date ?? inv.created_at,
       quoteReference,
     },
     job,
-    { tradeFeeOptions },
+    { tradeFeeOptions, agentParty: await loadAgentReceiptParty(admin, job) },
   );
 
   return new NextResponse(html, {

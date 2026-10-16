@@ -78,41 +78,41 @@ export function LiveMapDayRoutePanel({
     onReorder(ids);
   };
   return (
-    <div className="w-[280px] max-w-[80vw] space-y-2 rounded-lg border border-[#E4E4E8] bg-white/95 p-2.5 shadow-lg backdrop-blur">
+    <div className="w-[280px] max-w-[80vw] space-y-2 rounded-lg border border-border bg-white/95 p-2.5 shadow-lg backdrop-blur">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">Day route</p>
-          <p className="truncate text-[12px] font-semibold text-[#020040]">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Day route</p>
+          <p className="truncate text-[12px] font-semibold text-text-primary">
             {route?.partnerName ?? "Partner"}
             {route ? (
-              <span className="ml-1 font-normal text-[#64748B]">
+              <span className="ml-1 font-normal text-text-tertiary">
                 · {new Date(`${route.date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
               </span>
             ) : null}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button type="button" onClick={onBackToLondon} className="text-[10px] font-medium text-[#020040] hover:underline">
+          <button type="button" onClick={onBackToLondon} className="text-[10px] font-medium text-text-primary hover:underline">
             London
           </button>
-          <button type="button" onClick={onClose} className="text-[10px] font-medium text-[#64748B] hover:text-[#020040]">
+          <button type="button" onClick={onClose} className="text-[10px] font-medium text-text-tertiary hover:text-text-primary">
             Clear ✕
           </button>
         </div>
       </div>
 
       {loading ? (
-        <p className="text-[11px] text-[#64748B]">Loading day route…</p>
+        <p className="text-[11px] text-text-tertiary">Loading day route…</p>
       ) : !route ? null : route.stops.length === 0 ? (
-        <p className="text-[11px] text-[#64748B]">No jobs assigned on this day.</p>
+        <p className="text-[11px] text-text-tertiary">No jobs assigned on this day.</p>
       ) : (
         <>
           {route.home ? (
-            <p className="truncate text-[10.5px] text-[#64748B]">
+            <p className="truncate text-[10.5px] text-text-tertiary">
               🏠 Starts from {route.home.label}
             </p>
           ) : (
-            <p className="text-[10.5px] text-[#B45309]">No home address on file — route starts at the first job.</p>
+            <p className="text-[10.5px] text-[var(--warn-ink)]">No home address on file — route starts at the first job.</p>
           )}
 
           <div className="max-h-[300px] space-y-1 overflow-y-auto overscroll-contain pr-0.5">
@@ -147,11 +147,11 @@ export function LiveMapDayRoutePanel({
                   className={cn(
                     onReorder && "cursor-grab active:cursor-grabbing",
                     dragIdx === i && "opacity-50",
-                    overIdx === i && dragIdx !== i && "rounded-md ring-2 ring-[#ED4B00]/60",
+                    overIdx === i && dragIdx !== i && "rounded-md ring-2 ring-text-primary/20",
                   )}
                 >
                   {leg ? (
-                    <p className="py-0.5 pl-[26px] text-[10px] text-[#64748B]">
+                    <p className="py-0.5 pl-[26px] text-[10px] text-text-tertiary">
                       ↓ {formatDuration(leg.durationSec)} drive · {formatDistanceMiles(leg.distanceM)}
                     </p>
                   ) : null}
@@ -162,17 +162,17 @@ export function LiveMapDayRoutePanel({
                       "flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left transition-colors",
                       aperto
                         ? "border-[#FCA5A5] bg-[#FEF2F2] hover:bg-[#FEE2E2]"
-                        : "border-[#E4E4E8] bg-[#FAFAFB] hover:bg-[#F1F5F9]",
+                        : "border-border bg-surface-secondary hover:bg-[#F1F5F9]",
                     )}
                   >
-                    <span className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#020040] text-[10px] font-bold text-white">
+                    <span className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
                       {i + 1}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[11px] font-medium text-[#020040]">
+                      <span className="block truncate text-[11px] font-medium text-text-primary">
                         {stop.title || stop.reference}
                       </span>
-                      <span className="block truncate text-[10px] text-[#64748B]">
+                      <span className="block truncate text-[10px] text-text-tertiary">
                         {hm(stop.scheduled_start_at)}–{hm(stop.scheduled_end_at)}
                         {stop.client_name ? ` · ${stop.client_name}` : ""}
                       </span>
@@ -182,7 +182,7 @@ export function LiveMapDayRoutePanel({
                         </span>
                       ) : null}
                       {stop.latitude == null ? (
-                        <span className="block text-[10px] font-medium text-[#B45309]">No location — out of the route line</span>
+                        <span className="block text-[10px] font-medium text-[var(--warn-ink)]">No location — out of the route line</span>
                       ) : null}
                     </span>
                   </button>
@@ -192,16 +192,16 @@ export function LiveMapDayRoutePanel({
           </div>
 
           {onReorder && route.stops.length >= 2 ? (
-            <p className="text-[10px] text-[#64748B]">
+            <p className="text-[10px] text-text-tertiary">
               Drag stops to set the day order · it becomes the partner&apos;s email order.
             </p>
           ) : null}
 
-          <div className="flex items-center justify-between rounded-md bg-[#020040]/5 px-2 py-1.5 text-[11px]">
-            <span className="font-semibold text-[#020040]">
+          <div className="flex items-center justify-between rounded-md bg-primary/5 px-2 py-1.5 text-[11px]">
+            <span className="font-semibold text-text-primary">
               {route.stops.length} stop{route.stops.length === 1 ? "" : "s"} on the road
             </span>
-            <span className="font-mono tabular-nums text-[#020040]">
+            <span className="font-mono tabular-nums text-text-primary">
               {route.totalSec > 0 ? `${formatDuration(route.totalSec)} · ${formatDistanceMiles(route.totalM)}` : "—"}
             </span>
           </div>

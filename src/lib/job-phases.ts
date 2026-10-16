@@ -183,7 +183,7 @@ export type JobStatusAction = {
 /** Primary actions for advancing / rewinding job workflow. After mig 162: scheduled → in_progress → final_check → awaiting_payment → completed. */
 export function getJobStatusActions(job: Job): JobStatusAction[] {
   const onHoldAction: JobStatusAction = {
-    label: "On Hold",
+    label: "On hold",
     status: "on_hold",
     icon: Pause,
     primary: false,
@@ -191,7 +191,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     special: "put_on_hold",
   };
   const cancelAction: JobStatusAction = {
-    label: "Cancel Job",
+    label: "Cancel job",
     status: "cancelled",
     icon: XCircle,
     primary: false,
@@ -206,7 +206,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "late":
       return [
         {
-          label: "Start Job",
+          label: "Start job",
           status: "in_progress",
           icon: Play,
           primary: true,
@@ -249,7 +249,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
           special: "send_report_invoice",
         },
         onHoldAction,
-        { label: "Reopen Job", status: "in_progress", icon: RotateCcw, primary: false },
+        { label: "Reopen job", status: "in_progress", icon: RotateCcw, primary: false },
         cancelAction,
       ];
     }
@@ -276,7 +276,7 @@ export function getJobStatusActions(job: Job): JobStatusAction[] {
     case "cancelled": {
       const reopenTarget: Job["status"] =
         job.partner_id || job.partner_name?.trim() ? "scheduled" : "unassigned";
-      return [{ label: "Reopen Job", status: reopenTarget, icon: RotateCcw, primary: false }];
+      return [{ label: "Reopen job", status: reopenTarget, icon: RotateCcw, primary: false }];
     }
     case "on_hold":
       return [
@@ -376,7 +376,7 @@ export function canAdvanceJob(
   }
   if (nextStatus === "final_check") {
     if (!isJobOnSiteWorkStatus(job.status)) {
-      return { ok: false, message: "Move to Final Check from the on-site (In progress) step." };
+      return { ok: false, message: "Move to Final review from the on-site (In progress) step." };
     }
     return { ok: true };
   }
@@ -507,7 +507,7 @@ export function canSendReportAndRequestFinalPayment(job: Job): { ok: boolean; me
     if (job.status !== "final_check" && !isJobOnSiteWorkStatus(job.status)) {
       return {
         ok: false,
-        message: "Job must be in Final check or on site before sending the report and invoice.",
+        message: "Job must be in Final review or on site before sending the report and invoice.",
       };
     }
     return { ok: true };

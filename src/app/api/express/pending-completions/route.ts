@@ -19,6 +19,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { avisar, avisoHtml, quandoLondres, urlsDeFoto } from "@/lib/stefane/run-external-report";
 import { pickReportTemplate } from "@/lib/public-report-templates";
 import { parseMaterialExtra } from "@/lib/report-material-extra";
+import { CONTA_PRINCIPAL, contaDasNotas, contaValida } from "@/lib/checkatrade-contas";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("jobs")
     .select(
-      "id, reference, title, report_link, status, start_report, final_report, " +
+      "id, reference, title, report_link, status, start_report, final_report, internal_notes, " +
         "final_report_submitted, external_report_submitted_at, external_report_attempts",
     )
     .ilike("report_link", "%checkatrade%")
@@ -89,7 +90,9 @@ export async function GET(req: NextRequest) {
     start_report: unknown;
     final_report: unknown;
     external_report_attempts: number | null;
+    internal_notes: string | null;
   };
+  const contaPedida = contaValida(req.nextUrl.searchParams.get("account")) ?? CONTA_PRINCIPAL;
 
   const fila = [];
   for (const j of (data ?? []) as unknown as LinhaDaFila[]) {
@@ -98,6 +101,9 @@ export async function GET(req: NextRequest) {
     const m = /membersapp\.checkatrade\.com\/business-jobs\/([a-z0-9]+)/i.exec(String(j.report_link ?? ""));
     if (!m) continue;
     if ((j.external_report_attempts ?? 0) >= 3) continue;
+    // Cada Ruben só conclui o que a conta DELE aceitou (duas contas, 11/10/2026):
+    // na outra conta o botão "Mark job as complete" nem existe.
+    if (contaDasNotas(j.internal_notes) !== contaPedida) continue;
 
     const fotos = await assinar(supabase, [
       ...urlsDeFoto(j.start_report),

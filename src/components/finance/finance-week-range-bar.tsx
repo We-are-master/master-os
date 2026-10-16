@@ -126,8 +126,8 @@ export function FinanceWeekRangeBar({
     cn(
       "rounded-[6px] px-3 py-[5px] text-[11px] font-medium transition-colors",
       active
-        ? "bg-[#ED4B00] text-white shadow-sm"
-        : "bg-transparent text-[#020040] hover:bg-surface-hover"
+        ? "bg-primary text-white shadow-sm"
+        : "bg-transparent text-text-primary hover:bg-surface-hover"
     );
 
   const handleMode = (m: FinancePeriodMode) => {

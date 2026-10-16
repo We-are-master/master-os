@@ -37,3 +37,47 @@ export function valorFixoDoLink(pedido: unknown, saldoAberto: number): ValorDoLi
 
   return { ok: true, valor, limitadoAoSaldo: pedidoCent > saldo };
 }
+
+const EPS = 0.02;
+
+/**
+ * Saldo que o `/pay/REF` cobra, com o total do job como rede de segurança.
+ *
+ * A base é o saldo da fatura (amount − amount_paid). Só que a fatura pode ter o
+ * `amount` errado para baixo: em 14/10/2026 a RCP-2026-917 (job de £180) ficou com
+ * amount = 90 depois do sinal de £90, e o link do saldo achou que não havia nada a
+ * cobrar e mandou o cliente direto para a tela de "pago".
+ *
+ * Quando a fatura é a ÚNICA do job e vale menos que o total do job (preço + extras −
+ * promoção), o saldo passa a ser o total do job menos o que já entrou (o maior entre o
+ * pago na fatura e o razão do job). Fica com o maior dos dois saldos: fatura maior que
+ * o job (CCZ, estacionamento ainda fora do job) continua cobrando o que a fatura diz.
+ *
+ * Job com fatura de sinal e fatura de saldo separadas (quote aceito) não entra aqui:
+ * cada fatura cobra a sua fatia.
+ *
+ * Fatura marcada como paga conta como paga por inteiro mesmo sem `amount_paid` (linha
+ * legada marcada à mão): o guarda nunca volta a cobrar o que o Financeiro deu baixa.
+ */
+export function saldoDoLinkDePagamento(input: {
+  valorFatura: number;
+  pagoFatura: number;
+  faturaPaga?: boolean;
+  /** Preço + extras − promoção do job; null quando a fatura não tem job. */
+  totalDoJob?: number | null;
+  /** Soma dos pagamentos de cliente no razão do job; null quando não deu para ler. */
+  pagoNoJob?: number | null;
+  faturaUnicaDoJob?: boolean;
+}): number {
+  const valor = centavo(Math.max(0, Number(input.valorFatura) || 0));
+  const pagoLinha = centavo(Math.max(0, Number(input.pagoFatura) || 0));
+  const pagoFatura = input.faturaPaga ? Math.max(pagoLinha, valor) : pagoLinha;
+  const saldoFatura = Math.max(0, centavo(valor - pagoFatura));
+
+  const totalJob = centavo(Number(input.totalDoJob ?? 0) || 0);
+  if (!input.faturaUnicaDoJob || !(totalJob > valor + EPS)) return saldoFatura;
+
+  const pagoJob = Math.max(pagoFatura, centavo(Number(input.pagoNoJob ?? 0) || 0));
+  const saldoJob = Math.max(0, centavo(totalJob - pagoJob));
+  return Math.max(saldoFatura, saldoJob);
+}

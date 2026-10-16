@@ -103,6 +103,11 @@ export function computeSelfBillAmountDue(
   let base = 0;
   if (sb.bill_origin === "internal") {
     base = Math.max(0, Math.round(Number(sb.net_payout ?? 0) * 100) / 100);
+  } else if (sb.dedicated_job_id && sb.payment_plan_active) {
+    // Job parcelado com datas combinadas (mig 326): vale o combinado menos o já
+    // pago, mesmo com o job em andamento. Quanto sai por vez é a parcela (abaixo).
+    const pago = (jobs ?? []).reduce((t, j) => t + (partnerPaidByJobId[j.id] ?? 0), 0);
+    base = Math.max(0, Math.round((Number(sb.net_payout ?? 0) - pago) * 100) / 100);
   } else {
     const list = jobs ?? [];
     // Documento só de visita tem zero linha de job e não pode cair no
@@ -152,9 +157,27 @@ export function computeSelfBillAmountDue(
         0,
       );
       base = Math.round((due + Math.max(0, visitCaps)) * 100) / 100;
+      // Ajustes do documento (payout_breakdown.adjustments): positivo = dedução (taxa de
+      // cancelamento, material cobrado de volta), negativo = acerto a favor do parceiro.
+      // Sem isto o Money Out pagava o valor dos jobs e ignorava o que o PDF mostra
+      // (dono, 16/10/2026: SB-14524 da WHistyle, PDF £231,56 e tela £175,31).
+      base = Math.max(0, Math.round((base - ajustesDoDocumento(sb)) * 100) / 100);
     }
   }
   return selfBillWisePayAmount(sb, installments, base);
+}
+
+/** Soma dos ajustes do self-bill: positivo desconta, negativo acrescenta. */
+export function ajustesDoDocumento(sb: Pick<SelfBill, "id"> & { payout_breakdown?: unknown }): number {
+  const raw = (sb.payout_breakdown as { adjustments?: unknown } | null | undefined)?.adjustments;
+  if (!Array.isArray(raw)) return 0;
+  let total = 0;
+  for (const a of raw) {
+    const v = Number((a as { amount?: unknown } | null)?.amount);
+    const rotulo = String((a as { label?: unknown } | null)?.label ?? "").trim();
+    if (Number.isFinite(v) && v !== 0 && rotulo) total += v;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 export async function computeLinkedJobsMapsForSelfBillIds(ids: string[]): Promise<{

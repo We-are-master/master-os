@@ -1,0 +1,669 @@
+/**
+ * O motor do Harvey no WhatsApp: da mensagem que chegou até a resposta que sai.
+ *
+ *   webhook da Sunshine → trava de repetida → quem está com a conversa?
+ *   → histórico → cérebro → responde (ou passa para a equipe) → lead no OS
+ *
+ * Portas (variáveis):
+ *   HARVEY_WA_LIGADO=1        sem ela, nada responde (a conversa segue o fluxo de sempre)
+ *   HARVEY_WA_SO_ESTES=+44…   lista de teste: só esses telefones falam com ele;
+ *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
+ */
+
+import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
+import { esperaHumana, faltaEsperar } from "./ritmo";
+import { preencherFormularioDoJob } from "./ficha-do-job";
+import { etapaDaPassagem, textoDaPassagem } from "./etapa-da-passagem";
+import { registrarDecisao } from "./diario";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
+import { precoNaMensagem } from "./preco-da-equipe";
+import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
+import { createServiceClient } from "@/lib/supabase/service";
+import { pensar, type Contas, type Fala } from "./cerebro";
+import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
+import { externalIdDoLead } from "./primeiro-contato";
+import { contextoDoExpress } from "./express";
+import { contextoDaRetomada } from "./site-lead";
+import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
+import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
+import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
+import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
+import { chamarSite } from "./site";
+import { pedirCotacao } from "./cotacao";
+import { custoDoParceiroParaCotacao } from "./desconto";
+import { registrarEmpresa } from "./empresa";
+import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
+import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+
+type EventoSc = {
+  type: string;
+  payload: {
+    conversation?: { id: string; activeSwitchboardIntegration?: { name?: string } };
+    message?: MensagemSc;
+  };
+};
+
+let catalogoEmCache: { em: number; dados: unknown } | null = null;
+export async function catalogo() {
+  if (catalogoEmCache && Date.now() - catalogoEmCache.em < 10 * 60_000) return catalogoEmCache.dados;
+  const { status, data } = await chamarSite({ action: "catalog" });
+  if (status !== 200) throw new Error(`catálogo do site: ${status}`);
+  catalogoEmCache = { em: Date.now(), dados: data };
+  return data;
+}
+
+function listaDeTeste(): string[] {
+  return (process.env.HARVEY_WA_SO_ESTES ?? "").split(",").map((s) => s.replace(/\D/g, "")).filter(Boolean);
+}
+
+export function paraFalas(msgs: MensagemSc[]): Fala[] {
+  return msgs
+    .map((m): Fala | null => {
+      const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
+      if (!texto.trim()) return null;
+      if (m.author.type === "user") return { papel: "cliente", texto, ...(m.content.mediaUrl ? { midia: m.content.mediaUrl } : {}) };
+      return { papel: ehDoHarvey(m) ? "harvey" : "equipe", texto };
+    })
+    .filter((f): f is Fala => f !== null);
+}
+
+/**
+ * Quem é a pessoa e o que o Harvey já sabe dela antes de responder: parceiro
+ * (status e documentos pela ferramenta) ou cliente, com as reservas já na mão
+ * para saber se é job feito, job marcado ou pedido novo sem precisar perguntar.
+ */
+/** O pedido que a pessoa fez no Checkatrade, para o Harvey continuar a conversa que o template abriu. */
+function pedidoDoCheckatrade(c: { id: string; full_name: string | null; phone: string | null; email: string | null; postcode: string | null; address: string | null; notes?: string | null }): string | null {
+  if (!/checkatrade-lead:/.test(c.notes ?? "")) return null;
+  const b = parseLeadBrief({ ...c, name: c.full_name, notes: c.notes ?? null });
+  return (
+    `This person asked for a quote on Checkatrade and we messaged them first (our message is the first one in this chat, so you have already introduced yourself: do not say "I'm Harvey" again). ` +
+    `Name: ${c.full_name ?? "unknown"}. Postcode: ${b.postcode ?? c.postcode ?? "unknown"}. ` +
+    `What they asked for, in their words: ${JSON.stringify(b.enquiry ?? "not given")}. ` +
+    "Pick up from their request: if it fits the catalogue, ask only what is missing and quote; if it does not, offer a proper quote (request_quote)."
+  );
+}
+
+export async function contextoDaPessoa(
+  sb: ReturnType<typeof createServiceClient>,
+  telefone: string | null,
+  extra: { nomeNoWhatsApp?: string | null; fotos?: string[]; /** quem da equipe falava nesta conversa, se alguém */ falaComo?: string | null } = {},
+) {
+  const quem = await quemE(sb, telefone).catch((): Identidade => ({ tipo: "novo" }));
+  const contas: Contas = {
+    reservas: (email) => reservasDoCliente(sb, { telefone, email, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    pedirCotacao: (pedido) => pedirCotacao(sb, { telefone, quem, nomeNoWhatsApp: extra.nomeNoWhatsApp ?? null, fotos: extra.fotos ?? [], pedido }),
+    custoDoParceiro: (linhas) => custoDoParceiroParaCotacao(sb, linhas),
+    registrarEmpresa: (dados) => registrarEmpresa(sb, telefone, dados),
+    reservarPrecoDaEquipe: async (r) => reservarPrecoDaEquipe(sb, { ...r, telefone, ticketId: await ticketPeloTelefone(telefone).catch(() => null), quemDeuOPreco: extra.falaComo ?? null }),
+    statusDasCotacoes: () => statusDasCotacoes(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
+    perguntarAoParceiro: (pergunta) => perguntarAoParceiro(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null, pergunta }),
+    ...(quem.tipo === "parceiro"
+      ? {
+          situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
+          salvarDocumento: (tipo: string, mediaUrl: string) =>
+            (TIPOS_DE_DOC as readonly string[]).includes(tipo) ? salvarDocumento(sb, quem.parceiro, tipo as TipoDeDoc, mediaUrl) : Promise.resolve({ error: "unknown document type" }),
+        }
+      : {}),
+  };
+  let sobreQuem: string | undefined;
+  // Postcodes que o OS já tem desta pessoa: o request_quote aceita sem o cliente redigitar (dono, 15/10/2026).
+  const postcodesConhecidos: string[] = [];
+  if (quem.tipo === "cliente") {
+    if (quem.cliente.postcode) postcodesConhecidos.push(quem.cliente.postcode);
+    if (/checkatrade-lead:/.test(quem.cliente.notes ?? "")) {
+      const b = parseLeadBrief({ ...quem.cliente, name: quem.cliente.full_name, notes: quem.cliente.notes ?? null });
+      if (b.postcode) postcodesConhecidos.push(b.postcode);
+    }
+  }
+  if (quem.tipo === "parceiro") {
+    const p = quem.parceiro;
+    sobreQuem = `Partner in our system: ${p.contact_name ?? p.company_name ?? "unknown name"}${p.company_name ? ` (${p.company_name})` : ""}, ${p.trade ?? "trade not set"}, account status ${p.status}.`;
+  } else if (quem.tipo === "cliente") {
+    const reservas = await contas.reservas(null).catch(() => null);
+    const lista = (reservas as { reservas?: unknown[] } | null)?.reservas ?? [];
+    const pedido = pedidoDoCheckatrade(quem.cliente);
+    if (pedido && !lista.length) {
+      // Lead do Checkatrade que recebeu o nosso primeiro contato (primeiro-contato.ts).
+      sobreQuem = pedido;
+      return { quem, contas, sobreQuem, postcodesConhecidos };
+    }
+    sobreQuem =
+      `Existing customer in our system: ${quem.cliente.full_name ?? "name unknown"}. ` +
+      `Their bookings (recent and upcoming): ${JSON.stringify((reservas as { reservas?: unknown[] } | null)?.reservas ?? [])}. ` +
+      "Use this to understand what they are messaging about: a job that is coming up (confirm the details), a job already done (thank them; any problem or complaint goes to the team), a balance to pay (send the link), or something new (sell as usual). If it is not clear, ask one short question.";
+  }
+  return { quem, contas, sobreQuem, postcodesConhecidos };
+}
+
+/** Até 4 fotos (as mais recentes) que o cliente mandou nesta conversa, como data URL. */
+async function fotosDaConversa(sessao: MensagemSc[]): Promise<string[]> {
+  const urls = sessao.filter((m) => m.author.type === "user" && m.content.type === "image" && m.content.mediaUrl).map((m) => m.content.mediaUrl as string).slice(-4);
+  const fotos = await Promise.all(
+    urls.map(async (u) => {
+      try {
+        const f = await baixarMidia(u);
+        return f.tipo.startsWith("image/") && f.dados.length < 8 * 1024 * 1024 ? `data:${f.tipo};base64,${f.dados.toString("base64")}` : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return fotos.filter((f): f is string => !!f);
+}
+
+/**
+ * Só a conversa de agora: quem volta depois de 6h parado começa do zero, com
+ * apresentação nova. Sem isto um pedido velho sem resposta (ou uma passagem
+ * para a equipe de outro dia) contaminava o "hi there" seguinte.
+ */
+const PAUSA_QUE_ENCERRA_MS = (Number(process.env.HARVEY_WA_SESSAO_MIN) || 360) * 60_000; // teste: HARVEY_WA_SESSAO_MIN=5
+/** O que veio antes da sessão atual, até 30 dias e as últimas 12 mensagens: só contexto para o Harvey. */
+const ANTERIOR_MAX_MS = 30 * 86_400_000;
+export function antesDaSessao(msgs: MensagemSc[], sessao: MensagemSc[], agora = Date.now()): MensagemSc[] {
+  const corte = msgs.length - sessao.length;
+  if (corte <= 0) return [];
+  return msgs.slice(0, corte).filter((m) => agora - Date.parse(m.received ?? "") < ANTERIOR_MAX_MS).slice(-12);
+}
+export function sessaoAtual(msgs: MensagemSc[]): MensagemSc[] {
+  for (let i = msgs.length - 1; i > 0; i--) {
+    const agora = Date.parse(msgs[i].received ?? "");
+    const antes = Date.parse(msgs[i - 1].received ?? "");
+    if (agora && antes && agora - antes > PAUSA_QUE_ENCERRA_MS) return msgs.slice(i);
+  }
+  return msgs;
+}
+
+/**
+ * A conversa é de um lead que recebeu o nosso template e ninguém da equipe
+ * escreveu nela (só o template, sem nome de agente, e o próprio Harvey)?
+ */
+async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string | undefined): Promise<boolean> {
+  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+  if (!telefone) return false;
+  const sb = createServiceClient();
+  const { data: lead } = await sb.from("harvey_wa_leads").select("chave").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
+  if (!lead) return false;
+  const { data: estado } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  if (estado && estado.estado !== "harvey") return false;
+  const msgs = await historico(conversationId).catch(() => []);
+  return !msgs.some(ehDaEquipe);
+}
+
+/**
+ * A conversa foi para a equipe pela trava de dono (equipe-dona.ts) e ninguém da equipe
+ * escreveu nas últimas N horas: volta ao Harvey, que responde normalmente (e pode fechar
+ * pelo preço da equipe com book_team_price). Conversa assumida de outro jeito fica onde está.
+ */
+async function equipeLargouAConversa(conversationId: string): Promise<boolean> {
+  const sb = createServiceClient();
+  const { data: est } = await sb.from("harvey_wa_conversas").select("estado, motivo_passagem").eq("conversation_id", conversationId).maybeSingle();
+  if (est?.estado !== "equipe" || !String(est.motivo_passagem ?? "").startsWith(MARCA_EQUIPE_DONA)) return false;
+  const msgs = await historico(conversationId).catch(() => null);
+  if (!msgs || equipeDonaDaConversa(msgs, Date.now(), horasDaEquipeDona()).dona) return false;
+  await sb.from("harvey_wa_conversas").update({ estado: "harvey", passou_em: null, motivo_passagem: null, chases: 0, atualizado_em: new Date().toISOString() }).eq("conversation_id", conversationId);
+  console.log("[harvey-wa] trava de dono vencida: a conversa volta ao Harvey", conversationId);
+  return true;
+}
+
+/**
+ * Trava de dono (dono, 15/10/2026): alguém da equipe escreveu há menos de N horas. O
+ * Harvey não fala nada; a conversa vai para a equipe (ticket sai do "AI agent" e fica
+ * editável). O Reply Status 🔴 sai em depoisDaMensagem (a última fala é do cliente).
+ */
+async function calarPelaEquipe(sb: ReturnType<typeof createServiceClient>, conversationId: string, dona: Extract<DonaDaConversa, { dona: true }>): Promise<string> {
+  const motivo = `${MARCA_EQUIPE_DONA} ${dona.quem} wrote at ${dona.em}, Harvey stays out until ${dona.liberaEm}`;
+  await passarParaEquipe(conversationId, `${dona.quem} is handling this chat`).catch((e) => console.error("[harvey-wa] trava de dono, passar:", e));
+  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivo, chases: 3 }).eq("conversation_id", conversationId);
+  console.log("[harvey-wa] calado:", motivo);
+  return `calado: ${dona.quem} é dono da conversa até ${dona.liberaEm}`;
+}
+
+type LeadWa = { lead_externo?: string | null; job_id?: string | null; ticket_id?: number | string | null; origem?: string | null } | null;
+
+/** Qual ticket anterior entra no da conversa: o do lead (Checkatrade), o do site ou o do job do Express. */
+function dadosDeJuncao(leadWa: LeadWa): Pick<DadosDoCliente, "ticketDoLead" | "ticketAntigo" | "ticketDoJob"> {
+  const doSite = leadWa?.origem === "site";
+  return {
+    ...(leadWa?.lead_externo && !doSite ? { ticketDoLead: externalIdDoLead(leadWa.lead_externo) } : {}),
+    // Retomada do site: o ticket do lead do site entra na conversa (mesma junção do Express).
+    ...(doSite && leadWa?.ticket_id ? { ticketAntigo: Number(leadWa.ticket_id) } : {}),
+    // Express: o ticket do job entra na conversa e o job passa a apontar para ela.
+    ...(leadWa?.job_id && leadWa?.ticket_id ? { ticketDoJob: { ticketId: Number(leadWa.ticket_id), jobId: String(leadWa.job_id) } } : {}),
+  };
+}
+
+/** Só quem recebeu um template nosso tem ticket anterior; para o resto é uma leitura no banco. */
+export async function juntarTicketAnterior(telefone: string | null, esperarEquipe = false): Promise<void> {
+  if (!telefone) return;
+  const sb = createServiceClient();
+  const { data: leadWa } = await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
+  if (!leadWa) return;
+  const feito = await juntarTicketsDaConversa(telefone, dadosDeJuncao(leadWa), { esperarEquipe });
+  if (/juntado|espelhado/.test(feito)) console.log("[harvey-wa] ticket anterior:", feito);
+}
+
+/**
+ * 🔴 quando o cliente escreveu por último, 🟢 quando fomos nós. Vale a ÚLTIMA
+ * mensagem da conversa, não a do evento: o Harvey responde em segundos e os
+ * dois webhooks podem chegar fora de ordem.
+ */
+async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Promise<void> {
+  if (msg.author.type === "user" && msg.source?.type && msg.source.type !== "whatsapp") return;
+  const userId = msg.author.type === "user" ? msg.author.userId : await usuarioDaConversa(conversationId).catch(() => null);
+  const telefone = userId ? await telefoneDoUsuario(userId).catch(() => null) : null;
+  if (!telefone) return;
+  const ultima = (await historico(conversationId, 1).catch(() => [msg])).at(-1) ?? msg;
+  // O Harvey passou para a equipe ("let me grab someone"): a última fala é dele, mas a vez
+  // é NOSSA. Sem isto o ticket ficava 🟢 e voltava para a view Leads (Max, 08/10/2026).
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  const harveyPassou = est?.estado === "equipe" && ehOHarveyNoNomeDele(ultima);
+  await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" || harveyPassou ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
+}
+
+/** Botão de resposta rápida do template: vira nota no ticket com o que fazer. */
+const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[]; perdido?: boolean }> = [
+  { re: /call me/i, nota: (tel) => `📞 The customer tapped "Call me back" on the WhatsApp template. Call them on ${tel}.`, tags: ["callback_requested"] },
+  { re: /photo|send a list/i, nota: () => `📷 The customer tapped the "send photos" button on the WhatsApp template: photos are coming in this conversation.`, tags: ["photos_coming"] },
+  { re: /still need/i, nota: () => `✅ The customer tapped "Yes, still need it" on the check-in: the lead is still live.`, tags: ["lead_still_needed"] },
+  // Lead perdido: fecha o ticket de trabalho (dono, 08/10/2026).
+  { re: /no longer needed|not needed|don'?t need/i, nota: () => `Lost: the customer tapped "No longer needed" on the WhatsApp template. Solved as cancelled; it reopens by itself if they write again.`, tags: ["lead_lost"], perdido: true },
+];
+
+async function anotarBotao(msg: MensagemSc): Promise<void> {
+  const botao = msg.content.payload?.trim();
+  if (!botao || !msg.author.userId) return;
+  const telefone = await telefoneDoUsuario(msg.author.userId).catch(() => null);
+  if (!telefone) return;
+  const b = BOTOES.find((x) => x.re.test(botao));
+  if (b?.perdido) {
+    console.log("[harvey-wa] lead perdido:", await encerrarLeadPerdido(telefone, b.nota(telefone)));
+    return;
+  }
+  // No ticket de trabalho: com o Harvey atendendo, o da conversa é "AI agent" e não aceita nota.
+  await notaNoTicketDeTrabalho(telefone, b ? b.nota(telefone) : `The customer tapped "${botao}" on the WhatsApp template.`, ["harvey_wa", ...(b?.tags ?? [])]);
+}
+
+/**
+ * O que o Zendesk precisa saber de toda mensagem, DEPOIS de o Harvey (ou a
+ * pausa) cuidar dela: com o Harvey pausado o ticket da conversa só nasce quando
+ * a conversa passa para a equipe, então antes disso não havia ticket para
+ * juntar o do lead nem para marcar (ticket do Dan #50964, 08/10/2026).
+ */
+async function depoisDaMensagem(evento: EventoSc): Promise<void> {
+  const conversa = evento.payload.conversation;
+  const msg = evento.payload.message;
+  if (evento.type !== "conversation:message" || !conversa?.id || !msg) return;
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone").eq("conversation_id", conversa.id).maybeSingle();
+  if (msg.author.type === "user" && (!msg.source?.type || msg.source.type === "whatsapp")) {
+    // O ticket que nasceu antes da conversa (lead, site, Express): com a equipe, entra no
+    // da conversa; com o Harvey (ticket "AI agent", só leitura), vira o lugar de trabalho.
+    const telefone = (est?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId).catch(() => null) : null);
+    await juntarTicketAnterior(telefone, est?.estado === "equipe").catch((e) => console.error("[harvey-wa] juntar ticket:", e));
+    await anotarBotao(msg).catch((e) => console.error("[harvey-wa] botão:", e));
+  } else if (est?.estado === "equipe" && est.phone) {
+    // A equipe assumiu: o ticket da conversa deixa de ser "AI agent" e o anterior entra nele.
+    await juntarTicketAnterior(est.phone as string, true).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
+  }
+  // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
+  await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
+  // A equipe deu o preço no chat: ticket para 🟠 Approval (e a conversa volta ao Harvey para fechar).
+  if (ehDaEquipe(msg) && est?.phone && est.tipo !== "parceiro") {
+    await precoDaEquipeNoChat(conversa.id, est.phone as string, msg).catch((e) => console.error("[harvey-wa] preço da equipe:", e));
+  }
+  // Grupo do ticket: 🤖 Harvey enquanto ele atende, Fixfy Support com a equipe (parceiro fica onde está).
+  if (est?.phone && est.tipo !== "parceiro") await grupoDaConversa(est.phone as string, est.estado === "harvey").catch((e) => console.error("[harvey-wa] grupo:", e));
+}
+
+/**
+ * Preço dado pela EQUIPE no chat (dono, 15/10/2026). Equipe aqui é quem escreveu pelo
+ * Zendesk (não o Harvey, nem no nome de alguém): é o mesmo critério do book_team_price
+ * (`precosDaEquipe` lê só falas da equipe), então o valor que vai para Approval é o
+ * que o Harvey aceita reservar.
+ *
+ * Ticket antes do preço → 🟠 Approval, 🟢, Action Required No, nota interna. Depois a
+ * conversa volta para o Harvey (`devolverConversa`, o mesmo Give back da tela): com ela
+ * na equipe ele fica calado e o "yes" do cliente não viraria reserva. A equipe que
+ * escrever de novo reassume sozinha (processarMensagem). HARVEY_WA_PRECO_DEVOLVE=0
+ * desliga só a devolução.
+ */
+async function precoDaEquipeNoChat(conversationId: string, telefone: string, msg: MensagemSc): Promise<void> {
+  if (msg.content.type !== "text") return;
+  const achado = precoNaMensagem(msg.content.text ?? "");
+  if (!achado) return;
+  const quem = msg.author.displayName?.trim() || "the team";
+  const { ticket, linha } = await ticketParaAprovacao(telefone, quem, achado);
+  if (!ticket || !linha) return;
+  const fila = await acaoFeita(ticket);
+  console.log("[harvey-wa] preço da equipe:", linha, "·", fila.linha);
+  const sb = createServiceClient();
+  await registrarDecisao({ origem: "whatsapp", ticketId: ticket, decisao: `${quem} gave £${achado.preco} in the WhatsApp chat: ticket moved to Approval`, regra: "team price in chat → Approval (owner, 15/10/2026)", pendente: "Customer: accept the price" }, sb);
+  if (process.env.HARVEY_WA_PRECO_DEVOLVE === "0") return;
+  const { data: est } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
+  if (est?.estado !== "equipe") return;
+  const { devolverConversa } = await import("./controle");
+  await devolverConversa(sb, conversationId);
+  console.log("[harvey-wa] conversa devolvida ao Harvey depois do preço da equipe");
+}
+
+/** Um evento da Sunshine: a resposta (ou a pausa) e depois a contabilidade no Zendesk. */
+export async function processarEvento(evento: EventoSc): Promise<string> {
+  const resultado = await processarMensagem(evento);
+  await depoisDaMensagem(evento).catch((e) => console.error("[harvey-wa] depois da mensagem:", e));
+  return resultado;
+}
+
+/** Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
+async function processarMensagem(evento: EventoSc): Promise<string> {
+  if (evento.type !== "conversation:message") return "ignorado: tipo";
+  const conversa = evento.payload.conversation;
+  const msg = evento.payload.message;
+  // Alguém da equipe escreveu na conversa pelo Zendesk: o Harvey sai na hora e
+  // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
+  if (conversa?.id && msg && ehDaEquipe(msg)) {
+    const sbEquipe = createServiceClient();
+    const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    if (est?.estado === "harvey") {
+      await sbEquipe
+        .from("harvey_wa_conversas")
+        .update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: `${msg.author.displayName} took over in Zendesk`, chases: 3 })
+        .eq("conversation_id", conversa.id);
+      if (conversa.activeSwitchboardIntegration?.name === INTEGRACAO_HARVEY) await passarParaEquipe(conversa.id, `${msg.author.displayName} took over`).catch(() => {});
+      return `equipe assumiu: ${msg.author.displayName}`;
+    }
+    return "ignorado: equipe já com a conversa";
+  }
+  if (!conversa?.id || !msg || msg.author.type !== "user") return "ignorado: não é do cliente";
+  if (conversa.activeSwitchboardIntegration?.name && conversa.activeSwitchboardIntegration.name !== INTEGRACAO_HARVEY) {
+    // Conversa que nasceu do NOSSO template (lead do Checkatrade) cai com a equipe no
+    // Zendesk, e o Harvey nunca respondia (Kit Bransby, 07/10/2026). Se nenhuma pessoa
+    // da equipe escreveu ainda, o Harvey assume e segue.
+    // E a conversa que a trava de dono passou para a equipe volta depois de N horas sem ninguém da equipe.
+    if (!(await ehLeadDoTemplateSemEquipe(conversa.id, msg.author.userId)) && !(await equipeLargouAConversa(conversa.id))) return "ignorado: conversa com a equipe";
+    await devolverAoHarvey(conversa.id);
+  }
+  // Só WhatsApp. O chat do site (web) e qualquer outro canal seguem o fluxo de sempre.
+  if (msg.source?.type !== "whatsapp") {
+    await seguirFluxoPadrao(conversa.id).catch(() => {});
+    return `ignorado: canal ${msg.source?.type ?? "desconhecido"}`;
+  }
+
+  const sb = createServiceClient();
+  // Trava: a Sunshine reenvia o evento quando a resposta demora.
+  const { error: repetida } = await sb.from("harvey_wa_mensagens").insert({ message_id: msg.id, conversation_id: conversa.id });
+  if (repetida) return "ignorado: repetida";
+
+  const { data: estado } = await sb.from("harvey_wa_conversas").select("*").eq("conversation_id", conversa.id).maybeSingle();
+  if (estado && estado.estado !== "harvey") return `ignorado: ${estado.estado}`;
+
+  const telefone = (estado?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId) : null);
+  if (process.env.HARVEY_WA_LIGADO !== "1") {
+    await seguirFluxoPadrao(conversa.id);
+    return "desligado: seguiu o fluxo padrão";
+  }
+  // Pausa pela tela do OS (/harvey-whatsapp): tudo que chega vai para a equipe.
+  const { data: pausa } = await sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle();
+  if (pausa?.valor === true) {
+    await passarParaEquipe(conversa.id, "Harvey is paused");
+    if (estado) await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: "Harvey paused" }).eq("conversation_id", conversa.id);
+    return "pausado: foi para a equipe";
+  }
+  const lista = listaDeTeste();
+  if (lista.length && !lista.includes((telefone ?? "").replace(/\D/g, ""))) {
+    await seguirFluxoPadrao(conversa.id);
+    return "fora da lista de teste";
+  }
+  if (!estado) {
+    await sb.from("harvey_wa_conversas").insert({ conversation_id: conversa.id, user_id: msg.author.userId ?? null, phone: telefone, name: msg.author.displayName ?? null });
+  }
+
+  const comecou = Date.now();
+  await digitando(conversa.id);
+  // Quem digita em rajada: espera um pouco e responde tudo junto (a mensagem mais nova manda).
+  await new Promise((r) => setTimeout(r, 2500));
+  const msgs = await historico(conversa.id);
+  const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
+  if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
+  // Quem da equipe escreveu é dono da conversa por N horas: nada do Harvey por cima.
+  // Give back por uma pessoa vale como ordem: o que a equipe escreveu antes não trava.
+  const dona = equipeDonaDaConversa(msgs, Date.now(), horasDaEquipeDona(), devolvidaEm(estado?.motivo_passagem as string | null | undefined));
+  if (dona.dona) return calarPelaEquipe(sb, conversa.id, dona);
+
+  // De qual anúncio veio: a mensagem pronta de anúncio mais recente manda (quem já falou com a
+  // gente e depois clica num anúncio passa a contar para ele). Sem nenhuma no histórico, vale o lead.
+  const leadExistente = (estado?.lead_id as string | null) ?? null;
+  const deAnuncio = origemMaisRecente(msgs.filter((m) => m.author.type === "user").map((m) => m.content.text));
+  const origem =
+    deAnuncio ??
+    (leadExistente ? origemDoLead((await sb.from("site_leads").select("source").eq("id", leadExistente).maybeSingle()).data?.source) : null) ??
+    ORIGEM_PADRAO;
+
+  // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
+  // Conversa que a equipe começou: o Harvey continua no nome de quem falava e lê
+  // a conversa inteira (a sessão cortaria o que a equipe já combinou com o cliente).
+  const voz = vozDaConversa(msgs);
+  const sessao = voz ? msgs : sessaoAtual(msgs);
+  const fotos = await fotosDaConversa(sessao);
+  const { quem, contas, sobreQuem: sobreDaPessoa, postcodesConhecidos } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
+  // O lead do site/WhatsApp também pode ter o postcode (da cotação do site ou de uma cotação anterior).
+  if (leadExistente) {
+    const { data: lead } = await sb.from("site_leads").select("postcode").eq("id", leadExistente).maybeSingle();
+    if (lead?.postcode) postcodesConhecidos.push(String(lead.postcode));
+  }
+  // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
+  const sobreQuem =
+    [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null, telefone ? await contextoDaRetomada(sb, telefone) : null].filter(Boolean).join(" ") || undefined;
+
+  const r = await pensar(
+    paraFalas(sessao),
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)) },
+    chamarSite,
+    await catalogo(),
+  );
+
+  // Nunca por cima de quem está escrevendo (dono, 08/10/2026): o Harvey leva uns
+  // segundos pensando. Se nesse meio tempo a conversa saiu dele ou alguém da
+  // equipe escreveu depois da mensagem do cliente, a resposta dele é descartada.
+  if (r.resposta) {
+    // O ritmo de uma pessoa: o tempo de ler, pensar e digitar, com "digitando" aparecendo enquanto isso.
+    const falta = faltaEsperar(
+      esperaHumana({ caracteres: r.resposta.length, temMidia: msg.content.type !== "text", primeiraResposta: !sessao.some((m) => ehDoHarvey(m)) }),
+      Date.now() - comecou,
+    );
+    for (let resta = falta; resta > 0; resta -= 6_000) {
+      await digitando(conversa.id);
+      await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
+    }
+    const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
+    const equipeEscreveu = depois.some(ehDaEquipe);
+    if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
+    // O cliente mandou mais alguma coisa enquanto o Harvey escrevia (texto e logo depois a foto): a mensagem
+    // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
+    // resposta que é só texto: link de pagamento, cotação e passagem já aconteceram e precisam ser ditos.
+    const clienteEscreveuDeNovo = depois.some((m) => m.author.type === "user" && m.id !== msg.id);
+    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.cotacaoPedida && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
+    await enviarTexto(conversa.id, r.resposta, voz);
+  }
+
+  // Parceiro não é lead de venda.
+  const leadId =
+    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, deAnuncio, r });
+  const mudancas: Record<string, unknown> = {
+    atualizado_em: new Date().toISOString(),
+    // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
+    cliente_em: msg.received ?? new Date().toISOString(),
+    ...(r.resposta ? { harvey_em: new Date().toISOString(), chases: 0 } : {}),
+    lead_id: leadId,
+    tipo: quem.tipo,
+    partner_id: quem.tipo === "parceiro" ? quem.parceiro.id : null,
+    client_id: quem.tipo === "cliente" ? quem.cliente.id : null,
+  };
+  // Zendesk: separa parceiro de cliente na primeira mensagem e preenche o perfil quando a reserva traz os dados.
+  // Refaz enquanto o ticket da conversa não apareceu no Zendesk.
+  if (!String(estado?.zendesk_resultado ?? "").includes("ticket") || r.checkout || estado?.tipo !== quem.tipo) {
+    // Lead que recebeu o template: o ticket aberto no envio entra no da conversa.
+    const { data: leadWa } = telefone ? await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle() : { data: null };
+    const dados: DadosDoCliente = {
+      ...(r.checkout ? { nome: r.checkout.nome, email: r.checkout.email, postcode: r.checkout.postcode } : {}),
+      ...dadosDeJuncao(leadWa),
+    };
+    const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
+    Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
+  }
+  if (r.checkout)
+    Object.assign(mudancas, {
+      checkout_ref: r.checkout.ref,
+      checkout_total: r.checkout.total,
+      checkout_deposit: r.checkout.deposit,
+      checkout_method: r.checkout.metodo,
+      checkout_at: new Date().toISOString(),
+      checkout_sinal: r.checkout.sinal,
+      job_ids: r.checkout.jobIds,
+      lembrado_em: null,
+      liberado_em: null,
+      sinal_recebido_em: null,
+      email: r.checkout.email.toLowerCase(),
+    });
+  if (r.passarParaEquipe) {
+    await passarParaEquipe(conversa.id, r.passarParaEquipe);
+    const nota = [`Harvey handed this WhatsApp conversation to the team.`, `Why: ${r.passarParaEquipe}`, r.notaParaEquipe ? `\nWhat Harvey already has:\n${r.notaParaEquipe}` : null, r.cotacao ? `\nLast quote: ${r.cotacao.servico}, £${r.cotacao.total}${r.cotacao.postcode ? `, ${r.cotacao.postcode}` : ""}` : null]
+      .filter(Boolean)
+      .join("\n");
+    const feitoNota = await notaInternaNaConversa(telefone, nota).catch((e) => `nota falhou: ${e instanceof Error ? e.message : e}`);
+    // O que o Harvey já sabe entra nos campos do formulário de Job: a equipe confere e aperta a macro.
+    const feitoFicha = await preencherFormularioDoJob(sb, telefone, r.fichaDoJob ? { nome: msg.author.displayName ?? null, ...semVazios(r.fichaDoJob) } : null).catch((e) => `ficha falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] ficha do job:", feitoFicha);
+    // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
+    // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
+    // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
+    if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
+      await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
+    } else {
+      // Sem `need` (modelo esqueceu, ou prometeu a equipe sem chamar a ferramenta), o que ele disse ao cliente também conta.
+      const etapa = etapaDaPassagem(r.precisaDe, r.precisaDe ? r.passarParaEquipe : `${r.passarParaEquipe} ${r.resposta ?? ""}`);
+      if (etapa === "complaint" || etapa === "booking") {
+        // Reclamação e operação: do responsável de operação (Needs Attention). Reclamação vira 🚨 Complaint.
+        await ticketParaOperacao(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para a operação:", e));
+      } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
+    }
+    // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).
+    const fila = await precisaDeAcao(await ticketPeloTelefone(telefone).catch(() => null), textoDaPassagem(r.precisaDe, r.passarParaEquipe), { esperarAgente: true });
+    console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
+    Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
+  }
+  // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Bidding e nota para a equipe, conversa continua com ele.
+  if (r.cotacaoPedida && !r.passarParaEquipe) {
+    const feito = await cotacaoPedidaNoTicket(telefone, `🤖 Harvey asked partners to price this on WhatsApp (he stays in the chat).\n\n${r.cotacaoPedida.nota}`).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
+    console.log("[harvey-wa] cotação pedida:", r.cotacaoPedida.referencia, feito);
+    await registrarDecisao({ origem: "whatsapp", ticketId: await ticketPeloTelefone(telefone).catch(() => null), quoteRef: r.cotacaoPedida.referencia, decisao: `Asked partners to price ${r.cotacaoPedida.referencia} and kept the WhatsApp chat`, regra: "request_quote (Fase 1: Harvey stays)", pendente: "Partners: send a bid" }, sb);
+  }
+  // Diário: passagem e link de pagamento são as decisões que alguém precisa enxergar de manhã.
+  const ticketDoDiario = r.passarParaEquipe || r.checkout ? await ticketPeloTelefone(telefone).catch(() => null) : null;
+  if (r.passarParaEquipe) await registrarDecisao({ origem: "whatsapp", ticketId: ticketDoDiario, quoteRef: /\bQT-\d{4}-\d+\b/.exec(r.passarParaEquipe)?.[0] ?? null, decisao: `Handed the WhatsApp chat to the team: ${r.passarParaEquipe}`, regra: r.precisaDe ? `hand_off_to_team (need: ${r.precisaDe})` : "hand_off_to_team", pendente: `Team: ${r.precisaDe ?? "pick up the chat"}` }, sb);
+  if (r.checkout) await registrarDecisao({ origem: "whatsapp", ticketId: ticketDoDiario, decisao: `Sent a ${r.checkout.deposit ? "deposit" : "full"} payment link ${r.checkout.ref}: £${r.checkout.sinal} now of £${r.checkout.total}`, regra: "create_payment_link (card only, catalogue price)", pendente: `Customer: pay ${r.checkout.ref}` }, sb);
+  await sb.from("harvey_wa_conversas").update(mudancas).eq("conversation_id", conversa.id);
+
+  // Veio de anúncio: a Meta fica sabendo do lead (1ª cotação) e do checkout (link ou banco).
+  if (r.cotacao) await mandarEventoWhatsApp(sb, { telefone, evento: "LeadSubmitted", chave: conversa.id }).catch((e) => console.error("[harvey-wa] meta lead", e));
+  // Conversa sem ticket anterior: na primeira cotação o ticket sai de "Conversation with X" para o assunto padrão.
+  if (r.cotacao && quem.tipo !== "parceiro")
+    await assuntoPadraoNaConversa(telefone, { origem: deAnuncio ? "WhatsApp ad" : "WhatsApp", servico: r.cotacao.servico, nome: quem.tipo === "cliente" ? quem.cliente.full_name : (msg.author.displayName ?? null), postcode: r.cotacao.postcode }).catch((e) => console.error("[harvey-wa] assunto", e));
+  if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
+  return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.cotacaoPedida ? `cotação ${r.cotacaoPedida.referencia}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
+}
+
+/**
+ * O lead no OS (site_leads, canal whatsapp): nasce na primeira resposta, ganha
+ * serviço e preço na cotação e e-mail no link. Sem sequência de e-mails: quem
+ * cuida da conversa é o Harvey. Pagou, o site avisa pelo e-mail e ele vira won.
+ */
+async function registrarLead(
+  sb: ReturnType<typeof createServiceClient>,
+  a: { conversationId: string; leadId: string | null; telefone: string | null; nome: string | null; origem: Origem; deAnuncio: Origem | null; r: Awaited<ReturnType<typeof pensar>> },
+): Promise<string | null> {
+  const agora = new Date().toISOString();
+  const campos: Record<string, unknown> = { last_activity_at: agora, updated_at: agora };
+  if (a.r.cotacao) Object.assign(campos, { service_label: a.r.cotacao.servico, price: a.r.cotacao.total, postcode: a.r.cotacao.postcode });
+  if (a.r.checkout) Object.assign(campos, { email: a.r.checkout.email.toLowerCase(), full_name: a.r.checkout.nome, step_reached: 4, status: "hot", booking_ref: a.r.checkout.ref, postcode: a.r.checkout.postcode, price: a.r.checkout.total });
+  if (a.r.passarParaEquipe) campos.notes = `Harvey passed to the team: ${a.r.passarParaEquipe}`;
+  try {
+    if (a.leadId) {
+      // Lead antigo que voltou por um anúncio: passa a contar para esse anúncio.
+      if (a.deAnuncio?.conteudo) {
+        const { data: atual } = await sb.from("site_leads").select("source, tags").eq("id", a.leadId).maybeSingle();
+        const fonte = (atual?.source ?? {}) as Record<string, unknown>;
+        if (fonte.utm_content !== a.deAnuncio.conteudo) {
+          campos.source = { ...fonte, utm_source: "whatsapp", utm_medium: "paid_social", utm_campaign: a.deAnuncio.campanha, utm_content: a.deAnuncio.conteudo };
+          campos.tags = Array.from(new Set([...((atual?.tags as string[] | null) ?? []), "harvey-wa", "wa-ads"]));
+        }
+      }
+      await sb.from("site_leads").update(campos).eq("id", a.leadId);
+      return a.leadId;
+    }
+    const { data, error } = await sb
+      .from("site_leads")
+      .insert({
+        ...campos,
+        channel: "whatsapp",
+        phone: a.telefone,
+        full_name: (campos.full_name as string) ?? a.nome,
+        status: (campos.status as string) ?? "new",
+        step_reached: (campos.step_reached as number) ?? 1,
+        sequence_state: "none",
+        source: {
+          utm_source: "whatsapp",
+          utm_medium: a.origem.conteudo ? "paid_social" : "chat",
+          utm_campaign: a.origem.campanha,
+          ...(a.origem.conteudo ? { utm_content: a.origem.conteudo } : {}),
+        },
+        tags: a.origem.conteudo ? ["harvey-wa", "wa-ads"] : ["harvey-wa"],
+        selection: {},
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return data.id as string;
+  } catch (err) {
+    console.error("[harvey-wa] lead", a.conversationId, err);
+    return a.leadId;
+  }
+}
+
+/** O site avisou que pagou (pelo e-mail): o Harvey confirma no WhatsApp da pessoa. */
+export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: string | null): Promise<boolean> {
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("harvey_wa_conversas")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone")
+    .eq("email", email.toLowerCase())
+    .order("atualizado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return false;
+  // Pagou: nada mais a cobrar.
+  await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
+  const ref = bookingRef ?? (data.checkout_ref as string | null);
+  if (ref) await mandarEventoWhatsApp(sb, { telefone: data.phone as string | null, evento: "Purchase", chave: ref, valor: data.checkout_total as number | null }).catch((e) => console.error("[harvey-wa] meta compra", e));
+  const texto = data.checkout_deposit
+    ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
+    : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;
+  // O job pago nasce neste mesmo ticket (dono, 07/10/2026): a conversa fica aberta, só a nota.
+  await anotarPagamentoNaConversa(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job is on this ticket.`).catch((e) =>
+    console.error("[harvey-wa] nota de pagamento", e),
+  );
+  try {
+    await enviarTexto(data.conversation_id as string, texto);
+    return true;
+  } catch (err) {
+    console.error("[harvey-wa] aviso de pagamento", err);
+    return false;
+  }
+}
+
+/** Tira o que veio vazio, para o nome do WhatsApp só valer quando o Harvey não tem o nome completo. */
+function semVazios<T extends Record<string, unknown>>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")) as Partial<T>;
+}

@@ -9,7 +9,7 @@ import {
 } from "@/lib/workforce-welcome-email-template";
 
 const DEFAULT_FROM = "Fixfy <support@getfixfy.com>";
-const WELCOME_SUBJECT = "Welcome to the Fixfy Operating System";
+const WELCOME_SUBJECT = "Your invitation to Fixfy OS";
 
 export function workforcePlatformLoginUrl(workEmail: string): string {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "http://localhost:3000";

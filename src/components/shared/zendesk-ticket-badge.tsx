@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Ticket } from "lucide-react";
 import type { Job } from "@/types/database";
 import {
   formatPushEventDetail,
@@ -107,8 +107,6 @@ export function ZendeskTicketBadge({
 
   if (source !== "zendesk" || !ref) return null;
 
-  const padding = size === "xs" ? "px-1 py-0.5" : "px-1.5 py-0.5";
-  const fontSize = size === "xs" ? "text-[9px]" : "text-[10px]";
   /**
    * Build the Zendesk ticket URL synchronously so the badge is clickable on
    * first render — no waiting for the API. Priority order:
@@ -127,11 +125,11 @@ export function ZendeskTicketBadge({
 
   const badgeInner = (
     <span
-      className={`inline-flex items-center gap-1 font-mono font-semibold text-blue-700 bg-blue-50 dark:bg-blue-950/30 dark:text-blue-300 ${padding} ${fontSize} rounded ${
+      className={`box-border inline-flex h-[22px] items-center gap-[5px] rounded-[6px] px-2 text-[11px] font-medium leading-none tabular-nums text-[var(--info-ink)] bg-[var(--info-light,#e7eeff)] ${
         ticketUrl ? "hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors cursor-pointer" : ""
       }`}
     >
-      <span aria-hidden="true">🎫</span>#{ref}
+      <Ticket className="h-3 w-3 shrink-0" strokeWidth={2.2} aria-hidden />#{ref}
     </span>
   );
 

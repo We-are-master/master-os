@@ -34,6 +34,7 @@ import {
   type PulseRecurringExpenseLine,
 } from "@/lib/pulse-fixed-costs";
 import { useProfile } from "@/hooks/use-profile";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 
 const ACTIVE_OPS_STATUSES = [
   "unassigned",
@@ -41,6 +42,7 @@ const ACTIVE_OPS_STATUSES = [
   "scheduled",
   "late",
   "in_progress",
+  "on_hold",
   "final_check",
   "need_attention",
   "awaiting_payment",
@@ -85,6 +87,9 @@ export function Financials() {
   const { bounds, rangeLabel } = useDashboardDateRange();
   const { profile } = useProfile();
   const isAdmin = profile?.role === "admin";
+  /** Sem `finance_overview` os cartões mostram só o número: nenhum abre o detalhe. */
+  const { can } = useAdminConfig();
+  const canSeeDetails = can("finance_overview");
   const [jobs, setJobs] = useState<JobDetail[]>([]);
   const [bills, setBills] = useState<BillDetail[]>([]);
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseDetail[]>([]);
@@ -323,11 +328,12 @@ export function Financials() {
 
   const revenueGoalUi = useMemo(() => {
     if (loading) {
-      return { sub: "Loading…" as ReactNode, variant: "default" as const, topRight: <StatusDot color="bg-fx-green" /> };
+      return { sub: null as ReactNode, dica: "", variant: "default" as const, topRight: <StatusDot color="bg-fx-green" /> };
     }
     if (revenueGoal.periodGoal <= 0 || revenueGoal.status === "unset") {
       return {
-        sub: "Set revenue goal in Setup",
+        sub: null as ReactNode,
+        dica: "No revenue goal set. Choose it in Settings, Setup, Finance.",
         variant: "default" as const,
         topRight: <StatusDot color="bg-fx-green" />,
       };
@@ -339,26 +345,22 @@ export function Financials() {
 
     let pillLabel: string;
     let gapLabel: string;
-    let gapClass: string;
     let barClass: string;
     let variant: "default" | "coral" | "alert";
 
     if (revenueGoal.status === "above") {
-      pillLabel = `+${formatGbp(revenueGoal.aheadOfGoal)} ahead`;
+      pillLabel = `+${formatGbpCompact(revenueGoal.aheadOfGoal)} ahead`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
-      gapClass = "text-fx-coral-p font-semibold";
       barClass = "bg-fx-coral";
       variant = "coral";
     } else if (revenueGoal.status === "on_track") {
-      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      pillLabel = `${formatGbpCompact(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% · almost there`;
-      gapClass = "text-fx-amber font-semibold";
       barClass = "bg-fx-amber";
       variant = "default";
     } else {
-      pillLabel = `${formatGbp(revenueGoal.gapToGoal)} to go`;
+      pillLabel = `${formatGbpCompact(revenueGoal.gapToGoal)} to go`;
       gapLabel = `${pct}% of ${goalLabel} goal`;
-      gapClass = "text-fx-red font-semibold";
       barClass = "bg-fx-red";
       variant = "alert";
     }
@@ -368,34 +370,29 @@ export function Financials() {
         ? ` · ${revenueGoal.workingDaysInPeriod} working day${revenueGoal.workingDaysInPeriod === 1 ? "" : "s"}`
         : "";
 
+    // Receita é número neutro; quem diz se está atrás é a barra e a linha de baixo (15/10/2026).
     return {
-      variant,
-      topRight: (
-        <Pill tone={revenueGoal.status === "above" ? "ok" : revenueGoal.status === "on_track" ? "warn" : "bad"}>
-          {pillLabel}
-        </Pill>
-      ),
+      variant: "default" as const,
+      topRight: <StatusDot color="bg-fx-green" />,
+      // Só a barra (15/10/2026): "40% of R$ 333.5k" e "to go" saíram do card; o número
+      // da meta fica no tooltip da barra e no "!" do card.
       sub: (
-        <div className="flex flex-col gap-1.5">
+        <div
+          className="mt-1 h-1 w-full overflow-hidden rounded-full bg-fx-line/80"
+          role="progressbar"
+          aria-valuenow={barPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Revenue ${pct}% of period goal`}
+          title={`${pct}% of ${goalLabel} · ${pillLabel}`}
+        >
           <div
-            className="h-1.5 w-full overflow-hidden rounded-full bg-fx-line/80"
-            role="progressbar"
-            aria-valuenow={barPct}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Revenue ${pct}% of period goal`}
-          >
-            <div
-              className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barClass)}
-              style={{ width: `${barPct}%` }}
-            />
-          </div>
-          <span className="font-mono text-[11.5px] leading-snug">
-            <span className={gapClass}>{gapLabel}</span>
-            <span className="text-fx-mute">{wdPart}</span>
-          </span>
+            className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barClass)}
+            style={{ width: `${barPct}%` }}
+          />
         </div>
       ),
+      dica: `${gapLabel} · ${pillLabel}${wdPart}`,
     };
   }, [loading, revenueGoal]);
 
@@ -426,34 +423,33 @@ export function Financials() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           label="Revenue"
-          hint="Total client price + extras for jobs in the active pipeline. Goal comes from Setup (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days."
+          hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Business settings (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
           value={loading ? "—" : formatGbp(totals.revenue)}
           sub={revenueGoalUi.sub}
           variant={revenueGoalUi.variant}
           topRight={revenueGoalUi.topRight}
-          onShowDetails={() => setOpenModal("revenue")}
+          onShowDetails={canSeeDetails ? () => setOpenModal("revenue") : undefined}
           detailsLabel="View revenue breakdown"
         />
         <KpiCard
-          label="Operating Cost"
-          hint="Partner cost + materials + per-job expenses for the same pipeline. The percentage below is gross margin: what is left of revenue after this cost, before fixed costs. Target comes from Setup."
+          label="Job costs"
+          hint={`Partner cost + materials + per-job expenses for the same pipeline. Gross margin is what is left of revenue after this cost, before fixed costs. Target comes from Business settings.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
           value={loading ? "—" : formatGbp(totals.operatingCost)}
-          sub={loading ? null : <MargemSub margem={margens.bruta} rotulo="gross margin" alvo="target" />}
           topRight={<StatusDot color="bg-fx-amber" />}
-          onShowDetails={() => setOpenModal("operating")}
-          detailsLabel="View operating cost breakdown"
+          onShowDetails={canSeeDetails ? () => setOpenModal("operating") : undefined}
+          detailsLabel="View job cost breakdown"
         />
         <KpiCard
-          label="Fixed Costs"
-          hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Bills & expenses (monthly burn, pro-rated) and one-off bills due in the period."
+          label="Overheads"
+          hint="Active workforce monthly payroll (pro-rated to working days in the window) plus all recurring expenses from Expenses (monthly burn, pro-rated) and one-off bills due in the period."
           value={loading ? "—" : formatGbp(totals.fixedCost)}
           topRight={<StatusDot color="bg-fx-blue" />}
-          onShowDetails={isAdmin ? () => setOpenModal("fixed") : undefined}
-          detailsLabel="View fixed cost breakdown (admin)"
+          onShowDetails={isAdmin && canSeeDetails ? () => setOpenModal("fixed") : undefined}
+          detailsLabel="View overhead breakdown (admin)"
         />
         <KpiCard
-          label="Net Margin"
-          hint="Revenue minus Operating Cost and Fixed Costs. Negative means the period didn't cover overhead."
+          label="Projected result"
+          hint={`Pipeline revenue minus job costs and overheads. This is a projected result, not cash received.${loading ? "" : `\n\n${margemTexto(margens.liquida, "net margin", "healthy")}`}`}
           variant={
             !loading && totals.netMargin < 0
               ? "alert"
@@ -462,15 +458,14 @@ export function Financials() {
                 : "default"
           }
           value={loading ? "—" : formatGbp(totals.netMargin)}
-          sub={loading ? null : <MargemSub margem={margens.liquida} rotulo="net margin" alvo="healthy" />}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
-          onShowDetails={() => setOpenModal("net")}
+          onShowDetails={canSeeDetails ? () => setOpenModal("net") : undefined}
           detailsLabel="View net margin breakdown"
         />
       </div>
 
       <Modal
-        open={openModal === "revenue"}
+        open={canSeeDetails && openModal === "revenue"}
         onClose={() => setOpenModal(null)}
         title="Revenue breakdown"
         subtitle={`${totals.jobsCount} job${totals.jobsCount === 1 ? "" : "s"} · ${periodLabel} · ${formatGbp(totals.revenue)}`}
@@ -492,9 +487,9 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={openModal === "operating"}
+        open={canSeeDetails && openModal === "operating"}
         onClose={() => setOpenModal(null)}
-        title="Operating cost breakdown"
+        title="Job cost breakdown"
         subtitle={`Partners + materials + expenses · ${periodLabel} · ${formatGbp(totals.operatingCost)}`}
         size="lg"
       >
@@ -518,9 +513,9 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={isAdmin && openModal === "fixed"}
+        open={isAdmin && canSeeDetails && openModal === "fixed"}
         onClose={() => setOpenModal(null)}
-        title="Fixed costs breakdown"
+        title="Overhead breakdown"
         subtitle={`Workforce ${formatGbp(totals.workforce)} + Expenses ${formatGbp(totals.bills)} · ${periodLabel}`}
         size="lg"
       >
@@ -572,19 +567,19 @@ export function Financials() {
       </Modal>
 
       <Modal
-        open={openModal === "net"}
+        open={canSeeDetails && openModal === "net"}
         onClose={() => setOpenModal(null)}
-        title="Net margin breakdown"
-        subtitle={`Revenue − Operating Cost − Fixed Costs · ${periodLabel}`}
+        title="Projected result breakdown"
+        subtitle={`Revenue − Job costs − Overheads · ${periodLabel}`}
         size="lg"
       >
         <div className="px-5 py-5">
           <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SummaryRow label="Revenue" value={totals.revenue} tone="green" />
-            <SummaryRow label="Operating Cost" value={-totals.operatingCost} tone="amber" />
-            <SummaryRow label="Fixed Costs" value={-totals.fixedCost} tone="blue" />
+            <SummaryRow label="Job costs" value={-totals.operatingCost} tone="amber" />
+            <SummaryRow label="Overheads" value={-totals.fixedCost} tone="blue" />
             <SummaryRow
-              label="Net Margin"
+              label="Projected result"
               value={totals.netMargin}
               tone={totals.netMargin >= 0 ? "green" : "red"}
               emphasis
@@ -898,45 +893,15 @@ function StatusDot({ color }: { color: string }) {
 }
 
 /**
- * A margem em porcentagem embaixo do valor em libras, com a meta ao lado.
+ * A margem em porcentagem, com a meta ao lado, para o "!" do card (dono, 11/10/2026:
+ * as legendas saíram de baixo do número para o Pulse ficar limpo).
  *
- * O rótulo é obrigatório e explícito por causa do card de custo: "38%" solto
- * embaixo de £7.420 lê como "o custo é 38% da receita", que é o contrário do
- * que o número diz. Escrever "gross margin" custa duas palavras e tira a
- * ambiguidade.
- *
- * Mesma forma do card de Revenue: o número colorido, a meta em cinza.
+ * O rótulo é explícito por causa do card de custo: "38%" solto lê como "o custo é 38%
+ * da receita", que é o contrário do que o número diz.
  */
-function MargemSub({
-  margem,
-  rotulo,
-  alvo,
-}: {
-  margem: MargemDoPeriodo;
-  rotulo: string;
-  /** Como o Setup chama a meta desta margem: "target" na bruta, "healthy" na líquida. */
-  alvo: string;
-}) {
-  if (margem.pct == null) {
-    return <span className="text-fx-mute">no revenue in this period</span>;
-  }
-  const cor =
-    margem.situacao === "acima"
-      ? "text-fx-green"
-      : margem.situacao === "no_alvo"
-        ? "text-fx-amber"
-        : "text-fx-red";
-  return (
-    <span className="leading-snug">
-      <span className={cn("font-semibold", cor)}>
-        {margem.pct}% {rotulo}
-      </span>
-      <span className="text-fx-mute">
-        {" · "}
-        {alvo} {margem.alvo}%
-      </span>
-    </span>
-  );
+function margemTexto(margem: MargemDoPeriodo, rotulo: string, alvo: string): string {
+  if (margem.pct == null) return "No revenue in this period.";
+  return `${margem.pct}% ${rotulo} · ${alvo} ${margem.alvo}%`;
 }
 
 function ymd(d: Date): string {

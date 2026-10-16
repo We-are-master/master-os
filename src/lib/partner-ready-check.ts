@@ -2,6 +2,7 @@ import type { Partner } from "@/types/database";
 import {
   type PartnerDocLike,
   type PartnerDocRuleRow,
+  REQUIRED_PARTNER_DOCS,
   buildCoreComplianceDocs,
   getRequiredDocComplianceStatus,
 } from "@/lib/partner-required-docs";
@@ -60,4 +61,57 @@ export function partnerIsReadyForReview(
   rules?: PartnerDocRuleRow[] | null,
 ): boolean {
   return computePartnerOnboardingProgress(partner, docsByPartnerId, rules).ready;
+}
+
+/** Agreements a partner signs. The workforce_* versions are for employees (People), never partners. */
+export const PARTNER_CONTRACT_TYPES = ["terms_of_use", "self_bill_agreement", "contractor_service_agreement"] as const;
+
+export interface PartnerChecklist {
+  /** Mandatory documents sent (any review state). */
+  docsUploaded: number;
+  /** Mandatory documents approved and in date. */
+  docsValid: number;
+  docsTotal: number;
+  /** Active agreements signed in their current version. */
+  contractsSigned: number;
+  contractsTotal: number;
+  /** Everything sent or signed, over everything required (0–100). */
+  uploadedPct: number;
+  /** Everything approved or signed, over everything required (0–100). */
+  validPct: number;
+}
+
+/**
+ * Full onboarding checklist: every mandatory document (Photo ID, Proof of Address,
+ * Right to Work, Public Liability) plus every active agreement signed in its current
+ * version. DBS and trade certificates are extras and never count (owner's call,
+ * 24/09/2026). Used by the Onboarding bar (uploaded) and the Compliance column (valid).
+ */
+export function computePartnerChecklist(
+  docs: PartnerDocLike[] | null | undefined,
+  signedVersionIds: ReadonlySet<string>,
+  activeVersionIds: readonly string[],
+): PartnerChecklist {
+  const list = docs ?? [];
+  const reqs = REQUIRED_PARTNER_DOCS.map((d) => ({ ...d, aliases: [...d.aliases] }));
+  let docsUploaded = 0;
+  let docsValid = 0;
+  for (const req of reqs) {
+    const st = getRequiredDocComplianceStatus(list, req);
+    if (st !== "missing") docsUploaded += 1;
+    if (st === "valid") docsValid += 1;
+  }
+  const contractsTotal = activeVersionIds.length;
+  const contractsSigned = activeVersionIds.filter((id) => signedVersionIds.has(id)).length;
+  const total = reqs.length + contractsTotal;
+  const pct = (n: number) => (total === 0 ? 100 : Math.round((n / total) * 100));
+  return {
+    docsUploaded,
+    docsValid,
+    docsTotal: reqs.length,
+    contractsSigned,
+    contractsTotal,
+    uploadedPct: pct(docsUploaded + contractsSigned),
+    validPct: pct(docsValid + contractsSigned),
+  };
 }

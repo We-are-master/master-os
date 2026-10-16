@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { dueDateIsoForJobAccountTerms, resolveJobScheduleInstant } from "@/lib/job-invoice-due-anchor";
+import { dueDateIsoForJobAccountTerms } from "@/lib/job-invoice-due-anchor";
+import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
 import { loadOrgPartnerPayoutSettings } from "@/lib/org-partner-payout-settings-server";
 import type { JobKind } from "@/types/database";
 
@@ -85,13 +86,15 @@ export async function POST(req: NextRequest) {
     scheduled_finish_date: string | null;
     scheduled_end_at: string | null;
     scheduled_start_at: string | null;
+    partner_timer_ended_at: string | null;
+    final_report: { submitted_at?: string | null } | null;
   };
   const allJobs: JobRow[] = [];
   for (let i = 0; i < jobRefs.length; i += CHUNK) {
     const { data: chunk, error: jobErr } = await admin
       .from("jobs")
       .select(
-        "reference, client_id, job_kind, scheduled_date, completed_date, scheduled_finish_date, scheduled_end_at, scheduled_start_at",
+        "reference, client_id, job_kind, scheduled_date, completed_date, scheduled_finish_date, scheduled_end_at, scheduled_start_at, partner_timer_ended_at, final_report",
       )
       .in("reference", jobRefs.slice(i, i + CHUNK));
     if (jobErr) console.error("[recalculate-due-dates] jobs query error:", jobErr);
@@ -153,7 +156,8 @@ export async function POST(req: NextRequest) {
 
     // Anchor = actual completion → planned finish → scheduled end → start → invoice created_at
     const job = jobByRef[jobRef];
-    const scheduleAnchor = job ? resolveJobScheduleInstant(job) : null;
+    // Conclusão real primeiro (relatório final, cronômetro, completed_date), depois a agenda.
+    const scheduleAnchor = job ? resolveJobCompletionInstant(job) : null;
     const anchorStr =
       scheduleAnchor != null
         ? scheduleAnchor.toISOString()

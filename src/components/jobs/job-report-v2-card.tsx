@@ -667,7 +667,7 @@ export interface JobReportV2DownloadButtonProps {
 }
 
 const DOWNLOAD_BTN_CLASS =
-  "inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-[#FAFAFB]";
+  "inline-flex items-center gap-1.5 bg-white rounded-[6px] px-[12px] py-[6px] text-[12px] font-medium hover:bg-surface-secondary";
 const DOWNLOAD_BTN_STYLE = { color: "#020040", border: "0.5px solid #D8D8DD" } as const;
 
 /**

@@ -1,14 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
+import { prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
+import { invoicePayLinkUrl } from "@/lib/pay-link-url";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { maybeCompleteAwaitingPaymentJob } from "@/lib/sync-job-after-invoice-paid";
 import { applyJobDbCompat, prepareJobRowForInsert } from "@/lib/job-schema-compat";
 import { capJobImagesArray, coerceJobImagesArray } from "@/lib/job-images";
 import { isPostgrestWriteRetryableError } from "@/lib/postgrest-errors";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { ensureWeeklySelfBillForJob } from "@/services/self-bills";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { dispatchJobCreatedZendesk, dispatchQuoteRejectedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
@@ -19,8 +21,6 @@ function getServiceSupabase() {
     process.env.SERVICE_ROLE_KEY!,
   );
 }
-
-const baseUrl = () => process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 function withServerTiming(body: unknown, status: number, marks: Array<[string, number]>) {
   const metric = marks
@@ -35,7 +35,7 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
 /**
  * POST /api/quotes/respond
  * Public: customer accepts or rejects a quote via email link.
- * On accept with deposit_required > 0: creates job, deposit invoice, Stripe payment link; returns paymentLinkUrl.
+ * On accept with deposit_required > 0: creates job and deposit invoice; returns the invoice /pay link as paymentLinkUrl.
  * Body: { token: string, action: "accept" | "reject", rejectionReason?: string }
  */
 export async function POST(req: NextRequest) {
@@ -139,7 +139,9 @@ export async function POST(req: NextRequest) {
     const { data: quote, error: fetchError } = await supabase
       .from("quotes")
       .select(
-        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id",
+        // external_* e side conversation: sem eles o job nascia sem o ticket da cotação e
+        // nunca mandava o Job confirmed nem falava com o parceiro no ticket (16/10/2026).
+        "id, reference, status, title, client_id, client_name, client_email, deposit_required, scope, property_address, partner_id, partner_name, partner_cost, total_value, images, request_id, catalog_service_id, start_date_option_1, start_date_option_2, external_source, external_ref, zendesk_side_conversation_id",
       )
       .eq("id", quoteId)
       .single();
@@ -149,6 +151,10 @@ export async function POST(req: NextRequest) {
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({ error: "Quote not found" }, 404, marks);
     }
+
+    // Job do aceite já com o nome do parceiro e a data proposta no lance (15/10/2026).
+    const parceiroNoAceite = await nomeDoParceiroNoAceite(supabase, quote);
+    const dataNoAceite = dataDoJobNoAceite(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null });
 
     const qClientId = (quote as { client_id?: string | null }).client_id?.trim() ?? "";
     const acceptBilling = await resolveNominalBillingParty(supabase, {
@@ -162,10 +168,9 @@ export async function POST(req: NextRequest) {
     const depositRequired = Number(quote.deposit_required ?? 0);
 
     if (depositRequired > 0) {
-      // Create job, deposit invoice, and Stripe payment link; then mark quote accepted
-      let stripe: ReturnType<typeof requireStripe>;
+      // Create job and deposit invoice (paid through its /pay link); then mark quote accepted
       try {
-        stripe = requireStripe();
+        requireStripe();
       } catch {
         return NextResponse.json(
           { error: "Payment is not configured. Please contact us to complete your acceptance." },
@@ -180,7 +185,7 @@ export async function POST(req: NextRequest) {
       ]);
       marks.push(["next_refs", performance.now() - tRefs]);
       const jobReference = (jobRefRow as string) ?? `JOB-${Date.now()}`;
-      const invoiceReference = (invRefRow as string) ?? `RCP-${Date.now()}`;
+      const invoiceReference = (invRefRow as string) ?? `INV-${Date.now()}`;
 
       const totalValue = Number(quote.total_value ?? 0);
       const finalBalance = Math.max(0, totalValue - depositRequired);
@@ -190,7 +195,6 @@ export async function POST(req: NextRequest) {
       dueDate.setDate(dueDate.getDate() + 14);
       const dueDateStr = dueDate.toISOString().split("T")[0];
 
-      const hasPartner = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
       let jobImages = coerceJobImagesArray((quote as { images?: unknown }).images);
       const reqId = (quote as { request_id?: string | null }).request_id?.trim();
       if (jobImages.length === 0 && reqId) {
@@ -201,14 +205,21 @@ export async function POST(req: NextRequest) {
       }
       const baseJobRow: Record<string, unknown> = {
         reference: jobReference,
+        // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+        catalog_service_id: (quote as { catalog_service_id?: string | null }).catalog_service_id ?? null,
         title: quote.title ?? "Job from quote",
         client_id: qClientId || null,
         client_name: quote.client_name ?? "",
         property_address: quote.property_address ?? "Address to be confirmed",
-        partner_id: quote.partner_id ?? null,
-        partner_name: quote.partner_name ?? null,
+        // Com entrada o job espera o pagamento em Unassigned e sem parceiro (dono, 16/10/2026):
+        // não vai para o portal nem para o "jobs de amanhã" de ninguém antes de o cliente pagar.
+        // O parceiro do lance fica na cotação e entra quando a entrada é paga
+        // (aposEntradaDaCotacaoPaga), junto com o Job confirmed ao cliente.
+        partner_id: null,
+        partner_name: null,
+        scheduled_date: dataNoAceite,
         quote_id: quoteId,
-        status: hasPartner ? "scheduled" : "unassigned",
+        status: "unassigned",
         progress: 0,
         current_phase: 0,
         total_phases: 2,
@@ -303,38 +314,15 @@ export async function POST(req: NextRequest) {
         return withServerTiming({ error: "Failed to create deposit invoice" }, 500, marks);
       }
 
-      const tStripe = performance.now();
-      const product = await stripe.products.create({
-        name: `Deposit — ${quote.reference}`,
-        description: `Deposit for ${invClientName} — ${quote.reference}`,
-        metadata: {
-          invoice_id: invoice.id,
-          reference: invoiceReference,
-          quote_id: quoteId,
-          job_id: job.id,
-        },
-      });
-
-      const price = await stripe.prices.create({
-        product: product.id,
-        unit_amount: Math.round(depositRequired * 100),
-        currency: "gbp",
-      });
-
-      const paymentLink = await stripe.paymentLinks.create({
-        line_items: [{ price: price.id, quantity: 1 }],
-        metadata: { invoice_id: invoice.id, reference: invoiceReference, job_id: job.id },
-        after_completion: {
-          type: "redirect",
-          redirect: { url: `${baseUrl()}/payment-success?ref=${encodeURIComponent(quote.reference)}&from=quote` },
-        },
-      });
-      marks.push(["stripe_calls", performance.now() - tStripe]);
+      // O depósito é cobrado pelo /pay da fatura, que cria a sessão na hora com
+      // a chave atual e cai no webhook como pay_link "os". Payment Link fixo
+      // gravado aqui ficava preso à chave do dia em que o quote foi aceito.
+      const paymentLinkUrl = invoicePayLinkUrl(invoiceReference);
 
       const tWrites = performance.now();
       /** Final invoice ref RPC can run in parallel with the post-Stripe writes. */
       const finalRefPromise: Promise<string | null> = finalBalance > 0.01
-        ? Promise.resolve(supabase.rpc("next_invoice_ref")).then(({ data }) => (data as string | null) ?? `RCP-F-${Date.now()}`)
+        ? Promise.resolve(supabase.rpc("next_invoice_ref")).then(({ data }) => (data as string | null) ?? `INV-F-${Date.now()}`)
         : Promise.resolve(null);
 
       /** Three updates that touch different rows can all happen in parallel. */
@@ -342,8 +330,8 @@ export async function POST(req: NextRequest) {
         supabase
           .from("invoices")
           .update({
-            stripe_payment_link_id: paymentLink.id,
-            stripe_payment_link_url: paymentLink.url,
+            stripe_payment_link_id: null,
+            stripe_payment_link_url: paymentLinkUrl,
             stripe_payment_status: "pending",
             stripe_customer_email: invStripeEmail,
           })
@@ -383,20 +371,17 @@ export async function POST(req: NextRequest) {
           console.error("Quote accept: downstream sync failed", e);
         }
       })();
-      /** Zendesk: status sync + customer reply + partner side conv. Idempotent. */
-      void Promise.all([
-        syncJobZendeskStatus(job.id, supabase),
-        dispatchJobCreatedZendesk({ jobId: job.id, client: supabase }),
-      ]).catch((err) => {
-        console.error("Quote accept (deposit): Zendesk dispatch failed", err);
-      });
-      if (hasPartner) {
-        void ensureWeeklySelfBillForJob({ ...baseJobRow, id: job.id, reference: job.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
-          .then((sbId) => {
-            if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", job.id);
-          })
-          .catch((e) => console.error("Quote accept: self-bill create failed", e));
-      }
+      /**
+       * Só o status do ticket aqui. O Job confirmed ao cliente, a self-bill e o aviso ao
+       * parceiro saem quando a entrada é paga (aposEntradaDaCotacaoPaga): antes disso o
+       * cliente não pagou e nada está marcado (dono, 16/10/2026).
+       */
+      const jobIdDoAceite = job.id;
+      after(() =>
+        syncJobZendeskStatus(jobIdDoAceite, supabase)
+          .then(() => undefined)
+          .catch((err) => console.error("Quote accept (deposit): Zendesk status sync failed", err)),
+      );
       void supabase.from("audit_logs").insert({
         entity_type: "quote",
         entity_id: quoteId,
@@ -415,7 +400,7 @@ export async function POST(req: NextRequest) {
         action: "accept",
         reference: quote.reference,
         message: "Quote accepted. Complete your deposit payment to confirm.",
-        paymentLinkUrl: paymentLink.url,
+        paymentLinkUrl,
       }, 200, marks);
     }
 
@@ -430,7 +415,7 @@ export async function POST(req: NextRequest) {
     ]);
     marks.push(["next_refs", performance.now() - tRefsNoDep]);
     const jobReferenceNoDep = (jobRefRowNoDep as string) ?? `JOB-${Date.now()}`;
-    const invoiceReferenceNoDep = (invRefRowNoDep as string) ?? `RCP-${Date.now()}`;
+    const invoiceReferenceNoDep = (invRefRowNoDep as string) ?? `INV-${Date.now()}`;
 
     const nowNoDep = new Date().toISOString();
     const dueDateNoDep = new Date();
@@ -449,12 +434,15 @@ export async function POST(req: NextRequest) {
 
     const baseJobRowNoDep: Record<string, unknown> = {
       reference: jobReferenceNoDep,
+      // O serviço da quote segue para o job (29/09/2026: todo job ligado ao catálogo).
+      catalog_service_id: (quote as { catalog_service_id?: string | null }).catalog_service_id ?? null,
       title: quote.title ?? "Job from quote",
       client_id: qClientId || null,
       client_name: quote.client_name ?? "",
       property_address: quote.property_address ?? "Address to be confirmed",
       partner_id: quote.partner_id ?? null,
-      partner_name: quote.partner_name ?? null,
+      partner_name: parceiroNoAceite,
+      scheduled_date: dataNoAceite,
       quote_id: quoteId,
       status: hasPartnerNoDep ? "scheduled" : "unassigned",
       progress: 0,
@@ -573,11 +561,9 @@ export async function POST(req: NextRequest) {
       console.error("Quote accept (no deposit): Zendesk dispatch failed", err);
     });
     if (hasPartnerNoDep) {
-      void ensureWeeklySelfBillForJob({ ...baseJobRowNoDep, id: jobNoDep.id, reference: jobNoDep.reference } as Parameters<typeof ensureWeeklySelfBillForJob>[0])
-        .then((sbId) => {
-          if (sbId) void supabase.from("jobs").update({ self_bill_id: sbId }).eq("id", jobNoDep.id);
-        })
-        .catch((e) => console.error("Quote accept (no deposit): self-bill create failed", e));
+      // Sem entrada: self-bill e aviso ao parceiro já no aceite.
+      const jobId = jobNoDep.id;
+      after(() => prepararJobDoAceite(supabase, jobId, { avisarParceiro: true }).then(() => undefined));
     }
     void supabase.from("audit_logs").insert({
       entity_type: "quote",
