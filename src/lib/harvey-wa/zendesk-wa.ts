@@ -95,22 +95,43 @@ async function ticketDaConversa(userId: number): Promise<number | null> {
 }
 
 /**
+ * O ticket do job é do próprio cliente (aberto e com ele de solicitante, pelo e-mail
+ * do OS). Ticket de plataforma (Housekeep, Fantastic) ou de imobiliária fica de fora:
+ * juntar ele na conversa do morador levaria a conversa da conta junto.
+ */
+export async function ticketDoProprioCliente(ticketId: number, emailDoCliente: string | null): Promise<boolean> {
+  const { ticket } = await zendeskApi<{ ticket: { status: string; requester_id: number } }>(`tickets/${ticketId}.json`);
+  if (!ticket || ["solved", "closed"].includes(ticket.status)) return false;
+  return pessoaProvadaPeloEmail(ticket.requester_id, emailDoCliente);
+}
+
+/** O solicitante do ticket é o cliente do OS: end-user com o mesmo e-mail. */
+async function pessoaProvadaPeloEmail(requesterId: number, emailDoCliente: string | null): Promise<boolean> {
+  const email = (emailDoCliente ?? "").trim().toLowerCase();
+  if (!email || !requesterId) return false;
+  const { user } = await zendeskApi<{ user: { email: string | null; role: string } }>(`users/${requesterId}.json`);
+  return user?.role === "end-user" && (user.email ?? "").trim().toLowerCase() === email;
+}
+
+/**
  * Express: o cliente respondeu o template de boas-vindas. O ticket do job (aberto
  * pelo OS quando o Ruben aceitou) entra no ticket do WhatsApp e o job passa a
  * apontar para a conversa, para os avisos do job e a equipe ficarem num lugar só.
  */
-export async function juntarTicketDoJob(ticketWa: number, j: { ticketId: number; jobId: string }): Promise<string> {
+export async function juntarTicketDoJob(ticketWa: number, j: TicketDoJobDaConversa): Promise<string> {
   if (j.ticketId === ticketWa) return "";
   const { ticket } = await zendeskApi<{ ticket: { status: string; subject: string; requester_id: number } }>(`tickets/${j.ticketId}.json`);
   if (["solved", "closed"].includes(ticket?.status)) return "";
-  await herdarDoLead(ticketWa, ticket, ["harvey_wa", "checkatrade_express"], false).catch((e) => console.error("[harvey-wa] herdar do job:", e));
+  const doOs = j.emailDoCliente !== undefined;
+  const mesmaPessoa = doOs && (await pessoaProvadaPeloEmail(ticket.requester_id, j.emailDoCliente ?? null));
+  await herdarDoLead(ticketWa, ticket, doOs ? ["harvey_wa"] : ["harvey_wa", "checkatrade_express"], mesmaPessoa).catch((e) => console.error("[harvey-wa] herdar do job:", e));
   await zendeskApi(`tickets/${ticketWa}/merge.json`, {
     method: "POST",
     body: {
       ids: [j.ticketId],
       source_comment: `The customer replied on WhatsApp. This job continues in #${ticketWa}.`,
       source_comment_is_public: false,
-      target_comment: `Job ticket #${j.ticketId} (Checkatrade Express) merged here. The job now points to this conversation.`,
+      target_comment: `Job ticket #${j.ticketId}${doOs ? "" : " (Checkatrade Express)"} merged here. The job now points to this conversation.`,
       target_comment_is_public: false,
     },
   });
@@ -139,7 +160,15 @@ export async function juntarTicketAntigo(ticketWa: number, ticketId: number): Pr
   return `, ticket do site #${ticketId} juntado`;
 }
 
-export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null; ticketDoJob?: { ticketId: number; jobId: string } | null; ticketAntigo?: number | null };
+/**
+ * Ticket do job que entra na conversa. `emailDoCliente` existe quando o job veio
+ * do OS (cliente sem template nosso): a pessoa do ticket só se junta à do WhatsApp
+ * se o e-mail dela for o do cliente no OS. Sem essa prova, num job B2B o
+ * solicitante pode ser a imobiliária e o WhatsApp o inquilino.
+ */
+export type TicketDoJobDaConversa = { ticketId: number; jobId: string; emailDoCliente?: string | null };
+
+export type DadosDoCliente = { nome?: string | null; email?: string | null; endereco?: string | null; postcode?: string | null; osId?: string | null; ticketDoLead?: string | null; ticketDoJob?: TicketDoJobDaConversa | null; ticketAntigo?: number | null };
 
 /**
  * Assunto, prioridade, tags e pessoa do ticket anterior (lead do Checkatrade,
@@ -265,9 +294,11 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
     // Dono, 15/10/2026: tudo entra New/Open e a equipe classifica (Lead, quote, job, complaint).
     // O Harvey só classifica o que é lead da régua; 💬 In Conversation saiu de cena.
     if (dados.ticketDoLead) await statusDaConversa(ticket, ZD_STATUS_LEAD);
-    if (dados.ticketDoLead) juntou = await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
-    if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
+    // O job primeiro: ele repõe o ponteiro do job. Lead que virou job pode ser o mesmo ticket,
+    // e o merge do lead deixaria o job apontando para um ticket fechado.
     if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
+    if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
+    if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
   }
   return `cliente: usuário ${u.id} na org Fixfy Customers${ticket ? `, ticket ${ticket}` : ""}${juntou}`;
 }
@@ -296,7 +327,7 @@ async function tipoDoTicket(ticket: number): Promise<string> {
  * a pessoa do WhatsApp vira a mesma do lead (o histórico dela mostra os dois
  * tickets: é assim que se vê que é o mesmo lead). Uma vez só.
  */
-async function espelharNoAnterior(ticketWa: number, anterior: number): Promise<string> {
+async function espelharNoAnterior(ticketWa: number, anterior: number, emailDoCliente?: string | null): Promise<string> {
   const { ticket: t } = await zendeskApi<{ ticket: { status: string; tags: string[]; subject: string; requester_id: number } }>(`tickets/${anterior}.json`);
   if (!t || ["solved", "closed"].includes(t.status) || t.tags.includes("harvey_handling")) return "";
   await zendeskApi(`tickets/${anterior}.json`, {
@@ -316,7 +347,9 @@ async function espelharNoAnterior(ticketWa: number, anterior: number): Promise<s
   const { ticket: wa } = await zendeskApi<{ ticket: { requester_id: number } }>(`tickets/${ticketWa}.json`);
   if (wa?.requester_id && wa.requester_id !== t.requester_id) {
     const { user: doLead } = await zendeskApi<{ user: { id: number; name: string; email: string | null; role: string } }>(`users/${t.requester_id}.json`);
-    if (doLead?.role === "end-user" && !/@getfixfy\.com$/i.test(doLead.email ?? "")) {
+    // Job vindo do OS: só com o e-mail do cliente como prova (ver TicketDoJobDaConversa).
+    const provada = emailDoCliente === undefined || (!!emailDoCliente && (doLead?.email ?? "").trim().toLowerCase() === emailDoCliente.trim().toLowerCase());
+    if (provada && doLead?.role === "end-user" && !/@getfixfy\.com$/i.test(doLead.email ?? "")) {
       await zendeskApi(`users/${doLead.id}/merge.json`, { method: "PUT", body: { user: { id: wa.requester_id } } }).catch(() => {});
       if (doLead.name) await zendeskApi(`users/${wa.requester_id}.json`, { method: "PUT", body: { user: { name: doLead.name } } }).catch(() => {});
     }
@@ -385,7 +418,9 @@ export async function juntarTicketsDaConversa(
   if (tipo === "ai_agent") {
     let espelho = "";
     const anteriores = await ticketsAnteriores(dados);
-    for (const anterior of anteriores) espelho += await espelharNoAnterior(ticket, anterior).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
+    const provaDoJob = dados.ticketDoJob && dados.ticketDoJob.emailDoCliente !== undefined ? dados.ticketDoJob : null;
+    for (const anterior of anteriores)
+      espelho += await espelharNoAnterior(ticket, anterior, provaDoJob?.ticketId === anterior ? (provaDoJob.emailDoCliente ?? null) : undefined).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
     if (umTicketLeadsView()) espelho += await marcarConversaEspelhada(ticket, anteriores).catch((e) => `, tag de espelho falhou: ${e instanceof Error ? e.message : e}`);
     return `ticket ${ticket} (AI agent)${espelho}`;
   }
@@ -393,9 +428,9 @@ export async function juntarTicketsDaConversa(
   // Tira a tag mesmo com a chave desligada: tag esquecida esconderia o ticket para sempre.
   await desmarcarConversaEspelhada(ticket).catch((e) => console.warn("[harvey-wa] tirar tag de espelho:", e instanceof Error ? e.message : e));
   let juntou = "";
+  if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
-  if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
   return `ticket ${ticket}${juntou}`;
 }
 
