@@ -68,6 +68,23 @@ export async function applyManualInvoicePaymentToJobLedger(
   const job = await loadJobForInvoice(client, inv as { job_reference?: string | null }, invoiceId);
   if (!job) return null;
 
+  /**
+   * Pago pelo link do OS: o checkout já lançou no razão com a referência da fatura na nota
+   * ("Stripe checkout cs_… · RCP-…"), às vezes sem `linked_invoice_id` (coluna ausente em
+   * produção). Lançar de novo aqui creditava em dobro (16/10/2026).
+   */
+  const refDaFatura = String((inv as { reference?: string | null }).reference ?? "").trim();
+  if (refDaFatura) {
+    const { data: jaLancado } = await client
+      .from("job_payments")
+      .select("id")
+      .eq("job_id", job.id)
+      .ilike("note", `%Stripe checkout%· ${refDaFatura}%`)
+      .is("deleted_at", null)
+      .limit(1);
+    if ((jaLancado ?? []).length > 0) return job.id;
+  }
+
   // Soft-delete aware; fall back to no filter when `deleted_at` isn't on this DB.
   let pays: { type: string; amount: number }[] | null = null;
   const paysFirst = await client
