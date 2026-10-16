@@ -43,6 +43,9 @@ const RAMPA: Array<{ ate: string; teto: number }> = [
 ];
 const TETO_FINAL = 5000;
 
+/** Mais que isso numa rodada não é gente clicando em descadastrar: é marca do sistema. */
+export const LIMITE_DE_DESCADASTROS_POR_RODADA = 50;
+
 /** Quantos contatos a lista pode ter hoje. `MARKETING_CLUBE_TETO` passa por cima. */
 export function tetoDaLista(agora = new Date()): number {
   const fixo = Number(process.env.MARKETING_CLUBE_TETO?.trim());
@@ -224,13 +227,25 @@ export async function sincronizarLista(opcoes: { aplicar: boolean; maxOperacoes?
   const doClube = alvos.filter((a) => segmentoDaPosicao(a.posicao));
   const cabeHoje = new Set((Number.isFinite(teto) ? doClube.slice(0, teto) : doClube).map((a) => a.email));
 
+  /**
+   * Trava contra descadastro em massa (16/10/2026). Até o dia 14 a própria
+   * sincronização marcava como descadastrado quem passava do teto do dia, e 700
+   * contatos que nunca receberam nada ficaram com a marca. Ler isso como pedido
+   * do cliente bloquearia 700 pessoas de vez no OS, e-mail e WhatsApp. Pedido de
+   * verdade chega aos poucos: passou do limite numa rodada, nada é gravado e a
+   * rodada avisa para conferir.
+   */
+  const descadastrados = [...atual].filter(([email, { contato }]) => contato.unsubscribed && porEmail.has(email)).length;
+  const muitos = descadastrados > LIMITE_DE_DESCADASTROS_POR_RODADA;
+  if (muitos) r.erros.push(`${descadastrados} descadastrados na Resend de uma vez (limite ${LIMITE_DE_DESCADASTROS_POR_RODADA}): nada gravado no OS, conferir antes`);
+
   for (const [email, { contato, lista }] of atual) {
     const alvo = porEmail.get(email);
     if (contato.unsubscribed) {
       if (!alvo) continue;
       // Saiu pelo link do broadcast: o OS ainda não sabia.
       r.sairamNaResend++;
-      if (!opcoes.aplicar) continue;
+      if (!opcoes.aplicar || muitos) continue;
       await bloquear(email, "unsubscribed", "resend-broadcast");
       const fone = toWhatsAppNumber(alvo.phone);
       if (fone) await sb.from("whatsapp_suppressions").upsert({ phone: fone, reason: "stopped", source: "resend-broadcast" }, { onConflict: "phone", ignoreDuplicates: true });
