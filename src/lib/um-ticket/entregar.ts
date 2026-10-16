@@ -7,7 +7,7 @@
  * erro como já faziam no caminho do Zendesk).
  */
 
-import { createSideConversation, getTicketRequester, sendCustomerCommentWithAttachments, updateTicket, uploadAttachment, zendeskApi } from "@/lib/zendesk";
+import { createSideConversation, getTicketRequester, sendCustomerCommentWithAttachments, updateTicket, uploadSideConversationAttachment, zendeskApi } from "@/lib/zendesk";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ehCanalDeMensagem, janelaDoWhatsAppAberta, modoDeEntrega, type ModoDeEntrega, type OrigemDoTicket } from "./escolha";
 
@@ -71,7 +71,7 @@ export async function entregarEmailNoTicket(e: EmailNoTicket): Promise<EntregaNo
 
   // Ticket do WhatsApp: o e-mail sai como conversa lateral do próprio ticket; a resposta do cliente volta para ela.
   const tokens: string[] = [];
-  for (const a of e.anexos ?? []) tokens.push(await uploadAttachment(a.content, a.filename, a.contentType ?? "application/octet-stream"));
+  for (const a of e.anexos ?? []) tokens.push(await uploadSideConversationAttachment(a.content, a.filename, a.contentType ?? "application/octet-stream"));
   const r = await createSideConversation({ ticketId, toEmail: e.para.email, toName: e.para.nome ?? null, subject: e.assunto, htmlBody: e.html, attachmentIds: tokens });
   if (!r.ok) throw new Error(`side conversation: ${r.error ?? r.status}`);
   // O e-mail já saiu: a nota é registro, e falhar nela não pode fazer quem chama mandar de novo.
