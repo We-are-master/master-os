@@ -283,6 +283,32 @@ export async function dispatchJobCreatedZendesk(args: {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
   }
 
+  // Ticket de WhatsApp: a confirmação acima é nota interna; o cliente ouve uma linha curta
+  // na conversa (16/10/2026). Falha ou janela fechada vira nota, nunca derruba o dispatch.
+  if (viaWhatsApp) {
+    try {
+      const { confirmarJobNoWhatsApp } = await import("@/lib/harvey-wa/confirmacao-no-whatsapp");
+      const r = await confirmarJobNoWhatsApp(supabase, {
+        ticketId: Number(ticketId),
+        dia: formatJobConfirmationLongDate(dateStr),
+        janela: formatJobConfirmationArrivalWindow({
+          scheduled_start_at: job.scheduled_start_at,
+          scheduled_end_at: (job as { scheduled_end_at?: string | null }).scheduled_end_at,
+        }),
+        referencia: String(job.reference ?? ""),
+      });
+      if (!r.enviado) {
+        await zdUpdateTicket({
+          ticketId,
+          htmlBody: `<p>WhatsApp confirmation not sent: ${r.motivo ?? "unknown reason"}. Confirm with the customer by phone or template.</p>`,
+          publicComment: false,
+        }).catch(() => undefined);
+      }
+    } catch (err) {
+      console.error("[zendesk-lifecycle] WhatsApp confirmation failed:", err);
+    }
+  }
+
   // Partner side conv here only when a partner is on the job but not yet office-confirmed
   // (e.g. quote accept). Create Job with a manual partner sets partner_confirmed_at and
   // fires `assigned` via notifyPartnerJobZendesk — skip to avoid a duplicate thread.
