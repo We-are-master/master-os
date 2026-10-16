@@ -40,7 +40,7 @@ export type EntradaFinalCheck = {
   reportGate: { ok: boolean; message?: string };
   /** O que o relatório cobrou de material extra do cliente (custo +30% quando em branco). */
   materialExtraCharge: number;
-  /** Reclamação: ticket em Complaint, tag `com_leo`/`complaint`, ou descrição de reclamação no job. */
+  /** Reclamação: ticket em Complaint, tag `ops_attention`/`complaint`, ou descrição de reclamação no job. */
   complaint: boolean;
   /** Não deu para ler o ticket: sem descartar reclamação, fica para a equipe. */
   complaintUnknown?: boolean;

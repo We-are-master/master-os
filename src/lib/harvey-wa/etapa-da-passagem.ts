@@ -9,7 +9,7 @@
  *   null      -> o ticket fica onde está
  *
  * Dono, 15/10/2026: tudo entra New/Open e alguém classifica, e o Harvey conta como
- * alguém. Reclamação e assunto de operação são do responsável de operação (Needs Attention, tag com_leo).
+ * alguém. Reclamação e assunto de operação são do responsável de operação (Needs Attention, tag ops_attention).
  *
  * O Harvey diz o que precisa em `need`. O motivo escrito é a segunda prova: modelo que
  * esquece o campo ainda cai na etapa certa quando o texto é claro.

@@ -534,7 +534,7 @@ export async function ticketParaAprovacao(telefone: string | null, quem: string,
 
 /**
  * Reclamação e assunto de operação são do responsável de operação (papel "operacao" em
- * responsavel-operacao.ts, editável em /agents/harvey): tag com_leo (🚨 Needs Attention;
+ * responsavel-operacao.ts, editável em /agents/harvey): tag ops_attention (🚨 Needs Attention;
  * o nome da tag fica, views e gatilhos do Zendesk dependem dele) e o ticket atribuído a
  * essa pessoa. Reclamação também vira 🚨 Complaint, mesmo em ticket de job: o job em si
  * não muda, só o ticket.
