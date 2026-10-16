@@ -1,3 +1,4 @@
+import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
 import { after, NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -802,8 +803,15 @@ export async function POST(req: NextRequest) {
     serviceType = String((catRow as { name: string }).name).trim();
   }
 
-  // service_type doubles as title when the caller doesn't supply one.
-  const titleResolved = title || serviceType;
+  // service_type doubles as title when the caller doesn't supply one. Sempre um nome do
+  // catálogo (dono, 16/10/2026): o que vier inventado vira General Maintenance (ou pintura/
+  // limpeza/certificado quando o texto bate) e o texto original fica na descrição.
+  const pedidoTitulo = (title || serviceType || "").trim();
+  const { data: catNomes } = await supabase.from("service_catalog").select("name").eq("is_active", true);
+  const titleResolved = tipoDoCatalogo(pedidoTitulo, ((catNomes ?? []) as { name: string }[]).map((c) => String(c.name).trim()));
+  if (pedidoTitulo && pedidoTitulo !== titleResolved && !(description ?? "").toLowerCase().includes(pedidoTitulo.toLowerCase())) {
+    description = description ? `${pedidoTitulo}. ${description}` : pedidoTitulo;
+  }
 
   // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
