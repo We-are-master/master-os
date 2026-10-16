@@ -284,12 +284,12 @@ export async function cancelJobAfterRefund(
   if (error) return { ok: false, status: 500, error: "Lookup failed." };
   if (!jobRow) return { ok: false, status: 404, error: "Job not found." };
   const companySettings = await getCompanySettings().catch(() => null);
-  const presets = resolveOfficeJobCancellationPresets(companySettings?.frontend_setup ?? null);
-  const notes = `Refunded: ${a.reason}`.slice(0, 300);
+  const notes = a.reason.trim().slice(0, 200);
   return aplicarCancelamentoDoJob(supabase, jobRow as unknown as JobParaCancelar, {
     presetId: "other",
     notes,
-    reasonText: buildOfficeCancellationReasonText("other", notes, presets),
+    // Etiqueta curta no job (dono, 16/10/2026): "Refund · Job cancelled", não "Other — Refunded: …".
+    reasonText: `Refund · ${notes}`,
     lostValueGbp: 0,
     cancelledBy: a.userId,
     frontendSetup: companySettings?.frontend_setup ?? null,
