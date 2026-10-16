@@ -112,3 +112,15 @@ describe("auto-quote: quote text with the accept link (Fase 1 auto send)", () =>
     assert.doesNotMatch(t, /[—–]/);
   });
 });
+
+describe("textoDaQuote com entrada (16/10/2026)", () => {
+  it("com link e entrada diz entrada e saldo, sem travessão", () => {
+    const t = textoDaQuote({ nome: "Chloe", servico: "Carpentry", total: 480, referencia: "QT-2026-1180", link: "https://app.getfixfy.com/quote/respond?token=x&action=accept", entrada: 240 });
+    assert.match(t, /accept it here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept A £240\.00 deposit secures the booking and the £240\.00 balance is due when the job is done\./);
+    assert.doesNotMatch(t, /—/);
+  });
+  it("sem entrada (conta de fatura) não fala de pagamento", () => {
+    const t = textoDaQuote({ nome: "Chloe", total: 480, link: "https://x", entrada: 0 });
+    assert.doesNotMatch(t, /deposit/);
+  });
+});
