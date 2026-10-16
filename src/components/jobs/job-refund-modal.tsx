@@ -29,6 +29,9 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
   const [reason, setReason] = useState("");
   const [method, setMethod] = useState<Method>("bank_transfer");
   const [submitting, setSubmitting] = useState(false);
+  // Dono, 16/10/2026: refund cancela o job e avisa o cliente; os dois vêm marcados.
+  const [notifyClient, setNotifyClient] = useState(true);
+  const [cancelJob, setCancelJob] = useState(true);
   // Um id por abertura do modal: clique dobrado não vira dois refunds.
   const requestId = useMemo(() => (open ? crypto.randomUUID() : ""), [open]);
 
@@ -38,6 +41,8 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
     setInfo(null);
     setLoadError(null);
     setAmount("");
+    setNotifyClient(true);
+    setCancelJob(true);
     setReason("");
     void (async () => {
       try {
@@ -82,17 +87,20 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
       const res = await fetch(`/api/jobs/${jobId}/refund`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: value, reason: reason.trim(), method, request_id: requestId }),
+        body: JSON.stringify({ amount: value, reason: reason.trim(), method, request_id: requestId, notify_client: notifyClient, cancel_job: cancelJob }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; cancelled?: boolean; emailedTo?: string | null };
       if (!res.ok) {
         toast.error(data.error || "Refund failed.");
         return;
       }
+      const extras = [data.cancelled ? "Job cancelled." : "", data.emailedTo ? `Customer emailed (${data.emailedTo}).` : notifyClient ? "Customer not emailed: no email on file." : ""].filter(Boolean).join(" ");
       toast.success(
-        method === "stripe"
-          ? `${formatCurrencyPrecise(value)} refunded to the card. It reaches the customer in 5 to 10 days.`
-          : `${formatCurrencyPrecise(value)} refund recorded. Now send the transfer from the bank.`,
+        `${
+          method === "stripe"
+            ? `${formatCurrencyPrecise(value)} refunded to the card. It reaches the customer in 5 to 10 days.`
+            : `${formatCurrencyPrecise(value)} refund recorded. Now send the transfer from the bank.`
+        }${extras ? ` ${extras}` : ""}`,
       );
       await onDone();
       onClose();
@@ -153,8 +161,20 @@ export function JobRefundModal({ open, jobId, jobReference, clientName, onClose,
               <label className="text-xs font-medium text-text-secondary" htmlFor="refund-reason">Reason</label>
               <Input id="refund-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Job cancelled, goodwill, overpayment…" maxLength={300} />
             </div>
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-xs text-text-primary">
+                <input type="checkbox" checked={cancelJob} onChange={(e) => setCancelJob(e.target.checked)} />
+                Cancel the job
+                <span className="text-text-tertiary">· untick for a goodwill refund where the job goes on</span>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-text-primary">
+                <input type="checkbox" checked={notifyClient} onChange={(e) => setNotifyClient(e.target.checked)} />
+                Email the customer
+                <span className="text-text-tertiary">· amount, card or bank, and when it arrives</span>
+              </label>
+            </div>
             <p className="text-[11px] leading-snug text-text-tertiary">
-              The refund goes into the payment history of this job and the invoice{info.invoiceRef ? ` ${info.invoiceRef.replace(/^RCP-/, "INV-")}` : ""} goes back to showing the balance. The customer is not emailed.
+              The refund goes into the payment history of this job{cancelJob ? ", the job is cancelled and its open invoices and self-bill are cancelled with it" : ` and the invoice${info.invoiceRef ? ` ${info.invoiceRef.replace(/^RCP-/, "INV-")}` : ""} goes back to showing the balance`}.
             </p>
             {problem ? <p className="text-[11px] text-amber-800 dark:text-amber-300">{problem}</p> : null}
           </>

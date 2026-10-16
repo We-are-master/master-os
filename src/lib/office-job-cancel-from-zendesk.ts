@@ -108,14 +108,60 @@ export async function cancelJobFromZendeskWebhook(
     scheduled_end_at: string | null;
   };
 
+  return aplicarCancelamentoDoJob(supabase, job, {
+    presetId,
+    notes,
+    reasonText,
+    lostValueGbp: input.lostValueGbp,
+    cancelledAt: input.cancelledAt,
+    frontendSetup: companySettings?.frontend_setup ?? null,
+    auditMetadata: { source: "zendesk_cancellation_webhook", ticket_id: ticketId, cancelled_by_agent: input.cancelledByAgent ?? null },
+  });
+}
+
+type JobParaCancelar = {
+  id: string;
+  reference: string;
+  status: string;
+  partner_id: string | null;
+  invoice_id: string | null;
+  self_bill_id: string | null;
+  client_price: number;
+  extras_amount: number | null;
+  partner_cost: number;
+  partner_extras_amount: number | null;
+  materials_cost: number;
+  partner_agreed_value: number | null;
+  scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+};
+
+const JOB_PARA_CANCELAR_SELECT =
+  "id, reference, status, partner_id, invoice_id, self_bill_id, client_price, extras_amount, partner_cost, partner_extras_amount, materials_cost, partner_agreed_value, scheduled_date, scheduled_start_at, scheduled_end_at, partner_timer_started_at, partner_timer_ended_at";
+
+/**
+ * O cancelamento em si, igual para o webhook do Zendesk e para o refund do job (16/10/2026):
+ * zera a economia do job, cancela faturas abertas, self-bill e visitas, avisa o parceiro e
+ * sincroniza o ticket.
+ */
+async function aplicarCancelamentoDoJob(
+  supabase: SupabaseClient,
+  job: JobParaCancelar,
+  opts: {
+    presetId: NonNullable<ReturnType<typeof parseOfficeCancellationReasonId>>;
+    notes: string;
+    reasonText: string;
+    lostValueGbp: number;
+    cancelledAt?: string | null;
+    cancelledBy?: string | null;
+    frontendSetup: unknown;
+    auditMetadata: Record<string, unknown>;
+  },
+): Promise<ZendeskCancelJobResult> {
+  const { presetId, notes, reasonText } = opts;
   if (job.status === "cancelled") {
-    return {
-      ok: true,
-      status: 200,
-      action: "existing",
-      id: job.id,
-      reference: job.reference,
-    };
+    return { ok: true, status: 200, action: "existing", id: job.id, reference: job.reference };
   }
 
   if (NON_CANCELLABLE.has(job.status)) {
@@ -126,7 +172,7 @@ export async function cancelJobFromZendeskWebhook(
     };
   }
 
-  const now = input.cancelledAt?.trim() || new Date().toISOString();
+  const now = opts.cancelledAt?.trim() || new Date().toISOString();
   const jobForPatch = job as Pick<
     Job,
     | "status"
@@ -140,7 +186,7 @@ export async function cancelJobFromZendeskWebhook(
     | "timer_is_running"
   >;
   const lostSnapshot = patchOfficeCancelLostSnapshot(jobForPatch);
-  const reportedLost = roundLostGbp(input.lostValueGbp);
+  const reportedLost = roundLostGbp(opts.lostValueGbp);
   const patch = {
     ...patchOfficeCancelZeroJobEconomics(),
     ...lostSnapshot,
@@ -150,7 +196,7 @@ export async function cancelJobFromZendeskWebhook(
     cancellation_reason: reasonText,
     cancellation_reason_preset_id: presetId,
     cancelled_at: now,
-    cancelled_by: null,
+    cancelled_by: opts.cancelledBy ?? null,
     ...statusChangePartnerTimerPatch(jobForPatch, "cancelled"),
     ...statusChangeOfficeTimerPatch(jobForPatch, "cancelled"),
   };
@@ -199,11 +245,9 @@ export async function cancelJobFromZendeskWebhook(
     old_value: job.status,
     new_value: "cancelled",
     metadata: {
-      source: "zendesk_cancellation_webhook",
-      ticket_id: ticketId,
+      ...opts.auditMetadata,
       cancellation_reason_id: presetId,
       lost_value_gbp: reportedLost,
-      cancelled_by_agent: input.cancelledByAgent ?? null,
     },
   }).then(() => {}, (e) => console.error("[zendesk-cancel-webhook] audit failed:", e));
 
@@ -223,15 +267,32 @@ export async function cancelJobFromZendeskWebhook(
       presetId,
       notes: notes || null,
       client: supabase,
-      setup: companySettings?.frontend_setup ?? null,
+      setup: opts.frontendSetup as never,
     }),
   ]).catch((err) => console.error("[zendesk-cancel-webhook] zendesk sync:", err));
 
-  return {
-    ok: true,
-    status: 201,
-    action: "cancelled",
-    id: job.id,
-    reference: job.reference,
-  };
+  return { ok: true, status: 201, action: "cancelled", id: job.id, reference: job.reference };
+}
+
+/** Refund do job: cancela pelo id, com o motivo do refund (16/10/2026). */
+export async function cancelJobAfterRefund(
+  supabase: SupabaseClient,
+  jobId: string,
+  a: { reason: string; userId: string | null },
+): Promise<ZendeskCancelJobResult> {
+  const { data: jobRow, error } = await supabase.from("jobs").select(JOB_PARA_CANCELAR_SELECT).eq("id", jobId).maybeSingle();
+  if (error) return { ok: false, status: 500, error: "Lookup failed." };
+  if (!jobRow) return { ok: false, status: 404, error: "Job not found." };
+  const companySettings = await getCompanySettings().catch(() => null);
+  const presets = resolveOfficeJobCancellationPresets(companySettings?.frontend_setup ?? null);
+  const notes = `Refunded: ${a.reason}`.slice(0, 300);
+  return aplicarCancelamentoDoJob(supabase, jobRow as unknown as JobParaCancelar, {
+    presetId: "other",
+    notes,
+    reasonText: buildOfficeCancellationReasonText("other", notes, presets),
+    lostValueGbp: 0,
+    cancelledBy: a.userId,
+    frontendSetup: companySettings?.frontend_setup ?? null,
+    auditMetadata: { source: "job_refund" },
+  });
 }
