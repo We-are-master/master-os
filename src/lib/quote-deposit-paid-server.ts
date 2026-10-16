@@ -119,6 +119,15 @@ export async function aposEntradaDaCotacaoPaga(
 
   await prepararJobDoAceite(supabase, j.id, { avisarParceiro: true });
 
+  // Ticket sai de Approval agora (enquanto esperava a entrada o sync segurava): Scheduled
+  // com o parceiro do lance, Unassigned sem ele.
+  try {
+    const { syncJobZendeskStatus } = await import("@/lib/zendesk-status-sync");
+    await syncJobZendeskStatus(j.id, supabase);
+  } catch (e) {
+    console.error("[entrada paga] status do ticket", j.id, e);
+  }
+
   // Job confirmed ao cliente: só sai se o job tem parceiro e data (o dispatch confere).
   try {
     const { dispatchJobCreatedZendesk } = await import("@/lib/zendesk-lifecycle");
