@@ -124,11 +124,28 @@ export function textoAindaCotando(nome: string, servico?: string | null): string
   return `Hi ${nome}, just a quick update: we're still working on the prices${sobre} with our specialists and will send your quote very soon. Thanks for your patience.`;
 }
 
-export function textoDaQuote(a: { nome: string; servico?: string | null; total: number; referencia?: string | null; /** link para aceitar a quote (envio automático do lance) */ link?: string | null }): string {
+export function textoDaQuote(a: {
+  nome: string;
+  servico?: string | null;
+  total: number;
+  referencia?: string | null;
+  /** link para aceitar a quote: abre o pagamento da entrada (16/10/2026) */
+  link?: string | null;
+  /** entrada que o aceite cobra (regra da conta); 0 ou ausente = sem entrada */
+  entrada?: number | null;
+}): string {
   const sobre = a.servico?.trim() ? ` for the ${a.servico.trim().toLowerCase()} work` : "";
   const ref = a.referencia ? ` (${a.referencia})` : "";
+  const entrada = Math.round((Number(a.entrada) || 0) * 100) / 100;
+  const saldo = Math.max(0, Math.round((a.total - entrada) * 100) / 100);
+  const pagamento =
+    entrada > 0.01 && saldo > 0.01
+      ? ` A £${entrada.toFixed(2)} deposit secures the booking and the £${saldo.toFixed(2)} balance is due when the job is done.`
+      : entrada > 0.01
+        ? ` Payment of £${entrada.toFixed(2)} secures the booking.`
+        : "";
   const seguir = a.link
-    ? `If you're happy to go ahead, you can accept it here: ${a.link}`
+    ? `If you're happy to go ahead, accept it here: ${a.link}${pagamento}`
     : "If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in.";
   return `Hi ${a.nome}, your quote${sobre} is ready${ref}: £${a.total.toFixed(2)} for the job as described, fixed price. ${seguir} Any questions, just ask.`;
 }

@@ -36,10 +36,10 @@ const lance = (o: Partial<Parameters<typeof escolherMelhorLance>[0][number]> & {
   created_at: "2026-09-08T10:00:00Z", ...o,
 });
 
-test("o menor lance ganha e vira preco com 40%", () => {
+test("o menor lance ganha e vira preco com 30%, arredondado para cima de £5", () => {
   const r = escolherMelhorLance([lance({ id: "a", bid_amount: 500 }), lance({ id: "b", bid_amount: 380 })]);
   assert.equal(r!.melhor.id, "b");
-  assert.equal(r!.precoAoCliente, 633.33);
+  assert.equal(r!.precoAoCliente, 545);
   assert.equal(r!.margem, MARGEM_PADRAO);
 });
 
@@ -76,5 +76,5 @@ test("sem lance valido nao ha escolha, e nao ha rascunho", () => {
 
 test("bid_amount como string do banco continua valendo", () => {
   const r = escolherMelhorLance([lance({ id: "s", bid_amount: "380.00" })]);
-  assert.equal(r!.precoAoCliente, 633.33);
+  assert.equal(r!.precoAoCliente, 545);
 });

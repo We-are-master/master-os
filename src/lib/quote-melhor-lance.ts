@@ -9,10 +9,10 @@
  * Esta parte é pura de propósito: escolher não depende de banco, e é a decisão
  * que vira dinheiro. Quem varre é outro arquivo.
  */
-import { sellFromMargin } from "@/lib/catalog-pricing-floor-ceiling";
+import { MARGEM_DO_LANCE, precoDeVendaDoLance } from "@/lib/quotes/preco-do-lance";
 
-/** A margem padrão do OS sobre lance de parceiro (dono, 09/09/2026). */
-export const MARGEM_PADRAO = 40;
+/** Margem sobre lance de parceiro, em %: a regra única de `preco-do-lance` (30%, dono 09/10/2026; era 40%). */
+export const MARGEM_PADRAO = Math.round(MARGEM_DO_LANCE * 100);
 
 export type Lance = {
   id: string;
@@ -78,8 +78,8 @@ export function escolherMelhorLance(
 
   validos.sort((a, b) => (a.valor !== b.valor ? a.valor - b.valor : a.created_at.localeCompare(b.created_at)));
   const melhor = validos[0]!;
-  const preco = sellFromMargin(melhor.valor, margem);
-  if (preco === null) return null;
+  if (!(melhor.valor > 0) || margem >= 100) return null;
+  const preco = precoDeVendaDoLance(melhor.valor, margem / 100);
 
   return { melhor, ordenados: validos, descartados, precoAoCliente: preco, margem };
 }

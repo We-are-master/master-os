@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
-import { prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
+import { parceiroQueDeuOLance, prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";
@@ -422,7 +422,10 @@ export async function POST(req: NextRequest) {
     dueDateNoDep.setDate(dueDateNoDep.getDate() + 14);
     const dueDateStrNoDep = dueDateNoDep.toISOString().split("T")[0];
 
-    const hasPartnerNoDep = !!(quote.partner_id?.trim() || (quote.partner_name && String(quote.partner_name).trim()));
+    // Sem entrada vale a mesma regra (16/10/2026): o parceiro só entra se o lance é dele.
+    // Cotação manual (preço nosso ou da equipe) cai em Unassigned para a equipe alocar.
+    const parceiroDoLanceNoDep = await parceiroQueDeuOLance(supabase, quoteId, quote.partner_id);
+    const hasPartnerNoDep = !!parceiroDoLanceNoDep;
     let jobImagesNoDep = coerceJobImagesArray((quote as { images?: unknown }).images);
     const reqIdNoDep = (quote as { request_id?: string | null }).request_id?.trim();
     if (jobImagesNoDep.length === 0 && reqIdNoDep) {
@@ -440,8 +443,8 @@ export async function POST(req: NextRequest) {
       client_id: qClientId || null,
       client_name: quote.client_name ?? "",
       property_address: quote.property_address ?? "Address to be confirmed",
-      partner_id: quote.partner_id ?? null,
-      partner_name: parceiroNoAceite,
+      partner_id: parceiroDoLanceNoDep,
+      partner_name: parceiroDoLanceNoDep ? parceiroNoAceite : null,
       scheduled_date: dataNoAceite,
       quote_id: quoteId,
       status: hasPartnerNoDep ? "scheduled" : "unassigned",
