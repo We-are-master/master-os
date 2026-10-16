@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { dataDoJobNoAceite, nomeDoParceiroNoAceite, prepararJobDoAceite } from "@/lib/quote-accept-job-fields";
+import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
+import { prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
 import { requireStripe } from "@/lib/stripe";

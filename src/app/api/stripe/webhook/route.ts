@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { aposEntradaDaCotacaoPaga } from "@/lib/quote-accept-job-fields";
+import { aposEntradaDaCotacaoPaga } from "@/lib/quote-deposit-paid-server";
 import { requireStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncJobAfterStripeInvoicePaid } from "@/lib/stripe-job-sync";
