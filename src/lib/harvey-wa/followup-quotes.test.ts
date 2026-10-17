@@ -20,6 +20,13 @@ describe("quote chase: three follow-ups in seven days, then close", () => {
     assert.equal(proximoPasso(["quote_closed_no_reply"], 500), null);
     assert.equal(proximoPasso(["quote_closed_by_customer"], 500), null);
   });
+  it("B2B gets two chases: the second is the last, then closes 48h later (day 5)", () => {
+    assert.equal(proximoPasso([], 24, true), 1);
+    assert.equal(proximoPasso(["quote_chase_1"], 48, true), 2);
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 47, true), null);
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48, true), "fechar");
+    assert.match(textoDaCobranca(2, "Yosheeta", true), /final follow-up/);
+  });
   it("B2B is recognised by the b2b tag", () => {
     assert.equal(ehB2B({ tags: ["b2b", "quote_chase_1"] }), true);
     assert.equal(ehB2B({ tags: ["harvey_wa"] }), false);
