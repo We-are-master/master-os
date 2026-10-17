@@ -7,6 +7,7 @@ import { FinanceCards } from "./components/FinanceCards";
 import { MarginHero } from "./components/MarginHero";
 import { ModalFooter } from "./components/ModalFooter";
 import { ModalHeader } from "./components/ModalHeader";
+import { AddExtraModal } from "./components/AddExtraModal";
 import { ResponsibilityCheck } from "./components/ResponsibilityCheck";
 import { PaymentScheduleSection } from "./components/PaymentScheduleSection";
 import { StepsTimeline } from "./components/StepsTimeline";
@@ -126,7 +127,9 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     timerStartedAt,
     timerEndedAt,
     onEditReport,
+    extra,
   } = props;
+  const [addExtraOpen, setAddExtraOpen] = useState(false);
 
   /**
    * Duas etapas, nesta ordem: o relatório e depois o dinheiro.
@@ -343,7 +346,21 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               clientName={clientName}
               onClose={fechar}
               reviewSummary={reviewSummary ?? null}
+              onAddExtra={extra && etapa !== "relatorio" ? () => setAddExtraOpen(true) : undefined}
             />
+            {extra ? (
+              <AddExtraModal
+                open={addExtraOpen}
+                onClose={() => setAddExtraOpen(false)}
+                initial={extra.pending}
+                defaults={extra.defaults}
+                base={extra.base}
+                onConfirm={(e) => {
+                  extra.onChange(e);
+                  setAddExtraOpen(false);
+                }}
+              />
+            ) : null}
 
             {etapa === "relatorio" ? (
               <>
@@ -430,6 +447,21 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 clientOutstanding={clientOutstanding}
                 partnerOutstanding={partnerOutstanding}
               />
+
+              {extra?.pending ? (
+                <div className="mx-6 mb-[18px] flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-2.5" style={{ background: "#F2F0FA" }}>
+                  <p className="m-0 text-[13px]" style={{ color: "#020040" }}>
+                    <b>Extra</b>
+                    {extra.pending.kind === "hours" && extra.pending.hours ? ` · ${extra.pending.hours}h` : ""}
+                    {` · +£${extra.pending.clientAmount.toFixed(2)} client · +£${extra.pending.partnerAmount.toFixed(2)} partner`}
+                    <span style={{ color: "#6B6B70" }}> · saved when you finalise</span>
+                  </p>
+                  <span className="flex gap-2 text-[12px] font-medium">
+                    <button type="button" onClick={() => setAddExtraOpen(true)} style={{ color: "#020040" }}>Edit</button>
+                    <button type="button" onClick={() => extra.onChange(null)} style={{ color: "#B42318" }}>Remove</button>
+                  </span>
+                </div>
+              ) : null}
 
               {hourlySlot ? <div className="px-6 pb-[18px]">{hourlySlot}</div> : null}
 

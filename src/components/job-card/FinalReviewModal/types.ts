@@ -1,5 +1,6 @@
 import type { AccountFinalEmailPolicy } from "@/lib/account-final-email-policy";
 import type { DueDateSource } from "@/lib/partner-payout-schedule";
+import type { FinalReviewExtra } from "@/lib/job-final-extra";
 
 /** Presentational types for the Final review modal — display-only, no DB shape mapping. */
 
@@ -130,6 +131,18 @@ export type FinalReviewModalProps = {
     orgPayoutReferenceYmd?: string | null;
     loading?: boolean;
   };
+
+  /**
+   * Extra lançado aqui (17/10/2026): horas ou valor, aplicado só no finalise. Os números
+   * acima (jobValue, partnerPayout…) já chegam somados com o extra pendente.
+   */
+  extra?: {
+    pending: FinalReviewExtra | null;
+    onChange: (e: FinalReviewExtra | null) => void;
+    defaults: { clientRate: number; partnerRate: number; partnerShare: number };
+    /** Totais antes do extra, para a janela mostrar "was". */
+    base: { client: number; partner: number };
+  } | null;
 
   /** Wired to existing mutation handler */
   onApprove: () => void;

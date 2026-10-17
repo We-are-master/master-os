@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, X } from "lucide-react";
+import { FileText, Plus, X } from "lucide-react";
 import type { FinalReviewSummarySnapshot } from "../types";
 import { FinalReviewSummaryModal } from "./FinalReviewSummaryModal";
 
@@ -11,9 +11,11 @@ type Props = {
   clientName: string;
   onClose: () => void;
   reviewSummary?: FinalReviewSummarySnapshot | null;
+  /** Abre a janela "Add extra" (17/10/2026). Sem ela, o botão não aparece. */
+  onAddExtra?: () => void;
 };
 
-export function ModalHeader({ jobId, jobTitle, clientName, onClose, reviewSummary }: Props) {
+export function ModalHeader({ jobId, jobTitle, clientName, onClose, reviewSummary, onAddExtra }: Props) {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const initial = (clientName?.trim()?.[0] ?? "?").toUpperCase();
 
@@ -48,6 +50,17 @@ export function ModalHeader({ jobId, jobTitle, clientName, onClose, reviewSummar
       </div>
 
       <div className="flex items-center gap-1 shrink-0 self-start sm:self-center">
+        {onAddExtra ? (
+          <button
+            type="button"
+            onClick={onAddExtra}
+            className="inline-flex items-center gap-1 text-[11px] sm:text-[12px] font-medium px-2 sm:px-2.5 py-1.5 rounded-lg border transition-colors"
+            style={{ color: "#020040", borderColor: "#D4D4D8", background: "#FAFAFB" }}
+          >
+            <Plus className="h-3.5 w-3.5 opacity-80 shrink-0" />
+            Add extra
+          </button>
+        ) : null}
         {reviewSummary ? (
           <button
             type="button"
