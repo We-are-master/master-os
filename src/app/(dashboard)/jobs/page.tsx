@@ -35,7 +35,7 @@ import {
   ArrowRight, Briefcase, Receipt, Wallet,
   Building2, TrendingUp,
   AlertTriangle, XCircle, Undo2, ImagePlus, Loader2, Lock, Clock3, Wrench, Sparkles, Search, ChevronDown,
-  Timer, Route as RouteIcon, ArrowUpRight, Phone, Copy, MapPin, Link2, Check, Map as MapIcon,
+  Timer, Route as RouteIcon, ArrowUpRight, Phone, Copy, MapPin, Link2, Check, Map as MapIcon, CalendarRange,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { PartnerRouteView } from "@/components/jobs/partner-route-view";
@@ -224,9 +224,11 @@ import {
 import {
   addDaysYmd,
   getScheduleRangeYmd,
+  startOfWeekMondayYmd,
   ukTodayYmd,
   type ScheduleDatePreset,
 } from "@/lib/uk-schedule-range";
+import { JobsWeekBoard } from "@/components/jobs/jobs-week-board";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
 
@@ -947,6 +949,27 @@ function JobsPageContent() {
     [scheduleDatePreset, customScheduleFrom, customScheduleTo, anchorDayKey],
   );
 
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "route" | "map" | "board">("list");
+  /** Board da semana (17/10/2026): a semana mostrada É a janela de data da página. */
+  const irParaSemana = useCallback(
+    (segunda: string) => {
+      const domingo = addDaysYmd(segunda, 6);
+      setScheduleDatePreset("custom");
+      setCustomScheduleFrom(segunda);
+      setCustomScheduleTo(domingo);
+      guardarJanelaCustom(segunda, domingo);
+    },
+    [setScheduleDatePreset, guardarJanelaCustom],
+  );
+  const boardWeekStart = startOfWeekMondayYmd(scheduleRange?.from ?? anchorDayKey);
+  /** Entrou no board: a janela vira uma semana inteira (segunda a domingo) a partir da data atual do filtro. */
+  useEffect(() => {
+    if (viewMode !== "board") return;
+    const semanaCheia =
+      scheduleRange && scheduleRange.from === boardWeekStart && scheduleRange.to === addDaysYmd(boardWeekStart, 6);
+    if (!semanaCheia) irParaSemana(boardWeekStart);
+  }, [viewMode, scheduleRange, boardWeekStart, irParaSemana]);
+
   const [closedJobsFilter, setClosedJobsFilter] = useState<JobsClosedJobsListFilterMode>("all");
   /** "all" · "__none__" (unassigned) · partner_id */
   const [filterPartner, setFilterPartner] = useState<string>("all");
@@ -968,7 +991,8 @@ function JobsPageContent() {
     return listJobs(merged);
   }, []);
 
-  const [jobsPageSize] = useState<number>(50);
+  /** Board da semana carrega a semana inteira de uma vez (a lista segue paginada em 50). */
+  const jobsPageSize = viewMode === "board" ? 500 : 50;
   const { data, loading, page, totalPages, totalItems, setPage, search, setSearch, status, setStatus, refresh, refreshSilent } = useSupabaseList<Job>({
     fetcher: fetchJobsManagementList,
     pageSize: jobsPageSize,
@@ -978,7 +1002,6 @@ function JobsPageContent() {
   });
   const { profile } = useProfile();
   const { officeCancellationPresets, accessFees } = useFrontendSetup();
-  const [viewMode, setViewMode] = useState<"list" | "kanban" | "route" | "map">("list");
   const { visible: kpisVisible, toggle: toggleKpis } = useKpiVisibility("jobs_kpis_visible_v1");
   /** Kanban drop that needs a decision before it saves. Null while nothing is pending. */
   const [kanbanMove, setKanbanMove] = useState<
@@ -3467,9 +3490,10 @@ function JobsPageContent() {
                   [
                     { id: "list", icon: List, label: "List" },
                     { id: "map", icon: MapIcon, label: "Map" },
+                    { id: "board", icon: CalendarRange, label: "Week board" },
                     // Route only exists for one partner's day: no partner filter, no button.
                     ...(routeViewEligible ? [{ id: "route", icon: RouteIcon, label: "Route" }] : []),
-                  ] as { id: "list" | "kanban" | "route" | "map"; icon: LucideIcon; label: string }[]
+                  ] as { id: "list" | "kanban" | "route" | "map" | "board"; icon: LucideIcon; label: string }[]
                 ).map(({ id, icon: Icon, label }) => (
                   <button key={id} onClick={() => setViewMode(id)} title={label} aria-label={label} className={`h-7 w-7 rounded-md flex items-center justify-center transition-colors ${viewMode === id ? "bg-card shadow-sm text-text-primary" : "text-text-tertiary hover:text-text-secondary"}`}><Icon className="h-3.5 w-3.5" /></button>
                 ))}
@@ -3737,6 +3761,17 @@ function JobsPageContent() {
                 />
               )}
             </div>
+          )}
+          {viewMode === "board" && (
+            <JobsWeekBoard
+              jobs={scheduleSortedData}
+              weekStartYmd={boardWeekStart}
+              loading={loading}
+              onPrevWeek={() => irParaSemana(addDaysYmd(boardWeekStart, -7))}
+              onNextWeek={() => irParaSemana(addDaysYmd(boardWeekStart, 7))}
+              onThisWeek={() => irParaSemana(startOfWeekMondayYmd(anchorDayKey))}
+              onOpenJob={openJobDetail}
+            />
           )}
           {viewMode === "map" && (
             <div className="min-h-[560px]">
