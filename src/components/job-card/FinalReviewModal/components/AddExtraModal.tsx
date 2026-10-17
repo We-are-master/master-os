@@ -57,7 +57,8 @@ export function AddExtraModal({ open, onClose, onConfirm, initial, defaults, bas
 
   if (!open) return null;
 
-  const invalido = valores.clientAmount <= 0 || valores.partnerAmount > valores.clientAmount;
+  // Parceiro recebendo mais que o cliente paga é permitido (dono, 17/10/2026): fica só o aviso.
+  const invalido = valores.clientAmount <= 0 && valores.partnerAmount <= 0;
   const input = "h-9 w-full rounded-lg border border-fx-line bg-card px-2.5 text-[13px] text-text-primary";
   const rotulo = "block text-[11px] font-medium text-text-secondary mb-1";
 
@@ -143,8 +144,10 @@ export function AddExtraModal({ open, onClose, onConfirm, initial, defaults, bas
               <p className="m-0 text-[11px] tabular-nums" style={{ color: "#6B6B70" }}>was {gbp(base.partner)} · +{gbp(valores.partnerAmount)}</p>
             </div>
           </div>
-          {valores.partnerAmount > valores.clientAmount && valores.clientAmount > 0 ? (
-            <p className="m-0 text-[11px]" style={{ color: "#B45309" }}>The partner gets more than the client pays for this extra.</p>
+          {valores.partnerAmount > valores.clientAmount ? (
+            <p className="m-0 text-[11px]" style={{ color: "#B45309" }}>
+              The partner gets more than the client pays for this extra. Fine when authorised.
+            </p>
           ) : null}
         </div>
 

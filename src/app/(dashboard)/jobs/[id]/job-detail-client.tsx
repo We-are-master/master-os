@@ -5889,7 +5889,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const horasExtrasNoHourly =
         extraPendente?.kind === "hours" && current.job_type === "hourly" ? Math.max(0, Number(extraPendente.hours) || 0) : 0;
       let extraAplicado = false;
-      if (extraPendente && horasExtrasNoHourly === 0 && extraPendente.clientAmount > 0) {
+      if (extraPendente && horasExtrasNoHourly === 0 && (extraPendente.clientAmount > 0 || extraPendente.partnerAmount > 0)) {
         const motivo = motivoDoExtra(extraPendente);
         const hoje = new Date().toISOString().slice(0, 10);
         const grupo = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
@@ -5904,13 +5904,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           customerPayments,
           partnerPayments,
         };
-        current = await executeJobMoneyAction({
-          ...comum,
-          job: current,
-          mode: "client_extra",
-          amount: extraPendente.clientAmount,
-          extraReason: encodeClientExtraReason(motivo, true),
-        });
+        if (extraPendente.clientAmount > 0) {
+          current = await executeJobMoneyAction({
+            ...comum,
+            job: current,
+            mode: "client_extra",
+            amount: extraPendente.clientAmount,
+            extraReason: encodeClientExtraReason(motivo, true),
+          });
+        }
         if (extraPendente.partnerAmount > 0 && current.partner_id?.trim()) {
           current = await executeJobMoneyAction({
             ...comum,
