@@ -312,6 +312,12 @@ import {
 } from "@/components/jobs/job-money-drawer";
 import { executeJobMoneyAction } from "@/services/job-money-actions";
 import {
+  TAXA_CLIENTE_PADRAO_GBP,
+  motivoDoExtra,
+  partnerShareOfJob,
+  type FinalReviewExtra,
+} from "@/lib/job-final-extra";
+import {
   applyCustomerExtraPatch,
   applyPartnerExtraPatch,
   reverseCustomerExtraPatch,
@@ -1428,6 +1434,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [ownerApprovalChecked, setOwnerApprovalChecked] = useState(false);
   /** Second mandatory attestation on the Final review modal — separate from report + payment responsibility. */
   const [approvalBilledHoursInput, setApprovalBilledHoursInput] = useState("");
+  /** Extra lançado no Final review (17/10/2026): só vira dado no "Send report & finalise". */
+  const [pendingFinalExtra, setPendingFinalExtra] = useState<FinalReviewExtra | null>(null);
+  useEffect(() => {
+    if (!validateCompleteOpen) setPendingFinalExtra(null);
+  }, [validateCompleteOpen]);
   const [approvalInvoiceDueYmd, setApprovalInvoiceDueYmd] = useState("");
   const [approvalPartnerDueYmd, setApprovalPartnerDueYmd] = useState("");
   const [approvalPartnerTerms, setApprovalPartnerTerms] = useState<string | null>(null);
@@ -5869,8 +5880,72 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         current = unheld;
       }
 
+      /**
+       * Extra lançado no Final review (17/10/2026). Horas extras num job por hora entram nas
+       * horas faturadas abaixo; o resto (valor fechado, ou horas num job de preço fechado) vai
+       * pelo mesmo caminho do "Add extra charge": razão de extras, job, fatura e self-bill.
+       */
+      const extraPendente = pendingFinalExtra;
+      const horasExtrasNoHourly =
+        extraPendente?.kind === "hours" && current.job_type === "hourly" ? Math.max(0, Number(extraPendente.hours) || 0) : 0;
+      let extraAplicado = false;
+      if (extraPendente && horasExtrasNoHourly === 0 && extraPendente.clientAmount > 0) {
+        const motivo = motivoDoExtra(extraPendente);
+        const hoje = new Date().toISOString().slice(0, 10);
+        const grupo = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
+        const comum = {
+          paymentDate: hoje,
+          method: "other" as const,
+          note: motivo,
+          extraType: "Extra at final review",
+          actorUserId: profile?.id ?? undefined,
+          actorUserName: profile?.full_name ?? undefined,
+          linkedGroupId: grupo,
+          customerPayments,
+          partnerPayments,
+        };
+        current = await executeJobMoneyAction({
+          ...comum,
+          job: current,
+          mode: "client_extra",
+          amount: extraPendente.clientAmount,
+          extraReason: encodeClientExtraReason(motivo, true),
+        });
+        if (extraPendente.partnerAmount > 0 && current.partner_id?.trim()) {
+          current = await executeJobMoneyAction({
+            ...comum,
+            job: current,
+            mode: "partner_extra",
+            amount: extraPendente.partnerAmount,
+            extraReason: motivo,
+          });
+        }
+        extraAplicado = true;
+        // Já gravado: sai do pendente agora, para um novo clique (depois de um erro adiante) não lançar de novo.
+        setPendingFinalExtra(null);
+        setJob(current);
+        for (const [lado, valor] of [
+          ["customer_extra_charge", extraPendente.clientAmount],
+          ["partner_extra_payout", extraPendente.partnerAmount],
+        ] as const) {
+          if (valor <= 0) continue;
+          void logAudit({
+            entityType: "job",
+            entityId: current.id,
+            entityRef: current.reference,
+            action: "updated",
+            fieldName: lado,
+            newValue: formatCurrency(valor),
+            userId: profile?.id,
+            userName: profile?.full_name,
+            metadata: { mode: lado === "customer_extra_charge" ? "client_extra" : "partner_extra", source: "final_review", extra_reason: motivo, linked_group_id: grupo },
+          }).catch(() => {});
+        }
+      }
+
       const r2 = (s: string) => Math.round((parseFloat(s) || 0) * 100) / 100;
-      const extrasFromForm = r2(finForm.extras_amount);
+      // Com extra aplicado agora o formulário está velho: o valor certo é o do job recarregado.
+      const extrasFromForm = extraAplicado ? r2(String(current.extras_amount ?? 0)) : r2(finForm.extras_amount);
       const materialsFromForm = r2(finForm.materials_cost);
       const depositFromForm = r2(finForm.customer_deposit);
 
@@ -5888,19 +5963,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const { clientRate, partnerRate } = resolveJobHourlyRates(current);
         const typedHours = Math.max(0, Number(approvalBilledHoursInput) || 0);
         const elapsedSeconds =
-          typedHours > 0
+          (typedHours > 0
             ? Math.round(typedHours * 3600)
-            : (officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(current));
+            : (officeTimerDisplaySeconds ?? computeOfficeTimerElapsedSeconds(current))) +
+          Math.round(horasExtrasNoHourly * 3600);
         const totals = computeHourlyTotals({
           elapsedSeconds,
           clientHourlyRate: clientRate,
           partnerHourlyRate: partnerRate,
         });
         const customerFinal = Math.max(0, totals.clientTotal + extrasFromForm - depositFromForm);
+        // Extra do parceiro já lançado continua no custo (antes o fechamento por hora o apagava).
+        const partnerCostComExtras =
+          Math.round((totals.partnerTotal + Math.max(0, Number(current.partner_extras_amount ?? 0))) * 100) / 100;
         const mergedForDerived = {
           ...current,
           client_price: totals.clientTotal,
-          partner_cost: totals.partnerTotal,
+          partner_cost: partnerCostComExtras,
           extras_amount: extrasFromForm,
           customer_deposit: depositFromForm,
         } as Job;
@@ -5909,7 +5988,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           hourly_client_rate: clientRate,
           hourly_partner_rate: partnerRate,
           client_price: totals.clientTotal,
-          partner_cost: totals.partnerTotal,
+          partner_cost: partnerCostComExtras,
+          ...(Number(current.partner_agreed_value ?? 0) > 0 ? { partner_agreed_value: partnerCostComExtras } : {}),
           customer_final_payment: customerFinal,
           ...deriveStoredJobFinancials(mergedForDerived),
         });
@@ -6014,8 +6094,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         primaryInvoiceRow ??
         linked.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
         linked[0];
+      // Fatura de entrada paga não fecha o job (17/10/2026): ver approvalInvoiceShowsPaid.
       const invoiceShowsPaidInDb =
         Boolean(invoiceForPaidCheck) &&
+        invoiceForPaidCheck!.invoice_kind !== "deposit" &&
         (invoiceForPaidCheck!.status === "paid" || isInvoiceFullyPaidByAmount(invoiceForPaidCheck!));
       const customerDueForStatus = invoiceShowsPaidInDb ? 0 : customerDue;
 
@@ -6038,12 +6120,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       }
       const shouldCreateSelfBill = wantsSelfBill && (partnerSelfBillGrossAmount(current) > 0 || partnerDue > 0.02);
 
+      /**
+       * Job da cotação com entrada (17/10/2026): o `invoice_id` do job é a fatura da ENTRADA,
+       * já paga. O saldo mora na fatura `final`; é nela que o valor devido vai. Antes a entrada
+       * paga era sobrescrita com o saldo e voltava para pendente.
+       */
+      const faturaDoSaldo = linked.find(
+        (i) => i.invoice_kind === "final" && i.status !== "cancelled" && i.status !== "paid",
+      );
       const [draftInvoiceId, draftSelfBillId] = await Promise.all([
-        createDocumentAsDraft("invoice", current, {
-          amount: Math.max(customerDue, jobCustomerTotal(current)),
-          financeAnchorDate,
-          dueDate: invoiceDueYmd,
-        }),
+        faturaDoSaldo
+          ? Promise.resolve(faturaDoSaldo.id)
+          : createDocumentAsDraft("invoice", current, {
+              amount: Math.max(customerDue, jobCustomerTotal(current)),
+              financeAnchorDate,
+              dueDate: invoiceDueYmd,
+            }),
         shouldCreateSelfBill
           ? createDocumentAsDraft("selfbill", documentoJaPago ? { ...current, self_bill_id: undefined } : current, {
               financeAnchorDate: selfBillAnchorDate,
@@ -6205,6 +6297,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     partnerPayments,
     ownerApprovalChecked,
     approvalBilledHoursInput,
+    pendingFinalExtra,
     profile?.id,
     profile?.full_name,
     officeTimerDisplaySeconds,
@@ -6237,35 +6330,69 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     if (!job || job.job_type !== "hourly") return null;
     const { clientRate, partnerRate } = resolveJobHourlyRates(job);
     const typedHours = Math.max(0, Number(approvalBilledHoursInput) || 0);
-    const elapsedSeconds = typedHours > 0 ? Math.round(typedHours * 3600) : approvalModalElapsedSeconds;
+    const horasExtras = pendingFinalExtra?.kind === "hours" ? Math.max(0, Number(pendingFinalExtra.hours) || 0) : 0;
+    const elapsedSeconds =
+      (typedHours > 0 ? Math.round(typedHours * 3600) : approvalModalElapsedSeconds) + Math.round(horasExtras * 3600);
     return computeHourlyTotals({
       elapsedSeconds,
       clientHourlyRate: clientRate,
       partnerHourlyRate: partnerRate,
     });
-  }, [job, approvalModalElapsedSeconds, approvalBilledHoursInput]);
+  }, [job, approvalModalElapsedSeconds, approvalBilledHoursInput, pendingFinalExtra]);
+
+  /**
+   * Extra pendente que soma valores (não horas num job por hora, que já entram nos totais
+   * por hora acima): valor fechado em qualquer job, ou horas extras num job de preço fechado.
+   */
+  const extraAditivo = useMemo(() => {
+    if (!pendingFinalExtra) return { client: 0, partner: 0 };
+    if (pendingFinalExtra.kind === "hours" && job?.job_type === "hourly") return { client: 0, partner: 0 };
+    return { client: pendingFinalExtra.clientAmount, partner: pendingFinalExtra.partnerAmount };
+  }, [pendingFinalExtra, job?.job_type]);
 
   const approvalBillableRevenue = useMemo(() => {
     if (!job) return 0;
     if (job.job_type === "hourly" && approvalModalHourlyTotals) {
-      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0);
+      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0) + extraAditivo.client;
     }
-    return billableRevenueForApproval;
-  }, [job, approvalModalHourlyTotals, billableRevenueForApproval]);
+    return billableRevenueForApproval + extraAditivo.client;
+  }, [job, approvalModalHourlyTotals, billableRevenueForApproval, extraAditivo]);
 
   const approvalPartnerCostForDirect = useMemo(() => {
     if (!job) return 0;
-    if (job.job_type === "hourly" && approvalModalHourlyTotals) return approvalModalHourlyTotals.partnerTotal;
-    return Number(job.partner_cost ?? 0);
-  }, [job, approvalModalHourlyTotals]);
+    if (job.job_type === "hourly" && approvalModalHourlyTotals) {
+      return approvalModalHourlyTotals.partnerTotal + Number(job.partner_extras_amount ?? 0) + extraAditivo.partner;
+    }
+    return Number(job.partner_cost ?? 0) + extraAditivo.partner;
+  }, [job, approvalModalHourlyTotals, extraAditivo]);
 
   const approvalPartnerCap = useMemo(() => {
     if (!job) return 0;
     if (job.job_type === "hourly" && approvalModalHourlyTotals) {
-      return partnerPaymentCap({ ...job, partner_cost: approvalModalHourlyTotals.partnerTotal });
+      return (
+        partnerPaymentCap({
+          ...job,
+          partner_cost: approvalModalHourlyTotals.partnerTotal + Number(job.partner_extras_amount ?? 0),
+          // No fechamento por hora o valor combinado acompanha as horas (o finalise grava assim).
+          partner_agreed_value: 0,
+        }) + extraAditivo.partner
+      );
     }
-    return partnerCapForApproval;
-  }, [job, approvalModalHourlyTotals, partnerCapForApproval]);
+    return partnerCapForApproval + extraAditivo.partner;
+  }, [job, approvalModalHourlyTotals, partnerCapForApproval, extraAditivo]);
+
+  /** Valores de partida da janela "Add extra" do Final review. */
+  const finalExtraConfig = useMemo(() => {
+    if (!job) return null;
+    const rates = job.job_type === "hourly" ? resolveJobHourlyRates(job) : null;
+    const clienteBase = billableRevenueForApproval;
+    const parceiroBase = partnerCapForApproval;
+    const share = partnerShareOfJob({ clientTotal: clienteBase, partnerTotal: parceiroBase });
+    const clientRate = rates?.clientRate || Number(job.hourly_client_rate ?? 0) || TAXA_CLIENTE_PADRAO_GBP;
+    const partnerRate =
+      rates?.partnerRate || Number(job.hourly_partner_rate ?? 0) || Math.round(clientRate * share * 100) / 100;
+    return { clientRate, partnerRate, partnerShare: share };
+  }, [job, billableRevenueForApproval, partnerCapForApproval]);
 
   /** Partner “extra payout” slice for the same cap shown in this modal (recorded extras or hourly delta). */
   const approvalPartnerExtrasSplit = useMemo(() => {
@@ -7076,8 +7203,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       jobInvoices[0] ??
       null
     : jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ?? jobInvoices[0] ?? null;
+  /**
+   * Fatura de entrada paga não quer dizer job pago (17/10/2026): no fluxo da cotação o
+   * `invoice_id` do job é a entrada, e com ela paga a janela mostrava "To receive £0" com o
+   * saldo ainda em aberto. Só conta a fatura do saldo ou a única do job.
+   */
   const approvalInvoiceShowsPaid =
     Boolean(approvalPrimaryInvoice) &&
+    approvalPrimaryInvoice.invoice_kind !== "deposit" &&
     (approvalPrimaryInvoice.status === "paid" || isInvoiceFullyPaidByAmount(approvalPrimaryInvoice));
   const approvalEffectiveCustomerDue = approvalInvoiceShowsPaid ? 0 : approvalAmountDue;
   const approvalCustomerPaidPct =
@@ -10091,6 +10224,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         currentUserName={attestationDisplayName}
         jobValue={approvalBillableRevenue}
         partnerPayout={approvalPartnerGross}
+        extra={
+          finalExtraConfig
+            ? {
+                pending: pendingFinalExtra,
+                onChange: setPendingFinalExtra,
+                defaults: finalExtraConfig,
+                base: {
+                  client: Math.max(0, approvalBillableRevenue - (pendingFinalExtra?.clientAmount ?? 0)),
+                  partner: Math.max(0, approvalPartnerGross - (pendingFinalExtra?.partnerAmount ?? 0)),
+                },
+              }
+            : null
+        }
         margin={approvalProfit}
         marginPct={Math.max(0, approvalMarginPct)}
         received={customerPaidTotal}

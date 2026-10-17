@@ -244,6 +244,30 @@ export async function sendFinalReviewEmail(
     const { data: inv } = await admin.from("invoices").select("*").eq("id", invoiceId).maybeSingle();
     invoiceRow = (inv ?? null) as Invoice | null;
   }
+  /**
+   * Job da cotação com entrada (17/10/2026): o `invoice_id` é a fatura da entrada, já paga.
+   * O e-mail final leva a fatura do SALDO (preço novo menos a entrada), com o link para pagar.
+   */
+  if (includeInvoice && invoiceRow?.invoice_kind === "deposit") {
+    const { data: saldo } = await admin
+      .from("invoices")
+      .select("*")
+      .eq("job_reference", String(j.reference ?? ""))
+      .eq("invoice_kind", "final")
+      .is("deleted_at", null)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (saldo) invoiceRow = saldo as Invoice;
+  }
+  // Fatura com saldo sem link gravado: grava o /pay dela, para o botão "Pay" sempre aparecer.
+  if (invoiceRow && invoiceRow.status !== "paid" && !invoiceRow.stripe_payment_link_url?.trim() && invoiceRow.reference) {
+    const { invoicePayLinkUrl } = await import("@/lib/pay-link-url");
+    const url = invoicePayLinkUrl(invoiceRow.reference);
+    const { error: linkErr } = await admin.from("invoices").update({ stripe_payment_link_url: url }).eq("id", invoiceRow.id);
+    if (!linkErr) invoiceRow = { ...invoiceRow, stripe_payment_link_url: url };
+  }
 
   const quoteId = typeof j.quote_id === "string" ? j.quote_id : null;
   if (quoteId) {
