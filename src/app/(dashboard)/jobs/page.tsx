@@ -3388,6 +3388,8 @@ function JobsPageContent() {
               }}
             />
             <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
+            {/* Botão de colunas da tabela mora aqui, não numa coluna da tabela (dono, 18/10/2026). */}
+            <div id="jobs-column-picker" className="contents" />
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
         </PageHeader>
@@ -3605,6 +3607,7 @@ function JobsPageContent() {
               columns={tableColumns}
               data={sortedDataForTable}
               columnConfigKey="jobs-columns"
+              columnPickerPortalId="jobs-column-picker"
               columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}

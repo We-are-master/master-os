@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, Minus, SlidersHorizontal } from "lucide-react";
@@ -71,6 +72,12 @@ interface DataTableProps<T> {
   /** Optional scope (e.g. active tab id) appended to storage key. */
   columnConfigScope?: string;
   /**
+   * Id de um elemento fora da tabela (ex.: a barra do topo da página). Com ele, o
+   * botão de colunas vai para lá e a tabela perde a coluna extra do botão, o que
+   * evita rolagem lateral (dono, 18/10/2026).
+   */
+  columnPickerPortalId?: string;
+  /**
    * When set (non-empty), each section is rendered as a full-width header row
    * followed by data rows, instead of a single flat `data` list. Selection and
    * pagination use all section items in order; `data` is ignored for body rows.
@@ -139,6 +146,7 @@ export function DataTable<T>({
   tableClassName,
   columnConfigKey,
   columnConfigScope,
+  columnPickerPortalId,
   sortColumnKey,
   sortDirection = "asc",
   onSortChange,
@@ -154,6 +162,12 @@ export function DataTable<T>({
   const [openSortMenuColKey, setOpenSortMenuColKey] = useState<string | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const supportsColumnConfig = Boolean(configStorageKey) && columns.length > 1;
+  const [pickerTarget, setPickerTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPickerTarget(columnPickerPortalId ? document.getElementById(columnPickerPortalId) : null);
+  }, [columnPickerPortalId]);
+  /** Coluna extra do botão só quando o botão mora dentro da tabela. */
+  const pickerInTable = supportsColumnConfig && !columnPickerPortalId;
   /** Zebra stripe on `<tr>` only so tint spans every column (gear picker + trailing cells). */
   const zebraRowTint = "bg-surface-secondary dark:bg-white/[0.04]";
 
@@ -223,6 +237,54 @@ export function DataTable<T>({
     }
   };
 
+  const columnPicker = (fora: boolean) => (
+<div className={cn("inline-block", fora && "relative")} ref={columnMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setColumnMenuOpen((v) => !v)}
+                      className={
+                        fora
+                          ? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+                          : "h-7 w-7 rounded-md inline-flex items-center justify-center text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
+                      }
+                      title="Choose columns"
+                      aria-label="Choose table columns"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                    {columnMenuOpen ? (
+                      <div className="absolute right-0 top-9 z-40 w-56 rounded-xl border border-border-light bg-card shadow-lg p-3 space-y-2">
+                        <p className="text-[11px] font-medium text-text-tertiary">Columns</p>
+                        <div className="max-h-56 overflow-auto space-y-1.5">
+                          {columns.map((col) => {
+                            const checked = !hiddenColumns.has(col.key);
+                            const visibleCount = columns.length - hiddenColumns.size;
+                            const disableUncheck = checked && visibleCount <= 1;
+                            return (
+                              <label key={col.key} className="flex items-center gap-2 text-xs text-text-secondary">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disableUncheck}
+                                  onChange={() => {
+                                    const next = new Set(hiddenColumns);
+                                    if (checked) next.add(col.key);
+                                    else next.delete(col.key);
+                                    if (next.size >= columns.length) return;
+                                    setHiddenAndPersist(next);
+                                  }}
+                                  className="h-4 w-4 rounded border-border"
+                                />
+                                <span className="truncate" title={col.label}>{col.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+  );
+
   const hasColumnFooters = visibleColumns.some((c) => c.footer != null);
   /** Index of the first column that actually shows a total. */
   const firstFooterColumnIndex = visibleColumns.findIndex((c) => c.footer != null);
@@ -233,7 +295,7 @@ export function DataTable<T>({
     [isGrouped, groupedSections, data],
   );
   const allIds = tableRows.map((item, i) => getRowId?.(item) ?? String(i));
-  const colSpanFull = (selectable ? 1 : 0) + visibleColumns.length + (supportsColumnConfig ? 1 : 0);
+  const colSpanFull = (selectable ? 1 : 0) + visibleColumns.length + (pickerInTable ? 1 : 0);
   const allSelected = selectable && allIds.length > 0 && allIds.every((id) => selectedIds?.has(id));
   const someSelected = selectable && allIds.some((id) => selectedIds?.has(id));
   const selectionCount = selectedIds?.size ?? 0;
@@ -289,6 +351,7 @@ export function DataTable<T>({
         className,
       )}
     >
+      {supportsColumnConfig && columnPickerPortalId && pickerTarget ? createPortal(columnPicker(true), pickerTarget) : null}
       <AnimatePresence>
         {selectable && selectionCount > 0 && bulkActions && (
           <motion.div
@@ -476,49 +539,9 @@ export function DataTable<T>({
                   </th>
                 );
               })}
-              {supportsColumnConfig ? (
+              {pickerInTable ? (
                 <th className="w-10 px-2 py-2 text-right relative">
-                  <div className="inline-block" ref={columnMenuRef}>
-                    <button
-                      type="button"
-                      onClick={() => setColumnMenuOpen((v) => !v)}
-                      className="h-7 w-7 rounded-md inline-flex items-center justify-center text-text-tertiary hover:text-text-secondary hover:bg-surface-hover"
-                      title="Choose columns"
-                      aria-label="Choose table columns"
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                    </button>
-                    {columnMenuOpen ? (
-                      <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border-light bg-card shadow-lg p-3 space-y-2">
-                        <p className="text-[11px] font-medium text-text-tertiary">Columns</p>
-                        <div className="max-h-56 overflow-auto space-y-1.5">
-                          {columns.map((col) => {
-                            const checked = !hiddenColumns.has(col.key);
-                            const visibleCount = columns.length - hiddenColumns.size;
-                            const disableUncheck = checked && visibleCount <= 1;
-                            return (
-                              <label key={col.key} className="flex items-center gap-2 text-xs text-text-secondary">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={disableUncheck}
-                                  onChange={() => {
-                                    const next = new Set(hiddenColumns);
-                                    if (checked) next.add(col.key);
-                                    else next.delete(col.key);
-                                    if (next.size >= columns.length) return;
-                                    setHiddenAndPersist(next);
-                                  }}
-                                  className="h-4 w-4 rounded border-border"
-                                />
-                                <span className="truncate" title={col.label}>{col.label}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                  {columnPicker(false)}
                 </th>
               ) : null}
             </tr>
@@ -541,14 +564,14 @@ export function DataTable<T>({
                         />
                       </td>
                     ))}
-                    {supportsColumnConfig ? <td className="w-10 shrink-0 px-2 py-2" aria-hidden /> : null}
+                    {pickerInTable ? <td className="w-10 shrink-0 px-2 py-2" aria-hidden /> : null}
                   </tr>
                 ))}
               </tbody>
             ) : !isGrouped && tableRows.length === 0 ? (
               <tbody>
                 <tr>
-                  <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (supportsColumnConfig ? 1 : 0)} className="px-5 py-16 text-center">
+                  <td colSpan={visibleColumns.length + (selectable ? 1 : 0) + (pickerInTable ? 1 : 0)} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <div className="h-12 w-12 rounded-xl bg-surface-tertiary flex items-center justify-center">
                         <svg className="h-6 w-6 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -627,7 +650,7 @@ export function DataTable<T>({
                               <RowCell item={item} index={index} col={col} isFirst={ci === 0} rowHref={rowHref} />
                             </td>
                           ))}
-                          {supportsColumnConfig ? (
+                          {pickerInTable ? (
                             <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
                           ) : null}
                         </tr>
@@ -694,7 +717,7 @@ export function DataTable<T>({
                           <RowCell item={item} index={index} col={col} isFirst={ci === 0} rowHref={rowHref} />
                         </td>
                       ))}
-                      {supportsColumnConfig ? (
+                      {pickerInTable ? (
                         <td className="w-10 shrink-0 px-2 py-1.5" aria-hidden />
                       ) : null}
                     </tr>
@@ -739,7 +762,7 @@ export function DataTable<T>({
                     {col.footer ?? null}
                   </td>
                 ))}
-                {supportsColumnConfig ? (
+                {pickerInTable ? (
                   <td className="w-10 shrink-0 px-2 py-2" aria-hidden />
                 ) : null}
               </tr>
