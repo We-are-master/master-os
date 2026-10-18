@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { HoverPreview } from "@/components/ui/hover-preview";
+import { AddressCell } from "@/components/jobs/address-cell";
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
@@ -2979,17 +2980,28 @@ function JobsPageContent() {
       },
     },
     {
+      // Endereço completo numa linha, cartão no hover quando não cabe (dono, 18/10/2026).
+      key: "property_address",
+      label: "Address",
+      align: "left",
+      minWidth: "144px",
+      cellClassName: "uno-left min-w-[9rem] max-w-[12rem]",
+      headerClassName: "uno-left",
+      render: (item) => <AddressCell address={item.property_address} />,
+    },
+    {
       key: "schedule",
       label: "Schedule",
-      minWidth: "190px",
-      cellClassName: "min-w-[11.5rem]",
+      // Duas linhas (dia + chegada) cabem em pouco: estreita para a lista não rolar (18/10/2026).
+      minWidth: "104px",
+      cellClassName: "min-w-[6.5rem]",
       sortable: true,
       sortOptions: JOB_SORT_SCHEDULE,
       render: (item) => {
         /**
-         * Uma linha (15/10/2026). O chip SUBSTITUI a data quando ela diz menos que ele:
-         * hoje, amanhã, em 2 dias ou atrasado (data passada e job ainda não feito).
-         * Fora disso, a data. A janela de chegada vem sempre depois.
+         * O chip SUBSTITUI a data quando ela diz menos que ele: hoje, amanhã, em 2 dias
+         * ou atrasado (data passada e job ainda não feito). Fora disso, a data.
+         * A janela de chegada fica embaixo, menor, nos dois casos (18/10/2026).
          */
         const detail = formatJobScheduleLine(item);
         const ag = compactJobSchedule(item);
@@ -3006,14 +3018,14 @@ function JobsPageContent() {
                 ? { texto: ag.relative, cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
                 : null;
         return (
-          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={detail ?? `${ag.date}${ag.time ? ` · ${ag.time}` : ""}`}>
+          // Dia em cima, chegada embaixo menor (dono, 18/10/2026); chip mais baixo para a linha não crescer.
+          <div className="flex min-w-0 flex-col items-center whitespace-nowrap leading-tight" title={detail ?? `${ag.date}${ag.time ? ` · ${ag.time}` : ""}`}>
             {chip ? (
-              <span className={cn("inline-flex h-[22px] items-center rounded-md px-2 text-[11px] font-medium", chip.cls)}>{chip.texto}</span>
+              <span className={cn("inline-flex h-[18px] items-center rounded-md px-1.5 text-[10.5px] font-medium", chip.cls)}>{chip.texto}</span>
             ) : (
               <span className="text-[12px] font-medium tabular-nums text-text-primary">{ag.date}</span>
             )}
-            {/* Com chip, ele ocupa a célula toda; data e horário ficam no hover (15/10/2026). */}
-            {ag.time && !chip ? <span className="text-[11.5px] tabular-nums text-text-tertiary">· {ag.time}</span> : null}
+            {ag.time ? <span className="mt-0.5 text-[10px] tabular-nums text-text-tertiary">{ag.time}</span> : null}
           </div>
         );
       },
@@ -3116,22 +3128,7 @@ function JobsPageContent() {
         );
       },
     },
-    {
-      key: "account",
-      label: "Account",
-      minWidth: "100px",
-      cellClassName: "min-w-[6.25rem] max-w-[8rem]",
-      sortable: true,
-      sortOptions: jobColumnSortPack("account", "Account"),
-      render: (item) =>
-        item.client_id && clientAccountMap[item.client_id] ? (
-          <span className="text-sm text-text-primary block truncate" title={clientAccountMap[item.client_id]}>
-            {clientAccountMap[item.client_id]}
-          </span>
-        ) : (
-          <span className="text-xs text-text-tertiary italic">No account</span>
-        ),
-    },
+    // Coluna Account saiu (dono, 18/10/2026): o avatar da conta já vai junto do cliente.
     {
       key: "margin_percent",
       label: "Job amount",
@@ -3391,6 +3388,8 @@ function JobsPageContent() {
               }}
             />
             <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
+            {/* Botão de colunas da tabela mora aqui, não numa coluna da tabela (dono, 18/10/2026). */}
+            <div id="jobs-column-picker" className="contents" />
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
           </div>
         </PageHeader>
@@ -3608,6 +3607,7 @@ function JobsPageContent() {
               columns={tableColumns}
               data={sortedDataForTable}
               columnConfigKey="jobs-columns"
+              columnPickerPortalId="jobs-column-picker"
               columnConfigScope={status === "closed" ? `closed-${closedJobsFilter}` : status}
               loading={loading}
               getRowId={(item) => item.id}
