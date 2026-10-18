@@ -114,6 +114,8 @@ async function avisarSemSaldo(): Promise<void> {
 
 /** id do ticket → `updated_at` em que o modelo disse "nem quote nem booking". */
 const CLASSIFICADOS_PATH = join(STATE_DIR, ".classificados.json");
+/** id do e-mail diário da Housekeep → assinatura do que faltava na última nota. */
+const RESUMO_PATH = join(STATE_DIR, ".resumo-diario.json");
 function lerMapa(caminho: string): Record<string, string> {
   try { return JSON.parse(readFileSync(caminho, "utf8")) as Record<string, string>; } catch { return {}; }
 }
@@ -159,7 +161,7 @@ function gravarIds(caminho: string, ids: Set<number>): void {
   writeFileSync(caminho, JSON.stringify([...ids]));
 }
 
-type TicketDaBusca = { id: number; subject: string; description: string; tags: string[]; updated_at?: string };
+type TicketDaBusca = { id: number; subject: string; description: string; tags: string[]; updated_at?: string; created_at?: string };
 
 async function buscarCandidatos(): Promise<TicketDaBusca[]> {
   const desde = new Date(Date.now() - JANELA_DIAS * 864e5).toISOString().slice(0, 10);
@@ -402,7 +404,42 @@ async function ciclo(): Promise<void> {
   }
 
   let notasTriagem = 0;
-  const candidatos = (await buscarCandidatos()).filter(
+  const achados = await buscarCandidatos();
+
+  /**
+   * O e-mail diário da Housekeep ("You have 2 jobs on Mon 19 Oct").
+   *
+   * Até 18/10/2026 ele só passava reto, para um humano conferir no OS. Agora
+   * o Harvey confere: tudo no OS, vivo e com parceiro, fecha o ticket com a
+   * lista na nota; falta algo, deixa a nota e o ticket aberto, e fecha sozinho
+   * na passada em que o OS ficar completo. Sem modelo: a tabela é fixa.
+   */
+  try {
+    const { ehResumoDiario, tratarResumoDiario } = await import("../../src/lib/zendesk-quoter/resumo-diario-housekeep");
+    const resumos = lerMapa(RESUMO_PATH);
+    let mudou = false;
+    for (const t of achados.filter((x) => ehResumoDiario(x.subject) && !x.tags.includes("harvey_resumo_ok")).slice(0, 5)) {
+      const r = await tratarResumoDiario(
+        { id: t.id, subject: t.subject, created_at: t.created_at ?? t.updated_at ?? new Date().toISOString() },
+        true,
+        resumos[String(t.id)] ?? null,
+      );
+      if (r.status === "fechado") {
+        delete resumos[String(t.id)]; mudou = true;
+        console.log(`[harvey] ✅ diário #${t.id} (${r.data}): tudo booked, ticket fechado`);
+      } else if (r.status === "pendente") {
+        if (resumos[String(t.id)] !== r.assinatura) { resumos[String(t.id)] = r.assinatura; mudou = true; }
+        console.log(`[harvey] ⚠️ diário #${t.id} (${r.data}): falta coisa no OS${r.comentou ? ", nota postada" : ""}`);
+      } else {
+        console.log(`[harvey] · diário #${t.id} ilegível: ${r.motivo}`);
+      }
+    }
+    if (mudou) gravarMapa(RESUMO_PATH, resumos);
+  } catch (err) {
+    console.error("[harvey] conferência do diário falhou:", err);
+  }
+
+  const candidatos = achados.filter(
     (t) =>
       !vistos.has(t.id) &&
       !t.tags.includes(TAG) &&
@@ -414,8 +451,8 @@ async function ciclo(): Promise<void> {
       !t.tags.includes("os-created") &&
       // "You have N job(s) on Tue 18 Aug" da Housekeep é LEMBRETE diário dos
       // jobs do dia seguinte (dono, 18/08) — não é booking nem pedido de
-      // quote. Fica no Action Required pro humano; o Harvey nem gasta
-      // classificador nele.
+      // quote. Desde 18/10/2026 ele é conferido no bloco do diário, acima;
+      // aqui continua fora do classificador.
       !/you have \d+ jobs? on /i.test(t.subject) &&
       /**
        * Conversa de WhatsApp encaminhada pro Zendesk NÃO é booking
