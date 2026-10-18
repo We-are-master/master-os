@@ -2983,8 +2983,10 @@ function JobsPageContent() {
       // Endereço completo numa linha, cartão no hover quando não cabe (dono, 18/10/2026).
       key: "property_address",
       label: "Address",
+      align: "left",
       minWidth: "180px",
-      cellClassName: "min-w-[11rem] max-w-[16rem]",
+      cellClassName: "uno-left min-w-[11rem] max-w-[16rem]",
+      headerClassName: "uno-left",
       render: (item) => <AddressCell address={item.property_address} />,
     },
     {
@@ -3125,22 +3127,7 @@ function JobsPageContent() {
         );
       },
     },
-    {
-      key: "account",
-      label: "Account",
-      minWidth: "100px",
-      cellClassName: "min-w-[6.25rem] max-w-[8rem]",
-      sortable: true,
-      sortOptions: jobColumnSortPack("account", "Account"),
-      render: (item) =>
-        item.client_id && clientAccountMap[item.client_id] ? (
-          <span className="text-sm text-text-primary block truncate" title={clientAccountMap[item.client_id]}>
-            {clientAccountMap[item.client_id]}
-          </span>
-        ) : (
-          <span className="text-xs text-text-tertiary italic">No account</span>
-        ),
-    },
+    // Coluna Account saiu (dono, 18/10/2026): o avatar da conta já vai junto do cliente.
     {
       key: "margin_percent",
       label: "Job amount",

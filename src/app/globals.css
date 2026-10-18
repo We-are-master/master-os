@@ -708,6 +708,9 @@ main :is(.space-y-4, .space-y-5, .space-y-6, .space-y-8):has(> .uno-view-head) >
 .uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol ~ :is(th, td):is(:nth-child(2), :nth-child(3)) { text-align: left !important; }
 .uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td):is(:nth-child(1), :nth-child(2)):not(.uno-selcol) > :is(.flex, .inline-flex),
 .uno-tbl > :is(thead, tbody, tfoot) > tr > .uno-selcol ~ :is(th, td):is(:nth-child(2), :nth-child(3)) > :is(.flex, .inline-flex) { justify-content: flex-start; }
+/* Coluna de texto corrido fora das duas primeiras (ex.: endereço na lista de jobs) também alinha à esquerda. */
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td).uno-left { text-align: left !important; }
+.uno-tbl > :is(thead, tbody, tfoot) > tr > :is(th, td).uno-left > :is(.flex, .inline-flex) { justify-content: flex-start; }
 /* identity (first data column): 600 ink */
 .uno-tbl > tbody > tr > td:first-child:not(.uno-selcol),
 .uno-tbl > tbody > tr > .uno-selcol + td { color: var(--text-primary); font-weight: 600; }
