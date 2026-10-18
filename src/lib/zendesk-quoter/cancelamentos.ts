@@ -239,6 +239,43 @@ async function reabrirTicket(ticketId: number): Promise<void> {
   }).catch(() => {});
 }
 
+/** Campos do formulário que o Zendesk exige para resolver. */
+const CAMPO_WHAT_HAPPENED = 5687150349343;
+const CAMPO_RESUMO = 6417950403231;
+const CAMPO_REPLY_STATUS = 5698641403423;
+const CAMPO_ACTION_REQUIRED = 6437659168543;
+
+/**
+ * Aviso de cancelamento já tratado não tem mais nada a fazer: vai para solved
+ * (dono, 18/10/2026: "esses de cancelamento já deixa como solved").
+ */
+async function resolverTicket(ticketId: number, resumo: string): Promise<void> {
+  await fetch(`${baseUrl()}/tickets/${ticketId}.json`, {
+    method: "PUT",
+    headers: { Authorization: authHeader(), "content-type": "application/json" },
+    body: JSON.stringify({
+      ticket: {
+        status: "solved",
+        custom_fields: [
+          { id: CAMPO_WHAT_HAPPENED, value: "customer_cancelled" },
+          { id: CAMPO_RESUMO, value: resumo },
+          { id: CAMPO_REPLY_STATUS, value: "reply_replied" },
+          { id: CAMPO_ACTION_REQUIRED, value: "action_required_no" },
+        ],
+      },
+    }),
+  }).catch(() => {});
+}
+
+/** O ticket do próprio job morre junto, menos conversa com o cliente (WhatsApp). */
+async function resolverTicketDoJob(ticketId: number, resumo: string): Promise<void> {
+  const r = await fetch(`${baseUrl()}/tickets/${ticketId}.json`, { headers: { Authorization: authHeader() } }).catch(() => null);
+  const t = r && r.ok ? ((await r.json()) as { ticket?: { status?: string; tags?: string[]; via?: { channel?: string } } }).ticket : null;
+  if (!t || t.status === "solved" || t.status === "closed") return;
+  if (t.via?.channel === "whatsapp" || (t.tags ?? []).includes("harvey_wa")) return;
+  await resolverTicket(ticketId, resumo);
+}
+
 export type ResultadoVigia = { analisados: number; cancelados: number; reabertos: number };
 
 export async function vigiarCancelamentos(vistos: Set<number>): Promise<ResultadoVigia> {
@@ -269,6 +306,7 @@ export async function vigiarCancelamentos(vistos: Set<number>): Promise<Resultad
         if (dup) {
           await postarNotaInterna(t.id, `✅ HARVEY — duplicate cancellation notice: ${dup.reference} is already cancelled in the OS. Nothing to do.`);
           await adicionarTag(t.id);
+          await resolverTicket(t.id, `Duplicate cancellation notice: ${dup.reference} already cancelled in the OS.`);
           continue;
         }
       }
@@ -297,6 +335,7 @@ export async function vigiarCancelamentos(vistos: Set<number>): Promise<Resultad
       if (job.status === "cancelled") {
         await postarNotaInterna(t.id, `✅ HARVEY — cancellation notice checked: ${job.reference} is already cancelled in the OS. Nothing to do.`);
         await adicionarTag(t.id);
+        await resolverTicket(t.id, `Cancellation notice: ${job.reference} already cancelled in the OS.`);
         continue;
       }
 
@@ -336,6 +375,13 @@ export async function vigiarCancelamentos(vistos: Set<number>): Promise<Resultad
         ).catch(() => {});
       }
       await adicionarTag(t.id);
+      // Parceiro sem aviso precisa de gente: o ticket fica aberto com a nota.
+      if (!tinhaParceiro || parceiroInfo.startsWith("partner notified")) {
+        await resolverTicket(t.id, `Platform cancellation: ${job.reference} cancelled in the OS. ${parceiroInfo}`);
+        if (job.external_source === "zendesk" && job.external_ref && String(t.id) !== String(job.external_ref)) {
+          await resolverTicketDoJob(Number(job.external_ref), `${job.reference} cancelled by the client (notice #${t.id}).`);
+        }
+      }
       r.cancelados++;
       console.log(`[harvey] cancelamento #${t.id}: ${job.reference} cancelado (${como})`);
     } catch (err) {
