@@ -9,12 +9,15 @@
  *   dia 5  lembrete 3   (48h depois do 2º, o último, avisa que vamos fechar)
  *   dia 7  fecha        solved, What Happened = no_reply
  *
+ * B2B (dono, 17/10/2026: três é demais para conta): dois lembretes por e-mail,
+ * o 2º já é o aviso de fechamento, e fecha 48h depois dele (dia 5).
+ *
  * Canal:
  *  - B2C: WhatsApp E e-mail. No WhatsApp, texto livre com a janela de 24h aberta e
  *    o template `quote_request_checkin` com ela fechada. O e-mail vai como
  *    comentário público quando o ticket é de e-mail, ou pelo Resend quando o
  *    ticket é de WhatsApp e o OS tem o e-mail da pessoa.
- *  - B2B (tag `b2b`): só e-mail, comentário público no ticket.
+ *  - B2B (tag `b2b`): só e-mail, comentário público no ticket, dois lembretes.
  *
  * Se o cliente responde que não precisa mais ("no longer needed", "found someone",
  * "too expensive"...), o ticket fecha na hora com o motivo e uma resposta curta.
@@ -52,8 +55,9 @@ function horaDeLondres(d: Date): number {
  * já é o lembrete anterior): 24h para o 1º, 48h entre os outros. Fecha 48h
  * depois do 3º, que dá o 7º dia desde a quote.
  */
-export function proximoPasso(tags: string[], horasDesdeNossa: number): Passo | null {
+export function proximoPasso(tags: string[], horasDesdeNossa: number, b2b = false): Passo | null {
   if (tags.includes("quote_closed_no_reply") || tags.includes("quote_closed_by_customer")) return null;
+  if (b2b && (tags.includes("quote_chase_2") || tags.includes("quote_chase_3"))) return horasDesdeNossa >= 48 ? "fechar" : null;
   if (tags.includes("quote_chase_3")) return horasDesdeNossa >= 48 ? "fechar" : null;
   if (tags.includes("quote_chase_2")) return horasDesdeNossa >= 48 ? 3 : null;
   if (tags.includes("quote_chase_1")) return horasDesdeNossa >= 48 ? 2 : null;
@@ -75,7 +79,8 @@ export function textoDaCobranca(passo: 1 | 2 | 3, nome: string, b2b = false): st
   if (b2b) {
     return {
       1: `Hi ${nome},\n\nI am following up on the quote we sent. Should you wish to proceed, please reply with your preferred date and we will confirm the booking.`,
-      2: `Hi ${nome},\n\nFollowing up on our quote. If any part of it needs adjusting, whether scope, timing or access, please let me know and we will issue a revised version the same day.`,
+      // Na conta o 2º já é o último (dois lembretes, dono 17/10/2026).
+      2: `Hi ${nome},\n\nThis is our final follow-up on this quote. If any part of it needs adjusting, whether scope, timing or access, please let me know and we will issue a revised version the same day. If we do not hear back within the next two days, we will close it on our side.\n\nYou can reopen it at any time by replying to this email.`,
       3: `Hi ${nome},\n\nThis is our final follow-up on this quote. If we do not hear back within the next two days, we will close it on our side.\n\nYou can reopen it at any time by replying to this email.`,
     }[passo];
   }
@@ -197,13 +202,13 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       continue;
     }
 
-    const passo = proximoPasso(t.tags, horasDesdeNossa);
+    const passo = proximoPasso(t.tags, horasDesdeNossa, b2b);
     if (!passo) continue;
 
     if (passo === "fechar") {
-      if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, day 7)`); continue; }
+      if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, ${b2b ? "day 5" : "day 7"})`); continue; }
       try {
-        await fechar(t, "no_reply", "quote_closed_no_reply", "Quote closed automatically on day 7: three follow-ups and no reply.");
+        await fechar(t, "no_reply", "quote_closed_no_reply", b2b ? "Quote closed automatically on day 5: two follow-ups and no reply." : "Quote closed automatically on day 7: three follow-ups and no reply.");
         out.fechados.push(`${quem}: closed (no_reply)`);
       } catch (e) {
         out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 100) : "failed"}`);
@@ -244,7 +249,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       }
       await zendeskApi(`tickets/${t.id}.json`, {
         method: "PUT",
-        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of 3 sent automatically (${canais}).${passo === 3 ? " If there is no reply in 48h the ticket closes as no reply." : ""}` } } },
+        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of ${b2b ? 2 : 3} sent automatically (${canais}).${passo === (b2b ? 2 : 3) ? " If there is no reply in 48h the ticket closes as no reply." : ""}` } } },
       });
       await addTicketTags(t.id, [`quote_chase_${passo}`]);
       out.enviados.push(`${quem}: chase ${passo} (${canais})`);
