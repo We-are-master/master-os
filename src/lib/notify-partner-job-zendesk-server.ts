@@ -14,7 +14,7 @@
  */
 
 import { type SupabaseClient } from "@supabase/supabase-js";
-import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
+import { createSideConversation, replyToSideConversation, zendeskApi } from "@/lib/zendesk";
 import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
 import { formatPartnerJobPriceDisplay } from "@/lib/job-pricing-resolver";
@@ -77,6 +77,29 @@ export interface NotifyPartnerJobZendeskResult {
  * HTTP caller can forward it straight to NextResponse.json, and so internal
  * callers can inspect the outcome.
  */
+/**
+ * A conversa do job só serve para responder se ela ainda é DESTE parceiro e DESTE
+ * agendamento (dono, 18/10/2026). Antes o aviso ao parceiro novo saía como resposta
+ * na conversa aberta para o parceiro anterior (WHistyle recebeu dentro da thread da
+ * Top Freeze) e job remarcado chegava com a data velha no assunto ("16 Oct" para um
+ * job do dia 20). Os dois somem no Gmail. Assunto diferente ou outro parceiro na
+ * conversa: e-mail novo.
+ */
+export function conversaDoJobServe(
+  conversa: { subject?: string | null; participants?: Array<{ email?: string | null }> } | null,
+  novoAssunto: string,
+  emailsDoParceiro: string[],
+): boolean {
+  if (!conversa) return false;
+  const norm = (x: string | null | undefined) => String(x ?? "").trim().toLowerCase();
+  if (norm(conversa.subject) !== norm(novoAssunto)) return false;
+  const deles = new Set(emailsDoParceiro.map(norm).filter(Boolean));
+  return (conversa.participants ?? []).every((p) => {
+    const e = norm(p.email);
+    return !e || e.endsWith("@getfixfy.com") || deles.has(e);
+  });
+}
+
 export async function notifyPartnerJobZendesk(
   supabase: SupabaseClient,
   jobId: string,
@@ -468,7 +491,18 @@ export async function notifyPartnerJobZendesk(
         bodyText: email.text,
       });
       zendeskResult = { ok: r.ok, side_conversation_id: r.id ?? null, error: r.error };
-    } else if (job.zendesk_side_conversation_id) {
+    } else if (
+      job.zendesk_side_conversation_id &&
+      conversaDoJobServe(
+        await zendeskApi<{ side_conversation?: { subject?: string; participants?: Array<{ email?: string }> } }>(
+          `tickets/${zendeskTicketId}/side_conversations/${job.zendesk_side_conversation_id}.json`,
+        )
+          .then((r) => r.side_conversation ?? null)
+          .catch(() => null),
+        email.subject,
+        [partner.email, ...emailsExtras],
+      )
+    ) {
       const r = await replyToSideConversation({
         ticketId: zendeskTicketId,
         sideConversationId: job.zendesk_side_conversation_id,
