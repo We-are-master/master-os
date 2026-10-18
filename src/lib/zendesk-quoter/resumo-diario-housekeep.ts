@@ -31,6 +31,16 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { postcodesNoTexto } from "./achar-job";
 
 export const TAG_RESUMO_OK = "harvey_resumo_ok";
+/**
+ * Campos que o Zendesk exige para fechar, os mesmos do `resolverTicket` dos
+ * cancelamentos. Sem "What Happened" e "Closing Summary" o PUT de solved volta
+ * 422 (medido no #51528, 18/10/2026). O diário não é job concluído nem
+ * cancelado; "other" é o valor honesto.
+ */
+const CAMPO_WHAT_HAPPENED = 5687150349343;
+const CAMPO_RESUMO = 6417950403231;
+const CAMPO_REPLY_STATUS = 5698641403423;
+const CAMPO_ACTION_REQUIRED = 6437659168543;
 export const TAG_RESUMO_FALTANDO = "harvey_resumo_faltando";
 
 export function ehResumoDiario(assunto: string | null | undefined): boolean {
@@ -268,7 +278,16 @@ export async function tratarResumoDiario(
         method: "PUT",
         headers,
         body: JSON.stringify({
-          ticket: { status: "solved", comment: { public: false, body: corpo } },
+          ticket: {
+            status: "solved",
+            custom_fields: [
+              { id: CAMPO_WHAT_HAPPENED, value: "other" },
+              { id: CAMPO_RESUMO, value: `Housekeep daily list for ${data}: all ${linhas.length} job(s) booked in the OS with a partner (checked by Harvey).` },
+              { id: CAMPO_REPLY_STATUS, value: "reply_replied" },
+              { id: CAMPO_ACTION_REQUIRED, value: "action_required_no" },
+            ],
+            comment: { public: false, body: corpo },
+          },
         }),
       });
       if (!r.ok) throw new Error(`Zendesk resolve ${ticket.id}: HTTP ${r.status}`);
