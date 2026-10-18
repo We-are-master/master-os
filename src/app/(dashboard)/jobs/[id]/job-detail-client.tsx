@@ -1,5 +1,6 @@
 "use client";
 
+import { DATE_TBC_BADGE, jobDataAConfirmar } from "@/lib/job-data-a-confirmar";
 import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
 import type { JobDetailBundle } from "@/services/jobs";
 import { formatBritishDate } from "@/lib/utils/date";
@@ -1526,6 +1527,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [quickRescheduleSaving, setQuickRescheduleSaving] = useState(false);
   /** Padrão LIGADO: remarcar avisa cliente e parceiro; desmarcar silencia os dois. */
   const [qrNotify, setQrNotify] = useState(true);
+  /** "Date to be confirmed": o job sai da agenda e fica em Action required como Date TBC (18/10/2026). */
+  const [qrSemData, setQrSemData] = useState(false);
   const [qrDate, setQrDate] = useState("");
   const [qrTime, setQrTime] = useState("");
   const [qrWindowMins, setQrWindowMins] = useState("");
@@ -4992,14 +4995,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setQrCatalogServiceId(job.catalog_service_id ?? "");
     setQrClientPrice(String(job.client_price ?? 0));
     setQrPartnerCost(String(job.partner_cost ?? 0));
-    setQrNotify(true);
+    setQrNotify(!jobDataAConfirmar(job));
+    setQrSemData(jobDataAConfirmar(job));
     setQuickRescheduleOpen(true);
   }, [job, isOneOffScheduleUi]);
 
   const confirmQuickReschedule = useCallback(async () => {
     if (!job) return;
     const effective = { ...job, partner_id: qrPartnerId?.trim() ? qrPartnerId.trim() : null } as Job;
-    const schedulePatch = buildSchedulePatchForInputs(
+    // Sem data: limpa a agenda e o parceiro; o job volta a "unassigned" e aparece como Date TBC.
+    const schedulePatch = qrSemData
+      ? ({ scheduled_date: null, scheduled_start_at: null, scheduled_end_at: null, scheduled_finish_date: null, status: "unassigned" } as unknown as Partial<Job>)
+      : buildSchedulePatchForInputs(
       effective,
       qrDate,
       qrTime,
@@ -5021,7 +5028,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       titlePatch.title = normalizeTypeOfWork(svc.name) || svc.name;
     }
 
-    const pid = qrPartnerId.trim();
+    const pid = qrSemData ? "" : qrPartnerId.trim();
     const partnerRow = pid ? partners.find((p) => p.id === pid) : undefined;
 
     const merged: Partial<Job> = {
@@ -5072,12 +5079,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         /* non-blocking */
       }
       await refreshJobFinance();
-      setScheduleDate(qrDate.trim());
-      setScheduleTime(qrTime.trim());
-      setScheduleWindowMins(qrWindowMins.trim());
-      setScheduleExpectedFinishDate(isOneOffScheduleUi ? "" : qrExpectedFinish.trim());
+      setScheduleDate(qrSemData ? "" : qrDate.trim());
+      setScheduleTime(qrSemData ? "" : qrTime.trim());
+      setScheduleWindowMins(qrSemData ? "" : qrWindowMins.trim());
+      setScheduleExpectedFinishDate(qrSemData || isOneOffScheduleUi ? "" : qrExpectedFinish.trim());
       setQuickRescheduleOpen(false);
-      toast.success(qrNotify ? "Booking updated — customer and partner notified." : "Booking updated silently — nobody was notified.");
+      toast.success(
+        qrSemData
+          ? "Date removed: the job stays in Action required as Date TBC until the customer confirms a day."
+          : qrNotify ? "Booking updated — customer and partner notified." : "Booking updated silently — nobody was notified.",
+      );
     } finally {
       setQuickRescheduleSaving(false);
     }
@@ -5092,6 +5103,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     qrClientPrice,
     qrPartnerCost,
     qrNotify,
+    qrSemData,
     partners,
     catalogServicesJobType,
     buildSchedulePatchForInputs,
@@ -6528,7 +6540,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const displayStatus = effectiveJobStatusForDisplay(job);
   const onHoldBadge = jobOnHoldDisplayBadge(job);
-  const config = onHoldBadge ?? statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
+  const config = onHoldBadge ?? (jobDataAConfirmar(job) ? DATE_TBC_BADGE : null) ?? statusConfig[displayStatus] ?? { label: displayStatus, variant: "default" as const };
   const statusColors = getStatusColors(displayStatus, job);
   /**
    * Ledger-derived sums of client/partner extras (excluding materials, which
@@ -11774,7 +11786,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               Hourly job: client and partner totals below should match your billed labour; adjust in Finance after if timers override these.
             </p>
           ) : null}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex cursor-pointer select-none items-start gap-2.5 rounded-lg border border-border-light bg-surface-hover px-3 py-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+              checked={qrSemData}
+              disabled={quickRescheduleSaving}
+              onChange={(e) => {
+                setQrSemData(e.target.checked);
+                if (e.target.checked) {
+                  setQrPartnerId("");
+                  setQrNotify(false);
+                }
+              }}
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-text-primary">Date to be confirmed</span>
+              <span className="block text-xs leading-snug text-text-tertiary">
+                The customer will tell us the new day. The job leaves the schedule (no date, no partner) and stays in Action required as <strong>Date TBC</strong>.
+              </span>
+            </span>
+          </label>
+          <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", qrSemData && "hidden")}>
             {isOneOffScheduleUi ? (
               <div
                 className={cn(
@@ -11894,7 +11927,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             <select
               className="h-10 w-full rounded-lg border border-border-light bg-surface px-3 text-sm"
               value={qrPartnerId}
-              disabled={quickRescheduleSaving || loadingPartners}
+              disabled={quickRescheduleSaving || loadingPartners || qrSemData}
               onChange={(e) => setQrPartnerId(e.target.value)}
             >
               <option value="">— No Partner —</option>

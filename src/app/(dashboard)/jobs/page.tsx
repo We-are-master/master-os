@@ -11,7 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { HoverPreview } from "@/components/ui/hover-preview";
+import { DATE_TBC_BADGE, jobDataAConfirmar } from "@/lib/job-data-a-confirmar";
 import { AddressCell } from "@/components/jobs/address-cell";
+
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
@@ -3006,7 +3008,13 @@ function JobsPageContent() {
         const detail = formatJobScheduleLine(item);
         const ag = compactJobSchedule(item);
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
-        if (!ag) return <span className="text-[11px] text-text-tertiary">—</span>;
+        if (!ag) {
+          return jobDataAConfirmar(item) ? (
+            <span className="text-[11px] font-medium text-[var(--warn-ink)]" title="Waiting for the customer to confirm the date">Date TBC</span>
+          ) : (
+            <span className="text-[11px] text-text-tertiary">—</span>
+          );
+        }
         const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
         const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
         // Sem chip "On site" (dono, 15/10/2026): só os de data.
@@ -3083,7 +3091,7 @@ function JobsPageContent() {
         if (status === "action_required") {
           const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
           const st = effectiveJobStatusForDisplay(item);
-          const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
+          const c = onHoldBadge ?? (jobDataAConfirmar(item) ? DATE_TBC_BADGE : null) ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
           return (
             <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
@@ -3116,7 +3124,7 @@ function JobsPageContent() {
         }
         const st = effectiveJobStatusForDisplay(item);
         const onHoldBadge = jobOnHoldDisplayBadge(item);
-        const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
+        const c = onHoldBadge ?? (jobDataAConfirmar(item) ? DATE_TBC_BADGE : null) ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
           <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
