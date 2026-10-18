@@ -26,6 +26,7 @@ import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL 
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
+import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
@@ -512,7 +513,13 @@ export async function garantirQuoteNoOs(
   // O trade canônico sai do próprio price-check (primeiro serviço casado);
   // sem match nenhum a quote ainda nasce, só sem tipo forte.
   const tradeBruto = resultado.quote.services[0]?.trade ?? "";
-  const serviceType = normalizeTypeOfWork(tradeBruto).trim() || tradeBruto.trim() || "General Maintenance";
+  // Sempre um nome do catálogo (dono, 18/10/2026): "Plasterer" saiu inventado, não existe
+  // no catálogo e nenhum parceiro casou; a QT-2026-1248 ficou em Bidding sem convite.
+  const { data: catNomes } = await supabase.from("service_catalog").select("name").eq("is_active", true);
+  const serviceType = tipoDoCatalogo(
+    normalizeTypeOfWork(tradeBruto).trim() || tradeBruto.trim(),
+    ((catNomes ?? []) as { name: string }[]).map((c) => String(c.name).trim()),
+  );
   const catalogServiceId = await resolveQuoteCatalogServiceId(supabase, serviceType).catch(() => null);
 
   const clientName = ticket.requesterName?.trim() || ticket.subject.slice(0, 80);
@@ -1623,6 +1630,26 @@ async function calcularOuMandarConvites(
    */
   const soEste = process.env.HARVEY_CONVITE_PARCEIRO_UNICO?.trim();
   if (soEste) console.log(`[quoter] ENSAIO: convite só para o parceiro ${soEste}`);
+  /**
+   * O envio de verdade usa a MESMA lista do ensaio: trade da quote, os outros trades
+   * das linhas e por fim General Maintenance. Antes ele mandava só pelo trade da quote
+   * e, quando ninguém tinha aquele trade, saía para zero parceiros calado (18/10/2026).
+   */
+  const { extractUkPostcode: postcodeDe } = await import("@/lib/uk-postcode");
+  const pcReal = postcodeDe(quote.property_address) ?? quote.property_address;
+  const alvo = soEste
+    ? { ids: [soEste], usado: serviceType }
+    : await parceirosParaAQuote(supabase, { serviceType, catalogServiceId: quote.catalog_service_id, postcode: pcReal, trades: tradesDaQuote });
+  if (alvo.ids.length === 0) {
+    return {
+      enviados: 0,
+      nota: [
+        "── Partner invitations ──",
+        `NOT sent: no partner covers this work in ${pcReal}. Tried: ${[serviceType, ...tradesDaQuote, "General Maintenance"].filter(Boolean).join(", ")}.`,
+        "This needs a person: widen the trade or the area, or call a partner.",
+      ].join("\n"),
+    };
+  }
   const r = await dispatchQuoteBidInvites(supabase, {
     quoteId: quote.id,
     quoteReference: quote.reference,
@@ -1633,13 +1660,13 @@ async function calcularOuMandarConvites(
     scope: quote.scope,
     startIso: null,
     invitedBy: null,
-    ...(soEste ? { partnerIds: [soEste] } : {}),
+    partnerIds: alvo.ids,
   });
   return {
     enviados: r.partnerIds.length,
     nota: [
       soEste ? "── Partner invitations (ENSAIO — one partner only) ──" : "── Partner invitations ──",
-      `Sent to ${r.partnerIds.length} partner(s): ${r.emailsSent} email(s), ${r.pushSent} push.`,
+      `Sent to ${r.partnerIds.length} partner(s)${alvo.usado.toLowerCase() !== serviceType.toLowerCase() ? ` as ${alvo.usado} (nobody covers ${serviceType} here)` : ""}: ${r.emailsSent} email(s), ${r.pushSent} push.`,
       "They bid on the public link; the office picks the winner.",
     ].join("\n"),
   };

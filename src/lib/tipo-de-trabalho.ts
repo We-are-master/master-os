@@ -18,6 +18,10 @@ const REGRAS: Array<[RegExp, string]> = [
   [/\b(epc|energy performance)\b/i, "Energy Performance Certificate"],
   [/\binventory check[- ]?out\b/i, "Inventory Check-out"],
   [/\binventory\b/i, "Inventory Check"],
+  // Ofício com nome no catálogo (18/10/2026: "Plasterer" saiu inventado e nenhum parceiro casou).
+  [/\b(plaster(ing|er|board)?|skim(ming)?|render(ing)?|brick(work|layer|laying)?|building work|builder)\b/i, "Builder"],
+  [/\b(plumb(ing|er)?)\b/i, "Plumber"],
+  [/\b(carpent(ry|er)|joiner(y)?)\b/i, "Carpenter"],
 ];
 
 /**

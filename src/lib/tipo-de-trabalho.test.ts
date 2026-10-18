@@ -23,3 +23,12 @@ test("pintura e limpeza vão para o tipo certo do catálogo", () => {
   assert.equal(tipoDoCatalogo("After-builders clean", CAT), "After Builders Clean");
   assert.equal(tipoDoCatalogo("Electrical Safety Report", CAT), "Electrical Installation Condition Report");
 });
+
+test("ofício com nome no catálogo (caso QT-2026-1248 'Plasterer', 18/10/2026)", () => {
+  assert.equal(tipoDoCatalogo("Plasterer", CAT), "Builder");
+  assert.equal(tipoDoCatalogo("Plasterboard and skim ceiling", CAT), "Builder");
+  assert.equal(tipoDoCatalogo("Building work", CAT), "Builder");
+  assert.equal(tipoDoCatalogo("Plumbing", CAT), "Plumber");
+  assert.equal(tipoDoCatalogo("Carpentry", CAT), "Carpenter");
+  assert.equal(tipoDoCatalogo("After builders clean", CAT), "After Builders Clean");
+});
