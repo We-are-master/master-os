@@ -4114,6 +4114,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const customer_deposit = r2(finForm.customer_deposit);
       let customer_final_payment = r2(finForm.customer_final_payment);
       let billed_hours: number | undefined;
+      const novasTaxas: { hourly_client_rate?: number; hourly_partner_rate?: number } = {};
       if (job.job_type === "hourly") {
         const billedH = Number(job.billed_hours ?? 0);
         const approvedStage =
@@ -4121,7 +4122,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           job.status === "awaiting_payment" ||
           job.status === "completed";
         const useBilledHoursSeconds = billedH > 0 && approvedStage;
-        const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+        let { clientRate, partnerRate } = resolveJobHourlyRates(job);
+        /**
+         * Job por hora: o total é taxa × horas, então mudar o valor no campo e salvar
+         * era desfeito pelo recálculo com a taxa antiga (dono, 18/10/2026: parceiro
+         * para £40 voltava a £50). Valor editado vira a nova taxa: total ÷ horas faturadas.
+         */
+        const horasDaTaxa = billedH > 0 ? billedH : 1;
+        const taxaDoTotal = (total: number) => Math.round((total / horasDaTaxa) * 100) / 100;
+        if (Math.abs(r2(finForm.client_price) - (Number(job.client_price) || 0)) >= 0.01) {
+          clientRate = taxaDoTotal(r2(finForm.client_price));
+          novasTaxas.hourly_client_rate = clientRate;
+        }
+        if (Math.abs(r2(finForm.partner_cost) - (Number(job.partner_cost) || 0)) >= 0.01) {
+          partnerRate = taxaDoTotal(r2(finForm.partner_cost));
+          novasTaxas.hourly_partner_rate = partnerRate;
+        }
         if (useBilledHoursSeconds) {
           const elapsedSeconds = Math.round(billedH * 3600);
           const totals = computeHourlyTotals({
@@ -4161,6 +4177,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_deposit,
         customer_final_payment,
         ...(billed_hours != null ? { billed_hours } : {}),
+        ...novasTaxas,
       };
       const updated = await handleJobUpdate(job.id, newFields);
       await logFieldChanges(
@@ -9118,6 +9135,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </p>
                     <p>
                       Client total: {formatCurrency(hourlyAutoBilling.clientTotal)} · Partner total: {formatCurrency(hourlyAutoBilling.partnerTotal)}
+                    </p>
+                    <p className="text-sky-800/80 dark:text-sky-200/80">
+                      Rates: client {formatCurrency(Number(job.hourly_client_rate) || 0)}/h · partner {formatCurrency(Number(job.hourly_partner_rate) || 0)}/h.
+                      Changing Job price or Partner payout below sets the new hourly rate (total ÷ billed hours).
                     </p>
                   </div>
                 )}
