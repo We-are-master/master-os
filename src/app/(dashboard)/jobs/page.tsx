@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { HoverPreview } from "@/components/ui/hover-preview";
+import { AddressCell } from "@/components/jobs/address-cell";
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
 import { Modal } from "@/components/ui/modal";
 import { FixfyModalFooter, useModalScrollSpy } from "@/components/ui/fixfy-modal";
@@ -2977,6 +2978,14 @@ function JobsPageContent() {
           </HoverPreview>
         );
       },
+    },
+    {
+      // Endereço completo numa linha, cartão no hover quando não cabe (dono, 18/10/2026).
+      key: "property_address",
+      label: "Address",
+      minWidth: "180px",
+      cellClassName: "min-w-[11rem] max-w-[16rem]",
+      render: (item) => <AddressCell address={item.property_address} />,
     },
     {
       key: "schedule",
