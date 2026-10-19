@@ -11,7 +11,7 @@ describe("e-mail de acompanhamento", () => {
     assert.equal(c.public, true);
     assert.equal(c.author_id, 123);
     assert.doesNotMatch(c.html_body, /<!DOCTYPE/);
-    assert.match(c.html_body, /The Fixfy team/);
+    assert.doesNotMatch(c.html_body, /The Fixfy team/);
     assert.doesNotMatch(c.html_body, /\| Operations|Kind regards/);
   });
   it("padrão: o mesmo autor de antes, até alguém editar o papel", () => {
@@ -20,7 +20,7 @@ describe("e-mail de acompanhamento", () => {
   it("texto do cliente é escapado e o texto puro sai do mesmo conteúdo", () => {
     const { html, text } = montarEmail(e);
     assert.match(html, /Hi &lt;b&gt;Ann&lt;\/b&gt;,/);
-    assert.match(text, /^Hi <b>Ann<\/b>,\n\nLine one\n\nLine two\n\nThe Fixfy team/);
+    assert.match(text, /^Hi <b>Ann<\/b>,\n\nLine one\n\nLine two\n\nNeed a hand/);
     assert.match(text, /\+44 20 4538 4668/);
     assert.match(text, /hello@getfixfy\.com/);
   });

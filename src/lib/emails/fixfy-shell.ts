@@ -44,7 +44,12 @@ export const FIXFY_CONTACT = {
   legal: "Getfixfy Ltd, trading as Fixfy · 124 City Road, London EC1V 2NX · Company number 15406523",
 } as const;
 
-export const FIXFY_SIGNATURE = "The Fixfy team";
+/**
+ * Sem assinatura por padrão (dono, 20/10/2026: "don't need The Fixfy team").
+ * Fica exportada vazia para quem ainda importa; assinatura só quando o e-mail
+ * passar uma explicitamente.
+ */
+export const FIXFY_SIGNATURE = "";
 
 const LOGO = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 
@@ -269,7 +274,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const linhas = (e.linhas ?? []).filter((l): l is [string, string] => Boolean(l[1] && String(l[1]).trim()));
   const cta = e.cta && urlSegura(e.cta.url) ? { label: e.cta.label, url: urlSegura(e.cta.url)! } : null;
   const secundarios = (e.linksSecundarios ?? []).filter((l) => urlSegura(l.url));
-  const assinatura = e.assinatura === null ? null : (e.assinatura ?? FIXFY_SIGNATURE);
+  const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
   const pad = z ? "" : "padding:0 32px;";
 
   const estado = e.estado
@@ -374,7 +379,7 @@ export function emailPessoal(e: { preheader: string; saudacao: string; paragrafo
   const z = Boolean(e.zendesk);
   const cta = e.cta && urlSegura(e.cta.url) ? { label: e.cta.label, url: urlSegura(e.cta.url)! } : null;
   const sec = (e.linksSecundarios ?? []).filter((l) => urlSegura(l.url));
-  const assinatura = e.assinatura === null ? null : (e.assinatura ?? FIXFY_SIGNATURE);
+  const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
   const ps = [e.saudacao, ...e.paragrafos].map((p) => `<p style="margin:0 0 14px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(p)}</p>`).join("");
   const botao = cta
     ? `<p style="margin:6px 0 14px 0;"><a href="${esc(cta.url)}" style="display:inline-block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;">${esc(cta.label)}</a></p>`

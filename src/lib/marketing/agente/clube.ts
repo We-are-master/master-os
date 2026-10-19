@@ -63,7 +63,7 @@ export const MOTIVO_DO_MARKETING = "You are on this list because you asked us fo
  * nome de pessoa volta para o time.
  */
 export function assinaturaDoMarketing(): string {
-  return /victor/i.test(remetente().from) ? "Victor Braz, Operations Director at Fixfy" : FIXFY_SIGNATURE;
+  return /victor/i.test(remetente().from) ? "Victor Braz, Operations Director at Fixfy" : "";
 }
 
 export type OfertaAtiva = {

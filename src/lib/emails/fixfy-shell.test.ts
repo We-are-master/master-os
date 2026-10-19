@@ -54,7 +54,7 @@ describe("emailFixfy", () => {
     assert.doesNotMatch(m.html, />Property</);
     assert.match(m.text, /Service: Handyman/);
     assert.match(m.text, /Pay now: https:\/\/app\.getfixfy\.com\/pay\/INV-1/);
-    assert.match(m.text, /The Fixfy team/);
+    assert.doesNotMatch(m.text, /The Fixfy team/);
     for (const t of [m.html, m.text]) assert.doesNotMatch(t, /[–—]|\{\{/);
   });
   test("URL não-http não vira botão", () => {
@@ -75,7 +75,7 @@ describe("emailFixfy", () => {
 describe("emailPessoal", () => {
   test("assina e tem rodapé", () => {
     const m = emailPessoal({ preheader: "p", saudacao: "Hi there,", paragrafos: ["Just checking in."] });
-    assert.match(m.text, /The Fixfy team/);
+    assert.doesNotMatch(m.text, /The Fixfy team/);
     assert.match(m.html, /hello@getfixfy\.com/);
   });
 });

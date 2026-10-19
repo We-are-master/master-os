@@ -208,7 +208,7 @@ async function falarComCliente(t: Ticket, user: Usuario, conv: Conversa, texto: 
     });
     return "WhatsApp template";
   }
-  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: await autorDoAviso(), body: `${texto}\n\nThe Fixfy team` } } } });
+  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: await autorDoAviso(), body: texto } } } });
   return "email";
 }
 

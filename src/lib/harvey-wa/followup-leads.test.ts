@@ -62,7 +62,7 @@ describe("régua do follow-up de lead", () => {
       }
       assert.doesNotMatch(e.assunto, /^Lead/i);
       assert.equal(e.saudacao, "Hi Ann,");
-      assert.match(text, /The Fixfy team/);
+      assert.doesNotMatch(text, /The Fixfy team/);
       assert.doesNotMatch(text, /Checkatrade|same day|call-out|insured|guarantee|this week/i, `passo ${p}`);
     }
     assert.equal(emailDoPasso(2, "Ann", "handyman work").assunto, "Your handyman work enquiry · Photos for your quote");

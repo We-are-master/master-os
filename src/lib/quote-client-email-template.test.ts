@@ -55,7 +55,7 @@ test("Resend (21): B2C cumprimenta pelo primeiro nome, um botão, recusar como l
   assert.match(e.text, /A deposit of £90\.00 is required to confirm your booking\. The remaining £90\.00 is due when the job is done\./);
   assert.match(e.text, /Valid until: Wednesday 21 October 2026/);
   assert.match(e.text, /Itemised pricing: Labour £150\.00 · Materials £30\.00/);
-  assert.match(e.text, /The Fixfy team/);
+  assert.doesNotMatch(e.text, /The Fixfy team/);
   assert.match(e.text, /A PDF copy of this quote is attached/);
   assert.equal((e.html.match(/min-height:44px/g) ?? []).length, 1, "um botão só");
   for (const s of [e.assunto, e.html, e.text]) {

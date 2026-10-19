@@ -53,7 +53,7 @@ describe("quote chase: three follow-ups in seven days, then close", () => {
           assert.doesNotMatch(x, /\{\{/);
           assert.doesNotMatch(x, /\| Operations/);
         }
-        assert.match(text, /The Fixfy team/);
+        assert.doesNotMatch(text, /The Fixfy team/);
       }
     }
   });
