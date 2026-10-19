@@ -370,6 +370,12 @@ async function ciclo(): Promise<void> {
     console.log("[harvey] PAUSADO por HARVEY_PAUSADO=1 — nada lido, nada escrito.");
     return;
   }
+  // O mesmo, pela tela: /agents/harvey → Pause everything (harvey_wa_config.autonomia.geral).
+  const { harveyLigado } = await import("../../src/lib/harvey/autonomia");
+  if (!(await harveyLigado())) {
+    console.log("[harvey] PAUSADO pela tela (Pause everything) — nada lido, nada escrito.");
+    return;
+  }
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");

@@ -15,16 +15,19 @@
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 
 import { limiteDoEnvioAutomatico } from "@/lib/quotes/preco-do-lance";
+import { autonomiaLida, modoEfetivo, type Autonomia } from "@/lib/harvey/autonomia";
 
 /** Teto único do envio automático (16/10/2026: era £1001 aqui e £600 nos outros caminhos). */
 export const MAXIMO_PADRAO_GBP = 600;
 
-export function envioAutomaticoLigado(): boolean {
-  return process.env.HARVEY_QUOTE_AUTO_SEND?.trim() === "1";
+/** A variável HARVEY_QUOTE_AUTO_SEND=1 e a área "envio" ligada na tela (quem chama lê a autonomia antes). */
+export function envioAutomaticoLigado(a: Autonomia = autonomiaLida()): boolean {
+  return modoEfetivo(a, "envio") === "on";
 }
 
-export function maximoDoEnvioAutomatico(): number {
-  return limiteDoEnvioAutomatico();
+/** O teto da tela, se a equipe pôs um; senão o da variável (£600). */
+export function maximoDoEnvioAutomatico(a: Autonomia = autonomiaLida()): number {
+  return a.tetoEnvio ?? limiteDoEnvioAutomatico();
 }
 
 /**

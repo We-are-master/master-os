@@ -29,6 +29,8 @@ import { baixarMidia, ehDoHarvey, enviarTexto, historico, scNotificacao, vozDaCo
 import { idDaIntegracaoWhatsApp, telefoneE164 } from "./primeiro-contato";
 import { melhoresParceirosParaCotacao, nomeDoParceiro, MIN_CONVIDADOS } from "./melhores-parceiros";
 import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
+import { classificarPedido } from "@/lib/classificar-pedido";
+import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_PEDIU_CONTEXTO, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
@@ -55,7 +57,7 @@ type Comentario = { id: number; public: boolean; author_id: number; created_at: 
 type QuoteRow = {
   id: string; reference: string; status: string; title: string | null; service_type: string | null; catalog_service_id: string | null;
   postcode: string | null; property_address: string | null; scope: string | null; images: unknown; total_value: number | null;
-  partner_cost: number | null; partner_id: string | null; bidding_started_at: string | null; client_email: string | null;
+  partner_cost: number | null; partner_id: string | null; bidding_started_at?: string | null; client_email: string | null;
   automation_status?: string | null;
 };
 
@@ -89,7 +91,7 @@ async function entrouEmNeedsQuote(ticketId: number): Promise<Date | null> {
 async function quoteDoTicket(sb: SupabaseClient, ticketId: number): Promise<QuoteRow | null> {
   const { data } = await sb
     .from("quotes")
-    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email, automation_status, client_id, deposit_required")
+    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, client_email, automation_status, client_id, deposit_required")
     .eq("external_source", "zendesk")
     .eq("external_ref", String(ticketId))
     .is("deleted_at", null)
@@ -235,7 +237,7 @@ async function criarOuAbrirQuote(sb: SupabaseClient, t: Ticket, user: Usuario, q
     quote_type: "partner",
     ...(ctx.catalogServiceId ? { catalog_service_id: ctx.catalogServiceId } : {}),
   };
-  const sel = "id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, bidding_started_at, client_email";
+  const sel = "id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, client_email";
   if (q) {
     const { data, error } = await sb.from("quotes").update({ ...comum, images: [...imagensDaQuote(q), ...fotos] }).eq("id", q.id).select(sel).single();
     if (error || !data) throw new Error(`quote update: ${error?.message}`);
@@ -273,8 +275,23 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
   const conv = await lerConversa(sb, t, user, desde, agora);
   const q = await quoteDoTicket(sb, t.id);
   const ctx = montarContexto(t, q, conv, await nomeDoTipo(campo(t, CAMPO_TIPO)));
+  // Tipo sempre do catálogo (19/10/2026): nome inventado na quote ("Plasterer") não casa parceiro.
+  if (ctx.servico) {
+    const classe = classificarPedido({ servico: ctx.servico, descricao: ctx.escopo }, await catalogoAtivo(sb));
+    if (classe.tipo !== ctx.servico) {
+      ctx.servico = classe.tipo;
+      ctx.catalogServiceId = classe.catalogServiceId ?? ctx.catalogServiceId;
+      if (aplicar && q) await sb.from("quotes").update({ title: classe.tipo, service_type: classe.tipo, ...(classe.catalogServiceId ? { catalog_service_id: classe.catalogServiceId } : {}) }).eq("id", q.id);
+    }
+  }
   const faltando = faltandoNoContexto(ctx);
-  if (conv.equipeFalando) {
+  /**
+   * Ticket em Bidding sem convite nenhum (dono, 19/10/2026: QT-2026-1248/1251 ficaram
+   * parados assim). Aqui só se convidam parceiros, ninguém fala com o cliente, então a
+   * trava de "equipe conversando" não se aplica; contexto faltando vai para a equipe.
+   */
+  const emBiddingSemConvite = Number(t.custom_status_id) === Number(ZD_STATUS_BIDDING);
+  if (conv.equipeFalando && !emBiddingSemConvite) {
     // No ensaio diz também o que faria sem a trava, para o dono julgar a régua com ticket de verdade.
     let semATrava = "";
     if (!aplicar) {
@@ -289,14 +306,26 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
   }
   const nome = firstName(user.name ?? null) ?? "there";
 
-  // Quote do ticket já em leilão (o Harvey do WhatsApp convidou): só passa a acompanhar.
-  if (q && q.status === "bidding" && q.bidding_started_at) {
+  // Quote do ticket já em leilão COM convites (o Harvey do WhatsApp ou do e-mail convidou): só acompanha.
+  const convitesFeitos = q
+    ? ((await sb.from("quote_partner_invitations").select("id", { count: "exact", head: true }).eq("quote_id", q.id)).count ?? 0)
+    : 0;
+  if (q && q.status === "bidding" && convitesFeitos > 0) {
     if (!aplicar) { out.acoes.push(`${quem}: would track the existing bidding ${q.reference} (no new invites)`); return true; }
     await updateTicket({ ticketId: t.id, customStatusId: ZD_STATUS_BIDDING, additionalTags: [TAG_CONVIDOU] });
     out.acoes.push(`${quem}: tracking ${q.reference}, already bidding`);
     return true;
   }
 
+  if (faltando.length && emBiddingSemConvite) {
+    out.pulados.push(`${quem}: in Bidding with no invites, but missing ${faltando.join(", ")}: needs a person`);
+    if (aplicar && !t.tags.includes(TAG_SEM_LANCE)) {
+      await nota(t.id, `🤖 Auto-quote: this ticket is in Bidding but no partner was invited, and I can't invite yet: missing ${faltando.join(", ")}. Needs a person.`);
+      await addTicketTags(t.id, [TAG_SEM_LANCE]);
+      await precisaDeAcao(t.id, `Bidding with no partner invited: missing ${faltando.join(", ")}`);
+    }
+    return false;
+  }
   if (faltando.length) {
     if (t.tags.includes(TAG_PEDIU_CONTEXTO)) {
       out.pulados.push(`${quem}: waiting for the customer (missing ${faltando.join(", ")})`);
@@ -539,7 +568,11 @@ export async function varrerCotacaoAutomatica(sb: SupabaseClient, { aplicar }: {
   if (foraDoHorario && aplicar) return out;
 
   let feitas = 0;
-  const entrada = await buscar(`type:ticket status<solved custom_status_id:${ZD_STATUS_NEEDS_QUOTE}`);
+  const entrada = [
+    ...(await buscar(`type:ticket status<solved custom_status_id:${ZD_STATUS_NEEDS_QUOTE}`)),
+    // Bidding que ninguém convidou (19/10/2026): o convite que faltou sai aqui.
+    ...(await buscar(`type:ticket status<solved custom_status_id:${ZD_STATUS_BIDDING} -tags:${TAG_CONVIDOU} -tags:${TAG_FIM} -tags:${TAG_SEM_LANCE}`)),
+  ];
   const leilao = await buscar(`type:ticket status<solved tags:${TAG_CONVIDOU} -tags:${TAG_FIM}`);
   const filas: Array<[Ticket[], typeof tratarEntrada]> = [[leilao, tratarLeilao], [entrada, tratarEntrada]];
   for (const [tickets, tratar] of filas) {

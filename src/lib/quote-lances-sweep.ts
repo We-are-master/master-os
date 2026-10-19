@@ -29,6 +29,7 @@ import {
   marcaDeEspera, notasComNovoValor, passoDepoisDaResposta, pedidoDoCliente, respostaDoParceiro, verificarEscopoDoLance,
   type EsperaDeEscopo, type EventoDeSideConversation,
 } from "@/lib/quote-lance-escopo";
+import { modoDe } from "@/lib/harvey/autonomia";
 import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 
@@ -98,7 +99,8 @@ export async function varrerLancesParaRascunho(
   supabase: SupabaseClient,
   postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
 ): Promise<ResultadoDaVarredura> {
-  const armado = process.env.HARVEY_RASCUNHO_LANCE === "1";
+  // Lê a tela antes de tudo: "lances" decide o rascunho, "envio" e o teto valem lá embaixo.
+  const armado = (await modoDe("lances")) === "on";
   const r: ResultadoDaVarredura = {
     armado, analisados: 0, rascunhados: 0, semLance: 0, silenciosas: 0,
     perguntasDeEscopo: 0, escopoParaGente: 0, enviadasSozinhas: 0, janelaAberta: 0, detalhes: [],

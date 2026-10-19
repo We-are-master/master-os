@@ -26,11 +26,13 @@ import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL 
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
-import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
+import { tipoDoPedido } from "@/lib/classificar-pedido";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
+import { modoDe } from "@/lib/harvey/autonomia";
+import { blocoDasRegras } from "@/lib/harvey/regras-do-negocio";
 
 const MAX_IMAGENS = 6;
 
@@ -251,6 +253,7 @@ export async function consolidarPedido(ticket: TicketLido, apiKey: string): Prom
     })),
   ];
 
+  const regrasNegocio = await blocoDasRegras();
   const resposta = await chamarOpenAI("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -273,7 +276,9 @@ Rules:
 - property_address: the address of the property the work is at, exactly as written in the thread (street, flat, town). null if the thread never states it.
 - postcode: the UK postcode of that property if written anywhere (subject, body, signature of the request). null otherwise.
 
-JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missing_info":["..."],"property_address":str|null,"postcode":str|null}`,
+JSON shape: {"quote_request":"...","scope_of_work":"...","facts":["..."],"missing_info":["..."],"property_address":str|null,"postcode":str|null}
+
+${regrasNegocio}`,
         },
         { role: "user", content: conteudoUsuario },
       ],
@@ -491,7 +496,7 @@ export async function garantirQuoteNoOs(
      */
     const agora = pedido.propertyAddress ?? pedido.postcode;
     if (!e.property_address && agora && e.status === "draft") {
-      const vaiTransmitirAgora = process.env.HARVEY_QUOTE_INVITES === "1";
+      const vaiTransmitirAgora = (await modoDe("cotacao")) === "on";
       const { error: errPreenche } = await supabase
         .from("quotes")
         .update({
@@ -516,8 +521,10 @@ export async function garantirQuoteNoOs(
   // Sempre um nome do catálogo (dono, 18/10/2026): "Plasterer" saiu inventado, não existe
   // no catálogo e nenhum parceiro casou; a QT-2026-1248 ficou em Bidding sem convite.
   const { data: catNomes } = await supabase.from("service_catalog").select("name").eq("is_active", true);
-  const serviceType = tipoDoCatalogo(
-    normalizeTypeOfWork(tradeBruto).trim() || tradeBruto.trim(),
+  // Nome vago ("Handyman_time") cai na descrição do pedido (19/10/2026: QT-2026-1251 era pintura).
+  const serviceType = tipoDoPedido(
+    tradeBruto,
+    pedido.scopeOfWork || pedido.quoteRequest,
     ((catNomes ?? []) as { name: string }[]).map((c) => String(c.name).trim()),
   );
   const catalogServiceId = await resolveQuoteCatalogServiceId(supabase, serviceType).catch(() => null);
@@ -570,7 +577,7 @@ export async function garantirQuoteNoOs(
    * que promete transmissão sem transmitir, ou o contrário, é pior que os dois
    * desligados juntos.
    */
-  const vaiTransmitir = process.env.HARVEY_QUOTE_INVITES === "1";
+  const vaiTransmitir = (await modoDe("cotacao")) === "on";
   const autoFlow = process.env.AUTO_ASSIGN_ALL_JOBS === "1" || vaiTransmitir;
   /**
    * Sem endereço nenhum, a quote nasce `draft` e não `bidding`.
@@ -1577,7 +1584,7 @@ async function calcularOuMandarConvites(
   }
   const tradesDaQuote = [...porTrade.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
 
-  const armado = process.env.HARVEY_QUOTE_INVITES === "1";
+  const armado = (await modoDe("cotacao")) === "on";
 
   if (!armado) {
     // Mesma função de casamento do envio real: a lista do ensaio é a lista.

@@ -34,6 +34,7 @@ import { buildBidNotesJson } from "@/lib/quote-bid-payload";
 import { gravarLanceDoParceiro } from "@/lib/quotes/gravar-lance";
 import { registrarDecisao } from "@/lib/harvey-wa/diario";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
+import { modoDe } from "@/lib/harvey/autonomia";
 
 /** Mesma idade máxima da varredura de lances: quote velha não entra. */
 const IDADE_MAXIMA_DIAS = 14;
@@ -221,7 +222,7 @@ export async function lerLancesPorEmail(
   postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
   opcoes: { chamar?: ChamadaAoModelo } = {},
 ): Promise<ResultadoDosLancesPorEmail> {
-  const armado = process.env.HARVEY_RASCUNHO_LANCE === "1" && process.env.HARVEY_LANCE_EMAIL !== "0";
+  const armado = (await modoDe("lances")) === "on" && process.env.HARVEY_LANCE_EMAIL !== "0";
   const r: ResultadoDosLancesPorEmail = { armado, quotes: 0, lidas: 0, lances: 0, respostas: 0, outras: 0, detalhes: [] };
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase

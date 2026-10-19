@@ -11,6 +11,7 @@
  * gpt-4o-mini, temperature 0, response_format json_object — e a palavra
  * "json" no prompt, porque sem ela a API devolve 400 (aprendido na prática).
  */
+import { blocoDasRegras } from "@/lib/harvey/regras-do-negocio";
 import type { ServicoCasado } from "./quote-engine";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
 
@@ -49,7 +50,7 @@ export async function matchRequest(
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: PROMPT_SISTEMA },
+        { role: "system", content: `${PROMPT_SISTEMA}\n\n${await blocoDasRegras()}` },
         {
           role: "user",
           content: `Price list (trade | service | unit):\n${indice
