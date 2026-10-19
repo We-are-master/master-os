@@ -214,8 +214,8 @@ export function buildJobConfirmationHtml(args: JobConfirmationEmailArgs): string
 
   return envelopeDaConta({
     preheader: semJanela(args.arrivalWindow)
-      ? `Your job is confirmed for ${args.jobDate}. We'll confirm the arrival time.`
-      : `Your job is confirmed for ${args.jobDate} between ${args.arrivalWindow}.`,
+      ? `${args.eyebrow ?? "Your job is confirmed"} for ${args.jobDate}. We'll confirm the arrival time.`
+      : `${args.eyebrow ?? "Your job is confirmed"} for ${args.jobDate} between ${args.arrivalWindow}.`,
     eyebrow: args.eyebrow ? `&#10003; ${escapeHtml(args.eyebrow)}` : "&#10003; Job confirmed",
     corpo: `<p style="margin:0 0 18px 0;font-size:15px;line-height:22px;color:#4A4A55;">Hi <strong style="color:#020040;">${greeting}</strong>, ${args.intro ? escapeHtml(args.intro) : "this job is booked and scheduled."}</p>
 ${blocoDoJob(ref, title)}

@@ -197,6 +197,8 @@ export function VisitsTab({
       toast.success(`Visit ${index} done · visit 1 is still open`);
       return "pending" as const;
     }
+    // Última visita: o servidor pode ter voltado o job para In progress, então o card recarrega.
+    onJobChanged?.();
     return "finish" as const;
   }
 
@@ -231,7 +233,11 @@ export function VisitsTab({
   async function handleCreate(input: CreateJobVisitInput) {
     try {
       const { visit: created, partnerNotified, clientNotified } = await apiCreateJobVisit(input);
-      setVisits((rows) => [...rows, created]);
+      // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
+      setVisits((rows) => [
+        ...rows,
+        clientNotified?.ok ? { ...created, client_confirmation_sent_at: new Date().toISOString() } : created,
+      ]);
       setEditTarget(null);
       const quem = [partnerNotified?.ok ? "partner" : null, clientNotified?.ok ? "client" : null].filter(Boolean);
       toast.success(

@@ -51,6 +51,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const primaryDone = Boolean(body.primary) || Boolean(jaFeita) || jobStatusRank(job.status) >= 40;
   const passo = proximoPassoDasVisitas({ primaryDone, visits });
 
+  if (passo.kind === "finish" && jaFeita && (job.status === "scheduled" || job.status === "late")) {
+    /**
+     * A última visita foi feita, mas o job está Scheduled porque o Done da V1 o
+     * devolveu para a próxima visita. Final review só sai de In progress (regra do
+     * `canAdvanceJob`), então o job volta ao estágio de campo, que é onde ele está.
+     */
+    const { error } = await supabase.from("jobs").update({ status: "in_progress" }).eq("id", jobId);
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   if (passo.kind !== "next_visit") return NextResponse.json({ ok: true, ...passo });
 
   const proxima = passo.visit;

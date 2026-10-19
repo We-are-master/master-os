@@ -28,6 +28,7 @@ function mergeFetchedScheduleRowsIntoJobs(
             scheduled_end_at: v1.scheduled_end_at ?? row.scheduled_end_at,
             scheduled_finish_date: v1.scheduled_date ?? row.scheduled_finish_date,
             status: "completed",
+            __visit_history: true,
           } as Job)
         : (row as Job),
     );
@@ -58,6 +59,8 @@ function mergeFetchedScheduleRowsIntoJobs(
     };
     (synthetic as Job & { __visit_parent_id?: string; __visit_index?: number }).__visit_parent_id = parent.id;
     (synthetic as Job & { __visit_parent_id?: string; __visit_index?: number }).__visit_index = v.visit_index;
+    // Visita feita fica no calendário, riscada: é o histórico do job (19/10/2026).
+    if (v.status === "completed") (synthetic as Job & { __visit_history?: boolean }).__visit_history = true;
     merged.set(synthetic.id, synthetic);
   }
   const list = Array.from(merged.values()).filter((j) => !isJobExcludedFromScheduleView(j));
@@ -171,4 +174,9 @@ export async function fetchScheduleCalendarJobsForDayAnchor(dayAnchor: Date): Pr
   const padStart = formatLocalYmd(new Date(x.getFullYear(), x.getMonth(), x.getDate() - 62));
   const padEnd = formatLocalYmd(new Date(x.getFullYear(), x.getMonth(), x.getDate() + 62));
   return fetchScheduleCalendarJobsOverlappingYmdRange(padStart, padEnd);
+}
+
+/** Visita já feita (V1 guardada ou visita extra concluída): fica no calendário, riscada. */
+export function isVisitHistoryRow(job: Job): boolean {
+  return Boolean((job as Job & { __visit_history?: boolean }).__visit_history);
 }

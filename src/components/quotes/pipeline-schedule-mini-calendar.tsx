@@ -16,6 +16,7 @@ import {
   fetchScheduleCalendarJobsForYear,
   fetchScheduleCalendarJobsForWeekAnchor,
   fetchScheduleCalendarJobsForDayAnchor,
+  isVisitHistoryRow,
 } from "@/lib/fetch-schedule-calendar-jobs";
 import { jobVisibleOnSchedule } from "@/services/jobs";
 import { listPartners } from "@/services/partners";
@@ -271,7 +272,7 @@ export function PipelineScheduleMiniCalendar({
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [loadJobs]);
 
-  const pipelineJobs = useMemo(() => jobs.filter((j) => jobVisibleOnSchedule(j)), [jobs]);
+  const pipelineJobs = useMemo(() => jobs.filter((j) => jobVisibleOnSchedule(j) || isVisitHistoryRow(j)), [jobs]);
 
   const displayedJobs = useMemo(() => {
     if (schedulePartnerFilter === "all") return pipelineJobs;
