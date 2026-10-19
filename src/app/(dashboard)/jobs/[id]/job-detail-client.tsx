@@ -288,6 +288,7 @@ import {
   OFFICE_JOB_CANCELLATION_REASONS,
   buildOfficeCancellationReasonText,
   officeCancellationDetailRequired,
+  shortCancellationReasonLabel,
 } from "@/lib/job-office-cancellation";
 import {
   officeCancellationPartnerClawbackGbp,
@@ -527,7 +528,7 @@ function buildJobDetailStatusContext(
     if (reason) {
       return {
         chipClass: "border-red-500/35 bg-red-500/10 text-red-900 dark:text-red-100",
-        primary: reason,
+        primary: shortCancellationReasonLabel(reason, job.cancellation_reason_preset_id) ?? reason,
         secondary: when ?? undefined,
         title: [reason, when ? `Recorded ${when}` : null].filter(Boolean).join(" · "),
       };
@@ -581,7 +582,7 @@ function JobDetailStatusContextChip({ ctx }: { ctx: JobDetailStatusContext }) {
   return (
     <span
       className={cn(
-        "inline-flex min-w-0 max-w-[10rem] items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-snug sm:max-w-[13rem] md:max-w-[16rem]",
+        "inline-flex min-w-0 max-w-[14rem] items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-snug sm:max-w-[18rem] md:max-w-[22rem]",
         ctx.chipClass,
       )}
       title={ctx.title}

@@ -30,6 +30,24 @@ export function officeCancellationReasonLabel(
   return row?.label ?? id;
 }
 
+/**
+ * Rótulo curto do motivo para chips (dono, 19/10/2026): o texto gravado pode ser longo
+ * ("Client requested cancellation — platform cancellation email (ticket #…)") e quebrava
+ * o chip. Com preset, o nome de duas palavras; sem preset, só o trecho antes do detalhe.
+ */
+export function shortCancellationReasonLabel(
+  reason: string | null | undefined,
+  presetId?: string | null,
+): string | null {
+  const preset = presetId?.trim() ? OFFICE_JOB_CANCELLATION_REASONS.find((r) => r.id === presetId) : undefined;
+  if (preset) return preset.label;
+  const texto = reason?.trim();
+  if (!texto) return null;
+  const antesDoDetalhe = texto.split(/\s+[—–-]\s+|\s+\(|\.\s/)[0].replace(/\.$/, "").trim();
+  if (/^client requested cancell?ation$/i.test(antesDoDetalhe)) return "Client cancelled";
+  return antesDoDetalhe || texto;
+}
+
 /** Single text stored on `jobs.cancellation_reason` (partner + internal visibility). */
 export function buildOfficeCancellationReasonText(
   presetId: string,
