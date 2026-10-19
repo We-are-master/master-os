@@ -83,12 +83,12 @@ describe("quote chase copy (24 to 29)", () => {
   });
   it("the closing date only appears when the closure is scheduled", () => {
     assert.doesNotMatch(emailDaCobranca(3, false, sarah).paragrafos.join(" "), /close this enquiry/);
-    assert.match(emailDaCobranca(3, false, { ...sarah, fechaEm: "Wednesday 21 October 2026" }).paragrafos.join(" "), /by Wednesday 21 October 2026, we’ll close this enquiry for now/);
-    assert.match(whatsappDaCobranca(3, { ...sarah, fechaEm: "Wednesday 21 October 2026" }), /close the enquiry on Wednesday 21 October 2026/);
+    assert.match(emailDaCobranca(3, false, { ...sarah, fechaEm: "Wed 21 Oct 26" }).paragrafos.join(" "), /by Wed 21 Oct 26, we’ll close this enquiry for now/);
+    assert.match(whatsappDaCobranca(3, { ...sarah, fechaEm: "Wed 21 Oct 26" }), /close the enquiry on Wed 21 Oct 26/);
   });
   it("closing day is 48h later, in London, inside the sweep hours", () => {
-    assert.equal(diaDoFechamento(new Date("2026-10-19T10:00:00Z")), "Wednesday 21 October 2026");
-    assert.equal(diaDoFechamento(new Date("2026-10-19T19:30:00Z")), "Thursday 22 October 2026");
+    assert.equal(diaDoFechamento(new Date("2026-10-19T10:00:00Z")), "Wed 21 Oct 26");
+    assert.equal(diaDoFechamento(new Date("2026-10-19T19:30:00Z")), "Thu 22 Oct 26");
   });
   it("without a link the CTA disappears and nothing says 'below'", () => {
     const e = emailDaCobranca(2, false, { ...sarah, link: null });

@@ -27,7 +27,7 @@ test("#37 assunto, fotos só quando anexadas, sem promessa de fatura", () => {
 test("#38 data longa, sem frase de reembolso, sem data some a frase", () => {
   const a = buildJobCancelled({ publico: SARAH, reference: "JOB-9800", service: "Deep Clean", visitDate: "2026-10-21" });
   assert.equal(a.assunto, "Your booking has been cancelled · JOB-9800");
-  assert.match(a.texto, /Your booking for Deep Clean on Wednesday 21 October 2026 has been cancelled\./);
+  assert.match(a.texto, /Your booking for Deep Clean on Wed 21 Oct 26 has been cancelled\./);
   assert.doesNotMatch(a.html + a.texto, /refund/i);
   const b = buildJobCancelled({ publico: SARAH, reference: "JOB-9800", service: "Deep Clean" });
   assert.match(b.texto, /Your booking for Deep Clean has been cancelled\./);

@@ -10,7 +10,7 @@ test("cartão: valor, final do cartão, job e prazo da Stripe", () => {
   assert.match(m.text, /Hi Jake,/);
   assert.match(m.text, /We’ve issued a refund of £2\.00 for Door repair to your card ending 6987\./);
   assert.match(m.text, /within 5 to 10 working days/);
-  assert.match(m.text, /Issued: Wednesday 21 October 2026/);
+  assert.match(m.text, /Issued: Wed 21 Oct 26/);
   assert.doesNotMatch(m.html + m.text + m.subject, /[–—]|\{\{/);
 });
 

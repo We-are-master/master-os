@@ -31,7 +31,7 @@ describe("overdue invoice reminders: 1, 3, 4 days friendly, 7 days final", () =>
     assert.equal(nextReminderStage(0, 14), 1);
   });
   it("last one is the final reminder", () => {
-    const c = reminderCopy(4, { reference: "INV-1", amount: "£198.00", dueLabel: "Friday 16 October 2026" });
+    const c = reminderCopy(4, { reference: "INV-1", amount: "£198.00", dueLabel: "Fri 16 Oct 26" });
     assert.equal(c.final, true);
     assert.equal(c.subject, "Final payment reminder · INV-1");
   });
@@ -63,7 +63,7 @@ describe("overdue reminder emails (copy 15 to 18)", () => {
       assert.doesNotMatch(e.text, /RCP-/);
       assert.match(e.text, /^PAYMENT|^FINAL/);
       assert.match(e.text, /Hi Sarah,/);
-      assert.match(e.text, /Wednesday 21 October 2026/);
+      assert.match(e.text, /Wed 21 Oct 26/);
       assert.match(e.text, /quote INV-2026-999/);
     });
   }

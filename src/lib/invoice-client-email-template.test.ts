@@ -41,7 +41,7 @@ describe("copy 10: invoice", () => {
     assert.equal(e.subject, "Your invoice INV-2026-999 is ready");
     assert.match(e.text, /^PAYMENT DUE\nYour invoice is ready/);
     assert.match(e.text, /Hi Sarah,/);
-    assert.match(e.text, /Please pay £180\.00 by Wednesday 21 October 2026/);
+    assert.match(e.text, /Please pay £180\.00 by Wed 21 Oct 26/);
     assert.match(e.text, /Prefer a bank transfer\? Use the details below and quote INV-2026-999\./);
     assert.match(e.text, /Need a VAT invoice\?/);
     assert.match(e.text, /Payment breakdown: Trade services/);
@@ -100,7 +100,7 @@ describe("copy 12: final email with invoice", () => {
     assert.equal(e.subject, "Your job report and invoice · JOB-9800");
     assert.match(e.text, /Your work is complete/);
     assert.match(e.text, /your final report is attached/);
-    assert.match(e.text, /Your invoice is also included\. The remaining amount to pay is £180\.00, due by Wednesday 21 October 2026\./);
+    assert.match(e.text, /Your invoice is also included\. The remaining amount to pay is £180\.00, due by Wed 21 Oct 26\./);
   });
   it("paid: no pay button, receipt line", () => {
     const e = buildInvoiceClientEmail(inv({ status: "paid", amount_paid: 180 }), ctx, job, { final: true, reportAttachmentCount: 2, documentAttached: true, bankRows: SAMPLE });

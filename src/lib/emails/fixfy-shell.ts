@@ -101,7 +101,7 @@ export function primeiroNome(nomeCompleto: string | null | undefined): string {
 // ─── Data e janela (Europe/London) ──────────────────────────────────────
 
 /**
- * `2026-10-21` ou um ISO vira `Wednesday 21 October 2026`, no fuso de
+ * `2026-10-21` ou um ISO vira `Wed 21 Oct 26`, no fuso de
  * Londres. Data só (YYYY-MM-DD) é lida como dia de calendário, sem fuso.
  */
 export function dataLonga(valor: string | Date | null | undefined): string | null {
@@ -116,9 +116,11 @@ export function dataLonga(valor: string | Date | null | undefined): string | nul
     d = valor instanceof Date ? valor : new Date(valor);
   }
   if (Number.isNaN(d.getTime())) return null;
-  const partes = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: tz }).formatToParts(d);
+  // Abreviada em tudo (dono, 20/10/2026): "Wed 21 Oct 26".
+  const partes = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "2-digit", timeZone: tz }).formatToParts(d);
   const v = (t: string) => partes.find((x) => x.type === t)?.value ?? "";
-  return `${v("weekday")} ${v("day")} ${v("month")} ${v("year")}`;
+  // en-GB escreve "Sept"; o resto do mês é de três letras.
+  return `${v("weekday")} ${v("day")} ${v("month").replace(/^Sept$/, "Sep")} ${v("year")}`;
 }
 
 /** Uma hora em Londres: `9am`, `9:30am`, `midday`, `midnight`, `4pm`. */

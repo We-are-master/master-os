@@ -17,7 +17,7 @@ describe("copy 14: instalment due today", () => {
     const e = buildInstalmentDueEmail({ ...base, publico: { tipo: "b2c", primeiroNome: "Sarah Jones" } });
     assert.equal(e.subject, "Your £60.00 instalment is due today · INV-2026-999");
     assert.match(e.text, /Hi Sarah,/);
-    assert.match(e.text, /instalment 2 of 3 for Bathroom refit is due today, Wednesday 21 October 2026/);
+    assert.match(e.text, /instalment 2 of 3 for Bathroom refit is due today, Wed 21 Oct 26/);
     assert.match(e.text, /quote INV-2026-999/);
     assert.doesNotMatch(e.subject + e.html + e.text, /[–—]|\{\{|RCP-/);
   });

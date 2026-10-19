@@ -6,14 +6,14 @@ const SEM_TRAVESSAO = /[–—]/;
 
 test("com janela: dia, janela, serviço, endereço e referência, primeiro nome", () => {
   assert.equal(
-    textoDaConfirmacao({ nome: "Jake Carr", dia: "Wednesday 21 October 2026", janela: "9:00 AM – 12:00 PM", referencia: "JOB-9750", servico: "Handyman", endereco: "12 Example Road, London E1 6AN" }),
-    "Hi Jake,\n\nYour Fixfy booking is confirmed for Wednesday 21 October 2026, arriving between 9am and midday. Your professional is confirmed for Handyman at 12 Example Road, London E1 6AN. If anything changes, just reply here. Reference: JOB-9750.",
+    textoDaConfirmacao({ nome: "Jake Carr", dia: "Wed 21 Oct 26", janela: "9:00 AM – 12:00 PM", referencia: "JOB-9750", servico: "Handyman", endereco: "12 Example Road, London E1 6AN" }),
+    "Hi Jake,\n\nYour Fixfy booking is confirmed for Wed 21 Oct 26, arriving between 9am and midday. Your professional is confirmed for Handyman at 12 Example Road, London E1 6AN. If anything changes, just reply here. Reference: JOB-9750.",
   );
 });
 
 test("data curta antiga e janela já no formato novo", () => {
   const t = textoDaConfirmacao({ nome: null, dia: "2026-10-21", janela: "between 9am and midday", referencia: "JOB-9750" });
-  assert.match(t, /^Hi there,\n\nYour Fixfy booking is confirmed for Wednesday 21 October 2026, arriving between 9am and midday\./);
+  assert.match(t, /^Hi there,\n\nYour Fixfy booking is confirmed for Wed 21 Oct 26, arriving between 9am and midday\./);
 });
 
 test("sem janela não diz 'between To be confirmed'", () => {

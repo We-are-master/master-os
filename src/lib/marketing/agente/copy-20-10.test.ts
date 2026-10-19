@@ -24,7 +24,7 @@ test("#40 avaliação: assunto, sem prazo de 14 dias, indicação da configuraç
   assert.equal(ASSUNTO_DA_AVALIACAO, e.assunto);
   assert.match(e.texto, /Hi Sarah,/);
   assert.doesNotMatch(e.html + e.texto, /14 days|within \d+ days|31 March(?! 2027)/);
-  assert.match(e.texto, /They can use REFER20 for £20 off an eligible booking of £100 or more\. The offer is valid until Wednesday 31 March 2027\./);
+  assert.match(e.texto, /They can use REFER20 for £20 off an eligible booking of £100 or more\. The offer is valid until Wed 31 Mar 27\./);
   assert.match(e.html, new RegExp(`href="${SAIDA.replace(/[./]/g, "\\$&")}"[^>]*>Unsubscribe<`));
   assert.ok(!(e.html + e.texto).includes("{{"));
   limpo(e.html + e.texto);
@@ -44,7 +44,7 @@ test("#41 clube half day: copy nova, oferta do cupom, variáveis da Resend prese
   assert.match(e.html, /Hi \{\{\{contact\.first_name\|there\}\}\},/);
   assert.match(e.html, /href="\{\{\{RESEND_UNSUBSCRIBE_URL\}\}\}"/);
   assert.match(e.texto, /3\.5 hours to work through suitable jobs, for £180/);
-  assert.match(e.texto, /Use HANDY10 for 10% off a handyman half day until Wednesday 31 March 2027\./);
+  assert.match(e.texto, /Use HANDY10 for 10% off a handyman half day until Wed 31 Mar 27\./);
   assert.match(e.html, /promo=HANDY10/);
   // Fora as variáveis da Resend ({{{...}}}), nenhum placeholder cru.
   assert.ok(!(e.html + e.texto).replace(/\{\{\{[^}]+\}\}\}/g, "").includes("{{"));
@@ -67,8 +67,8 @@ test("só a peça aprovada mudou de moldura", () => {
 test("#42 relâmpago: todos os serviços no assunto e no corpo, prazo com ano, sem 36 horas fixas", () => {
   const r = RELAMPAGOS[0]!;
   const e = emailDoRelampagoPronto(r, { primeiroNome: "Sarah", descadastroUrl: SAIDA });
-  assert.equal(assuntoDoRelampago(r), "15% off any Fixfy booking · Ends Thursday 22 October 2026");
-  assert.match(e.texto, /Use PAINT15 for 15% off any Fixfy booking made by 11:59pm on Thursday 22 October 2026 \(UK time\)\./);
+  assert.equal(assuntoDoRelampago(r), "15% off any Fixfy booking · Ends Thu 22 Oct 26");
+  assert.match(e.texto, /Use PAINT15 for 15% off any Fixfy booking made by 11:59pm on Thu 22 Oct 26 \(UK time\)\./);
   assert.match(e.texto, /limited to the first 25 bookings/);
   assert.doesNotMatch(e.html + e.texto, /36 hours|applied for you|Thursday at midnight/i);
   assert.match(e.html, /promo=PAINT15/);

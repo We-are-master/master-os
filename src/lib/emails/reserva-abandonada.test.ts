@@ -51,8 +51,8 @@ test("e-mail 3 exige o código e mostra os dois preços", () => {
   const e = email3({ ...base, promo: { code: "BACK-7K2Q", percentOff: 10, discountedPrice: 213.3, expiresAt: new Date("2026-09-27T09:00:00Z") } });
   assert.match(e.html, /BACK-7K2Q/);
   assert.match(e.html, /£213\.30/);
-  assert.match(e.text, /That brings the price from £237 to £213\.30\. The offer is valid until Sunday 27 September 2026 at 10am \(UK time\)\./);
-  assert.match(e.text, /Valid until: Sunday 27 September 2026 at 10am \(UK time\)/);
+  assert.match(e.text, /That brings the price from £237 to £213\.30\. The offer is valid until Sun 27 Sep 26 at 10am \(UK time\)\./);
+  assert.match(e.text, /Valid until: Sun 27 Sep 26 at 10am \(UK time\)/);
 });
 
 test("sem travessão no texto que o cliente lê", () => {

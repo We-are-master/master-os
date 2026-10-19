@@ -42,18 +42,18 @@ const base = {
 };
 
 test("data e janela no formato da copy", () => {
-  assert.equal(base.jobDate, "Wednesday 21 October 2026");
+  assert.equal(base.jobDate, "Wed 21 Oct 26");
   assert.equal(base.arrivalWindow, "between 9am and midday");
   assert.equal(janelaDoAviso("9 AM – 12 PM"), "between 9am and midday");
   assert.equal(janelaDoAviso("To be confirmed"), null);
-  assert.deepEqual(lerLinhaDaAgenda("2026-10-21", "9AM – 12PM"), { data: "Wednesday 21 October 2026", janela: "between 9am and midday" });
+  assert.deepEqual(lerLinhaDaAgenda("2026-10-21", "9AM – 12PM"), { data: "Wed 21 Oct 26", janela: "between 9am and midday" });
 });
 
 test("#1 confirmação: B2C pelo primeiro nome, linhas e sem travessão", () => {
   const m = buildJobConfirmationEmail({ ...base, publico: { tipo: "b2c", primeiroNome: "Sarah" } });
-  assert.equal(m.subject, "Your Fixfy booking is confirmed · Wednesday 21 October 2026");
+  assert.equal(m.subject, "Your Fixfy booking is confirmed · Wed 21 Oct 26");
   assert.match(m.text, /^Hi Sarah,$/m);
-  assert.match(m.text, /Your professional is confirmed for Wednesday 21 October 2026, arriving between 9am and midday\./);
+  assert.match(m.text, /Your professional is confirmed for Wed 21 Oct 26, arriving between 9am and midday\./);
   assert.match(m.text, /Property: 12 Example Road, London, E1 6AN/);
   assert.match(m.text, /Booking: JOB-9800/);
   assert.doesNotMatch(m.html, /<table[^>]*><tr><td[^>]*>.*<table/); // comentário do Zendesk: sem tabela interna
@@ -84,10 +84,10 @@ test("#5 remarcação para a conta: assunto, antes e depois, B2B", () => {
     previousArrivalWindow: "1 PM – 4 PM",
     iniciadoPelaFixfy: true,
   });
-  assert.equal(m.subject, "Booking rescheduled · JOB-9800 · Wednesday 21 October 2026");
+  assert.equal(m.subject, "Booking rescheduled · JOB-9800 · Wed 21 Oct 26");
   assert.match(m.text, /^Hi Acme Lettings team,$/m);
-  assert.match(m.text, /Previous visit: Monday 19 October 2026 · between 1pm and 4pm/);
-  assert.match(m.text, /Revised visit: Wednesday 21 October 2026 · between 9am and midday/);
+  assert.match(m.text, /Previous visit: Mon 19 Oct 26 · between 1pm and 4pm/);
+  assert.match(m.text, /Revised visit: Wed 21 Oct 26 · between 9am and midday/);
   assert.match(m.text, /We’re sorry for the disruption\./);
   SEM(m.html);
   SEM(m.text);

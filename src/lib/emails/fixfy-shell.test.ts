@@ -16,7 +16,7 @@ describe("saudacao", () => {
 
 describe("data e janela", () => {
   test("data longa com ano", () => {
-    assert.equal(dataLonga("2026-10-21"), "Wednesday 21 October 2026");
+    assert.equal(dataLonga("2026-10-21"), "Wed 21 Oct 26");
     assert.equal(dataLonga(null), null);
   });
   test("janela em Londres, meio-dia vira midday", () => {

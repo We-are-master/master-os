@@ -12,7 +12,7 @@ const input = {
   firstName: "Jane",
   ref: "JOB-9701",
   summary: "End of tenancy clean",
-  dateLabel: "Thursday 8 October 2026",
+  dateLabel: "Thu 8 Oct 26",
   windowLabel: "between 9am and midday",
   addressLine: "1 High St, London E3 4AA",
   professionalName: "Sparkle Clean Ltd",
@@ -29,10 +29,10 @@ const input = {
 describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
   it("names the professional in the subject and the body, as agent", () => {
     const m = buildProfessionalConfirmedEmail(input);
-    assert.equal(m.subject, "Your Sparkle Clean Ltd booking is confirmed · Thursday 8 October 2026");
+    assert.equal(m.subject, "Your Sparkle Clean Ltd booking is confirmed · Thu 8 Oct 26");
     assert.match(m.html, /Hi Jane,/);
     assert.match(m.html, /Your professional is confirmed/);
-    assert.match(m.text, /Your booking with Sparkle Clean Ltd is confirmed\. They’ll arrive on Thursday 8 October 2026, between 9am and midday/);
+    assert.match(m.text, /Your booking with Sparkle Clean Ltd is confirmed\. They’ll arrive on Thu 8 Oct 26, between 9am and midday/);
     assert.match(m.html, /Paid to GETFIXFY LTD \(Fixfy\), as agent for Sparkle Clean Ltd/);
     assert.match(m.html, /Not VAT registered, so no VAT is charged/);
     assert.match(m.html, /Free re-clean within 7 days\./);
@@ -72,7 +72,7 @@ describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
 
 describe("rotuloDoDia", () => {
   it("full date with the year", () => {
-    assert.equal(rotuloDoDia("2026-10-21"), "Wednesday 21 October 2026");
+    assert.equal(rotuloDoDia("2026-10-21"), "Wed 21 Oct 26");
   });
 });
 
