@@ -2,6 +2,36 @@ import type { AccountFinalEmailPolicy } from "@/lib/account-final-email-policy";
 import type { DueDateSource } from "@/lib/partner-payout-schedule";
 import type { FinalReviewExtra } from "@/lib/job-final-extra";
 
+/**
+ * Como o valor do job se forma, para a Final review mostrar sem conta de cabeça
+ * (dono, 19/10/2026): por hora (horas × taxa) ou preço fechado, os extras, as visitas,
+ * o total do cliente, o do parceiro e a nossa margem.
+ */
+export type FinalReviewBreakdown = {
+  type: "hourly" | "fixed";
+  /** Por hora: horas cobradas e a taxa de cada lado. */
+  hours: number | null;
+  clientRate: number | null;
+  partnerRate: number | null;
+  /** Mão de obra / preço da visita 1. */
+  clientBase: number;
+  partnerBase: number;
+  /** Extras do cliente (inclui material cobrado e taxas de acesso). */
+  clientExtras: number;
+  /** Extras pagos ao parceiro (fora o material). */
+  partnerExtras: number;
+  /** Reembolso de material ao parceiro da visita 1. */
+  partnerMaterials: number;
+  /** Visitas 2+: o que o cliente paga e o que os parceiros delas recebem (self-bill de cada um). */
+  visitsCount: number;
+  visitsClient: number;
+  visitsPartner: number;
+  clientTotal: number;
+  partnerTotal: number;
+  margin: number;
+  marginPct: number;
+};
+
 /** Presentational types for the Final review modal — display-only, no DB shape mapping. */
 
 export type InvoiceDisplayStatus = "issued" | "pending" | "on_hold";
@@ -143,6 +173,9 @@ export type FinalReviewModalProps = {
     /** Totais antes do extra, para a janela mostrar "was". */
     base: { client: number; partner: number };
   } | null;
+
+  /** Quadro de valores (hourly × fixed). */
+  breakdown?: FinalReviewBreakdown | null;
 
   /** Wired to existing mutation handler. `forced`: fechando sem o relatório ter saído (Force approve). */
   onApprove: (opts?: { forced?: boolean }) => void;

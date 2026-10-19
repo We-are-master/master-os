@@ -1,5 +1,6 @@
 "use client";
 
+import { PriceBreakdown } from "./components/PriceBreakdown";
 import { parseMaterialExtra, recibosDoMaterial } from "@/lib/report-material-extra";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -119,6 +120,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     confirmed,
     onConfirmedChange,
     onApprove,
+    breakdown,
     submitting,
     hourlySlot,
     cardCharge,
@@ -342,9 +344,10 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
    * sem descrição, horário impossível. É o único caso que ainda trava o
    * Finalise, e o passo 3 mostra o que consertar.
    */
+  // Job sem plataforma (cliente direto) não tem para onde mandar: isso não bloqueia (19/10/2026).
   const envioBloqueado =
     !!envioExterno?.bloqueio &&
-    !/queued for the Express robot|already been sent|marked as sent manually/i.test(
+    !/queued for the Express robot|already been sent|marked as sent manually|no platform link/i.test(
       envioExterno.bloqueio,
     );
   /**
@@ -366,7 +369,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const envioResolvido =
     envioExterno?.estado === "enviado" ||
     !!envioExterno?.manualAt ||
-    /queued for the Express robot|already been sent|marked as sent manually/i.test(
+    /queued for the Express robot|already been sent|marked as sent manually|no platform link/i.test(
       envioExterno?.bloqueio ?? "",
     );
   const aprovandoForcado =
@@ -475,6 +478,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 partnerPayout={partnerPayout}
                 jobValue={jobValue}
               />
+
+              {breakdown ? <PriceBreakdown b={breakdown} materialFromReports={materialTotal} /> : null}
 
               <StepsTimeline
                 invoiceStatus={invoiceStatus}

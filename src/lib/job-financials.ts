@@ -22,8 +22,22 @@ export function jobPromotionAmount(j: Pick<Job, "promotion_amount">): number {
  * link /pay, fechamento financeiro) usa isto, não `jobBillableRevenue`, que
  * continua sendo o preço cheio para receita e margem.
  */
-export function jobCustomerTotal(j: Pick<Job, "client_price" | "extras_amount" | "promotion_amount">): number {
-  return Math.max(0, Math.round((jobBillableRevenue(j) - jobPromotionAmount(j)) * 100) / 100);
+export function jobCustomerTotal(
+  j: Pick<Job, "client_price" | "extras_amount" | "promotion_amount"> & Partial<Pick<Job, "total_client_price">>,
+): number {
+  return Math.max(0, Math.round((jobBillableRevenue(j) + precoDasVisitasExtras(j) - jobPromotionAmount(j)) * 100) / 100);
+}
+
+/**
+ * O que o cliente paga pelas visitas 2+ (mig 274: `total_client_price` = visita 1 +
+ * extras de visita, mantido por trigger). Só o LADO DO CLIENTE lê isto: fatura,
+ * cobrança, link de pagamento (19/10/2026, a V2 cobrada não entrava na fatura).
+ * O parceiro nunca: self-bill é por parceiro e lê linha por linha.
+ */
+export function precoDasVisitasExtras(j: Partial<Pick<Job, "client_price" | "total_client_price">>): number {
+  const total = Number(j.total_client_price ?? 0);
+  const v1 = Number(j.client_price ?? 0);
+  return total > v1 ? Math.round((total - v1) * 100) / 100 : 0;
 }
 
 export function jobDirectCost(j: Pick<Job, "partner_cost" | "materials_cost">): number {

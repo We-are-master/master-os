@@ -30,6 +30,7 @@ import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalRe
 import type {
   CompletionDelivery,
   FinalReviewSummarySnapshot,
+  FinalReviewBreakdown,
 } from "@/components/job-card/FinalReviewModal/types";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
@@ -195,6 +196,7 @@ import {
 } from "@/lib/job-phases";
 import {
   jobCustomerTotal,
+  precoDasVisitasExtras,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerCashOutDisplaySplit,
@@ -6532,7 +6534,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const approvalBillableRevenue = useMemo(() => {
     if (!job) return 0;
     if (job.job_type === "hourly" && approvalModalHourlyTotals) {
-      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0) + extraAditivo.client;
+      // Visitas 2+ entram no que o cliente paga (19/10/2026); no preço fechado já vêm em jobCustomerTotal.
+      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0) + extraAditivo.client + precoDasVisitasExtras(job);
     }
     return billableRevenueForApproval + extraAditivo.client;
   }, [job, approvalModalHourlyTotals, billableRevenueForApproval, extraAditivo]);
@@ -7437,13 +7440,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       : 0;
 
   const approvalMaterialsCost = Number(job.materials_cost ?? 0);
-  const approvalProfit = approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost;
+  // As visitas 2+ entram na receita (acima) e o custo delas sai aqui: o parceiro de cada
+  // visita é pago no self-bill dele, mas a margem do job é uma só (19/10/2026).
+  const approvalProfit =
+    approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost - extraVisitsPartner - extraVisitsMaterials;
   const approvalMarginPct = approvalBillableRevenue > 0 ? Math.round((approvalProfit / approvalBillableRevenue) * 10000) / 100 : 0;
 
   const approvalAmountDue = Math.max(0, approvalBillableRevenue - customerPaidTotal);
   /** Matches the main finance card: partner takes labour cap + materials reimbursement (same basis as partnerSelfBillGrossAmount). */
   const approvalPartnerGross = Math.max(0, approvalPartnerCap + approvalMaterialsCost);
   const approvalPartnerPayRemaining = Math.max(0, approvalPartnerGross - partnerPaidTotal);
+  /** Quadro de valores da Final review (19/10/2026): por hora ou preço fechado, linha a linha. */
+  const finalReviewBreakdown: FinalReviewBreakdown = (() => {
+    const horasDoJob = job.job_type === "hourly" && approvalModalHourlyTotals ? approvalModalHourlyTotals : null;
+    const taxas = horasDoJob ? resolveJobHourlyRates(job) : null;
+    const clientExtras = Math.max(0, Number(job.extras_amount ?? 0)) + extraAditivo.client;
+    const visitsClient = extraVisitsClient;
+    return {
+      type: horasDoJob ? "hourly" : "fixed",
+      hours: horasDoJob?.billedHours ?? null,
+      clientRate: taxas?.clientRate ?? null,
+      partnerRate: taxas?.partnerRate ?? null,
+      clientBase: Math.max(0, Math.round((approvalBillableRevenue - clientExtras - visitsClient) * 100) / 100),
+      partnerBase: approvalPartnerExtrasSplit.base,
+      clientExtras,
+      partnerExtras: approvalPartnerExtrasSplit.extra,
+      partnerMaterials: approvalMaterialsCost,
+      visitsCount: extraVisitsCount,
+      visitsClient,
+      visitsPartner: Math.round((extraVisitsPartner + extraVisitsMaterials) * 100) / 100,
+      clientTotal: approvalBillableRevenue,
+      partnerTotal: approvalPartnerGross,
+      margin: approvalProfit,
+      marginPct: approvalMarginPct,
+    };
+  })();
   const approvalPrimaryInvoice = job.invoice_id
     ? jobInvoices.find((i) => i.id === job.invoice_id) ??
       jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
@@ -10483,6 +10514,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         currentUserName={attestationDisplayName}
         jobValue={approvalBillableRevenue}
         partnerPayout={approvalPartnerGross}
+        breakdown={finalReviewBreakdown}
         extra={
           finalExtraConfig
             ? {
