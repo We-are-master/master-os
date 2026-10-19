@@ -619,7 +619,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 <ResponsibilityCheck
                   confirmed={confirmed}
                   onChange={onConfirmedChange}
-                  envioResolvido={envioResolvido}
+                  // Sem plataforma não há o que confirmar "do lado deles": a linha verde não aparece.
+                  envioResolvido={envioResolvido && !/no platform link/i.test(envioExterno?.bloqueio ?? "")}
                   envioQuando={envioExterno?.submittedAt ?? envioExterno?.manualAt ?? null}
                   envioNota={
                     envioExterno?.manualAt

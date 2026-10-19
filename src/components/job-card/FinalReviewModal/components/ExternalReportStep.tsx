@@ -314,6 +314,15 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
     );
   }
 
+  // Job sem plataforma (cliente direto): não há para onde enviar, e nada a fazer aqui (19/10/2026).
+  if (/no platform link/i.test(bloqueio)) {
+    return (
+      <span className={chip} style={{ background: "#F4F4F5", color: "#4A4A55" }}>
+        No client platform on this job · the report stays in the OS
+      </span>
+    );
+  }
+
   if (/already been sent/i.test(bloqueio)) {
     return (
       <span className={chip} style={{ background: "#E9F7F0", color: "#12704F" }}>
