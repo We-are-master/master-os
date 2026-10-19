@@ -30,6 +30,34 @@ export function dataDoJobNoAceite(
   return null;
 }
 
+/** As datas do lance que ainda não passaram, sem repetir (o que o cliente pode escolher). */
+export function datasDisponiveis(
+  quote: { start_date_option_1?: string | null; start_date_option_2?: string | null },
+  agora: Date = new Date(),
+): string[] {
+  const hoje = hojeLondres(agora);
+  return [quote.start_date_option_1, quote.start_date_option_2]
+    .map((b) => String(b ?? "").trim().slice(0, 10))
+    .filter((d, i, a) => YMD.test(d) && d >= hoje && a.indexOf(d) === i);
+}
+
+/**
+ * Data do job com a escolha do cliente (20/10/2026: "manda as datas do parceiro para o
+ * cliente escolher, evita o vai e volta"). Uma das datas oferecidas: vale ela. "none":
+ * nenhuma serve, o job nasce sem data e a equipe combina. Sem escolha (link antigo,
+ * WhatsApp): a primeira que ainda não passou, como antes.
+ */
+export function dataEscolhidaNoAceite(
+  quote: { start_date_option_1?: string | null; start_date_option_2?: string | null },
+  escolha: unknown,
+  agora: Date = new Date(),
+): { data: string | null; nenhumaServe: boolean } {
+  const opcoes = datasDisponiveis(quote, agora);
+  if (escolha === "none" && opcoes.length) return { data: null, nenhumaServe: true };
+  if (typeof escolha === "string" && opcoes.includes(escolha.trim())) return { data: escolha.trim(), nenhumaServe: false };
+  return { data: dataDoJobNoAceite(quote, agora), nenhumaServe: false };
+}
+
 /** Nome do parceiro: o da cotação, senão o do cadastro (empresa, depois contato). */
 export async function nomeDoParceiroNoAceite(
   supabase: SupabaseClient,
