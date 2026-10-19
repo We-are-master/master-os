@@ -1364,6 +1364,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [financeHubOpen, setFinanceHubOpen] = useState(false);
   const [financeHubTab, setFinanceHubTab] = useState<"client" | "partner">("client");
   const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState<string | null>(null);
+  /** Job por hora no Edit job finances: taxa da hora e horário de entrada e saída (19/10/2026). */
+  const [financeHubHourlyDraft, setFinanceHubHourlyDraft] = useState<{ rate?: string; start?: string; end?: string }>({});
   const [financeHubExtraDrafts, setFinanceHubExtraDrafts] = useState<Record<string, { amount?: string; reason?: string }>>({});
   const [savingFinanceHub, setSavingFinanceHub] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
@@ -1997,7 +1999,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const useOffice =
       job.timer_is_running ||
       (Number(job.timer_elapsed_seconds ?? 0) > 0) ||
-      !!job.timer_last_started_at;
+      !!job.timer_last_started_at ||
+      // Janela do parceiro fechada (entrada e saída): conta como tempo trabalhado.
+      (!!job.partner_timer_started_at && !!job.partner_timer_ended_at);
     if (!useOffice) return null;
     return computeOfficeTimerElapsedSeconds(job);
   }, [job, officeTimerTick]);
@@ -3982,8 +3986,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Writes the base amount for one side and hands back the updated job, so a
    *  single Save can chain base + extras without any of them reading a stale job. */
   const persistFinanceHubBase = useCallback(
-    async (baseJob: Job, side: "client" | "partner", amount: number): Promise<Job> => {
-      const patch: Partial<Job> =
+    async (baseJob: Job, side: "client" | "partner", amount: number, extraPatch?: Partial<Job>): Promise<Job> => {
+      const patchDoLado: Partial<Job> =
         side === "client"
           ? {
               client_price: amount,
@@ -4017,6 +4021,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               partner_agreed_value:
                 Math.round((amount + Number(baseJob.materials_cost ?? 0)) * 100) / 100,
             };
+      // Job por hora grava junto a taxa, o horário e os dois totais (19/10/2026).
+      const patch: Partial<Job> = { ...patchDoLado, ...(extraPatch ?? {}) };
       const updated = await handleJobUpdate(baseJob.id, patch, { silent: true });
       if (!updated) return baseJob;
 
@@ -7003,7 +7009,50 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const clientBaseAmount = Math.max(0, Math.round(Number(job.client_price ?? 0) * 100) / 100);
   const financeHubEntries = getExtraManagerData(financeHubTab).entries;
   const financeHubLiveBase = financeHubTab === "client" ? clientBaseAmount : partnerInitialBalance;
-  const financeHubBaseValue = financeHubBaseDraft ?? String(financeHubLiveBase);
+  /**
+   * Job por hora: o valor base é taxa × horas, e as horas saem do horário de entrada
+   * e saída (mínimo 1h, depois de 30 em 30 min). Mexer aqui grava a taxa do lado
+   * aberto e o horário, que vale para os dois lados.
+   */
+  const financeHubHourly = (() => {
+    if (job.job_type !== "hourly") return null;
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const hhmm = (iso: string | null | undefined) =>
+      iso
+        ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/London" }).format(new Date(iso))
+        : "";
+    const liveStart = hhmm(job.partner_timer_started_at ?? job.scheduled_start_at) || "09:00";
+    const segundosVivos =
+      job.partner_timer_started_at && job.partner_timer_ended_at
+        ? Math.max(0, (new Date(job.partner_timer_ended_at).getTime() - new Date(job.partner_timer_started_at).getTime()) / 1000)
+        : computeOfficeTimerElapsedSeconds(job) || (Number(job.billed_hours ?? 0) > 0 ? Number(job.billed_hours) * 3600 : 3600);
+    const [sh, sm] = liveStart.split(":").map(Number);
+    const fimMin = (sh * 60 + sm + Math.round(segundosVivos / 60)) % (24 * 60);
+    const liveEnd = job.partner_timer_ended_at
+      ? hhmm(job.partner_timer_ended_at)
+      : `${String(Math.floor(fimMin / 60)).padStart(2, "0")}:${String(fimMin % 60).padStart(2, "0")}`;
+    const liveRate = financeHubTab === "client" ? clientRate : partnerRate;
+    const rate = financeHubHourlyDraft.rate ?? String(liveRate);
+    const start = financeHubHourlyDraft.start ?? liveStart;
+    const end = financeHubHourlyDraft.end ?? liveEnd;
+    const minutos = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+    const segundos = Math.max(0, (minutos(end) - minutos(start)) * 60);
+    const taxaCliente = financeHubTab === "client" ? Number(rate) || 0 : clientRate;
+    const taxaParceiro = financeHubTab === "partner" ? Number(rate) || 0 : partnerRate;
+    const totals = computeHourlyTotals({ elapsedSeconds: segundos, clientHourlyRate: taxaCliente, partnerHourlyRate: taxaParceiro });
+    const dirty =
+      (financeHubHourlyDraft.rate != null && Math.abs((Number(financeHubHourlyDraft.rate) || 0) - liveRate) >= 0.009) ||
+      (financeHubHourlyDraft.start != null && financeHubHourlyDraft.start !== liveStart) ||
+      (financeHubHourlyDraft.end != null && financeHubHourlyDraft.end !== liveEnd);
+    return {
+      rate, start, end, segundos, totals, dirty, taxaCliente, taxaParceiro,
+      base: financeHubTab === "client" ? totals.clientTotal : totals.partnerTotal,
+    };
+  })();
+  const financeHubBaseValue = financeHubHourly ? String(financeHubHourly.base) : financeHubBaseDraft ?? String(financeHubLiveBase);
   const financeHubExtraValue = (entry: ExtraHistoryEntry) => {
     const draft = financeHubExtraDrafts[entry.idRaw];
     return {
@@ -7020,6 +7069,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return sum + sign * Math.abs(typed);
     }, 0);
   const financeHubDirty =
+    !!financeHubHourly?.dirty ||
     (financeHubBaseDraft != null &&
       Math.abs((Number(financeHubBaseDraft) || 0) - financeHubLiveBase) >= 0.009) ||
     financeHubEntries.some((entry) => {
@@ -7035,6 +7085,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setFinanceHubExtraDrafts((prev) => ({ ...prev, [entry.idRaw]: { ...prev[entry.idRaw], ...patch } }));
   const resetFinanceHubDrafts = () => {
     setFinanceHubBaseDraft(null);
+    setFinanceHubHourlyDraft({});
     setFinanceHubExtraDrafts({});
   };
 
@@ -7114,7 +7165,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error(side === "client" ? "Base price must be a number." : "Base pay must be a number.");
       return;
     }
-    const baseDirty = Math.abs(baseAmount - liveBase) >= 0.009;
+    const horaSujo = !!financeHubHourly?.dirty;
+    const baseDirty = horaSujo || Math.abs(baseAmount - liveBase) >= 0.009;
 
     const dirtyExtras: { entry: ExtraHistoryEntry; amount: number; reason: string }[] = [];
     for (const entry of entries) {
@@ -7149,7 +7201,29 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setSavingFinanceHub(true);
     try {
       let current: Job = job;
-      if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
+      if (horaSujo && financeHubHourly) {
+        const h = financeHubHourly;
+        if (h.segundos <= 0) {
+          toast.error("Leave time must be after arrival.");
+          setSavingFinanceHub(false);
+          return;
+        }
+        const ymd = String(current.scheduled_date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+        const clientTotal = h.totals.clientTotal;
+        const partnerTotal = h.totals.partnerTotal;
+        current = await persistFinanceHubBase(current, side, h.base, {
+          hourly_client_rate: h.taxaCliente,
+          hourly_partner_rate: h.taxaParceiro,
+          billed_hours: h.totals.billedHours,
+          partner_timer_started_at: ukWallClockToUtcIso(ymd, h.start),
+          partner_timer_ended_at: ukWallClockToUtcIso(ymd, h.end),
+          client_price: clientTotal,
+          customer_final_payment:
+            Math.round(Math.max(0, clientTotal + Number(current.extras_amount ?? 0) - Number(current.customer_deposit ?? 0)) * 100) / 100,
+          partner_cost: partnerTotal,
+          partner_agreed_value: Math.round((partnerTotal + Number(current.materials_cost ?? 0)) * 100) / 100,
+        });
+      } else if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
       for (const row of dirtyExtras) {
         current = await persistExtraEntryEdit(
           current,
@@ -11108,6 +11182,59 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ))}
           </div>
 
+          {financeHubHourly ? (
+            <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-3 dark:border-[#2f3642]">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Charged by the hour</p>
+                <span className="text-[11px] tabular-nums text-text-tertiary">
+                  {financeHubHourly.totals.billedHours}h billed · min 1h, then every 30 min
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">Arrived</label>
+                  <Input
+                    type="time"
+                    value={financeHubHourly.start}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, start: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">Left</label>
+                  <Input
+                    type="time"
+                    value={financeHubHourly.end}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, end: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">
+                    {financeHubTab === "client" ? "Client £/h" : "Partner £/h"}
+                  </label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={financeHubHourly.rate}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, rate: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-text-secondary">
+                  {financeHubTab === "client" ? "Base price" : "Base pay"} · {financeHubHourly.totals.billedHours}h × {formatCurrency(Number(financeHubHourly.rate) || 0)}
+                </span>
+                <span className="font-semibold tabular-nums">{formatCurrency(financeHubHourly.base)}</span>
+              </div>
+              <p className="m-0 text-[11px] text-text-tertiary">The times apply to client and partner.</p>
+            </div>
+          ) : (
           <div className="flex flex-wrap items-center gap-2">
             <JobCardTitleWithHint
               className="min-w-0 flex-1"
@@ -11131,6 +11258,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             />
             <span className="w-3.5 shrink-0" aria-hidden />
           </div>
+          )}
 
           <div className="space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>
