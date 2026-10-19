@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildPartnerJobConfirmationEmail } from "@/lib/emails/partner-job-confirmation";
+import { buildVisitReportUrl } from "@/lib/partner-job-report-url";
 import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { createSideConversation, replyToSideConversation } from "@/lib/zendesk";
@@ -132,9 +133,9 @@ export async function notifyVisitPartner(
     jobType: "fixed",
     priceDisplay: `£${Number(visit.partner_cost ?? 0).toFixed(2)}`,
     partnerNotes,
-    // Sem link de relatório: o token de relatório valida contra `jobs.partner_id`
-    // e daria 403 para o parceiro da visita. Relatório por visita é etapa própria.
-    reportUrl: null,
+    // Link do relatório DESTA visita (19/10/2026): token da visita, valida contra o
+    // parceiro dela e grava em `job_visits`.
+    reportUrl: visit.partner_id ? await buildVisitReportUrl(visit.id, visit.partner_id).catch(() => null) : null,
   });
 
   const reply = visit.zendesk_side_conversation_id

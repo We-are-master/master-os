@@ -796,6 +796,12 @@ export interface JobVisit {
   self_bill_id?: string | null;
   /** Confirmação ao cliente desta visita, no ticket do job (mig 337). */
   client_confirmation_sent_at?: string | null;
+  /** Relatório desta visita, pelo link dela (mig 338). A visita 1 usa os campos do job. */
+  start_report?: unknown;
+  final_report?: unknown;
+  report_submitted_at?: string | null;
+  report_approved_at?: string | null;
+  report_approved_by?: string | null;
   scope?: string | null;
   notes?: string | null;
   created_at: string;

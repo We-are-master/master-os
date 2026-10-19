@@ -73,6 +73,36 @@ const JOB_SELECT =
   "external_report_started_at, external_report_submitted_at, external_report_manual_at, external_report_attempts";
 
 /**
+ * O job, com o relatório que vai para a plataforma: o da ÚLTIMA visita que mandou
+ * relatório, quando houver visitas extras (dono, 19/10/2026). A plataforma recebe um
+ * relatório só, o da visita que fechou o trabalho; os outros ficam no job card.
+ * O horário do formulário segue o do job (a visita não tem timer próprio).
+ */
+async function carregarJobComRelatorioDaUltimaVisita(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<Record<string, unknown> | null> {
+  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  if (!job) return null;
+  const { data: visitas } = await supabase
+    .from("job_visits")
+    .select("visit_index, start_report, final_report, report_submitted_at")
+    .eq("job_id", jobId)
+    .is("deleted_at", null)
+    .not("report_submitted_at", "is", null)
+    .order("visit_index", { ascending: false })
+    .limit(1);
+  const ultima = (visitas ?? [])[0] as { start_report?: unknown; final_report?: unknown } | undefined;
+  if (!ultima?.final_report) return job as unknown as Record<string, unknown>;
+  return {
+    ...(job as unknown as Record<string, unknown>),
+    start_report: ultima.start_report ?? (job as { start_report?: unknown }).start_report ?? null,
+    final_report: ultima.final_report,
+    final_report_submitted: true,
+  };
+}
+
+/**
  * Qual dos dois formulários da Housekeep preencher.
  *
  * Manda o **relatório que foi realmente digitado**, não o título do job. Um
@@ -515,7 +545,7 @@ async function executarEnvio(
   opcoes: OpcoesDeEnvio | undefined,
   marca: MarcaDeTrava,
 ): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
-  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  const job = await carregarJobComRelatorioDaUltimaVisita(supabase, jobId);
   if (!job) return { estado: "nao_elegivel", motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
@@ -845,7 +875,7 @@ export async function previewEnvio(
   | { ok: true; forma: "trade" | "limpeza"; campos: Array<{ rotulo: string; valor: string }>; avisos: string[] }
   | { ok: false; motivo: string }
 > {
-  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  const job = await carregarJobComRelatorioDaUltimaVisita(supabase, jobId);
   if (!job) return { ok: false, motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);

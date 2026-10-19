@@ -42,6 +42,11 @@ export interface ReportSubmissionJob {
 }
 
 export interface ReportSubmissionInput {
+  /**
+   * Relatório de uma visita extra (19/10/2026): grava em `job_visits`, com as fotos
+   * em `visit-N-…` na pasta do job. Não mexe no status nem no timer do job.
+   */
+  visit?: { id: string; index: number };
   template: ReportTemplate;
   source: ReportSource;
   startData: Record<string, unknown>;
@@ -438,10 +443,43 @@ export async function persistReportSubmission(
   // whenever a submission wrote both (input.writeStart).
   const [startPhotos, finalPhotos] = await Promise.all([
     input.writeStart
-      ? uploadSlotPhotos(supabase, job.id, "start", input.photos, input.template, failures)
+      ? uploadSlotPhotos(supabase, job.id, "start", input.photos, input.template, failures, prefixoDaVisita(input))
       : Promise.resolve(null),
-    uploadSlotPhotos(supabase, job.id, "final", input.photos, input.template, failures),
+    uploadSlotPhotos(supabase, job.id, "final", input.photos, input.template, failures, prefixoDaVisita(input)),
   ]);
+
+  if (input.visit) {
+    const { error: visitErr } = await supabase
+      .from("job_visits")
+      .update({
+        final_report: buildReportPayload({
+          template: input.template,
+          source: input.source,
+          submittedAt: now,
+          photos: mergeReportPhotos(input.existingFinalPhotos, finalPhotos ?? []),
+          data: input.finalData,
+        }),
+        ...(input.writeStart
+          ? {
+              start_report: buildReportPayload({
+                template: input.template,
+                source: input.source,
+                submittedAt: now,
+                photos: mergeReportPhotos(input.existingStartPhotos, startPhotos ?? []),
+                data: input.startData,
+              }),
+            }
+          : {}),
+        report_submitted_at: now,
+        updated_at: now,
+      })
+      .eq("id", input.visit.id);
+    if (visitErr) {
+      console.error("[report-submission] visit update failed:", visitErr);
+      return { ok: false, error: "Could not save the report.", photoFailures: failures.count };
+    }
+    return { ok: true, photoFailures: failures.count };
+  }
 
   const durationMs =
     typeof input.finalData.duration_ms === "number" ? input.finalData.duration_ms : null;
@@ -531,13 +569,14 @@ async function uploadSlotPhotos(
   photoEntries: Record<string, File[]>,
   template: ReportTemplate,
   failures: { count: number },
+  prefixo = "",
 ): Promise<string[] | Record<string, string[]>> {
   const allowed = slotsForKind(template, kind);
   const daMetade = fotosDaMetade(photoEntries, kind);
 
   if (allowed === null) {
     const flatSlot = kind === "start" ? "before" : "after";
-    return uploadFlat(supabase, jobId, kind, daMetade[flatSlot] ?? [], failures);
+    return uploadFlat(supabase, jobId, `${prefixo}${kind}`, daMetade[flatSlot] ?? [], failures);
   }
 
   // Slots are independent (separate keys in the result object, separate
@@ -545,7 +584,7 @@ async function uploadSlotPhotos(
   // before the next slot started.
   const entries = Object.entries(daMetade).filter(([slot]) => allowed.has(slot));
   const uploaded = await Promise.all(
-    entries.map(async ([slot, files]) => [slot, await uploadFlat(supabase, jobId, `${kind}-${slot}`, files, failures)] as const),
+    entries.map(async ([slot, files]) => [slot, await uploadFlat(supabase, jobId, `${prefixo}${kind}-${slot}`, files, failures)] as const),
   );
   const result: Record<string, string[]> = {};
   for (const [slot, urls] of uploaded) result[slot] = urls;
@@ -588,4 +627,8 @@ async function uploadFlat(
   );
   const out = results.filter((url): url is string => url != null);
   return out;
+}
+
+function prefixoDaVisita(input: ReportSubmissionInput): string {
+  return input.visit ? `visit-${input.visit.index}-` : "";
 }

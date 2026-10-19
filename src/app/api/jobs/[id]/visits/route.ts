@@ -128,7 +128,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id: jobId } = await ctx.params;
   const { data, error } = await supabase
     .from("job_visits")
-    .select("id, visit_index, partner_id, partner_name, status, completed_at, partner_cost, client_price, self_bill_id, scheduled_date")
+    .select("*")
     .eq("job_id", jobId)
     .is("deleted_at", null)
     .order("visit_index", { ascending: true });

@@ -160,6 +160,34 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   };
 
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
+  /** Relatórios das visitas extras (19/10/2026): aparecem no passo 3, junto do da V1. */
+  const [relatoriosDasVisitas, setRelatoriosDasVisitas] = useState<
+    { index: number; partner: string; enviado: boolean; aprovado: boolean }[]
+  >([]);
+  useEffect(() => {
+    if (!isOpen || !jobUuid) return;
+    let vivo = true;
+    void fetch(`/api/jobs/${jobUuid}/visits`)
+      .then((r) => r.json())
+      .then((d: { visits?: Array<Record<string, unknown>> }) => {
+        if (!vivo) return;
+        setRelatoriosDasVisitas(
+          (d.visits ?? [])
+            .filter((v) => v.status !== "cancelled")
+            .map((v) => ({
+              index: Number(v.visit_index),
+              partner: String(v.partner_name ?? ""),
+              enviado: !!v.report_submitted_at,
+              aprovado: !!v.report_approved_at,
+            })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [isOpen, jobUuid]);
+  const faltaRelatorioDeVisita = relatoriosDasVisitas.some((v) => !v.enviado);
 
   /**
    * Manda o relatório assim que ele é aprovado, não no fim.
@@ -319,7 +347,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
       envioExterno?.bloqueio ?? "",
     );
   const aprovandoForcado =
-    forcarSemEnvio || !temRelatorio || (!!envioExterno?.bloqueio && !envioResolvido);
+    forcarSemEnvio || !temRelatorio || faltaRelatorioDeVisita || (!!envioExterno?.bloqueio && !envioResolvido);
 
   return (
     <AnimatePresence>
@@ -439,6 +467,25 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 onEditReport={onEditReport}
                 relatorioAprovado={relatorioAprovado}
               />
+
+              {relatoriosDasVisitas.length ? (
+                <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "#F7F7FB", border: "0.5px solid #E4E4E7" }}>
+                  <p className="m-0 mb-1 text-[11px] font-semibold" style={{ color: "#020040" }}>Visit reports</p>
+                  {relatoriosDasVisitas.map((v) => (
+                    <p key={v.index} className="m-0 flex justify-between gap-2" style={{ color: "#4A4A55" }}>
+                      <span>Visit {v.index}{v.partner ? ` · ${v.partner}` : ""}</span>
+                      <span style={{ color: v.aprovado ? "#047857" : v.enviado ? "#020040" : "#B45309" }}>
+                        {v.aprovado ? "Approved" : v.enviado ? "Sent, not approved" : "Missing"}
+                      </span>
+                    </p>
+                  ))}
+                  {faltaRelatorioDeVisita ? (
+                    <p className="m-0 mt-1 text-[11px]" style={{ color: "#B45309" }}>
+                      A visit has no report. Finalising now is a force approve.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
               <FinanceCards
                 clientName={clientName}

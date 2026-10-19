@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Loader2, X, Save, Check, Mail } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, X, Save, Check, Mail, Link2, FileText } from "lucide-react";
+import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -121,6 +122,8 @@ export function VisitsTab({
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
   /** Índice da visita recém-fechada: abre o "e agora?" logo depois do Done. */
   const [justCompleted, setJustCompleted] = useState<number | null>(null);
+  /** Relatório de visita aberto para leitura (19/10/2026). */
+  const [relatorioAberto, setRelatorioAberto] = useState<JobVisit | null>(null);
   /** Account ID resolved from the job's client (clients.source_account_id). Used by the pricing resolver. */
   const [accountId, setAccountId] = useState<string | null>(null);
 
@@ -227,6 +230,35 @@ export function VisitsTab({
       if (ok) setJustCompleted(1);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to complete visit 1");
+    }
+  }
+
+  async function copiarLinkDoRelatorio(visit: JobVisit) {
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/visits/report?visitId=${encodeURIComponent(visit.id)}`);
+      const r = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!res.ok || !r.url) throw new Error(r.error || "Could not build the report link");
+      await navigator.clipboard.writeText(r.url);
+      toast.success(`Visit ${visit.visit_index} report link copied`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not copy the link");
+    }
+  }
+
+  async function aprovarRelatorio(visit: JobVisit, approve: boolean) {
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/visits/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitId: visit.id, approve }),
+      });
+      const r = (await res.json().catch(() => ({}))) as { visit?: JobVisit; error?: string };
+      if (!res.ok || !r.visit) throw new Error(r.error || "Could not update the report");
+      setVisits((rows) => rows.map((x) => (x.id === visit.id ? { ...x, ...r.visit } : x)));
+      setRelatorioAberto((v) => (v && v.id === visit.id ? { ...v, ...r.visit } : v));
+      toast.success(approve ? `Visit ${visit.visit_index} report approved` : "Approval removed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update the report");
     }
   }
 
@@ -386,6 +418,13 @@ export function VisitsTab({
                     ? `Client notified ${new Date(v.client_confirmation_sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
                     : null
                 }
+                report={{
+                  submittedAt: v.report_submitted_at ?? null,
+                  approvedAt: v.report_approved_at ?? null,
+                  onView: () => setRelatorioAberto(v),
+                  onCopyLink: v.partner_id ? () => void copiarLinkDoRelatorio(v) : undefined,
+                  onApprove: () => void aprovarRelatorio(v, true),
+                }}
                 onEdit={() => setEditTarget({ mode: "edit", visit: v })}
                 onDelete={() => handleDelete(v)}
                 onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
@@ -394,6 +433,40 @@ export function VisitsTab({
           </div>
         </>
       )}
+
+      {relatorioAberto ? (
+        <SectionPortal>
+        <Modal
+          open
+          onClose={() => setRelatorioAberto(null)}
+          title={`Visit ${relatorioAberto.visit_index} report`}
+          size="lg"
+          scrollBody
+        >
+          <div className="space-y-3 p-4">
+            <JobReportV2Card
+              jobId={job.id}
+              kind="final"
+              rawReport={relatorioAberto.final_report}
+              rawStartReport={relatorioAberto.start_report}
+              approvedAt={relatorioAberto.report_approved_at ?? null}
+              readOnly
+            />
+            <div className="flex justify-end gap-2">
+              {relatorioAberto.report_approved_at ? (
+                <Button variant="outline" size="sm" onClick={() => void aprovarRelatorio(relatorioAberto, false)}>
+                  Remove approval
+                </Button>
+              ) : (
+                <Button size="sm" icon={<Check className="h-3.5 w-3.5" />} onClick={() => void aprovarRelatorio(relatorioAberto, true)}>
+                  Approve report
+                </Button>
+              )}
+            </div>
+          </div>
+        </Modal>
+        </SectionPortal>
+      ) : null}
 
       {justCompleted != null ? (
         <SectionPortal>
@@ -453,7 +526,7 @@ function diaCurto(ymd: string | null | undefined): string {
 /** Uma visita = um cartão. Feita fica riscada e apagada, mas fica: é o histórico do job. */
 function VisitCard({
   index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
-  statusLabel, statusVariant, done, notified, onEdit, onDelete, onComplete, completeTitle,
+  statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle,
 }: {
   index: number;
   partner: string;
@@ -467,6 +540,14 @@ function VisitCard({
   statusVariant: "info" | "warning" | "success" | "default" | "primary";
   done: boolean;
   notified?: string | null;
+  /** Relatório da visita extra (a V1 fica na aba Reports). */
+  report?: {
+    submittedAt: string | null;
+    approvedAt: string | null;
+    onView: () => void;
+    onCopyLink?: () => void;
+    onApprove: () => void;
+  };
   onEdit?: () => void;
   onDelete?: () => void;
   onComplete?: () => void;
@@ -493,6 +574,33 @@ function VisitCard({
           {partner}
           {service ? <span className="text-text-tertiary"> · {service}</span> : null}
         </p>
+        {report ? (
+          <p className="m-0 mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px]">
+            <FileText className="h-3 w-3 text-text-tertiary" />
+            {report.approvedAt ? (
+              <button type="button" onClick={report.onView} className="font-medium text-emerald-700 hover:underline dark:text-emerald-400">
+                Report approved
+              </button>
+            ) : report.submittedAt ? (
+              <>
+                <button type="button" onClick={report.onView} className="font-medium text-primary hover:underline">
+                  Report in · view
+                </button>
+                <button type="button" onClick={report.onApprove} className="font-medium text-text-secondary hover:text-emerald-600">
+                  Approve
+                </button>
+              </>
+            ) : (
+              <span className="text-text-tertiary">No report yet</span>
+            )}
+            {!report.submittedAt && report.onCopyLink ? (
+              <button type="button" onClick={report.onCopyLink} className="inline-flex items-center gap-1 font-medium text-text-secondary hover:text-primary">
+                <Link2 className="h-3 w-3" />
+                Copy report link
+              </button>
+            ) : null}
+          </p>
+        ) : null}
       </div>
       <div className="hidden shrink-0 text-right text-[11px] leading-tight tabular-nums sm:block">
         <p className="m-0 text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)} <span className="text-text-tertiary">client</span></p>
