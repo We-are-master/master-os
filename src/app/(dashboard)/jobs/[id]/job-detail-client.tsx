@@ -484,6 +484,42 @@ type JobDetailStatusContext = {
   title: string;
 };
 
+/**
+ * Texto da pergunta antes de trocar o modo de cobrança (por hora ↔ preço fechado) ou
+ * os valores (dono, 19/10/2026: "tem que ser sempre perguntado").
+ */
+function confirmacaoDoModoDeCobranca(a: {
+  para: "fixed" | "hourly";
+  antes: { client: number; partner: number; hourly: boolean };
+  depois: { client: number; partner: number };
+  taxas?: { client: number; partner: number; horas: number };
+}): string {
+  const gbp = (n: number) => `£${(Math.round((Number(n) || 0) * 100) / 100).toFixed(2)}`;
+  const modoAntes = a.antes.hourly ? "charged by the hour" : "a fixed price";
+  const titulo =
+    a.para === "hourly"
+      ? a.antes.hourly
+        ? "Change the hourly rates on this job?"
+        : `This job is ${modoAntes}. Charge it by the hour instead?`
+      : a.antes.hourly
+        ? "This job is charged by the hour. Make it a fixed price?"
+        : "Change the fixed price on this job?";
+  const linhas = [titulo, ""];
+  if (a.para === "hourly" && a.taxas) {
+    linhas.push(
+      `Client: ${gbp(a.antes.client)} → ${gbp(a.taxas.client)}/h (${gbp(a.depois.client)} for ${a.taxas.horas}h)`,
+      `Partner: ${gbp(a.antes.partner)} → ${gbp(a.taxas.partner)}/h (${gbp(a.depois.partner)} for ${a.taxas.horas}h)`,
+      "",
+      "Before the work, the total follows the timer, with a 1 hour minimum.",
+    );
+  } else {
+    if (a.antes.hourly && a.taxas) linhas.push(`Now: client ${gbp(a.taxas.client)}/h, partner ${gbp(a.taxas.partner)}/h`);
+    linhas.push(`Client: ${gbp(a.antes.client)} → ${gbp(a.depois.client)}`, `Partner: ${gbp(a.antes.partner)} → ${gbp(a.depois.partner)}`);
+  }
+  linhas.push("", "The invoice and the partner self-bill change to these amounts.");
+  return linhas.join("\n");
+}
+
 function formatJobStatusContextTimestamp(iso: string | null | undefined): string | null {
   if (!iso?.trim()) return null;
   try {
@@ -3661,6 +3697,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const customer_final_payment =
         Math.round(Math.max(0, totals.clientTotal + extras - deposit) * 100) / 100;
       const titleOut = normalizeTypeOfWork(service.name) || service.name;
+      /**
+       * Trocar o modo de cobrança muda o que o cliente paga e o que o parceiro recebe:
+       * sempre pergunta, com o antes e o depois (dono, 19/10/2026: JOB-9766 virou £90/h
+       * sem ninguém ver e a fatura saiu de £78 para £90).
+       */
+      if (
+        !window.confirm(
+          confirmacaoDoModoDeCobranca({
+            para: "hourly",
+            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
+            depois: { client: totals.clientTotal, partner: totals.partnerTotal },
+            taxas: { client: clientRate, partner: partnerRate, horas: totals.billedHours },
+          }),
+        )
+      ) {
+        return;
+      }
       const patch: Partial<Job> = {
         job_type: "hourly",
         catalog_service_id: jobTypeEditCatalogId,
@@ -3746,6 +3799,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           partnerHourlyRate: partnerRate,
         })
       : null;
+    const clientFixo = clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0);
+    const partnerFixo = partnerCostConfirmed > 0 ? partnerCostConfirmed : matchedTotals?.partnerTotal ?? Number(job.partner_cost ?? 0);
+    const mudouValor =
+      Math.abs(clientFixo - Number(job.client_price ?? 0)) >= 0.01 || Math.abs(partnerFixo - Number(job.partner_cost ?? 0)) >= 0.01;
+    if (
+      (job.job_type === "hourly" || mudouValor) &&
+      !window.confirm(
+        confirmacaoDoModoDeCobranca({
+          para: "fixed",
+          antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
+          depois: { client: clientFixo, partner: partnerFixo },
+          taxas: job.job_type === "hourly"
+            ? { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) }
+            : undefined,
+        }),
+      )
+    ) {
+      return;
+    }
     const patch: Partial<Job> = {
       job_type: "fixed",
       catalog_service_id: matchedService?.id ?? null,
@@ -4114,7 +4186,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let customer_final_payment = r2(finForm.customer_final_payment);
       let billed_hours: number | undefined;
       const novasTaxas: { hourly_client_rate?: number; hourly_partner_rate?: number } = {};
-      if (job.job_type === "hourly") {
+      let virouFixo = false;
+      const mexeuNoValor =
+        Math.abs(r2(finForm.client_price) - (Number(job.client_price) || 0)) >= 0.01 ||
+        Math.abs(r2(finForm.partner_cost) - (Number(job.partner_cost) || 0)) >= 0.01;
+      if (
+        job.job_type === "hourly" &&
+        mexeuNoValor &&
+        !job.internal_invoice_approved &&
+        job.status !== "awaiting_payment" &&
+        job.status !== "completed"
+      ) {
+        /**
+         * Valor digitado num job por hora, antes do trabalho: sem perguntar, o OS
+         * recalculava pelo timer (mínimo 1h) e o valor digitado sumia (JOB-9766,
+         * 19/10/2026). Agora pergunta: vira preço fechado com esse valor, ou nada muda.
+         */
+        const ok = window.confirm(
+          confirmacaoDoModoDeCobranca({
+            para: "fixed",
+            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: true },
+            depois: { client: client_price, partner: partner_cost },
+            taxas: { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) },
+          }),
+        );
+        if (!ok) return;
+        virouFixo = true;
+      }
+      if (job.job_type === "hourly" && !virouFixo) {
         const billedH = Number(job.billed_hours ?? 0);
         const approvedStage =
           job.internal_invoice_approved ||
@@ -4177,6 +4276,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_final_payment,
         ...(billed_hours != null ? { billed_hours } : {}),
         ...novasTaxas,
+        ...(virouFixo
+          ? {
+              job_type: "fixed" as const,
+              billed_hours: null,
+              customer_final_payment: Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100,
+            }
+          : {}),
       };
       const updated = await handleJobUpdate(job.id, newFields);
       await logFieldChanges(
