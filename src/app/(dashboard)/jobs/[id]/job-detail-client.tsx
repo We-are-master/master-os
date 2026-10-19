@@ -358,6 +358,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
+  deleted: { label: "Deleted", variant: "default", dot: true },
 };
 
 /** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
@@ -499,15 +500,17 @@ function buildJobDetailStatusContext(
   opts?: { forcedPaidBySystemOwner?: boolean },
 ): JobDetailStatusContext | null {
   if (job.status === "on_hold") {
-    // Reclamação: o chip diz só "Complaint"; o texto e a conversa ficam na aba Complaint.
-    const reason = jobOnHoldPorReclamacao(job) ? "Complaint" : job.on_hold_reason?.trim() || "No reason recorded";
+    // Reclamação: o status vermelho já diz "Complaint"; o chip amarelo repetia (dono, 19/10/2026).
+    // O texto e a conversa ficam na aba Complaint.
+    if (jobOnHoldPorReclamacao(job)) return null;
+    const reason = job.on_hold_reason?.trim() || "No reason recorded";
     const since = formatJobStatusContextTimestamp(job.on_hold_at);
     const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
     const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
     return {
       chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
       primary: reason,
-      secondary: jobOnHoldPorReclamacao(job) ? undefined : since ?? undefined,
+      secondary: since ?? undefined,
       title,
     };
   }
@@ -565,14 +568,6 @@ function buildJobDetailStatusContext(
       };
     }
     return null;
-  }
-
-  if (job.status === "deleted") {
-    return {
-      chipClass: "border-border bg-muted/50 text-text-secondary",
-      primary: "Deleted",
-      title: "Job archived",
-    };
   }
 
   return null;
@@ -7509,7 +7504,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <JobScheduleTimingChip job={job} />
                   {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
                 </div>
-                <JobOverdueBadge job={job} size="sm" />
+                {/* Late e Overdue dizem o mesmo (data passou): fica só o Late (dono, 19/10/2026). */}
+                {displayStatus !== "late" ? <JobOverdueBadge job={job} size="sm" /> : null}
                 <JobCardRefusedBadge job={job} size="sm" showHistory />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
