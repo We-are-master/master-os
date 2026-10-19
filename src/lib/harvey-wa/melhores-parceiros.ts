@@ -1,6 +1,8 @@
 /**
- * Quem recebe o convite de cotação (dono, 14/10/2026): os 3 a 5 MELHORES
- * parceiros do serviço perto do postcode, não todo mundo.
+ * Quem recebe o convite de cotação. Era "os 3 a 5 melhores" (14/10/2026); desde
+ * 19/10/2026 é TODO parceiro que atende o serviço no postcode (dono: "manda para
+ * todos"), na ordem do ranking abaixo. Se ninguém do ofício cobre a área, tenta
+ * General Maintenance antes de desistir, como o Harvey do e-mail.
  *
  * Quem pode receber continua sendo decidido por `matchPartnerIdsForWork`
  * (serviço, cobertura, postcodes excluídos, opt-in de leads). Aqui só se
@@ -18,7 +20,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { displayPartnerRating } from "@/lib/partner-rating";
 
-export const MAX_CONVIDADOS = 5;
+/** Sem teto: todos que atendem (dono, 19/10/2026). */
+export const MAX_CONVIDADOS = Number.POSITIVE_INFINITY;
 export const MIN_CONVIDADOS = 3;
 
 export type ParceiroNoRanking = {
@@ -50,17 +53,22 @@ export function nomeDoParceiro(p: ParceiroNoRanking): string {
 export async function melhoresParceirosParaCotacao(
   sb: SupabaseClient,
   a: { serviceType: string; catalogServiceId?: string | null; postcode: string | null },
-): Promise<{ escolhidos: ParceiroNoRanking[]; elegiveis: number }> {
-  const ids = await matchPartnerIdsForWork(sb, {
+): Promise<{ escolhidos: ParceiroNoRanking[]; elegiveis: number; usado: string }> {
+  let usado = a.serviceType;
+  let ids = await matchPartnerIdsForWork(sb, {
     serviceType: a.serviceType,
     catalogServiceId: a.catalogServiceId ?? null,
     postcode: a.postcode,
     kind: "lead",
   });
-  if (ids.length === 0) return { escolhidos: [], elegiveis: 0 };
+  if (ids.length === 0 && a.serviceType.toLowerCase() !== "general maintenance") {
+    usado = "General Maintenance";
+    ids = await matchPartnerIdsForWork(sb, { serviceType: usado, catalogServiceId: null, postcode: a.postcode, kind: "lead" });
+  }
+  if (ids.length === 0) return { escolhidos: [], elegiveis: 0, usado };
   const { data } = await sb
     .from("partners")
     .select("id, company_name, contact_name, rating, compliance_score, jobs_completed")
     .in("id", ids);
-  return { escolhidos: ranquearParceiros((data ?? []) as ParceiroNoRanking[]), elegiveis: ids.length };
+  return { escolhidos: ranquearParceiros((data ?? []) as ParceiroNoRanking[]), elegiveis: ids.length, usado };
 }

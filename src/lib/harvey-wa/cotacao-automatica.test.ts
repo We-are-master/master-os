@@ -39,8 +39,8 @@ describe("auto-quote: minimum context before inviting partners", () => {
   });
 });
 
-describe("auto-quote: picks the 3 to 5 best partners", () => {
-  it("orders by rating, then compliance, then jobs done, and caps at five", () => {
+describe("auto-quote: invites every matching partner, best first", () => {
+  it("orders by rating, then compliance, then jobs done, with no cap (owner, 19 Oct 2026)", () => {
     const lista = [
       { id: "a", rating: 4.5, compliance_score: 100, jobs_completed: 3 },
       { id: "b", rating: 5, compliance_score: 0, jobs_completed: 0 },
@@ -49,7 +49,8 @@ describe("auto-quote: picks the 3 to 5 best partners", () => {
       { id: "e", rating: null, compliance_score: 100, jobs_completed: 5 },
       { id: "f", rating: 3, compliance_score: 100, jobs_completed: 0 },
     ];
-    assert.deepEqual(ranquearParceiros(lista).map((p) => p.id), ["e", "c", "b", "a", "f"]);
+    assert.deepEqual(ranquearParceiros(lista).map((p) => p.id), ["e", "c", "b", "a", "f", "d"]);
+    assert.deepEqual(ranquearParceiros(lista, 5).map((p) => p.id), ["e", "c", "b", "a", "f"]);
     assert.equal(ranquearParceiros(lista.slice(0, 2)).length, 2);
   });
 });

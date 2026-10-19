@@ -17,6 +17,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { guardarFotosDoTicket } from "@/lib/zendesk-quoter/guardar-fotos";
 import { ticketPeloTelefone } from "./zendesk-wa";
 import type { Identidade } from "./identidade";
+import { classificarPedido } from "@/lib/classificar-pedido";
+import { catalogoAtivo } from "@/lib/catalogo-ativo";
 
 export type PedidoDeCotacao = { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string };
 
@@ -24,6 +26,9 @@ export async function pedirCotacao(
   sb: SupabaseClient,
   a: { telefone: string | null; quem: Identidade; nomeNoWhatsApp: string | null; fotos: string[]; pedido: PedidoDeCotacao },
 ): Promise<{ reference?: string; invited?: number; ticket?: string | null; error?: string }> {
+  // O tipo sempre do catálogo (dono, 19/10/2026): o nome livre do LLM não casa parceiro nenhum.
+  const classe = classificarPedido({ servico: a.pedido.serviceType, descricao: a.pedido.description }, await catalogoAtivo(sb));
+  a = { ...a, pedido: { ...a.pedido, serviceType: classe.tipo } };
   const ticket = await ticketPeloTelefone(a.telefone).catch(() => null);
   const ref = ticket ? String(ticket) : null;
 
@@ -44,11 +49,11 @@ export async function pedirCotacao(
       const scope = `${a.pedido.description}\n\nRequested on WhatsApp with Harvey${a.telefone ? ` (${a.telefone})` : ""}.`;
       const postcode = a.pedido.postcode.trim().toUpperCase();
       const endereco = a.pedido.address?.trim() ? `${a.pedido.address.trim()}, ${postcode}` : ((ja.property_address as string | null) ?? postcode);
-      await sb.from("quotes").update({ scope, property_address: endereco, postcode, images: [...((ja.images as string[] | null) ?? []), ...novas] }).eq("id", ja.id);
+      await sb.from("quotes").update({ scope, property_address: endereco, postcode, title: classe.tipo, service_type: classe.tipo, ...(classe.catalogServiceId ? { catalog_service_id: classe.catalogServiceId } : {}), images: [...((ja.images as string[] | null) ?? []), ...novas] }).eq("id", ja.id);
       // Pedido que ficou em rascunho (sem convite): convida agora. Já em leilão: conta quem foi convidado.
       const convidados =
         ja.status === "draft"
-          ? await convidarParceiros(sb, { id: ja.id as string, reference: ja.reference as string, title: ja.title as string | null, catalog_service_id: ja.catalog_service_id as string | null, property_address: endereco, scope }, a.pedido.serviceType, postcode)
+          ? await convidarParceiros(sb, { id: ja.id as string, reference: ja.reference as string, title: classe.tipo, catalog_service_id: classe.catalogServiceId ?? (ja.catalog_service_id as string | null), property_address: endereco, scope }, a.pedido.serviceType, postcode)
           : ((await sb.from("quote_partner_invitations").select("id", { count: "exact", head: true }).eq("quote_id", ja.id as string)).count ?? 0);
       return { reference: ja.reference as string, invited: convidados, ticket: ref };
     }
@@ -65,6 +70,7 @@ export async function pedirCotacao(
       reference: String(numero),
       title: a.pedido.serviceType,
       service_type: a.pedido.serviceType,
+      catalog_service_id: classe.catalogServiceId,
       client_id: cliente?.id ?? null,
       client_name: a.pedido.name || cliente?.full_name || a.nomeNoWhatsApp || "WhatsApp customer",
       client_email: a.pedido.email || cliente?.email || null,
@@ -101,8 +107,8 @@ export async function pedirCotacao(
 type QuoteParaConvite = { id: string; reference: string; title: string | null; catalog_service_id: string | null; property_address: string | null; scope: string | null };
 
 /**
- * Concorrência de verdade (Fase 2, dono 09/10/2026; Fase 1, 15/10/2026): os 3 a 5
- * melhores parceiros DO OFÍCIO perto do postcode são convidados agora, igual ao
+ * Concorrência de verdade (Fase 2, dono 09/10/2026; Fase 1, 15/10/2026; 19/10/2026):
+ * TODOS os parceiros do ofício que cobrem o postcode são convidados agora, igual ao
  * Harvey do e-mail. O postcode basta: o casamento de parceiro é por área.
  * Porta: HARVEY_QUOTE_INVITES=1 (a mesma do Harvey do e-mail).
  */
@@ -112,7 +118,7 @@ async function convidarParceiros(sb: SupabaseClient, q: QuoteParaConvite, servic
     await sb.from("quotes").update({ status: "bidding", quote_type: "partner" }).eq("id", q.id);
     const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
     const soEste = process.env.HARVEY_CONVITE_PARCEIRO_UNICO?.trim();
-    // Só os 3 a 5 melhores do ofício na área (dono, 14/10/2026), não todo mundo que cobre o postcode.
+    // Todos que atendem o serviço na área, melhores primeiro (dono, 19/10/2026: "manda para todos").
     const { melhoresParceirosParaCotacao } = await import("./melhores-parceiros");
     const melhores = soEste
       ? [soEste]

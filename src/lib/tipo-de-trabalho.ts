@@ -12,7 +12,7 @@ const REGRAS: Array<[RegExp, string]> = [
   [/\bafter[- ]?build(ers|er)?\b/i, "After Builders Clean"],
   [/\bdeep[- ]?clean/i, "Deep Clean"],
   [/\b(regular|domestic|weekly|fortnightly)\b.*\bclean|\bclean(ing|er)?\b/i, "Regular Cleaning"],
-  [/\b(paint(ing|er)?|decorat(ing|or|ion))\b/i, "Painter"],
+  [/\b((re)?paint(ing|er|ed|s)?|decorat(ing|or|ion))\b/i, "Painter"],
   [/\b(eicr|electrical (installation )?(condition|safety) report)\b/i, "Electrical Installation Condition Report"],
   [/\bgas safety\b|\bcp12\b/i, "Gas Safety Certificate"],
   [/\b(epc|energy performance)\b/i, "Energy Performance Certificate"],

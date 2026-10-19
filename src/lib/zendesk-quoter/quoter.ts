@@ -26,7 +26,7 @@ import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL 
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
-import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
+import { tipoDoPedido } from "@/lib/classificar-pedido";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
@@ -516,8 +516,10 @@ export async function garantirQuoteNoOs(
   // Sempre um nome do catálogo (dono, 18/10/2026): "Plasterer" saiu inventado, não existe
   // no catálogo e nenhum parceiro casou; a QT-2026-1248 ficou em Bidding sem convite.
   const { data: catNomes } = await supabase.from("service_catalog").select("name").eq("is_active", true);
-  const serviceType = tipoDoCatalogo(
-    normalizeTypeOfWork(tradeBruto).trim() || tradeBruto.trim(),
+  // Nome vago ("Handyman_time") cai na descrição do pedido (19/10/2026: QT-2026-1251 era pintura).
+  const serviceType = tipoDoPedido(
+    tradeBruto,
+    pedido.scopeOfWork || pedido.quoteRequest,
     ((catNomes ?? []) as { name: string }[]).map((c) => String(c.name).trim()),
   );
   const catalogServiceId = await resolveQuoteCatalogServiceId(supabase, serviceType).catch(() => null);
