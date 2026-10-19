@@ -5,6 +5,7 @@
  * roda o mesmo cérebro com a conversa simulada.
  */
 
+import { blocoDasRegras } from "@/lib/harvey/regras-do-negocio";
 import { janelaParaOJob, precoConfere, precosDaEquipe } from "./preco-da-equipe";
 import { fichaDaFerramenta, type FichaDoJob } from "./ficha-do-job";
 import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
@@ -518,7 +519,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const fotos = parceiro || n === 0 ? [] : (ctx.fotos ?? []).slice(-n);
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
-  const regras = parceiro ? "" : instrucoesDosAjustes(ajustes);
+  const regras = parceiro ? "" : [await blocoDasRegras(), instrucoesDosAjustes(ajustes)].filter(Boolean).join("\n\n");
   const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });

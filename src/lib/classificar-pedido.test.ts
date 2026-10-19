@@ -55,6 +55,13 @@ test("mais de um dia de trabalho vira cotação", () => {
   assert.equal(c.modo, "cotacao");
 });
 
+test("piso de madeira é carpinteiro e cotação (#51529)", () => {
+  const c = classificarPedido({ servico: "Handyman", descricao: "Laying floorboards in the hallway, nails or glue to be confirmed" }, CAT);
+  assert.equal(c.tipo, "Carpenter");
+  assert.equal(c.modo, "cotacao");
+  assert.equal(tipoDoPedido("Handyman", "Replace a broken skirting board in the lounge", NOMES), "Carpenter");
+});
+
 test("horas do texto", () => {
   assert.equal(horasDoTexto("a full day (up to 7 hours)"), 7);
   assert.equal(horasDoTexto("Up to half a day"), 3.5);

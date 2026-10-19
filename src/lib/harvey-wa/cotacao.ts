@@ -19,6 +19,7 @@ import { ticketPeloTelefone } from "./zendesk-wa";
 import type { Identidade } from "./identidade";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
+import { modoDe } from "@/lib/harvey/autonomia";
 
 export type PedidoDeCotacao = { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string };
 
@@ -113,7 +114,7 @@ type QuoteParaConvite = { id: string; reference: string; title: string | null; c
  * Porta: HARVEY_QUOTE_INVITES=1 (a mesma do Harvey do e-mail).
  */
 async function convidarParceiros(sb: SupabaseClient, q: QuoteParaConvite, serviceType: string, postcode: string): Promise<number> {
-  if (process.env.HARVEY_QUOTE_INVITES?.trim() !== "1" || !postcode) return 0;
+  if ((await modoDe("cotacao")) !== "on" || !postcode) return 0;
   try {
     await sb.from("quotes").update({ status: "bidding", quote_type: "partner" }).eq("id", q.id);
     const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
