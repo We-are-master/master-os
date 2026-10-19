@@ -28,6 +28,7 @@ import {
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
 import { jobStatusRank } from "@/lib/job-phases";
+import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
@@ -348,7 +349,9 @@ export function VisitsTab({
         ? { label: "Completed", variant: "success" }
         : job.status === "in_progress"
           ? { label: "In progress", variant: "warning" }
-          : { label: "Scheduled", variant: "info" };
+          : effectiveJobStatusForDisplay(job) === "late"
+            ? { label: "Late", variant: "warning" }
+            : { label: "Scheduled", variant: "info" };
   const vivas = visits.filter((v) => !v.deleted_at).sort((a, b) => a.visit_index - b.visit_index);
   const botaoAdd = (
     <Button
@@ -365,25 +368,23 @@ export function VisitsTab({
 
   return (
     <div className="space-y-2.5">
-      {vivas.length === 0 ? (
-        // Quase todo job tem uma visita só: aqui fica uma linha, nada de tabela.
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-light px-3 py-2">
-          <p className="m-0 text-[12px] text-text-secondary">
-            <span className="font-semibold text-text-primary">1 visit.</span>{" "}
-            {jobHasPartner ? "Need to go back? Add another visit." : "Assign a partner to visit 1 before adding another."}
-          </p>
-          {botaoAdd}
-        </div>
-      ) : (
+      {/* Mesmo desenho com uma visita ou várias (dono, 20/10/2026): cabeçalho com o
+          resumo e um cartão por visita. */}
+      {(
         <>
           <div className="flex items-center justify-between gap-3">
             <p className="m-0 text-[12px] text-text-secondary">
-              <span className="font-semibold text-text-primary">{summary.count} visits</span>
+              <span className="font-semibold text-text-primary">
+                {summary.count} {summary.count === 1 ? "visit" : "visits"}
+              </span>
               {" · "}client {formatCurrency(summary.totalClientPrice)}
               {" · "}partner {formatCurrency(summary.totalPartnerCost)}
             </p>
             {botaoAdd}
           </div>
+          {!jobHasPartner ? (
+            <p className="m-0 text-[11px] text-text-tertiary">Assign a partner to visit 1 before adding another visit.</p>
+          ) : null}
           <div className="space-y-1.5">
             <VisitCard
               index={1}
@@ -397,7 +398,7 @@ export function VisitsTab({
               statusLabel={primaryStatus.label}
               statusVariant={primaryStatus.variant}
               done={primaryDone}
-              notified="Client and partner got the job confirmation"
+              notified={jobHasPartner ? "Client and partner got the job confirmation" : null}
               onComplete={!primaryDone && job.status !== "cancelled" && (onCompletePrimary || vivas.length) ? () => void handleCompletePrimary() : undefined}
               completeTitle={completePrimaryLabel ?? "Mark visit 1 done"}
             />
