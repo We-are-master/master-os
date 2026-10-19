@@ -381,6 +381,8 @@ function renderableFieldsFromReport(report: NormalizedReport): RenderableField[]
 }
 
 function formatFieldValue(key: string, v: unknown): string {
+  // Material em libras no relatório do cliente (19/10/2026).
+  if (key === "materials_extra_charge" && v !== "" && Number.isFinite(Number(v))) return `£${Number(v).toFixed(2)}`;
   if (key === "duration_ms" && typeof v === "number") {
     const min = Math.round(v / 60_000);
     const h = Math.floor(min / 60);
