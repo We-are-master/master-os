@@ -1,5 +1,6 @@
 "use client";
 
+import { parseMaterialExtra, recibosDoMaterial } from "@/lib/report-material-extra";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { modalTransition, overlayTransition } from "@/lib/motion";
@@ -162,7 +163,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
   /** Relatórios das visitas extras (19/10/2026): aparecem no passo 3, junto do da V1. */
   const [relatoriosDasVisitas, setRelatoriosDasVisitas] = useState<
-    { index: number; partner: string; enviado: boolean; aprovado: boolean }[]
+    { index: number; partner: string; enviado: boolean; aprovado: boolean; final: Record<string, unknown> | null }[]
   >([]);
   useEffect(() => {
     if (!isOpen || !jobUuid) return;
@@ -179,6 +180,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               partner: String(v.partner_name ?? ""),
               enviado: !!v.report_submitted_at,
               aprovado: !!v.report_approved_at,
+              final: (v.final_report as Record<string, unknown> | null) ?? null,
             })),
         );
       })
@@ -188,6 +190,26 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     };
   }, [isOpen, jobUuid]);
   const faltaRelatorioDeVisita = relatoriosDasVisitas.some((v) => !v.enviado);
+  /**
+   * Material comprado na casa, de TODAS as visitas (19/10/2026): uma linha por
+   * visita e o total que o cliente paga. Pergunta sem resposta ou Yes sem recibo
+   * aparece como aviso, para nunca fechar o job esquecendo o material.
+   */
+  const materialPorVisita = (() => {
+    const linha = (index: number, rel: unknown) => {
+      if (!rel || typeof rel !== "object") return null;
+      const env = rel as Record<string, unknown>;
+      const d = ((env.data as Record<string, unknown> | undefined) ?? env) as Record<string, unknown>;
+      const pergunta = d.materials_bought ?? d.materials_charges;
+      const m = parseMaterialExtra(d);
+      const comprou = pergunta === true || m.cost > 0;
+      return { index, ...m, comprou, semResposta: pergunta === undefined && m.cost === 0, recibos: recibosDoMaterial(d).length };
+    };
+    return [linha(1, rawFinalReport), ...relatoriosDasVisitas.map((v) => linha(v.index, v.final))].filter(
+      (x): x is NonNullable<typeof x> => !!x,
+    );
+  })();
+  const materialTotal = materialPorVisita.reduce((n, v) => n + v.charge, 0);
 
   /**
    * Manda o relatório assim que ele é aprovado, não no fim.
@@ -468,6 +490,30 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                 onEditReport={onEditReport}
                 relatorioAprovado={relatorioAprovado}
               />
+
+              {materialPorVisita.length ? (
+                <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "#FFF6EC", border: "0.5px solid #F0D6B8", color: "#4A2A00" }}>
+                  <p className="m-0 mb-1 flex justify-between text-[11px] font-semibold" style={{ color: "#7A3D00" }}>
+                    <span>Materials on site</span>
+                    <span className="tabular-nums">Client pays £{materialTotal.toFixed(2)}</span>
+                  </p>
+                  {materialPorVisita.map((v) => (
+                    <p key={v.index} className="m-0 flex justify-between gap-2">
+                      <span>Visit {v.index}</span>
+                      <span className="tabular-nums" style={{ color: v.semResposta || (v.comprou && !v.recibos) ? "#B42318" : undefined }}>
+                        {v.semResposta
+                          ? "Report does not say"
+                          : v.comprou
+                            ? `£${v.cost.toFixed(2)} paid · £${v.charge.toFixed(2)} to client${v.recibos ? "" : " · no receipt"}`
+                            : "None"}
+                      </span>
+                    </p>
+                  ))}
+                  {materialTotal > 0 ? (
+                    <p className="m-0 mt-1 text-[11px]">Already added to the invoice and to each partner&apos;s self-bill.</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               {relatoriosDasVisitas.length ? (
                 <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "#F7F7FB", border: "0.5px solid #E4E4E7" }}>

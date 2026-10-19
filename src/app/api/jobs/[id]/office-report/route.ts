@@ -11,7 +11,7 @@ import {
 } from "@/lib/report-submission";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
-import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
+import { aplicarMaterialExtraDoReport, pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 
 export const dynamic = "force-dynamic";
@@ -163,6 +163,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     timerStartedAt: timerStartedAt ?? job.partner_timer_started_at ?? null,
     timerEndedAt: timerEndedAt ?? job.partner_timer_ended_at ?? null,
   });
+  // Material comprado (19/10/2026): vale para o escritório também.
+  const faltaMaterial = pendenciasDeMaterial(template, finalData, (fotos.receipt ?? []).length);
+  if (faltaMaterial.length) {
+    veredito.ok = false;
+    veredito.motivos.push(...faltaMaterial);
+  }
   if (!veredito.ok) {
     return NextResponse.json(
       {
@@ -209,7 +215,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // report corrige o valor em vez de somar de novo. Nunca derruba a gravação.
   const materialExtra = await aplicarMaterialExtraDoReport(admin, job.id, {
     finalData,
-    previousFinalData: job.final_report_submitted ? finalEnvelope?.data ?? null : null,
+    // O envelope guarda os campos no topo (buildReportPayload), não em `.data`.
+    previousFinalData: job.final_report_submitted ? (finalEnvelope?.data ?? (finalEnvelope as Record<string, unknown> | null) ?? null) : null,
   });
 
   // Read the expiry off the attached certificate once the report is safely

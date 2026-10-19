@@ -362,7 +362,8 @@ function formatBritishDateTime(d: Date): string {
   }).format(d);
 }
 
-const PDF_HIDDEN_FIELD_KEYS = new Set(["photos", "recommend_additional_services"]);
+// O custo do material e o recibo são nossos: o cliente vê só o que paga (19/10/2026).
+const PDF_HIDDEN_FIELD_KEYS = new Set(["photos", "recommend_additional_services", "materials_extra_cost", "materials_receipt"]);
 
 function renderableFieldsFromReport(report: NormalizedReport): RenderableField[] {
   const out: RenderableField[] = [];

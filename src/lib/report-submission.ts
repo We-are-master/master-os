@@ -448,6 +448,17 @@ export async function persistReportSubmission(
     uploadSlotPhotos(supabase, job.id, "final", input.photos, input.template, failures, prefixoDaVisita(input)),
   ]);
 
+  /**
+   * Recibo do material (19/10/2026): fica num campo próprio do relatório, nunca no
+   * meio das fotos do trabalho, que vão para a plataforma do cliente. O link do
+   * parceiro já manda o endereço (subiu na hora); o escritório manda o arquivo.
+   */
+  const recibosNovos = await uploadFlat(supabase, job.id, `${prefixoDaVisita(input)}receipt`, input.photos.receipt ?? [], failures);
+  if (recibosNovos.length > 0) {
+    const ja = Array.isArray(input.finalData.materials_receipt) ? (input.finalData.materials_receipt as string[]) : [];
+    input = { ...input, finalData: { ...input.finalData, materials_receipt: [...ja, ...recibosNovos] } };
+  }
+
   if (input.visit) {
     const { error: visitErr } = await supabase
       .from("job_visits")

@@ -16,7 +16,7 @@ import { photosRefused } from "@/lib/public-report-templates";
 import { registrarReportLink } from "@/lib/report-link-events";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
-import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
+import { aplicarMaterialDaVisita, aplicarMaterialExtraDoReport, pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 
 export const dynamic = "force-dynamic";
@@ -173,6 +173,12 @@ export async function POST(req: NextRequest) {
     timerStartedAt: job.partner_timer_started_at ?? null,
     timerEndedAt: job.partner_timer_ended_at ?? null,
   });
+  // Material comprado (19/10/2026): resposta obrigatória; Yes exige valor e foto do recibo.
+  const faltaMaterial = pendenciasDeMaterial(template, finalData, (fotos.receipt ?? []).length);
+  if (faltaMaterial.length) {
+    veredito.ok = false;
+    veredito.motivos.push(...faltaMaterial);
+  }
   if (!veredito.ok) {
     await registrarReportLink(supabase, { jobId: job.id, partnerId: tokenPartnerId, event: "submit_refused", ok: false, detail: veredito.motivos.join(" · ").slice(0, 500) });
     return NextResponse.json(
@@ -225,8 +231,9 @@ export async function POST(req: NextRequest) {
   // caso raro de regravação com só o start submetido — nunca soma duas vezes.
   await aplicarMaterialExtraDoReport(supabase, job.id, {
     finalData,
+    // O envelope guarda os campos no topo (buildReportPayload), não em `.data`.
     previousFinalData: job.final_report_submitted
-      ? ((job.final_report as { data?: Record<string, unknown> } | null)?.data ?? null)
+      ? ((job.final_report as { data?: Record<string, unknown> } | null)?.data ?? (job.final_report as Record<string, unknown> | null) ?? null)
       : null,
   });
 
@@ -317,6 +324,11 @@ async function enviarRelatorioDaVisita(form: FormData, visitId: string, tokenPar
     timerStartedAt: null,
     timerEndedAt: null,
   });
+  const faltaMaterial = pendenciasDeMaterial(template, finalData, (fotos.receipt ?? []).length);
+  if (faltaMaterial.length) {
+    veredito.ok = false;
+    veredito.motivos.push(...faltaMaterial);
+  }
   if (!veredito.ok) {
     return NextResponse.json(
       { error: "The report is missing what the client platform requires.", pendencias: veredito.motivos, nota: veredito.nota },
@@ -342,6 +354,9 @@ async function enviarRelatorioDaVisita(form: FormData, visitId: string, tokenPar
   if (!result.ok) {
     return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
   }
+
+  // Material da visita: reembolso no parceiro DELA, cobrança somada no job (19/10/2026).
+  await aplicarMaterialDaVisita(supabase, visit, { finalData, previousFinalData: null });
 
   // A visita aconteceu: fecha, paga o parceiro dela e o job segue.
   if (visit.status !== "completed") {

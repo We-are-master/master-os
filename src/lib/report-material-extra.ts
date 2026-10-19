@@ -123,6 +123,8 @@ export async function aplicarMaterialExtraDoReport(
         })
         .eq("job_id", jobId)
         .eq("extra_type", REPORT_MATERIALS_EXTRA_TYPE)
+        // As linhas das visitas extras são delas (aplicarMaterialDaVisita): não apaga.
+        .not("reason", "ilike", "%(visit %")
         .is("deleted_at", null);
       const linhas = [
         alvo.cost > 0 && {
@@ -155,4 +157,142 @@ export async function aplicarMaterialExtraDoReport(
     console.error(`[report-material] ${jobId} falhou: ${msg}`);
     return { applied: false, ...alvo, error: msg };
   }
+}
+
+// ─── Pergunta obrigatória e recibo (19/10/2026) ──────────────────────────────
+
+/** Chave da pergunta "comprou material?" por template (jardinagem já tinha a dela). */
+export function chaveDaPerguntaDeMaterial(template: string): string | null {
+  if (template === "gardener") return "materials_charges";
+  if (template === "general" || template === "cleaner") return "materials_bought";
+  return null;
+}
+
+/** Endereços das fotos de recibo guardadas no relatório. */
+export function recibosDoMaterial(finalData: Record<string, unknown> | null | undefined): string[] {
+  const v = finalData?.materials_receipt;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+}
+
+/**
+ * O que falta para o material ficar certo no relatório (dono, 19/10/2026: "nunca
+ * esquecer de colocar isso no report do nosso cliente"). Vazio = pode enviar.
+ *
+ *  - a pergunta "comprou material?" tem que ter resposta;
+ *  - Yes exige o valor pago e pelo menos uma foto do recibo.
+ *
+ * `recibosNoEnvio`: fotos de recibo que sobem junto com o envio (formulário do
+ * escritório), ainda sem endereço no relatório.
+ */
+export function pendenciasDeMaterial(
+  template: string,
+  finalData: Record<string, unknown> | null | undefined,
+  recibosNoEnvio = 0,
+): string[] {
+  const chave = chaveDaPerguntaDeMaterial(template);
+  if (!chave) return [];
+  const resposta = finalData?.[chave];
+  if (resposta !== true && resposta !== false) return ["Answer: did you buy any materials for this job?"];
+  if (resposta === false) return [];
+  const faltas: string[] = [];
+  if (parseMaterialExtra(finalData).cost <= 0) faltas.push("Materials bought on site (£): enter what you paid");
+  if (recibosDoMaterial(finalData).length + recibosNoEnvio === 0) faltas.push("Photo of the receipt for the materials");
+  return faltas;
+}
+
+/**
+ * Material do relatório de UMA visita extra (19/10/2026). Mesmo princípio do job,
+ * por delta, mas cada lado no seu lugar:
+ *  - o que o parceiro pagou → `job_visits.materials_cost` (self-bill do parceiro DA VISITA);
+ *  - o que o cliente paga → `jobs.extras_amount`, somando com o material das outras visitas.
+ */
+export async function aplicarMaterialDaVisita(
+  admin: SupabaseClient,
+  visita: { id: string; job_id: string; visit_index: number; materials_cost?: number | null },
+  input: { finalData: Record<string, unknown>; previousFinalData?: Record<string, unknown> | null },
+): Promise<{ applied: boolean; cost: number; charge: number; error?: string }> {
+  const alvo = parseMaterialExtra(input.finalData);
+  const antes = parseMaterialExtra(input.previousFinalData ?? null);
+  const deltaCost = round2(alvo.cost - antes.cost);
+  const deltaCharge = round2(alvo.charge - antes.charge);
+  if (deltaCost === 0 && deltaCharge === 0) return { applied: false, ...alvo };
+  try {
+    if (deltaCost !== 0) {
+      const novo = Math.max(0, round2(Number(visita.materials_cost ?? 0) + deltaCost));
+      const { error } = await admin.from("job_visits").update({ materials_cost: novo }).eq("id", visita.id);
+      if (error) return { applied: false, ...alvo, error: error.message };
+    }
+    if (deltaCharge !== 0) {
+      const { data: jobRow } = await admin.from("jobs").select("*").eq("id", visita.job_id).maybeSingle();
+      if (!jobRow) return { applied: false, ...alvo, error: "job not found" };
+      const patch =
+        deltaCharge > 0
+          ? applyCustomerExtraPatch(jobRow as Job, deltaCharge, "extras")
+          : reverseCustomerExtraPatch(jobRow as Job, -deltaCharge, "extras");
+      const { error } = await admin.from("jobs").update(patch).eq("id", visita.job_id);
+      if (error) return { applied: false, ...alvo, error: error.message };
+    }
+    try {
+      const sufixo = `(visit ${visita.visit_index})`;
+      await admin
+        .from("job_extra_entries")
+        .update({ deleted_at: new Date().toISOString(), deleted_by_name: "Report", deleted_reason: "superseded by report edit" })
+        .eq("job_id", visita.job_id)
+        .eq("extra_type", REPORT_MATERIALS_EXTRA_TYPE)
+        .ilike("reason", `%${sufixo}%`)
+        .is("deleted_at", null);
+      const linhas = [
+        alvo.cost > 0 && {
+          job_id: visita.job_id, side: "partner", extra_type: REPORT_MATERIALS_EXTRA_TYPE,
+          reason: `Materials bought on site ${sufixo}`, amount: alvo.cost, allocation: "materials", created_by_name: "Report",
+        },
+        alvo.charge > 0 && {
+          job_id: visita.job_id, side: "client", extra_type: REPORT_MATERIALS_EXTRA_TYPE,
+          reason: `Materials charged to the client ${sufixo}`, amount: alvo.charge, allocation: "extras", created_by_name: "Report",
+        },
+      ].filter(Boolean);
+      if (linhas.length > 0) await admin.from("job_extra_entries").insert(linhas);
+    } catch (e) {
+      console.error(`[report-material] visita ${visita.id} ledger falhou (totais aplicados):`, e);
+    }
+    return { applied: true, ...alvo };
+  } catch (e) {
+    return { applied: false, ...alvo, error: e instanceof Error ? e.message : "unknown error" };
+  }
+}
+
+/**
+ * Material do job inteiro: o relatório do job (visita 1) mais o de cada visita extra
+ * que mandou relatório (19/10/2026). É o que o cliente paga de material, somado.
+ */
+export async function materialDoJobInteiro(
+  admin: SupabaseClient,
+  jobId: string,
+  finalReportDoJob: Record<string, unknown> | null,
+): Promise<{ cost: number; charge: number; porVisita: Array<{ index: number; cost: number; charge: number; recibos: number }> }> {
+  const dadosDe = (env: Record<string, unknown> | null | undefined) =>
+    ((env?.data as Record<string, unknown> | undefined) ?? env ?? null) as Record<string, unknown> | null;
+  const v1 = parseMaterialExtra(dadosDe(finalReportDoJob));
+  const porVisita = [{ index: 1, ...v1, recibos: recibosDoMaterial(dadosDe(finalReportDoJob)).length }];
+  try {
+    const { data } = await admin
+      .from("job_visits")
+      .select("visit_index, final_report")
+      .eq("job_id", jobId)
+      .is("deleted_at", null)
+      .neq("status", "cancelled")
+      .not("final_report", "is", null)
+      .order("visit_index", { ascending: true });
+    for (const v of (data ?? []) as Array<{ visit_index: number; final_report: Record<string, unknown> | null }>) {
+      const m = parseMaterialExtra(dadosDe(v.final_report));
+      porVisita.push({ index: v.visit_index, ...m, recibos: recibosDoMaterial(dadosDe(v.final_report)).length });
+    }
+  } catch {
+    /* sem visitas (ou sem a mig 338): fica só o job */
+  }
+  return {
+    cost: round2(porVisita.reduce((n, v) => n + v.cost, 0)),
+    charge: round2(porVisita.reduce((n, v) => n + v.charge, 0)),
+    porVisita,
+  };
 }

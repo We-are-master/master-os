@@ -8,6 +8,7 @@
  * relatório no mesmo dia da visita, então "hoje" também é a regra deles.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { materialDoJobInteiro } from "@/lib/report-material-extra";
 import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
 import { submeterRelatorioHousekeep } from "./submit-housekeep-report";
@@ -94,10 +95,19 @@ async function carregarJobComRelatorioDaUltimaVisita(
     .limit(1);
   const ultima = (visitas ?? [])[0] as { start_report?: unknown; final_report?: unknown } | undefined;
   if (!ultima?.final_report) return job as unknown as Record<string, unknown>;
+  // Material de todas as visitas, somado: a plataforma recebe um relatório só, e o
+  // material da V1 não pode sumir só porque a V2 fechou o trabalho (19/10/2026).
+  const material = await materialDoJobInteiro(supabase, jobId, (job as { final_report?: Record<string, unknown> | null }).final_report ?? null);
+  const finalDaUltima = { ...(ultima.final_report as Record<string, unknown>) };
+  if (material.cost > 0 || material.charge > 0) {
+    finalDaUltima.materials_bought = true;
+    finalDaUltima.materials_extra_cost = material.cost;
+    finalDaUltima.materials_extra_charge = material.charge;
+  }
   return {
     ...(job as unknown as Record<string, unknown>),
     start_report: ultima.start_report ?? (job as { start_report?: unknown }).start_report ?? null,
-    final_report: ultima.final_report,
+    final_report: finalDaUltima,
     final_report_submitted: true,
   };
 }
