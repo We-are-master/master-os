@@ -15,8 +15,8 @@ import {
   resolveJobForInvoiceSend,
   type JobBillingContactSnapshot,
 } from "@/lib/job-billing-contact";
-import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
-import { buildInvoiceEmailSubject, resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
+import { buildInvoiceClientEmail } from "@/lib/invoice-email-template";
+import { resolveInvoiceCcEmail } from "@/lib/invoice-email-subject";
 import { invoiceAmountDueForRequest } from "@/lib/invoice-request-amount";
 import { parseFrontendSetup, resolveInvoicePlatformFeePct } from "@/lib/frontend-setup";
 import { loadInvoicePdfData } from "@/lib/invoice-pdf-data";
@@ -206,7 +206,8 @@ export async function sendInvoiceEmail(
     return { error: pdfResult.error, status: 500 };
   }
 
-  const html = buildInvoiceEmailHTML(
+  // Copy 10 (fatura) ou 11 (recibo), na moldura única. O PDF já saiu acima, então "attached" é verdade.
+  const email = buildInvoiceClientEmail(
     inv,
     {
       clientName: billing.displayName,
@@ -215,13 +216,16 @@ export async function sendInvoiceEmail(
       serviceType: job?.title ?? null,
       completionDate: job?.completed_date ?? inv.created_at,
       quoteReference,
+      billingMode: billing.mode,
+      companyName: billing.companyName ?? null,
+      jobReference: job?.reference ?? inv.job_reference ?? null,
     },
     job,
-    emailOpts,
+    { ...emailOpts, documentAttached: true },
   );
-
-  const jobRef = job?.reference ?? inv.job_reference ?? "Job";
-  let subject = buildInvoiceEmailSubject(inv, jobRef);
+  const html = email.html;
+  let subject = email.subject;
+  let bodyText: string | undefined = email.text;
   let bodyHtml = html;
   // Reserva ainda não paga: o cliente recebe o convite para confirmar, não uma fatura.
   if (options.variant === "booking" && job && request.amountDueNow > 0.02) {
@@ -240,9 +244,11 @@ export async function sendInvoiceEmail(
       amountDueNow: request.amountDueNow,
       percent: pct,
       payLink: invoicePayLinkUrl(inv.reference, pct < 100 ? pct : undefined),
+      publico: billing.mode === "account" ? { tipo: "b2b", empresa: billing.companyName ?? null } : { tipo: "b2c", primeiroNome: billing.displayName },
     };
     subject = buildBookingPaymentSubject(booking);
     bodyHtml = buildBookingPaymentEmailHTML(booking);
+    bodyText = undefined;
   }
   const safeName = pdfResult.reference.replace(/[^\w.-]+/g, "_");
 
@@ -300,6 +306,7 @@ export async function sendInvoiceEmail(
       cc: ccList.length > 0 ? ccList : undefined,
       subject,
       html: bodyHtml,
+      ...(bodyText ? { text: bodyText } : {}),
       attachments: [anexoPdf],
     });
 

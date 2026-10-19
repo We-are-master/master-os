@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { buildBookingPaymentEmail } from "./booking-payment-email";
+import { FIXFY_CLIENT_BANK_DETAILS } from "./fixfy-client-bank-details";
+
+const base = {
+  clientName: "Sarah Jones",
+  jobReference: "JOB-9800",
+  invoiceReference: "INV-2026-999",
+  serviceTitle: "Handyman",
+  scope: "- Fix kitchen door\n- Replace hinge",
+  dayLabel: "Wednesday 21 October 2026",
+  windowLabel: "between 9am and midday",
+  address: "12 Example Road, London E1 6AN",
+  total: 180,
+  amountDueNow: 90,
+  percent: 50,
+  payLink: "https://os.getfixfy.com/pay/INV-2026-999?pct=50",
+};
+
+const SEM = (t: string) => {
+  assert.doesNotMatch(t, /[–—]/);
+  assert.doesNotMatch(t, /\{\{|undefined|null/);
+};
+
+test("#3 sinal: assunto, um botão com o valor, saldo calculado, transferência de booking", () => {
+  const m = buildBookingPaymentEmail(base);
+  assert.equal(m.subject, "Confirm your booking with a £90.00 deposit");
+  assert.match(m.text, /^Hi Sarah,$/m);
+  assert.match(m.text, /The remaining £90\.00 is due once the agreed work is complete\./);
+  assert.match(m.text, /Pay £90\.00 deposit: https:\/\/os\.getfixfy\.com\/pay/);
+  assert.match(m.text, /Proposed visit: Wednesday 21 October 2026 · between 9am and midday/);
+  assert.match(m.text, /Work included: Fix kitchen door; Replace hinge/);
+  assert.match(m.text, /We’ll confirm your booking once payment has been received and checked\./);
+  assert.match(m.text, new RegExp(FIXFY_CLIENT_BANK_DETAILS.accountNumber));
+  assert.equal((m.html.match(/background:#ED4B00;color:#FFFFFF/g) ?? []).length, 1);
+  SEM(m.subject);
+  SEM(m.text);
+});
+
+test("#4 total: assunto e botão", () => {
+  const m = buildBookingPaymentEmail({ ...base, amountDueNow: 180, percent: 100, publico: { tipo: "b2b", empresa: "Acme Lettings" } });
+  assert.equal(m.subject, "Confirm your Fixfy booking · £180.00");
+  assert.match(m.text, /^Hi Acme Lettings team,$/m);
+  assert.match(m.text, /Pay £180\.00 and confirm:/);
+  assert.doesNotMatch(m.text, /Remaining balance|deposit/i);
+  SEM(m.text);
+});
+
+test("sem dados bancários, sem bloco de transferência; sem data, sem linha de visita", () => {
+  const m = buildBookingPaymentEmail({ ...base, bankDetails: [], dayLabel: null, windowLabel: null, clientName: "" });
+  assert.doesNotMatch(m.text, /Prefer a bank transfer/);
+  assert.doesNotMatch(m.text, /Proposed visit/);
+  assert.match(m.text, /^Hi there,$/m);
+});

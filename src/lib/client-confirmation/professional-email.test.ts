@@ -5,14 +5,15 @@ import {
   buildProfessionalConfirmedEmail,
   enviarEmailConfirmadoComProfissional,
   rotuloDaJanela,
+  rotuloDoDia,
 } from "./professional-email";
 
 const input = {
   firstName: "Jane",
   ref: "JOB-9701",
   summary: "End of tenancy clean",
-  dateLabel: "Thursday 8 October",
-  windowLabel: "between 9am and 12pm",
+  dateLabel: "Thursday 8 October 2026",
+  windowLabel: "between 9am and midday",
   addressLine: "1 High St, London E3 4AA",
   professionalName: "Sparkle Clean Ltd",
   professionalAddress: "12 Mare Street, London E8 4RP",
@@ -28,12 +29,19 @@ const input = {
 describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
   it("names the professional in the subject and the body, as agent", () => {
     const m = buildProfessionalConfirmedEmail(input);
-    assert.equal(m.subject, "You're booked: Sparkle Clean Ltd, Thursday 8 October, 9am to 12pm");
-    assert.match(m.html, /You're booked, Jane\./);
+    assert.equal(m.subject, "Your Sparkle Clean Ltd booking is confirmed · Thursday 8 October 2026");
+    assert.match(m.html, /Hi Jane,/);
+    assert.match(m.html, /Your professional is confirmed/);
+    assert.match(m.text, /Your booking with Sparkle Clean Ltd is confirmed\. They’ll arrive on Thursday 8 October 2026, between 9am and midday/);
     assert.match(m.html, /Paid to GETFIXFY LTD \(Fixfy\), as agent for Sparkle Clean Ltd/);
     assert.match(m.html, /Not VAT registered, so no VAT is charged/);
     assert.match(m.html, /Free re-clean within 7 days\./);
-    assert.match(m.text, /your contract for this job is with Sparkle Clean Ltd/);
+    assert.match(m.text, /Your contract for this job is with Sparkle Clean Ltd/);
+    assert.match(m.text, /Consumer Rights Act 2015/);
+    assert.match(m.text, /version of 6 October 2026/);
+    assert.match(m.text, /cancel within 14 days/);
+    assert.match(m.text, /business address 12 Mare Street/);
+    assert.match(m.text, /Your statement is attached, issued in Sparkle Clean Ltd's name\./);
   });
 
   it("Fixfy promotion is its own line, paid by Fixfy on the customer's behalf", () => {
@@ -42,18 +50,35 @@ describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
     assert.match(m.text, /Fixfy promotion, paid by Fixfy on your behalf: -£26\.60/);
   });
 
-  it("no em or en dashes, and no Fixfy VAT number", () => {
+  it("no em or en dashes, no placeholders, and no Fixfy VAT number", () => {
     const m = buildProfessionalConfirmedEmail(input);
     for (const t of [m.subject, m.html, m.text]) {
       assert.doesNotMatch(t, /[\u2013\u2014]/);
+      assert.doesNotMatch(t, /\{\{/);
       assert.doesNotMatch(t, /478 1027 82/);
     }
+  });
+
+  it("no first name: Hi there,", () => {
+    const m = buildProfessionalConfirmedEmail({ ...input, firstName: "" });
+    assert.match(m.text, /^Hi there,$/m);
+  });
+
+  it("calendar link is a secondary link, not the button", () => {
+    const m = buildProfessionalConfirmedEmail({ ...input, calendarUrl: "https://calendar.google.com/calendar/render?x=1" });
+    assert.match(m.text, /Add to calendar: https:\/\/calendar\.google\.com/);
+  });
+});
+
+describe("rotuloDoDia", () => {
+  it("full date with the year", () => {
+    assert.equal(rotuloDoDia("2026-10-21"), "Wednesday 21 October 2026");
   });
 });
 
 describe("rotuloDaJanela", () => {
   it("reads like a person in London", () => {
-    assert.equal(rotuloDaJanela("2026-10-08T08:00:00Z", "2026-10-08T11:00:00Z"), "between 9am and 12pm");
+    assert.equal(rotuloDaJanela("2026-10-08T08:00:00Z", "2026-10-08T11:00:00Z"), "between 9am and midday");
     assert.equal(rotuloDaJanela("2026-12-08T09:30:00Z", "2026-12-08T13:00:00Z"), "between 9:30am and 1pm");
     assert.equal(rotuloDaJanela(null, "2026-10-08T11:00:00Z"), null);
   });

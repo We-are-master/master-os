@@ -1,20 +1,35 @@
 import "server-only";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { format, parseISO, isValid } from "date-fns";
 import type { Invoice } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
 import { splitInvoiceTradeAndFee, type InvoiceTradeFeeJob, type SplitInvoiceTradeFeeOptions } from "@/lib/invoice-trade-fee-split";
-import { displayBillingReference } from "@/lib/billing-reference";
 import { splitFeeVat } from "@/lib/invoice-fee-vat";
-import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { invoicePayLinkForClient } from "@/lib/pay-link-url";
 import {
   buildAgentReceiptView,
   type AgentReceiptParty,
   type AgentReceiptView,
 } from "@/lib/agent-model/receipt-view";
+import { dataLonga, emailFixfy, gbp, saudacao, type EmailFixfy } from "@/lib/emails/fixfy-shell";
+import {
+  dadosBancariosVerificados,
+  nomeDoDocumento,
+  nomeDoDocumentoAberto,
+  publicoDaCobranca,
+  referenciaDeCobranca,
+  semTravessao,
+} from "@/lib/emails/billing-email-common";
+
+/**
+ * E-mail da fatura ao cliente (copy 10), do recibo (11) e do e-mail final com
+ * fatura (12), na moldura única (`emailFixfy`, desenho de app aprovado em 20/10/2026).
+ *
+ * O HTML antigo (`email-templates/invoice-client.html`) não é mais lido; o PDF
+ * continua o mesmo. Toda a letra pequena de antes segue aqui: o detalhamento do
+ * valor (trade + management fee, ou as linhas do profissional), o quadro de VAT
+ * (Need a VAT invoice? / VAT só na taxa), e em Schedule A quem é o profissional,
+ * com quem o cliente contratou e que a Fixfy recebe como agente.
+ */
 
 export type InvoiceClientEmailContext = {
   clientName: string;
@@ -24,12 +39,18 @@ export type InvoiceClientEmailContext = {
   serviceType?: string | null;
   completionDate?: string | null;
   quoteReference?: string | null;
+  /** "account" = cobrança da conta (B2B, "Hi {empresa} team,"); senão B2C. */
+  billingMode?: "account" | "end_client" | null;
+  /** Empresa da conta (saudação B2B). */
+  companyName?: string | null;
+  /** JOB-9800, para "Booking" e o assunto do e-mail final. */
+  jobReference?: string | null;
 };
 
 export type InvoiceEmailOptions = {
-  /** When set, prepends a note that report PDFs are attached. */
+  /** E-mail final (copy 12): quantos arquivos do relatório foram anexados. */
   reportAttachmentCount?: number;
-  /** Shown when reports were requested but files could not be attached. */
+  /** Relatório pedido mas sem arquivo: o e-mail diz que não foi anexado. */
   missingReportNote?: string;
   customMessage?: string;
   /** £ amount requested in this send (may be % of balance). */
@@ -40,476 +61,137 @@ export type InvoiceEmailOptions = {
   tradeFeeOptions?: SplitInvoiceTradeFeeOptions;
   /**
    * Schedule A (modelo de agente): o profissional em nome de quem o recibo sai.
-   * Vem de `loadAgentReceiptParty`. Ausente = Schedule B, e-mail de sempre.
+   * Vem de `loadAgentReceiptParty`. Ausente = Schedule B.
    */
   agentParty?: AgentReceiptParty | null;
   /**
-   * Conta com `invoice_fee_vat` (mig 323): o corpo mostra o serviço do parceiro
-   * sem VAT e a taxa da Fixfy em líquido + VAT, igual ao PDF. Ausente = e-mail de sempre.
+   * Conta com `invoice_fee_vat` (mig 323): a letra pequena mostra o serviço do
+   * parceiro sem VAT e a taxa da Fixfy em líquido + VAT, igual ao PDF.
    */
   feeVat?: { ratePct: number; vatNumber: string } | null;
+  /** O PDF da fatura/recibo vai anexado (só diga "attached" se o PDF saiu). */
+  documentAttached?: boolean;
+  /** E-mail final do job (copy 12): o trabalho está concluído. */
+  final?: boolean;
+  /** Comentário público do Zendesk: sem tabelas internas. */
+  zendesk?: boolean;
+  /** Linhas da conta para transferência; padrão = a conta verificada da configuração (a do PDF). */
+  bankRows?: Array<[string, string]>;
 };
 
-const PAID_INTRO =
-  "We've received your payment for the work below. Thanks for choosing Fixfy.";
-const UNPAID_INTRO =
-  "Your statement of charges is ready. Review the amount due and payment details below.";
-const PARTIAL_INTRO =
-  "We've received a partial payment. The remaining balance is shown below.";
+export type InvoiceClientEmail = {
+  subject: string;
+  preheader: string;
+  html: string;
+  text: string;
+  /** invoice | statement | receipt */
+  documentName: string;
+  billingReference: string;
+};
 
-
-/**
- * Schedule B: as duas linhas de sempre ("Trade services" + taxa da Fixfy),
- * tiradas do HTML para o template aceitar também o recibo de agente. Em B a
- * Fixfy vende como principal, então a taxa é "management fee", nunca
- * "platform fee" (B não se diz plataforma nem agente).
- */
-const B_CHARGES_ROWS = `                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Trade services</p>
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Performed by the assigned trade provider</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{trade_amount}}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Fixfy management fee</p>
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">Coordination, vetting &amp; quality assurance</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£{{fixfy_fee}}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-`;
-
-/** Conta com VAT só na taxa: três linhas, e os valores sem "inc VAT". */
-function buildFeeVatChargesRows(trade: number, net: number, vat: number, ratePct: number): string {
-  const linha = (titulo: string, sub: string, valor: number) => `                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">${titulo}</p>
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">${sub}</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">£${formatMoneyPlain(valor)}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-`;
-  return (
-    linha("Trade services", "Passed through at cost, no VAT", trade) +
-    linha("Fixfy management fee (net)", "Coordination, vetting &amp; quality assurance", net) +
-    linha(`VAT at ${ratePct}%`, "On the Fixfy management fee only", vat)
-  );
+function round2(n: number): number {
+  return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-/** Conta com VAT só na taxa: o quadro diz de quem é o VAT, em vez de "Need a VAT invoice?". */
-function buildFeeVatBox(vatNumber: string): string {
-  return `          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">VAT</p>
-                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">Getfixfy Ltd · VAT No. ${escapeHtml(vatNumber)}. VAT is charged on the Fixfy management fee only. Trade services are passed through at cost, with no VAT added by Fixfy.</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-`;
+/** Endereço com o postcode, sem repetir o postcode. */
+function enderecoCompleto(address?: string | null, postcode?: string | null): string {
+  const a = semTravessao(address);
+  const pc = String(postcode ?? "").trim().toUpperCase();
+  if (!pc) return a;
+  if (a.toUpperCase().replace(/\s+/g, "").includes(pc.replace(/\s+/g, ""))) return a;
+  return [a, pc].filter(Boolean).join(", ");
 }
 
-/** Schedule B: o quadro "Need a VAT invoice?" de sempre. */
-const B_VAT_BOX = `          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">
-                      Need a VAT invoice?
-                    </p>
-                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">
-                      Request one at <a href="mailto:hello@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">hello@getfixfy.com</a>.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-`;
-
-let cachedTemplate: string | null = null;
-
-function loadInvoiceClientTemplate(): string {
-  if (cachedTemplate) return cachedTemplate;
-  cachedTemplate = readFileSync(
-    join(process.cwd(), "src/lib/email-templates/invoice-client.html"),
-    "utf8",
-  );
-  return cachedTemplate;
+function dataDoPagamento(inv: Invoice): string | null {
+  return dataLonga(inv.stripe_paid_at ?? inv.paid_date ?? inv.last_payment_date ?? null);
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+/** Só o que se sabe: pagamento verificado pela Stripe = cartão. Sem prova, a linha some. */
+function metodoDoPagamento(inv: Invoice): string | null {
+  if (inv.stripe_paid_at || inv.stripe_payment_status === "paid") return "Card";
+  return null;
 }
 
-function formatMoneyPlain(value: number): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "0.00";
-  return n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function clientFirstName(fullName: string): string {
-  const t = fullName.trim();
-  if (!t) return "there";
-  return t.split(/\s+/)[0] ?? t;
-}
-
-function refForTemplate(reference: string, prefix: string): string {
-  const re = new RegExp(`^${prefix}-`, "i");
-  return reference.replace(re, "").trim() || reference;
-}
-
-function formatDisplayDate(iso?: string | null): string {
-  if (!iso?.trim()) return "—";
-  const d = parseISO(iso.length === 10 ? `${iso}T12:00:00` : iso);
-  if (!isValid(d)) return iso.slice(0, 10);
-  return format(d, "d MMM yyyy");
-}
-
-const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
-
-function splitAddressAndPostcode(
-  address?: string | null,
-  postcode?: string | null,
-): { street: string; outward: string } {
-  const pc = postcode?.trim() ?? "";
-  const raw = (address ?? "").trim();
-  if (pc) {
-    const street = raw.replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim() || raw || "—";
-    return { street: street || "—", outward: pc };
-  }
-  const match = raw.match(UK_POSTCODE_RE);
-  if (match) {
-    const outward = match[1].toUpperCase().replace(/\s+/g, " ");
-    const street = raw.replace(match[0], "").replace(/,\s*$/, "").trim();
-    return { street: street || raw, outward };
-  }
-  return { street: raw || "—", outward: "—" };
-}
-
-function replaceAll(template: string, key: string, value: string): string {
-  return template.split(`{{${key}}}`).join(value);
-}
-
-function buildPaymentReceivedBanner(total: string, paymentDate: string): string {
-  return `
-          <tr>
-            <td bgcolor="#DCFCE7" style="background:#DCFCE7; padding:18px 40px; border-bottom:3px solid #22C55E;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td valign="middle" width="36" style="padding-right:12px;">
-                    <span style="display:inline-block; width:30px; height:30px; line-height:30px; background:#22C55E; color:#fff; border-radius:50%; text-align:center; font-size:18px; font-weight:700;">✓</span>
-                  </td>
-                  <td valign="middle">
-                    <p style="margin:0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#166534; text-transform:uppercase;">
-                      PAYMENT RECEIVED
-                    </p>
-                    <p style="margin:2px 0 0 0; padding:0; font-size:14px; color:#166534;">
-                      £${escapeHtml(total)} on ${escapeHtml(paymentDate)}
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-function buildPaymentDueBanner(amountDue: string, dueDate: string): string {
-  return `
-          <tr>
-            <td bgcolor="#FFF1EA" style="background:#FFF1EA; padding:18px 40px; border-bottom:3px solid #ED4B00;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td valign="middle" width="36" style="padding-right:12px;">
-                    <span style="display:inline-block; width:30px; height:30px; line-height:30px; background:#ED4B00; color:#fff; border-radius:50%; text-align:center; font-size:16px; font-weight:700;">!</span>
-                  </td>
-                  <td valign="middle">
-                    <p style="margin:0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#9A3412; text-transform:uppercase;">
-                      PAYMENT DUE
-                    </p>
-                    <p style="margin:2px 0 0 0; padding:0; font-size:14px; color:#9A3412;">
-                      £${escapeHtml(amountDue)} due by ${escapeHtml(dueDate)}
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-function buildPaymentMethodBlock(method: string, transactionId: string): string {
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 28px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:6px;">
-                <tr>
-                  <td style="padding:10px 16px;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle" style="font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">Method</td>
-                        <td valign="middle" align="right" style="font-size:13px; color:#020040; font-weight:600;">${escapeHtml(method)}</td>
-                      </tr>
-                      <tr>
-                        <td valign="middle" style="padding-top:4px; font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">Transaction</td>
-                        <td valign="middle" align="right" style="padding-top:4px; font-size:12px; color:#4A4A55; font-family:monospace;">${escapeHtml(transactionId)}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-function buildPayNowBlock(paymentLinkUrl: string): string {
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 28px 40px; text-align:center;">
-              <a href="${escapeHtml(paymentLinkUrl)}" style="display:inline-block;background:#020040;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:14px 32px;border-radius:8px;">Pay outstanding balance</a>
-              <p style="margin:10px 0 0 0; font-size:12px; color:#9A9AA8;">Secure payment via Stripe</p>
-            </td>
-          </tr>`;
-}
-
-/**
- * GetFixfy LTD bank details — shown on unpaid invoices so the client can pay
- * by bank transfer as an alternative to the Stripe link. Hidden on paid
- * receipts (no need to repeat).
- */
-function buildBankDetailsBlock(heading = "Or pay by bank transfer"): string {
-  const rowsHtml = FIXFY_CLIENT_BANK_DETAIL_ROWS
-    .map(
-      (r) => `
-                      <tr>
-                        <td valign="middle" style="padding-top:4px; font-size:11px; font-weight:700; letter-spacing:1px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(r.label)}</td>
-                        <td valign="middle" align="right" style="padding-top:4px; font-size:13px; color:#020040; font-family:monospace;">${escapeHtml(r.value)}</td>
-                      </tr>`,
-    )
-    .join("");
-
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 28px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:6px;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 8px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#9A9AA8; text-transform:uppercase;">${escapeHtml(heading)}</p>
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rowsHtml}
-                    </table>
-                    <p style="margin:10px 0 0 0; padding:0; font-size:11px; line-height:16px; color:#9A9AA8;">Use the statement reference as the payment reference so we can match your payment to this statement.</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-function buildReportNoticeBlock(count: number): string {
-  const label = count === 1 ? "report" : "reports";
-  return `
-          <tr>
-            <td class="px" style="padding:16px 40px 0 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF2FF; border-radius:8px;">
-                <tr>
-                  <td style="padding:12px 16px;">
-                    <p style="margin:0; font-size:13px; line-height:20px; color:#020040;">
-                      Your final ${label} ${count === 1 ? "is" : "are"} attached to this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-
-/** Uma linha da tabela de valores do recibo de agente. */
-function agentChargeRow(label: string, amount: string, sub?: string, muted = false): string {
-  const subHtml = sub
-    ? `
-                          <p style="margin:2px 0 0 0; font-size:11px; color:#9A9AA8;">${escapeHtml(sub)}</p>`
-    : "";
-  return `
-                <tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:${muted ? "#4A4A55" : "#1A1A1A"};">${escapeHtml(label)}</p>${subHtml}
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#020040; font-weight:600;">${amount}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>`;
-}
-
-/**
- * Schedule A: serviços pelo preço do profissional, VAT DELE (ou "No VAT
- * charged"), promoção da Fixfy em linha própria. Nada de "platform fee".
- */
-function buildAgentChargesRows(view: AgentReceiptView, paid: boolean): string {
-  const rows: string[] = view.lines.map((l) => agentChargeRow(l.label, `£${formatMoneyPlain(l.amount)}`));
+/** Schedule A: linhas do profissional, VAT dele, promoção. Em texto (letra pequena). */
+function detalheDoAgente(view: AgentReceiptView, paid: boolean): string[] {
+  const out: string[] = [];
+  const itens = view.lines.map((l) => `${semTravessao(l.label)} ${gbp(l.amount)}`);
+  if (itens.length) out.push(`Services: ${itens.join(". ")}.`);
   if (view.lines.length > 1 || view.vatLine || view.promotion > 0.02) {
-    rows.push(
-      agentChargeRow(
-        view.professionalName ? `${view.professionalName}'s price` : "Price",
-        `£${formatMoneyPlain(view.professionalPrice)}`,
-      ),
-    );
+    out.push(`${view.professionalName ? `${view.professionalName}'s price` : "Price"}: ${gbp(view.professionalPrice)}.`);
   }
   if (view.vatLine) {
-    rows.push(
-      agentChargeRow(
-        view.vatLine,
-        view.vatAmount != null ? `£${formatMoneyPlain(view.vatAmount)}` : "",
-        view.vatNumber ? `VAT number ${view.vatNumber}` : undefined,
-        true,
-      ),
-    );
+    const vat = view.vatAmount != null ? ` (${gbp(view.vatAmount)})` : "";
+    out.push(`${semTravessao(view.vatLine).replace(/\.$/, "")}${vat}${view.vatNumber ? `. VAT number ${view.vatNumber}` : ""}.`);
   }
-  if (view.promotion > 0.02) {
-    rows.push(agentChargeRow("Fixfy promotion, paid by Fixfy on your behalf", `-£${formatMoneyPlain(view.promotion)}`));
-  }
-  if (view.partOfPrice) {
-    rows.push(
-      agentChargeRow(paid ? "This receipt covers" : "This statement covers", `£${formatMoneyPlain(view.documentAmount)}`),
-    );
-  }
-  return rows.join("");
-}
+  if (view.promotion > 0.02) out.push(`Fixfy promotion, paid by Fixfy on your behalf: -${gbp(view.promotion)}.`);
+  if (view.partOfPrice) out.push(`${paid ? "This receipt covers" : "This statement covers"} ${gbp(view.documentAmount)}.`);
 
-/** Schedule A: o bloco "Your professional" (04-booking-copy, e-mail C2). */
-function buildProfessionalBlock(view: AgentReceiptView): string {
-  const name = view.professionalName;
-  const lines: string[] = [];
-  lines.push(
-    name
-      ? "Independent trader: they offer their services as a business, and your contract for this job is with them."
+  const nome = view.professionalName;
+  out.push(
+    nome
+      ? `Your professional: ${nome}, an independent trader. They offer their services as a business, and your contract for this job is with them.`
       : "Your job is carried out by an independent, vetted professional, named in your booking confirmation.",
   );
-  if (name && view.businessAddress) lines.push(`Business address: ${view.businessAddress}`);
-  if (name) {
-    lines.push(
-      view.vatNumber
-        ? `VAT: VAT registered, VAT number ${view.vatNumber}`
-        : "VAT: Not VAT registered, so no VAT is charged",
+  if (nome && view.businessAddress) out.push(`Business address: ${semTravessao(view.businessAddress)}.`);
+  if (nome) out.push(view.vatNumber ? `VAT: VAT registered, VAT number ${view.vatNumber}.` : "VAT: Not VAT registered, so no VAT is charged.");
+  out.push(`${semTravessao(view.issuerLine).replace(/\.$/, "")}.`);
+  out.push(semTravessao(view.paymentNote));
+  out.push(semTravessao(view.bookingNote));
+  return out.filter(Boolean);
+}
+
+/** Schedule B: trade + management fee (ou com VAT só na taxa), e o quadro de VAT. */
+function detalheSchedB(a: {
+  trade: number;
+  fee: number;
+  feeVat: { net: number; vat: number; ratePct: number; vatNumber: string } | null;
+  paid: boolean;
+  docAberto: string;
+}): string[] {
+  const out: string[] = [];
+  if (a.feeVat) {
+    out.push(
+      `Payment breakdown: Trade services, passed through at cost with no VAT, ${gbp(a.trade)}. Fixfy management fee (net), for coordination, vetting and quality assurance, ${gbp(a.feeVat.net)}. VAT at ${a.feeVat.ratePct}% on the Fixfy management fee only, ${gbp(a.feeVat.vat)}.`,
     );
+    out.push(
+      `VAT: Getfixfy Ltd, VAT No. ${a.feeVat.vatNumber}. VAT is charged on the Fixfy management fee only. Trade services are passed through at cost, with no VAT added by Fixfy.`,
+    );
+  } else {
+    out.push(
+      `Payment breakdown: Trade services, performed by the assigned trade provider, ${gbp(a.trade)}. Fixfy management fee, for coordination, vetting and quality assurance, ${gbp(a.fee)}.`,
+    );
+    out.push(`Need a VAT invoice? Request one at hello@getfixfy.com.`);
   }
-  const body = lines
-    .map((l) => `<p style="margin:4px 0 0 0; font-size:13px; line-height:19px; color:#4A4A55;">${escapeHtml(l)}</p>`)
-    .join("");
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 8px 40px;">
-              <p style="margin:0 0 12px 0; padding:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">
-                YOUR PROFESSIONAL
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;">
-                <tr>
-                  <td style="padding:16px 20px;">
-                    <p style="margin:0; font-size:16px; font-weight:700; color:#020040; line-height:22px;">${escapeHtml(name ?? "Your professional")}</p>
-                    ${body}
-                    <p style="margin:8px 0 0 0; font-size:12px; line-height:18px; color:#9A9AA8;">${escapeHtml(view.issuerLine)}.</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-/** Schedule A: no lugar do "Need a VAT invoice?", quem é quem e quem recebeu o pagamento. */
-function buildAgentNoticeBlock(view: AgentReceiptView): string {
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF1EA; border-left:4px solid #ED4B00; border-radius:0 6px 6px 0;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 6px 0; padding:0; font-size:10px; font-weight:700; letter-spacing:2px; color:#ED4B00; text-transform:uppercase;">
-                      Who you are booking with
-                    </p>
-                    <p style="margin:0 0 6px 0; padding:0; font-size:13px; line-height:19px; color:#020040;">${escapeHtml(view.paymentNote)}</p>
-                    <p style="margin:0; padding:0; font-size:13px; line-height:19px; color:#020040;">${escapeHtml(view.bookingNote)}</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-function resolvePaymentMethod(inv: Invoice): string {
-  if (inv.stripe_paid_at || inv.stripe_payment_status === "paid") return "Card (Stripe)";
-  if (inv.stripe_payment_link_url) return "Card (Stripe)";
-  return "Bank transfer";
-}
-
-function resolveTransactionId(inv: Invoice): string {
-  const pi = inv.stripe_payment_intent_id?.trim();
-  if (pi) return pi;
-  return inv.reference?.trim() || "—";
+  out.push(
+    a.paid
+      ? "This receipt confirms your payment to Getfixfy Ltd for the work above."
+      : `This ${a.docAberto} from Getfixfy Ltd covers the work above.`,
+  );
+  return out;
 }
 
 /**
- * Fixfy client invoice / payment receipt email (HTML body).
- * Green "Payment received" banner only when payment is verified; otherwise shows invoice with payment due.
+ * Fixfy client invoice / payment receipt email (copy 10, 11, 12).
+ * "Payment received" só com pagamento verificado (`isInvoicePaymentVerified`).
  */
-export function buildInvoiceClientEmailHTML(
+export function buildInvoiceClientEmail(
   invoice: Invoice,
   context: InvoiceClientEmailContext,
   job?: InvoiceTradeFeeJob | null,
   options?: InvoiceEmailOptions,
-): string {
+): InvoiceClientEmail {
   const paid = isInvoicePaymentVerified(invoice);
-  const invAmt = Math.max(0, Math.round((Number(invoice.amount ?? 0) || 0) * 100) / 100);
-  const paidAmt = Math.round(invoiceAmountPaid(invoice) * 100) / 100;
+  const invAmt = Math.max(0, round2(Number(invoice.amount ?? 0)));
+  const paidAmt = round2(invoiceAmountPaid(invoice));
   const balanceDue = invoiceBalanceDue(invoice);
   const fullDue = balanceDue > 0.02 ? balanceDue : invAmt;
   const amountDueNow =
-    !paid && options?.amountDueNow != null && options.amountDueNow > 0
-      ? Math.round(options.amountDueNow * 100) / 100
-      : fullDue;
+    !paid && options?.amountDueNow != null && options.amountDueNow > 0 ? round2(options.amountDueNow) : fullDue;
   const isPartialRequest =
-    !paid &&
-    options?.amountDueNow != null &&
-    options.amountDueNow > 0.02 &&
-    Math.abs(amountDueNow - fullDue) > 0.02;
+    !paid && options?.amountDueNow != null && options.amountDueNow > 0.02 && Math.abs(amountDueNow - fullDue) > 0.02;
   const partial = !paid && paidAmt > 0.02;
-  // Schedule A (modelo de agente): recibo em nome do profissional; ausente = B.
+
   const agentView = options?.agentParty
     ? buildAgentReceiptView({
         party: options.agentParty,
@@ -524,182 +206,162 @@ export function buildInvoiceClientEmailHTML(
     ...options?.tradeFeeOptions,
     schedule: agentView ? "A" : options?.tradeFeeOptions?.schedule,
   });
-  const { street, outward } = splitAddressAndPostcode(context.propertyAddress, context.postcode);
-  // Sem cotação a linha some: "Linked to QT-—" era o que o cliente lia (15/10/2026).
-  const linkedQuoteRow = context.quoteReference?.trim()
-    ? `<tr>
-                        <td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Linked to</td>
-                        <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">QT-${escapeHtml(refForTemplate(context.quoteReference, "QT"))}</td>
-                      </tr>`
-    : "";
-  const billingRefDisplay = displayBillingReference(invoice.reference);
-  const issueDate = formatDisplayDate(invoice.created_at);
-  const dueDate = formatDisplayDate(invoice.due_date);
-  const paymentDate = formatDisplayDate(
-    invoice.stripe_paid_at ?? invoice.paid_date ?? invoice.last_payment_date,
-  );
-  const completionDate = formatDisplayDate(context.completionDate);
+  const feeVat = !agentView && options?.feeVat ? { ...splitFeeVat(fee, options.feeVat.ratePct), ...options.feeVat } : null;
 
-  let html = loadInvoiceClientTemplate();
+  const docName = nomeDoDocumento({ pago: paid, agente: Boolean(agentView) });
+  const docAberto = nomeDoDocumentoAberto(Boolean(agentView));
+  const ref = referenciaDeCobranca(invoice.reference);
+  const service = semTravessao(context.serviceType?.trim() || context.jobTitle || "your job");
+  const property = enderecoCompleto(context.propertyAddress, context.postcode) || null;
+  const jobRef = String(context.jobReference ?? invoice.job_reference ?? "").trim() || null;
+  const due = dataLonga(invoice.due_date ?? null);
+  const attached = Boolean(options?.documentAttached);
+  const reportCount = Math.max(0, options?.reportAttachmentCount ?? 0);
+  const reportMissing = Boolean(options?.missingReportNote?.trim());
+  const final = Boolean(options?.final);
+  const zendesk = Boolean(options?.zendesk);
+  const greeting = saudacao(publicoDaCobranca(context.billingMode, context.clientName, context.companyName));
 
-  const statusBanner = paid
-    ? buildPaymentReceivedBanner(formatMoneyPlain(invAmt), paymentDate)
-    : buildPaymentDueBanner(formatMoneyPlain(amountDueNow), dueDate);
-
-  const reportCount = options?.reportAttachmentCount ?? 0;
-  const missingReport = options?.missingReportNote?.trim() ?? "";
-  const reportNotice =
-    (reportCount > 0 ? buildReportNoticeBlock(reportCount) : "") +
-    (missingReport
-      ? `
-          <tr>
-            <td class="px" style="padding:16px 40px 0 40px;">
-              <p style="margin:0; font-size:13px; line-height:20px; color:#B45309;">${escapeHtml(missingReport)}</p>
-            </td>
-          </tr>`
-      : "");
-
-  const documentEyebrow = agentView
-    ? paid
-      ? agentView.professionalName
-        ? `RECEIPT FROM ${agentView.professionalName.toUpperCase()}`
-        : "PAYMENT RECEIVED"
-      : "STATEMENT OF CHARGES"
-    : paid
-      ? "PAYMENT RECEIPT"
-      : "STATEMENT OF CHARGES";
-  const pageTitle = agentView ? (paid ? "Receipt" : "Statement of Charges") : paid ? "Payment Receipt" : "Statement of Charges";
-  const refLabel = paid ? (agentView ? "Receipt No." : "Receipt Ref") : "Statement Ref";
-  const refValue = escapeHtml(billingRefDisplay);
-
-  const agentIntro = agentView
-    ? paid
-      ? `We've received your payment for the work below, on behalf of ${agentView.professionalLabel}. This receipt is issued in their name.`
-      : partial
-        ? `We've received a partial payment on behalf of ${agentView.professionalLabel}. The remaining balance is shown below.`
-        : `Your statement for work by ${agentView.professionalLabel} is ready. Review the amount due and payment details below.`
-    : null;
-  const intro = options?.customMessage?.trim()
-    ? escapeHtml(options.customMessage.trim())
-    : agentIntro
-      ? escapeHtml(agentIntro)
-      : paid
-        ? PAID_INTRO
-        : partial
-          ? PARTIAL_INTRO
-          : UNPAID_INTRO;
-
-  const dueDateRow = paid
-    ? ""
-    : `<tr>
-                        <td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Due date</td>
-                        <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">${escapeHtml(dueDate)}</td>
-                      </tr>`;
-
-  const amountPaidRow = partial
-    ? `<tr>
-                  <td style="padding:14px 20px; border-bottom:1px solid #F2F0FA;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td valign="middle">
-                          <p style="margin:0; font-size:14px; color:#1A1A1A;">Already paid</p>
-                        </td>
-                        <td valign="middle" align="right" style="font-size:14px; color:#0F6E56; font-weight:600;">£${formatMoneyPlain(paidAmt)}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>`
-    : "";
-
-  const breakdownTotalLabel = paid
-    ? "Total paid"
-    : isPartialRequest
-      ? "Amount due now"
-      : partial
-        ? "Balance due"
-        : "Total due";
-  const breakdownTotalAmount = paid ? formatMoneyPlain(invAmt) : formatMoneyPlain(amountDueNow);
-
-  const paymentMethodBlock = paid
-    ? buildPaymentMethodBlock(resolvePaymentMethod(invoice), resolveTransactionId(invoice))
-    : "";
-
+  // Link de pagamento: pedido parcial cobra a % pelo /pay do OS.
   const payLinkBase = paid ? "" : invoicePayLinkForClient(invoice.reference, invoice.stripe_payment_link_url);
-  // Partial requests charge the requested % through the OS /pay link; legacy
-  // fixed Stripe Payment Links can't vary the amount, so they keep the full link.
   const requestPct = Math.round(Number(options?.requestPercent ?? 0));
   const payLink =
     payLinkBase && isPartialRequest && payLinkBase.includes("/pay/") && requestPct >= 1 && requestPct <= 99
       ? `${payLinkBase.split("?")[0]}?pct=${requestPct}`
       : payLinkBase;
-  const payNowBlock = payLink ? buildPayNowBlock(payLink) : "";
-  const bankDetailsBlock = paid
-    ? ""
-    : agentView
-      ? buildBankDetailsBlock(`Or pay by bank transfer to Fixfy, as agent for ${agentView.professionalLabel}`)
-      : buildBankDetailsBlock();
 
-  /**
-   * O texto de quem vende, alinhado aos termos de 06/10/2026.
-   *
-   * Schedule A: a Fixfy é agente do profissional, que é com quem o cliente
-   * contratou, e recebe o pagamento em nome dele.
-   * Schedule B: venda da própria Getfixfy Ltd (principal). Nada de "plataforma
-   * divulgada" nem de agente: em B a Fixfy é quem vende o serviço.
-   */
-  const vatPrimary = agentView
-    ? agentView.bookingNote
-    : paid
-      ? "This receipt confirms your full payment to Getfixfy Ltd for the work below."
-      : "This statement from Getfixfy Ltd covers the work completed below.";
+  // Letra pequena: o detalhamento e as divulgações de sempre.
+  const letra: string[] = [];
+  if (agentView) letra.push(...detalheDoAgente(agentView, paid));
+  else letra.push(...detalheSchedB({ trade, fee, feeVat, paid, docAberto }));
+  if (partial) letra.push(`Already paid: ${gbp(paidAmt)}. Balance due: ${gbp(fullDue)}.`);
+  if (isPartialRequest) letra.push(`This request is ${requestPct}% of the ${gbp(fullDue)} balance.`);
+  letra.push(`${paid ? "Total paid" : "Total"}: ${gbp(invAmt)}.`);
+  if (context.quoteReference?.trim()) letra.push(`Linked to quote QT-${context.quoteReference.trim().replace(/^QT-/i, "")}.`);
+  if (!paid && agentView) letra.push(`Bank transfers are paid to Fixfy, as agent for ${agentView.professionalLabel}.`);
 
-  const preheader = agentView
-    ? paid
-      ? `Payment received: £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}, issued for ${agentView.professionalLabel}.`
-      : `Statement ${billingRefDisplay}: £${formatMoneyPlain(isPartialRequest ? amountDueNow : invAmt)} due for ${context.jobTitle}, work by ${agentView.professionalLabel}.`
-    : paid
-    ? `Payment received: £${formatMoneyPlain(invAmt)} for ${context.jobTitle}. Receipt ${billingRefDisplay}.`
-    : isPartialRequest
-      ? `Statement ${billingRefDisplay}: £${formatMoneyPlain(amountDueNow)} requested (${options?.requestPercent ?? 0}% of £${formatMoneyPlain(fullDue)}) for ${context.jobTitle}.`
-      : `Statement ${billingRefDisplay}: £${formatMoneyPlain(invAmt)} due for ${context.jobTitle}.`;
+  const banco = (options?.bankRows ?? dadosBancariosVerificados()).filter(([, v]) => String(v ?? "").trim());
+  const transferencia = !paid && ref && banco.length ? { dadosBancarios: banco, referencia: ref } : null;
+  const cta = !paid && payLink ? { label: `Pay ${gbp(amountDueNow)}`, url: payLink } : null;
+  const custom = options?.customMessage?.trim() || null;
 
-  html = replaceAll(html, "page_title", escapeHtml(pageTitle));
-  html = replaceAll(html, "preheader", escapeHtml(preheader));
-  html = replaceAll(html, "status_banner", statusBanner);
-  html = replaceAll(html, "report_notice_block", reportNotice);
-  html = replaceAll(html, "document_eyebrow", documentEyebrow);
-  html = replaceAll(html, "client_first_name", escapeHtml(clientFirstName(context.clientName)));
-  html = replaceAll(html, "intro_message", intro);
-  html = replaceAll(html, "ref_label", refLabel);
-  html = replaceAll(html, "ref_value", refValue);
-  html = replaceAll(html, "issue_date", escapeHtml(issueDate));
-  html = replaceAll(html, "due_date_row", dueDateRow);
-  html = replaceAll(html, "linked_quote_row", linkedQuoteRow);
-  html = replaceAll(html, "job_title", escapeHtml(context.jobTitle || "Job"));
-  html = replaceAll(
-    html,
-    "type_of_work",
-    escapeHtml(context.serviceType?.trim() || context.jobTitle || "Property services"),
-  );
-  html = replaceAll(html, "property_address", escapeHtml(street));
-  html = replaceAll(html, "property_postcode", escapeHtml(outward));
-  html = replaceAll(html, "completion_date", escapeHtml(completionDate));
-  html = replaceAll(html, "professional_block", agentView ? buildProfessionalBlock(agentView) : "");
-  html = replaceAll(html, "job_section_label", agentView ? "JOB" : "JOB COMPLETED");
-  html = replaceAll(html, "breakdown_section_label", agentView ? "SERVICES" : "PAYMENT BREAKDOWN");
-  const feeVat = !agentView && options?.feeVat ? { ...splitFeeVat(fee, options.feeVat.ratePct), ...options.feeVat } : null;
-  html = replaceAll(html, "charges_rows", agentView ? buildAgentChargesRows(agentView, paid) : feeVat ? buildFeeVatChargesRows(trade, feeVat.net, feeVat.vat, feeVat.ratePct) : B_CHARGES_ROWS);
-  html = replaceAll(html, "vat_box_block", agentView ? buildAgentNoticeBlock(agentView) : feeVat ? buildFeeVatBox(feeVat.vatNumber) : B_VAT_BOX);
-  html = replaceAll(html, "trade_amount", formatMoneyPlain(trade));
-  html = replaceAll(html, "fixfy_fee", formatMoneyPlain(fee));
-  html = replaceAll(html, "amount_paid_row", amountPaidRow);
-  html = replaceAll(html, "breakdown_total_label", breakdownTotalLabel);
-  html = replaceAll(html, "breakdown_total_amount", breakdownTotalAmount);
-  html = replaceAll(html, "payment_method_block", paymentMethodBlock);
-  html = replaceAll(html, "pay_now_block", payNowBlock);
-  html = replaceAll(html, "bank_details_block", bankDetailsBlock);
-  html = replaceAll(html, "vat_disclaimer_primary", escapeHtml(vatPrimary));
-  html = replaceAll(html, "total_amount", formatMoneyPlain(invAmt));
+  let shell: EmailFixfy;
+  let subject: string;
 
-  return html;
+  if (final) {
+    // Copy 12: o e-mail final do job com a fatura (ou o recibo, se já está paga).
+    const p1 =
+      reportCount > 0
+        ? "The agreed work is complete, and your final report is attached. We hope you’re pleased with the result."
+        : "The agreed work is complete. We hope you’re pleased with the result.";
+    const pMissing = reportMissing ? "We couldn’t attach the report files to this email. Just reply and we’ll send you a copy." : null;
+    const p2 = paid
+      ? attached
+        ? "Your payment receipt is also attached. Thank you for your payment."
+        : "Thank you for your payment. There is nothing left to pay."
+      : `${attached ? `Your ${docName} is also included. ` : ""}The remaining amount to pay is ${gbp(amountDueNow)}${due ? `, due by ${due}` : ""}.`;
+    const p3 =
+      reportCount > 0
+        ? "Please have a look through the report. If anything needs our attention, just reply and let us know."
+        : "If anything needs our attention, just reply and let us know.";
+    subject = reportCount > 0 ? `Your job report and ${docName} · ${jobRef ?? ref}` : `Your ${docName} · ${jobRef ?? ref}`;
+    shell = {
+      preheader: paid
+        ? reportCount > 0
+          ? "Your report and payment receipt are attached."
+          : "Thank you for your payment."
+        : reportCount > 0
+          ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
+          : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
+      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
+      titulo: "Your work is complete",
+      destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      saudacao: greeting,
+      paragrafos: [custom ?? p1, ...(pMissing ? [pMissing] : []), p2, p3],
+      linhas: [
+        ["Service", service],
+        ["Property", property],
+        ["Booking", jobRef],
+        ["Billing reference", ref],
+        ["Balance due", paid ? null : gbp(amountDueNow)],
+        ["Due date", paid ? null : due],
+      ],
+      cta,
+      transferencia,
+      letraPequena: letra,
+      zendesk,
+    };
+  } else if (paid) {
+    // Copy 11: recibo. Valor RECEBIDO (amount_paid), nunca o total da fatura.
+    const recebido = paidAmt > 0.02 ? paidAmt : invAmt;
+    const totalDoJob = job ? round2(Number(job.client_price ?? 0) + Number(job.extras_amount ?? 0)) : 0;
+    const ehEntrada = String((invoice as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit";
+    const restante = ehEntrada && totalDoJob > 0 ? round2(totalDoJob - recebido) : 0;
+    const frasePagamento =
+      restante > 0.02
+        ? `Your remaining balance is ${gbp(restante)}, due on completion of the work.`
+        : `There is no remaining balance on this ${docAberto}.`;
+    subject = `Payment received · ${ref}`;
+    shell = {
+      preheader: attached ? `Thank you. Your receipt for ${gbp(recebido)} is attached.` : `Thank you for your payment of ${gbp(recebido)}.`,
+      estado: { texto: "Payment received", cor: "green" },
+      titulo: "Thank you for your payment",
+      destaque: { linha1: `${gbp(recebido)} received`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null },
+      saudacao: greeting,
+      paragrafos: [
+        custom ?? `We’ve received ${gbp(recebido)} for ${service}.${attached ? " Your receipt is attached for your records." : ""}`,
+        frasePagamento,
+        "If you have any questions about the payment, just reply and we’ll help.",
+      ],
+      linhas: [
+        ["Reference", ref],
+        ["Amount received", gbp(recebido)],
+        ["Payment date", dataDoPagamento(invoice)],
+        ["Payment method", metodoDoPagamento(invoice)],
+        ["Booking", jobRef],
+        ["Remaining balance", restante > 0.02 ? gbp(restante) : null],
+      ],
+      letraPequena: letra,
+      zendesk,
+    };
+  } else {
+    // Copy 10: fatura (ou statement) com valor a pagar.
+    subject = `Your ${docName} ${ref} is ready`;
+    shell = {
+      preheader: `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
+      estado: { texto: "Payment due", cor: "navy" },
+      titulo: `Your ${docName} is ready`,
+      destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      saudacao: greeting,
+      paragrafos: [
+        custom ?? `Your ${docName} for ${service} is ready. You’ll find the amount due and payment details below.`,
+        `Please pay ${gbp(amountDueNow)}${due ? ` by ${due}` : ""}, using the button or bank details provided.`,
+        "If anything needs clarifying, just reply. We’re happy to help.",
+      ],
+      linhas: [
+        ["Reference", ref],
+        ["Service", service],
+        ["Property", property],
+        ["Amount due", gbp(amountDueNow)],
+        ["Due date", due],
+      ],
+      cta,
+      transferencia,
+      letraPequena: letra,
+      zendesk,
+    };
+  }
+
+  const { html, text } = emailFixfy(shell);
+  return { subject, preheader: shell.preheader, html, text, documentName: docName, billingReference: ref };
+}
+
+/** HTML só (pré-visualização `/api/invoices/email-preview` e chamadores antigos). */
+export function buildInvoiceClientEmailHTML(
+  invoice: Invoice,
+  context: InvoiceClientEmailContext,
+  job?: InvoiceTradeFeeJob | null,
+  options?: InvoiceEmailOptions,
+): string {
+  return buildInvoiceClientEmail(invoice, context, job, options).html;
 }

@@ -29,6 +29,7 @@ import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCo
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
+import { textoDePagamentoRecebido } from "./confirmacao-no-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
@@ -660,7 +661,7 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
   const sb = createServiceClient();
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name")
     .eq("email", email.toLowerCase())
     .order("atualizado_em", { ascending: false })
     .limit(1)
@@ -674,7 +675,11 @@ type ConversaComCheckout = {
   checkout_deposit: boolean | null;
   checkout_ref: string | null;
   checkout_total: number | null;
+  /** O sinal cobrado de fato (mig 306); o total menos ele é o saldo. */
+  checkout_sinal?: number | null;
   phone: string | null;
+  /** Nome do perfil do WhatsApp: pessoa, então saudação B2C. */
+  name?: string | null;
   chases?: number | null;
 };
 
@@ -687,7 +692,7 @@ export async function avisarPagamentoNoWhatsAppPelaReferencia(jobReference: stri
   const sb = createServiceClient();
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, phone, chases")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name, chases")
     .eq("checkout_ref", jobReference)
     .order("atualizado_em", { ascending: false })
     .limit(1)
@@ -706,9 +711,13 @@ async function confirmarPagamentoNaConversa(
   await sb.from("harvey_wa_conversas").update({ chases: 3 }).eq("conversation_id", data.conversation_id);
   const ref = bookingRef ?? (data.checkout_ref as string | null);
   if (ref) await mandarEventoWhatsApp(sb, { telefone: data.phone as string | null, evento: "Purchase", chave: ref, valor: data.checkout_total as number | null }).catch((e) => console.error("[harvey-wa] meta compra", e));
-  const texto = data.checkout_deposit
-    ? `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email. The other half is paid after the job.`
-    : `Payment received, thank you. You're booked in${bookingRef ? ` (${bookingRef})` : ""}, and the confirmation is in your email.`;
+  const texto = textoDePagamentoRecebido({
+    nome: data.name,
+    referencia: bookingRef,
+    deposito: Boolean(data.checkout_deposit),
+    total: data.checkout_total,
+    sinal: data.checkout_sinal,
+  });
   // O job pago nasce neste mesmo ticket (dono, 07/10/2026): a conversa fica aberta, só a nota.
   await anotarPagamentoNaConversa(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job is on this ticket.`).catch((e) =>
     console.error("[harvey-wa] nota de pagamento", e),

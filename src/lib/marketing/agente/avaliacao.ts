@@ -10,37 +10,53 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { ASSINATURA_DO_VICTOR, renderCampanha } from "@/lib/emails/campanha-layout";
 import { unsubscribeUrl } from "@/lib/email/unsubscribe";
-import { SITE } from "./calendario";
-import { remetente } from "./clube";
+import { emailDeMarketing, ofertaAtiva, remetente } from "./clube";
 import { publicoComPosicao } from "./lista";
 import { clientesComReclamacaoRecente } from "@/lib/feedback/reclamacao";
 
 const CAMPANHA = "review_referral";
 const LINK_DO_GOOGLE = "https://share.google/xs9HzIccBF88TgZoj";
 const DIA_MS = 24 * 60 * 60 * 1000;
+/** O cupom de indicação. Código, valor, mínimo e validade saem de `marketing/cupons.ts`. */
+const CUPOM_DE_INDICACAO = "REFER20";
 
-export const ASSUNTO_DA_AVALIACAO = "How did we do?";
+// Copy aprovada em 20/10/2026 (docs/copy/fixfy-client-copy.json, id 40).
+export const ASSUNTO_DA_AVALIACAO = "How was your experience with Fixfy?";
 
-export function htmlDaAvaliacao(nome: string | undefined, saida: string): string {
-  return renderCampanha({
-    preheader: "Your feedback, and £20 off for a friend.",
-    etiqueta: "Thank you",
-    selo: "Thank you",
-    titulo: "Thanks for booking with us",
-    nome,
-    blocos: [
-      { tipo: "texto", html: "My name is Victor, and I look after operations at Fixfy. I hope the job was done exactly the way you wanted." },
-      { tipo: "texto", html: "If anything was missed, reply within 14 days of the job and we will come back and put it right. Your reply comes straight to me." },
-      { tipo: "texto", html: "If you were happy, two things help us more than anything. A short Google review, so the next person knows what to expect. And passing us on: a friend who books with <strong>REFER20</strong> gets £20 off any booking of £100 or more." },
+/**
+ * O e-mail de avaliação + indicação, na moldura única com rodapé de marketing.
+ *
+ * Sem prazo novo de garantia ou reclamação (saiu o "reply within 14 days"). A
+ * indicação é secundária e só aparece com o cupom vivo na configuração; sem
+ * ele, o e-mail é só o pedido de avaliação.
+ */
+export function emailDaAvaliacao(nome: string | null | undefined, saida: string, agora: Date = new Date()): { assunto: string; html: string; texto: string } {
+  const oferta = ofertaAtiva(CUPOM_DE_INDICACAO, agora);
+  const indicacao = oferta
+    ? [
+        `Know someone with a job on their list? They can use ${oferta.codigo} for ${oferta.desconto} off an eligible booking${oferta.minimo ? ` of ${oferta.minimo} or more` : ""}. The offer is valid until ${oferta.validade}.`,
+        "Thank you for passing us on.",
+      ]
+    : [];
+  const { html, text } = emailDeMarketing({
+    preheader: oferta ? "We’d love your feedback, and there’s an offer to share with a friend." : "We’d love to hear how it went.",
+    estado: { texto: "Thank you", cor: "navy" },
+    titulo: "We’d love to hear how it went",
+    primeiroNome: nome,
+    paragrafos: [
+      "Thank you again for choosing Fixfy. We hope you’re pleased with the work.",
+      "If you have a moment, a short review would mean a great deal to us and help other customers decide who to book. If anything needs our attention, please reply and let us know.",
+      ...indicacao,
     ],
-    oferta: { codigo: "REFER20", valor: "£20 off", sobre: "for a friend, on bookings of £100 or more", validade: "31 March" },
-    cta: { texto: "Leave a review", url: LINK_DO_GOOGLE },
-    unsubscribeUrl: saida,
-    assinatura: ASSINATURA_DO_VICTOR,
-    notaDoRodape: `Book again any time at <a href="${SITE}" style="color:inherit;">getfixfy.com</a>.`,
+    cta: { label: "Leave a review", url: LINK_DO_GOOGLE },
+    descadastroUrl: saida,
   });
+  return { assunto: ASSUNTO_DA_AVALIACAO, html, texto: text };
+}
+
+export function htmlDaAvaliacao(nome: string | undefined, saida: string, agora?: Date): string {
+  return emailDaAvaliacao(nome, saida, agora).html;
 }
 
 export async function mandarAvaliacoes(opcoes: { aplicar: boolean; max?: number; agora?: Date }): Promise<{ elegiveis: number; enviados: number; erros: string[] }> {
@@ -76,7 +92,10 @@ export async function mandarAvaliacoes(opcoes: { aplicar: boolean; max?: number;
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from, reply_to, to: [a.email], subject: ASSUNTO_DA_AVALIACAO,
-          html: htmlDaAvaliacao(a.nome === "there" ? undefined : a.nome, unsubscribeUrl(a.email as string)),
+          ...(() => {
+            const e = emailDaAvaliacao(a.nome === "there" ? undefined : a.nome, unsubscribeUrl(a.email as string), agora);
+            return { html: e.html, text: e.texto };
+          })(),
           tags: [{ name: "campanha", value: CAMPANHA }],
         }),
         signal: AbortSignal.timeout(15_000),

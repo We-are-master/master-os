@@ -28,7 +28,9 @@
  * `quote_closed_by_customer`. Só 8h às 20h de Londres.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { autorDosEmails, comentarioDoEmail, htmlDoEmail, textoDoEmail } from "./email-do-leo";
+import { autorDosEmails, comentarioDoEmail, montarEmail, REMETENTE_DA_EQUIPE, type EmailDeAcompanhamento } from "./email-do-leo";
+import { dataLonga, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
+import { imovelCurto, servicoCurto } from "@/lib/zendesk-quote-sent";
 import { zendeskApi, addTicketTags } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { historico, scApi, scNotificacao } from "./sunshine";
@@ -74,21 +76,127 @@ export function ehB2B(t: Pick<Ticket, "tags">): boolean {
   return t.tags.includes("b2b");
 }
 
-export function textoDaCobranca(passo: 1 | 2 | 3, nome: string, b2b = false): string {
-  // Tom profissional, na voz de quem assina (papel autor_emails), e a frase de fecho em parágrafo próprio: dono, 15/10/2026.
+/** O que a copy precisa da quote do ticket. Tudo opcional: o texto se ajusta ao que existe. */
+export type DadosDaCobranca = {
+  publico: Publico;
+  servico?: string | null;
+  referencia?: string | null;
+  endereco?: string | null;
+  /** Link tokenizado da quote (o mesmo do e-mail da cotação). */
+  link?: string | null;
+  /** Só no último lembrete: o dia em que a régua fecha, já escrito ("Wednesday 21 October 2026"). */
+  fechaEm?: string | null;
+};
+
+const juntaPonto = (partes: Array<string | null | undefined>) => partes.map((p) => String(p ?? "").trim()).filter(Boolean).join(" · ");
+
+/**
+ * O e-mail de cada lembrete (copy 24 a 28). B2C: três; B2B (tag b2b): dois, o 2º
+ * já é o aviso de fechamento. O assunto só vale fora de thread (Resend): no
+ * comentário do Zendesk o ticket mantém o assunto dele.
+ */
+export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobranca): EmailDeAcompanhamento {
+  const s = servicoCurto(d.servico);
+  const ref = d.referencia?.trim() || "";
+  const prop = imovelCurto(d.endereco);
+  const endereco = d.endereco?.replace(/\s+/g, " ").trim() || "";
+  const cta = d.link ? { label: "Review your quote", url: d.link } : null;
+  const saud = saudacao(d.publico);
   if (b2b) {
+    if (passo === 1) {
+      return {
+        assunto: juntaPonto(["Quote follow-up", prop, ref]),
+        preheader: "Please let us know whether you would like to proceed.",
+        saudacao: saud,
+        paragrafos: [
+          `We’re following up on ${ref ? `quote ${ref}` : "our quote"}${s ? ` for ${s}` : ""}${endereco ? ` at ${endereco}` : ""}.`,
+          "If you’d like to proceed, please confirm your approval and preferred dates through the usual quote process. We’ll then check availability and coordinate access.",
+          "If you’re waiting for the property owner’s approval or need any changes to the scope, just let us know.",
+        ],
+        cta,
+      };
+    }
     return {
-      1: `Hi ${nome},\n\nI am following up on the quote we sent. Should you wish to proceed, please reply with your preferred date and we will confirm the booking.`,
-      // Na conta o 2º já é o último (dois lembretes, dono 17/10/2026).
-      2: `Hi ${nome},\n\nThis is our final follow-up on this quote. If any part of it needs adjusting, whether scope, timing or access, please let me know and we will issue a revised version the same day. If we do not hear back within the next two days, we will close it on our side.\n\nYou can reopen it at any time by replying to this email.`,
-      3: `Hi ${nome},\n\nThis is our final follow-up on this quote. If we do not hear back within the next two days, we will close it on our side.\n\nYou can reopen it at any time by replying to this email.`,
-    }[passo];
+      assunto: juntaPonto(["Final quote follow-up", ref]),
+      preheader: `Please confirm whether the work at ${prop || "the property"} is still required.`,
+      saudacao: saud,
+      paragrafos: [
+        `Could you let us know whether you still require the work${endereco ? ` at ${endereco}` : ""}?`,
+        "We’re happy to review the scope, proposed timing or access arrangements if anything has changed.",
+        `${d.fechaEm ? `If we don’t hear from you by ${d.fechaEm}, we’ll close the enquiry for now. ` : ""}Should the work be needed later, reply here and we’ll check the quote and availability again.`,
+      ],
+      cta,
+    };
+  }
+  if (passo === 1) {
+    return {
+      assunto: `Your ${s || "Fixfy"} quote · Ready to proceed?`,
+      preheader: "Review your quote or let us know what you need.",
+      saudacao: saud,
+      paragrafos: [
+        `Have you had a chance to look through your quote${s ? ` for ${s}` : ""}?`,
+        `If you’d like to go ahead, ${d.link ? "you can review and accept it below" : "just reply and let us know"}. If you have a preferred date, let us know and we’ll check availability.`,
+        "Any questions before you decide? Just reply. We’re happy to help.",
+      ],
+      cta,
+    };
+  }
+  if (passo === 2) {
+    return {
+      assunto: s ? `Any changes to your ${s} quote?` : "Any changes to your quote?",
+      preheader: "We can review the work included or your preferred timing.",
+      saudacao: saud,
+      paragrafos: [
+        `If anything in your ${s ? `${s} ` : ""}quote needs adjusting, we’re happy to take another look.`,
+        "Perhaps the work has changed, or you have a different date in mind. Just reply with what you need and we’ll check the options.",
+        ...(d.link ? ["You can also review the current quote below."] : []),
+      ],
+      cta,
+    };
   }
   return {
-    1: `Hi ${nome},\n\nI wanted to follow up on the quote we sent you. If you would like to go ahead, please reply with a date that suits you and we will arrange the booking.\n\nIf you have any questions, I will be happy to help.`,
-    2: `Hi ${nome},\n\nFollowing up on our quote. If you would like any changes to the scope or the timing, please let me know and I will send you a revised quote.`,
-    3: `Hi ${nome},\n\nThis is my final follow-up regarding our quote. If we do not hear from you within the next two days, we will close it on our side.\n\nYou are welcome to get in touch again at any time.`,
-  }[passo];
+    assunto: juntaPonto(["A final follow-up on your quote", ref]),
+    preheader: "Please let us know if you would still like to go ahead.",
+    saudacao: saud,
+    paragrafos: [
+      `One last follow-up on your quote${s ? ` for ${s}` : ""}. If you’d still like to go ahead, please ${d.link ? "review the quote or reply with any questions" : "reply and let us know, or ask us any questions"}.`,
+      `${d.fechaEm ? `If we don’t hear from you by ${d.fechaEm}, we’ll close this enquiry for now. ` : ""}You’re welcome to get back in touch whenever you need us.`,
+      "Thank you for considering Fixfy.",
+    ],
+    cta,
+  };
+}
+
+/**
+ * O lembrete no WhatsApp com a janela de 24h aberta (copy 24 a 26, "Open
+ * conversation"). Só B2C: conta não recebe WhatsApp desta régua. Com a janela
+ * fechada continua o template aprovado `quote_request_checkin`.
+ */
+export function whatsappDaCobranca(passo: 1 | 2 | 3, d: DadosDaCobranca): string {
+  const s = servicoCurto(d.servico);
+  const sua = `your ${s ? `${s} ` : ""}quote`;
+  const g = saudacao(d.publico);
+  if (passo === 1) {
+    return d.link
+      ? `${g} Have you had a chance to look through ${sua}? You can review it here: ${d.link}\n\nIf you have a question or a preferred date, just reply and we’ll help.`
+      : `${g} Have you had a chance to look through ${sua}? If you have a question or a preferred date, just reply and we’ll help.`;
+  }
+  if (passo === 2) {
+    return `${g} Does anything need changing in ${sua}? Let us know about the work or timing you have in mind and we’ll take another look.`;
+  }
+  const fim = `${d.fechaEm ? `Otherwise, we’ll close the enquiry on ${d.fechaEm}. ` : ""}You’re welcome to contact us again whenever you need us.`;
+  return d.link
+    ? `${g} A final follow-up on ${sua}. If you’re still interested, just reply or review it here: ${d.link}\n\n${fim}`
+    : `${g} A final follow-up on ${sua}. If you’re still interested, just reply. ${fim}`;
+}
+
+/**
+ * O dia em que a régua fecha depois do último lembrete: 48h, dentro do horário
+ * da varredura (8h às 20h de Londres; depois das 20h vira a manhã seguinte).
+ */
+export function diaDoFechamento(agora: Date): string | null {
+  const d = new Date(agora.getTime() + 48 * H);
+  return dataLonga(horaDeLondres(d) >= 20 ? new Date(d.getTime() + 12 * H) : d);
 }
 
 /**
@@ -103,8 +211,54 @@ export function motivoDeDesistencia(texto: string | null | undefined): "booked_e
   return null;
 }
 
-const RESPOSTA_DE_FECHAMENTO = (nome: string) =>
-  `Hi ${nome},\n\nThank you for letting us know. We have closed this quote on our side.\n\nShould anything change, please do not hesitate to get in touch.`;
+/** Copy 29: o cliente disse que não precisa mais. No mesmo canal em que respondeu. */
+export function respostaDeFechamento(d: DadosDaCobranca): { whatsapp: string; email: EmailDeAcompanhamento } {
+  const s = servicoCurto(d.servico);
+  const sua = `your quote${s ? ` for ${s}` : ""}`;
+  return {
+    whatsapp: `${saudacao(d.publico)} Thank you for letting us know. We’ve closed ${sua} as requested. If your plans change or you need help with another job, we’ll be happy to hear from you.`,
+    email: {
+      assunto: juntaPonto(["Your quote has been closed", d.referencia]),
+      preheader: "Thank you for the update.",
+      saudacao: saudacao(d.publico),
+      paragrafos: [
+        `Thank you for letting us know. We’ve closed ${sua} as requested.`,
+        "Thank you for considering Fixfy. If your plans change or you need help with another job, we’ll be happy to hear from you.",
+      ],
+    },
+  };
+}
+
+/**
+ * A quote do ticket, para a copy dizer o serviço, a referência, o imóvel e o link.
+ * Só leitura; sem achar, o texto sai sem esses pedaços.
+ */
+async function dadosDaQuoteDoTicket(sb: SupabaseClient, ticketId: number, b2b: boolean): Promise<Omit<DadosDaCobranca, "publico" | "fechaEm"> & { empresa: string | null }> {
+  const { data } = await sb
+    .from("quotes")
+    .select("id, reference, title, service_type, property_address, source_account_id")
+    .eq("external_source", "zendesk")
+    .eq("external_ref", String(ticketId))
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const q = (data?.[0] ?? null) as { id: string; reference: string | null; title: string | null; service_type: string | null; property_address: string | null; source_account_id: string | null } | null;
+  if (!q) return { empresa: null };
+  let empresa: string | null = null;
+  if (b2b && q.source_account_id) {
+    const { data: a } = await sb.from("accounts").select("company_name").eq("id", q.source_account_id).maybeSingle();
+    empresa = ((a as { company_name?: string | null } | null)?.company_name ?? "").trim() || null;
+  }
+  const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
+  const { appBaseUrl } = await import("@/lib/app-base-url");
+  return {
+    empresa,
+    servico: q.service_type?.trim() || q.title?.trim() || null,
+    referencia: q.reference,
+    endereco: q.property_address,
+    link: `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`,
+  };
+}
 
 async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
   await zendeskApi(`tickets/${t.id}.json`, {
@@ -114,12 +268,12 @@ async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
   await addTicketTags(t.id, [tag]);
 }
 
-async function emailDoResend(para: string, assunto: string, texto: string) {
-  const { nome } = await autorDosEmails();
+async function emailDoResend(para: string, e: EmailDeAcompanhamento) {
+  const { html, text } = montarEmail(e);
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: `${nome.replace(/[<>"]/g, "")} · Fixfy <no-reply@getfixfy.com>`, reply_to: "hello@getfixfy.com", to: [para], subject: assunto, text: textoDoEmail(texto, nome), html: htmlDoEmail(texto, "Kind regards,", nome) }),
+    body: JSON.stringify({ from: REMETENTE_DA_EQUIPE, reply_to: "hello@getfixfy.com", to: [para], subject: e.assunto, text, html }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!r.ok) throw new Error(`Resend ${r.status}`);
@@ -151,6 +305,15 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     if (!ultimaPublica) continue;
     const { user } = await zendeskApi<{ user: { name?: string; phone?: string | null; email?: string | null } }>(`users/${t.requester_id}.json`);
     const nome = firstName(user?.name ?? null) ?? "there";
+    // A copy precisa da quote do ticket; só busca quando há algo a mandar.
+    let dadosDaQuote: Awaited<ReturnType<typeof dadosDaQuoteDoTicket>> | null = null;
+    const dados = async (fechaEm: string | null = null): Promise<DadosDaCobranca> => {
+      dadosDaQuote ??= await dadosDaQuoteDoTicket(sb, t.id, b2b).catch(() => ({ empresa: null }));
+      const { empresa, ...resto } = dadosDaQuote;
+      // Conta: a empresa, nunca o nome de quem abriu o ticket (handoff 20/10/2026).
+      const publico: Publico = b2b ? { tipo: "b2b", empresa } : { tipo: "b2c", primeiroNome: nome === "there" ? "" : nome };
+      return { ...resto, publico, fechaEm };
+    };
 
     // Quem falou por último, e há quanto tempo foi a nossa última mensagem.
     let horasDesdeNossa: number;
@@ -188,11 +351,11 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       if (!motivo) continue;
       if (!aplicar) { out.fechados.push(`${quem}: would close (${motivo})`); continue; }
       try {
-        const resposta = RESPOSTA_DE_FECHAMENTO(nome);
+        const resposta = respostaDeFechamento(await dados());
         if (ehWhatsApp && conversa) {
-          await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: "Fixfy" }, content: { type: "text", text: resposta }, metadata: { origem: "quote_closed" } } });
+          await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: "Fixfy" }, content: { type: "text", text: resposta.whatsapp }, metadata: { origem: "quote_closed" } } });
         } else {
-          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta, (await autorDosEmails()).zendesk_user_id) } } });
+          await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta.email, (await autorDosEmails()).zendesk_user_id) } } });
         }
         await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`);
         out.fechados.push(`${quem}: closed (${motivo})`);
@@ -216,14 +379,16 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       continue;
     }
 
-    const texto = textoDaCobranca(passo, nome, b2b);
-    const email = b2b ? null : ehWhatsApp ? await emailDoCliente(sb, user?.phone) : null;
-    const canais = b2b ? "email" : ehWhatsApp ? `WhatsApp${janelaAberta ? "" : " template"}${email ? " + email" : ""}` : `email${user?.phone ? " + WhatsApp template" : ""}`;
+    const emailDoWhatsApp = b2b ? null : ehWhatsApp ? await emailDoCliente(sb, user?.phone) : null;
+    const canais = b2b ? "email" : ehWhatsApp ? `WhatsApp${janelaAberta ? "" : " template"}${emailDoWhatsApp ? " + email" : ""}` : `email${user?.phone ? " + WhatsApp template" : ""}`;
     if (!aplicar) { out.enviados.push(`${quem}: would send chase ${passo} (${canais})`); continue; }
 
     try {
+      const ultimo = passo === (b2b ? 2 : 3);
+      const d = await dados(ultimo ? diaDoFechamento(agora) : null);
+      const email = emailDaCobranca(passo, b2b, d);
       if (ehWhatsApp && janelaAberta && conversa) {
-        await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: texto }, metadata: { origem: "quote_chase" } } });
+        await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: whatsappDaCobranca(passo, d) }, metadata: { origem: "quote_chase" } } });
       } else if (ehWhatsApp || (!b2b && user?.phone)) {
         await scNotificacao({
           destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: user?.phone },
@@ -243,9 +408,9 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       }
       if (!ehWhatsApp) {
         // Ticket de e-mail (B2B ou B2C): o lembrete vai no próprio ticket, e a resposta cai nele.
-        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(texto, (await autorDosEmails()).zendesk_user_id) } } });
-      } else if (email) {
-        await emailDoResend(email, "Your Fixfy quote", texto);
+        await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(email, (await autorDosEmails()).zendesk_user_id) } } });
+      } else if (emailDoWhatsApp) {
+        await emailDoResend(emailDoWhatsApp, email);
       }
       await zendeskApi(`tickets/${t.id}.json`, {
         method: "PUT",

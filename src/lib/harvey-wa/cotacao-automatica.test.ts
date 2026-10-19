@@ -28,14 +28,20 @@ describe("auto-quote: minimum context before inviting partners", () => {
   });
   it("reads the service from the lead subject", () => {
     assert.equal(servicoDoAssunto("Lead · Carpentry · Chloe Doak · NW2 6XJ"), "Carpentry");
+    assert.equal(servicoDoAssunto("Your carpentry enquiry · A few details to get started"), "carpentry");
     assert.equal(servicoDoAssunto("Re: boiler"), null);
   });
   it("asks for what is missing in one message, without asking for the postcode twice", () => {
     const t = textoPedeContexto("Chloe", ["postcode", "address", "photos"], "Carpentry");
     assert.match(t, /full property address/);
     assert.match(t, /photos/);
-    assert.doesNotMatch(t, /postcode/);
-    assert.doesNotMatch(t, /—/);
+    assert.equal(t, "Hi Chloe, Thanks for your enquiry about carpentry. Could you send a few photos and the full property address, including the postcode? That will help us put together an accurate quote.");
+    assert.doesNotMatch(t, /[—–]/);
+  });
+  it("B2B greets the company team, never the contact person", () => {
+    assert.match(textoPedeContexto({ tipo: "b2b", empresa: "Acme Lettings" }, ["photos"], "Carpentry"), /^Hi Acme Lettings team, /);
+    assert.match(textoPedeContexto({ tipo: "b2b", empresa: null }, ["photos"]), /^Hi team, Thanks for your enquiry\. /);
+    assert.match(textoPedeContexto("there", ["photos"]), /^Hi there, /);
   });
 });
 
@@ -73,7 +79,8 @@ describe("auto-quote: the bidding clock", () => {
   });
   it("the 24h message never promises a time or a date", () => {
     const t = textoAindaCotando("Chloe", "Carpentry");
-    assert.match(t, /very soon/);
+    assert.equal(t, "Hi Chloe, A quick update on your carpentry enquiry: we’re still checking the pricing with our professionals. We’ll send your quote once the details are confirmed. Thank you for your patience.");
+    assert.doesNotMatch(t, /very soon|same day/i);
     assert.doesNotMatch(t, /\b(today|tomorrow|hours?|minutes?|by \d|monday|tuesday|wednesday|thursday|friday|weekend|\d{1,2}(am|pm|:\d\d))\b/i);
     assert.doesNotMatch(t, /—/);
   });
@@ -108,7 +115,9 @@ describe("auto-quote: quote text with the accept link (Fase 1 auto send)", () =>
   it("carries the link and no em dash", () => {
     const t = textoDaQuote({ nome: "Chloe", servico: "Carpentry", total: 480, referencia: "QT-2026-1180", link: "https://app.getfixfy.com/quote/respond?token=x&action=accept" });
     assert.match(t, /£480\.00/);
-    assert.match(t, /accept it here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept/);
+    assert.match(t, /accept here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept /);
+    assert.match(t, /^Hi Chloe, Your quote for carpentry is ready: £480\.00 for the work described\./);
+    assert.match(t, /Reference: QT-2026-1180\.$/);
     assert.doesNotMatch(t, /[—–]/);
   });
 });
@@ -116,7 +125,7 @@ describe("auto-quote: quote text with the accept link (Fase 1 auto send)", () =>
 describe("textoDaQuote com entrada (16/10/2026)", () => {
   it("com link e entrada diz entrada e saldo, sem travessão", () => {
     const t = textoDaQuote({ nome: "Chloe", servico: "Carpentry", total: 480, referencia: "QT-2026-1180", link: "https://app.getfixfy.com/quote/respond?token=x&action=accept", entrada: 240 });
-    assert.match(t, /accept it here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept A £240\.00 deposit secures the booking and the £240\.00 balance is due when the job is done\./);
+    assert.match(t, /accept here: https:\/\/app\.getfixfy\.com\/quote\/respond\?token=x&action=accept A deposit of £240\.00 is required to confirm your booking\. The remaining £240\.00 is due when the job is done\./);
     assert.doesNotMatch(t, /—/);
   });
   it("sem entrada (conta de fatura) não fala de pagamento", () => {

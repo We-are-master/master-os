@@ -16,7 +16,9 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { loadInvoiceSendContext, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
 import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { invoicePayLinkForAmount, invoicePayLinkUrl } from "@/lib/pay-link-url";
-import { daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage, reminderCopy } from "@/lib/invoice-overdue-reminders";
+import { buildOverdueReminderEmail, daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage } from "@/lib/invoice-overdue-reminders";
+import { publicoDaCobranca } from "@/lib/emails/billing-email-common";
+import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { Invoice } from "@/types/database";
 
 export const runtime = "nodejs";
@@ -41,10 +43,6 @@ async function faturaJaFoiEnviada(admin: ReturnType<typeof createServiceClient>,
   // Sem conseguir conferir, não cobra: lembrete errado custa mais do que lembrete atrasado.
   if (error) return false;
   return (count ?? 0) > 0;
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export async function POST(req: NextRequest) {
@@ -109,18 +107,21 @@ export async function POST(req: NextRequest) {
     const to = ctx.billing.documentEmail?.trim();
     if (!to) { out.push(`${inv.reference}: skip (no billing email)`); continue; }
 
-    const dueLabel = new Date(`${inv.due_date.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
     const payUrl = inv.reference
       ? plano.length > 0
         ? invoicePayLinkForAmount(inv.reference, balance)
         : invoicePayLinkUrl(inv.reference)
       : null;
-    const copy = reminderCopy(stage, {
-      name: ctx.billing.displayName ?? "there",
-      reference: inv.reference ?? "",
-      amount: `£${balance.toFixed(2)}`,
-      dueLabel,
-      jobLabel: ctx.job?.reference ?? inv.job_reference ?? "your job",
+    // Schedule A (agente): o PDF é "statement"; B: "invoice". O nome do e-mail segue o PDF.
+    const agente = await loadAgentReceiptParty(admin, ctx.job).catch(() => null);
+    // Copy 15 a 18 na moldura única (um texto por estágio), referência normalizada (INV-).
+    const copy = buildOverdueReminderEmail({
+      stage,
+      publico: publicoDaCobranca(ctx.billing.mode, ctx.billing.displayName, ctx.billing.companyName),
+      invoiceReference: inv.reference ?? "",
+      amount: balance,
+      dueDate: inv.due_date.slice(0, 10),
+      documentName: agente ? "statement" : "invoice",
       payUrl,
     });
     if (ensaio) { out.push(`${inv.reference}: would send stage ${stage} (${copy.subject}) to ${to}`); continue; }
@@ -128,14 +129,6 @@ export async function POST(req: NextRequest) {
 
     const ccDaConta = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
     const pdf = await renderInvoicePdfBuffer(admin, inv.id);
-    const html = `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1a1a2e;max-width:560px">
-<p>Hi ${esc(ctx.billing.displayName ?? "there")},</p>
-<p>${esc(copy.opening)}</p>
-${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:${copy.final ? "#020040" : "#ED4B00"};color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Pay £${balance.toFixed(2)} now</a></p>` : ""}
-<p>Bank transfer: GETFIXFY LTD · sort code 04-00-03 · account 06913415 · reference ${esc(inv.reference ?? "")}.</p>
-<p>${esc(copy.closing)}</p>
-<p>Thank you,<br>Fixfy Team</p></div>`;
-
     const resend = new Resend(resendKey);
     const { error } = await resend.emails.send({
       from: fromEmail,
@@ -144,7 +137,8 @@ ${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:${copy
       ...(ccDaConta.length ? { cc: ccDaConta } : {}),
       replyTo: "hello@getfixfy.com",
       subject: copy.subject,
-      html,
+      html: copy.html,
+      text: copy.text,
       ...("error" in pdf ? {} : { attachments: [{ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" }] }),
     });
     if (error) { out.push(`${inv.reference}: send failed`); continue; }

@@ -33,6 +33,13 @@ export type PecaDoClube = {
    * clube B2C não vende.
    */
   preset: string;
+  /**
+   * Peça com a copy nova (docs/copy, 20/10/2026): sai na moldura única
+   * (`emails/fixfy-shell`) em vez do `campanha-layout`. Parágrafos em texto
+   * puro com `{{chave}}`; parágrafo cuja chave falta (oferta vencida) some.
+   */
+  paragrafos?: string[];
+  servico?: { duracao: string; preco: string; materiais: string; rotuloDaOferta: string };
 };
 
 const t = (html: string): Bloco => ({ tipo: "texto", html });
@@ -66,17 +73,37 @@ export const PECAS_DO_CLUBE: PecaDoClube[] = [
     key: "half_day_list",
     preset: "s=fix&fix=half",
     etiqueta: "Repairs",
-    assunto: "The list on your fridge",
-    preheader: "It probably fits in half a day.",
-    titulo: "The list on your fridge",
+    // Copy aprovada em 20/10/2026 (docs/copy/fixfy-client-copy.json, id 41).
+    assunto: "A handyman half day for your home",
+    preheader: "Make a start on the little jobs you’ve been putting off.",
+    titulo: "Let’s get that list sorted",
     blocos: [
-      t("Almost every home has the same list. A shelf that never went up, a door that sticks, a tap that drips, silicone that's gone black."),
-      t("One at a time, none of it gets done. All together, it's usually half a day."),
-      t("Half a day with our handyman is 3.5 hours for £180, tools included. Write the list when you book and they turn up ready for it. If something needs parts, we agree it with you before buying anything."),
-      t("10% off this month with <strong>HANDY10</strong>. If you are not sure it all fits, reply with your list and I will let you know."),
+      t("The shelf waiting to go up. The door that sticks. The silicone that could do with replacing. Those little jobs have a habit of staying on the list."),
+      t("A handyman half day gives you 3.5 hours to work through suitable jobs, for £180. Send your list when you book so we can check what can be covered."),
+      t("Parts and materials are quoted separately, and we’ll agree them with you before buying anything."),
+      t("Not sure whether your list will fit? Reply with it and we’ll help you work out the next step."),
     ],
-    cta: "Book a half day",
+    cta: "Book a handyman half day",
     cupom: "HANDY10",
+    /**
+     * O que a copy nova preenche. Não existe tabela de preço viva no OS: estes
+     * são os valores do site em 14/10/2026 (ver o topo do arquivo) e mudam aqui
+     * junto com o site. A oferta NÃO mora aqui: sai do `cupom` em
+     * `marketing/cupons.ts` (código, desconto, validade) e some se ele vencer.
+     */
+    servico: {
+      duracao: "3.5 hours",
+      preco: "£180",
+      materiais: "Parts and materials are quoted separately, and we’ll agree them with you before buying anything.",
+      rotuloDaOferta: "a handyman half day",
+    },
+    paragrafos: [
+      "The shelf waiting to go up. The door that sticks. The silicone that could do with replacing. Those little jobs have a habit of staying on the list.",
+      "A handyman half day gives you {{service_duration}} to work through suitable jobs, for {{service_price}}. Send your list when you book so we can check what can be covered.",
+      "{{materials_terms_sentence}}",
+      "Use {{offer_code}} for {{offer_discount}} off {{eligible_service_label}} until {{offer_expiry_date}}.",
+      "Not sure whether your list will fit? Reply with it and we’ll help you work out the next step.",
+    ],
   },
   {
     key: "room_450",
