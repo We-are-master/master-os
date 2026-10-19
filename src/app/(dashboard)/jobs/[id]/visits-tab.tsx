@@ -28,7 +28,7 @@ import {
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
 import { jobStatusRank } from "@/lib/job-phases";
-import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
+import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
 import { toast } from "sonner";
@@ -46,7 +46,9 @@ function arrivalFromStored(startAt?: string | null, endAt?: string | null): {
   arrival_from: string;
   arrival_window_mins: string;
 } {
-  const from = startAt ? startAt.slice(11, 16) : "09:00";
+  // Hora de Londres, não o recorte do ISO em UTC: no BST ele dava 1h a menos
+  // (job das 9h abria a visita às 8h, 19/10/2026).
+  const from = startAt ? utcIsoToUkWallClock(startAt).hm || "09:00" : "09:00";
   const mins = startAt && endAt
     ? Math.max(30, Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60_000))
     : 180;
