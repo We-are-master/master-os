@@ -123,11 +123,22 @@ function googleCalendarUrl(input: {
   return `https://calendar.google.com/calendar/render?${q.toString()}`;
 }
 
-/** Assunto, HTML e texto do C2, a partir de dados já resolvidos. Puro. */
+/**
+ * Assunto, HTML e texto do C2, a partir de dados já resolvidos. Puro.
+ *
+ * Desenho de confirmação de app (dono, 20/10/2026: "quero um job like Uber de
+ * confirmação, não com tudo isso parecendo e-mail de contador"): no topo só o
+ * que o cliente precisa no dia (quem vem, quando, onde, quanto) e um botão. O
+ * que o modelo de agente obriga a dizer (contrato com o profissional, VAT,
+ * endereço comercial, pagamento à Fixfy como agente) continua no e-mail, mas
+ * em letra pequena no fim, como o recibo de um app.
+ */
 export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subject: string; html: string; text: string } {
   const pro = i.professionalName;
-  const subject = `Booking confirmed with ${pro}: ${i.summary} on ${i.dateLabel} (${i.ref})`;
-  const preheader = `${pro} arrives ${i.windowLabel} on ${i.dateLabel}. Everything you need for the day is inside.`;
+  /** `between 9am and 12pm` vira `9am to 12pm` para o bloco grande. */
+  const janelaCurta = i.windowLabel.replace(/^between\s+/i, "").replace(/\s+and\s+/i, " to ");
+  const subject = `You're booked: ${pro}, ${i.dateLabel}, ${janelaCurta}`;
+  const preheader = `${pro} arrives ${i.windowLabel} on ${i.dateLabel}. Booking ${i.ref}.`;
   const vatText = i.professionalVatNumber
     ? `VAT registered, VAT number ${i.professionalVatNumber}`
     : "Not VAT registered, so no VAT is charged";
@@ -140,94 +151,97 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
         title: "7-day guarantee.",
         body: `If anything is not right, reply within 7 days of the job and we arrange for ${pro} to come back at no cost.`,
       };
+  const iniciais =
+    pro
+      .split(/\s+/)
+      .filter((w) => /^[A-Za-z0-9]/.test(w))
+      .slice(0, 2)
+      .map((w) => w[0]!.toUpperCase())
+      .join("") || "F";
 
-  const p = (html: string, style = "margin:0 0 10px 0; font-size:14px; line-height:22px; color:#4A4A55;") =>
-    `<p style="${style}">${html}</p>`;
-  const sectionLabel = (t: string) =>
-    `<p style="margin:0 0 10px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">${esc(t)}</p>`;
-  const row = (label: string, value: string, bold = false) =>
-    `<tr><td style="padding:8px 0; font-size:14px; color:#1A1A1A; ${bold ? "font-weight:700;" : ""}">${esc(label)}</td>` +
-    `<td align="right" style="padding:8px 0; font-size:14px; color:#020040; font-weight:${bold ? 700 : 600}; white-space:nowrap;">${esc(value)}</td></tr>`;
+  const total = i.lines.reduce((t, l) => t + (Number(l.amount) || 0), 0) - (i.promotion ?? 0);
+  const pagamento =
+    i.balance > 0.02 && i.amountPaid > 0.02
+      ? `${gbp(i.amountPaid)} paid · ${gbp(i.balance)} after the job`
+      : i.amountPaid > 0.02
+        ? `${gbp(i.amountPaid)} paid`
+        : `${gbp(total)} after the job`;
 
-  const bookingRows = [
-    ...i.lines.map((l) => row(l.label, gbp(l.amount))),
-    ...((i.promotion ?? 0) > 0.02 ? [row("Fixfy promotion, paid by Fixfy on your behalf", `-${gbp(i.promotion ?? 0)}`)] : []),
-    ...(i.amountPaid > 0.02 ? [row(`Paid to GETFIXFY LTD (Fixfy), as agent for ${pro}`, gbp(i.amountPaid), true)] : []),
-  ].join("");
-  const bookingNotes = [
-    i.balance > 0.02 ? `The other ${gbp(i.balance)} is due when the work is done, through Fixfy.` : "",
-    i.attachmentKind ? `Your ${i.attachmentKind} is attached, issued in ${pro}'s name.` : "",
-  ]
-    .filter(Boolean)
-    .map((t) => p(esc(t), "margin:8px 0 0 0; font-size:13px; line-height:20px; color:#4A4A55;"))
-    .join("");
+  const fino = "margin:0 0 8px 0; font-size:12px; line-height:18px; color:#6B6E7B;";
+  const linha = (rotulo: string, valor: string) =>
+    `<tr><td style="padding:14px 0; border-top:1px solid #EEEEF2; font-size:13px; color:#6B6E7B; width:90px; vertical-align:top;">${esc(rotulo)}</td>` +
+    `<td style="padding:14px 0; border-top:1px solid #EEEEF2; font-size:15px; line-height:22px; color:#020040; font-weight:600;">${valor}</td></tr>`;
+  const passo = (n: string, titulo: string, corpo: string) =>
+    `<tr><td style="padding:0 12px 14px 0; vertical-align:top; width:28px;"><div style="width:24px; height:24px; line-height:24px; border-radius:12px; background:#F1F1F5; color:#020040; font-size:12px; font-weight:700; text-align:center;">${n}</div></td>` +
+    `<td style="padding:0 0 14px 0; font-size:14px; line-height:20px; color:#4A4A55;"><strong style="color:#020040;">${esc(titulo)}</strong><br>${esc(corpo)}</td></tr>`;
 
-  const card = (inner: string) =>
-    `<tr><td style="padding:0 40px 20px 40px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;"><tr><td style="padding:16px 20px;">${inner}</td></tr></table></td></tr>`;
+  const linhasDoValor = [
+    ...i.lines.map((l) => `${esc(l.label)}: ${gbp(l.amount)}`),
+    ...((i.promotion ?? 0) > 0.02 ? [`Fixfy promotion, paid by Fixfy on your behalf: -${gbp(i.promotion ?? 0)}`] : []),
+    ...(i.amountPaid > 0.02 ? [`Paid to GETFIXFY LTD (Fixfy), as agent for ${esc(pro)}: ${gbp(i.amountPaid)}`] : []),
+    ...(i.balance > 0.02 ? [`The other ${gbp(i.balance)} is due when the work is done, through Fixfy.`] : []),
+    ...(i.attachmentKind ? [`Your ${i.attachmentKind} is attached, issued in ${esc(pro)}'s name.`] : []),
+  ];
 
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><title>${esc(subject)}</title></head>
 <body style="margin:0; padding:0; background:#F5F5F7; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <div style="display:none; max-height:0; overflow:hidden; font-size:1px; line-height:1px; color:#F5F5F7;">${esc(preheader)}</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;"><tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background:#FFFFFF; border-radius:12px; overflow:hidden;">
-      <tr><td align="center" bgcolor="#020040" style="background:#020040; padding:24px;"><img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="100" style="display:block; width:100px; height:auto;"></td></tr>
-      <tr><td style="background:#ED4B00; line-height:5px; font-size:5px; height:5px;" height="5">&nbsp;</td></tr>
-      <tr><td style="padding:32px 40px 8px 40px;"><h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Job Confirmed.</h1></td></tr>
-      <tr><td style="padding:0 40px 24px 40px;">${p(
-        `Thanks, ${esc(i.firstName)}. Your ${esc(i.summary)} with ${esc(pro)} is set for <strong>${esc(i.dateLabel)}</strong>. Everything you need for the day is below.`,
-        "margin:0; font-size:15px; line-height:24px; color:#4A4A55;",
-      )}</td></tr>
-      ${card(
-        sectionLabel("Your professional") +
-          `<p style="margin:0 0 6px 0; font-size:16px; font-weight:700; color:#020040;">${esc(pro)}</p>` +
-          p("Independent trader: they offer their services as a business, and your contract for this job is with them.") +
-          (i.professionalAddress ? p(`Business address: ${esc(i.professionalAddress)}`) : "") +
-          p(`VAT: ${esc(vatText)}`) +
-          p("Insured: public liability insurance of at least £1 million") +
-          p("To reach them, reply to this email or message us on WhatsApp, and we pass it on.", "margin:0; font-size:14px; line-height:22px; color:#4A4A55;"),
-      )}
-      ${card(
-        sectionLabel("Your booking") +
-          `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${bookingRows}</table>` +
-          bookingNotes,
-      )}
-      ${card(
-        p(`<strong>When:</strong> ${esc(i.dateLabel)}, arriving ${esc(i.windowLabel)}`) +
-          (i.addressLine ? p(`<strong>Where:</strong> ${esc(i.addressLine)}`, "margin:0; font-size:14px; line-height:22px; color:#4A4A55;") : ""),
-      )}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;"><tr><td align="center" style="padding:24px 16px;">
+    <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="width:520px; max-width:520px; background:#FFFFFF; border-radius:16px; overflow:hidden;">
+      <tr><td bgcolor="#020040" style="background:#020040; padding:18px 32px;"><img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="72" style="display:block; width:72px; height:auto;"></td></tr>
+      <tr><td style="padding:28px 32px 4px 32px;">
+        <p style="margin:0 0 6px 0; font-size:13px; font-weight:700; letter-spacing:1px; color:#16A34A; text-transform:uppercase;">&#10003; Confirmed</p>
+        <h1 style="margin:0; font-size:30px; line-height:36px; font-weight:800; color:#020040;">You're booked, ${esc(i.firstName)}.</h1>
+        <p style="margin:10px 0 0 0; font-size:17px; line-height:24px; color:#4A4A55;">${esc(i.dateLabel)}<br><strong style="color:#020040;">${esc(janelaCurta)}</strong></p>
+      </td></tr>
+      <tr><td style="padding:24px 32px 8px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:12px;"><tr>
+          <td style="padding:16px 0 16px 16px; width:52px; vertical-align:middle;"><div style="width:48px; height:48px; line-height:48px; border-radius:24px; background:#020040; color:#FFFFFF; font-size:17px; font-weight:700; text-align:center;">${esc(iniciais)}</div></td>
+          <td style="padding:16px; vertical-align:middle;">
+            <p style="margin:0; font-size:17px; font-weight:700; color:#020040;">${esc(pro)}</p>
+            <p style="margin:3px 0 0 0; font-size:13px; line-height:18px; color:#6B6E7B;">Your professional · Vetted · Insured to £1m</p>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="padding:8px 32px 8px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${linha("Service", esc(i.summary))}
+          ${i.addressLine ? linha("Where", esc(i.addressLine)) : ""}
+          ${linha("Payment", esc(pagamento))}
+          ${linha("Booking", esc(i.ref))}
+        </table>
+      </td></tr>
       ${
         i.calendarUrl
-          ? `<tr><td align="center" style="padding:0 40px 24px 40px;"><a href="${esc(i.calendarUrl)}" style="display:inline-block; background:#020040; color:#FFFFFF; text-decoration:none; font-size:14px; font-weight:600; padding:12px 24px; border-radius:8px;">Add to Google Calendar</a></td></tr>`
+          ? `<tr><td style="padding:16px 32px 4px 32px;"><a href="${esc(i.calendarUrl)}" style="display:block; background:#ED4B00; color:#FFFFFF; text-decoration:none; font-size:16px; font-weight:700; padding:15px 0; border-radius:10px; text-align:center;">Add to calendar</a></td></tr>`
           : ""
       }
-      ${card(
-        sectionLabel("What happens next") +
-          p(`1. <strong>The day before.</strong> We call or message you to confirm ${esc(pro)}, the time and how they get in.`) +
-          p(`2. <strong>${esc(i.dateLabel)}.</strong> ${esc(pro)} arrives ${esc(i.windowLabel)} and photographs every room as they finish.`) +
-          p("3. <strong>Same day.</strong> Your photo report lands in your inbox, with a photo of every room they worked on.", "margin:0; font-size:14px; line-height:22px; color:#4A4A55;"),
-      )}
-      ${card(p(`<strong>${esc(guarantee.title)}</strong> ${esc(guarantee.body)}`, "margin:0; font-size:14px; line-height:22px; color:#4A4A55;"))}
-      ${card(
-        sectionLabel("Need to change something?") +
-          p(
-            `Just reply to this email and it reaches our team, who handle it for ${esc(pro)}. Changes and cancellation are free up to 48 hours before your slot, refunded in full.`,
-            "margin:0; font-size:14px; line-height:22px; color:#4A4A55;",
-          ),
-      )}
-      <tr><td style="padding:0 40px 28px 40px;">${p(
-        `<strong>Who you are booking with.</strong> Your contract for this job is with ${esc(pro)}, an independent trader. GETFIXFY LTD (Fixfy) arranged the booking as their agent and received your payment on their behalf, so paying Fixfy counts as paying them. Your rights under the Consumer Rights Act 2015 are against ${esc(pro)} as the trader, and we will help you resolve any problem. Your booking is under our <a href="https://getfixfy.com/terms" style="color:#020040;">booking terms</a> (version of 6 October 2026), which also explain your legal right to cancel within 14 days and how to use it. You asked for the work to be done on the day you picked, so once it is done it can no longer be cancelled.`,
-        "margin:0; font-size:12px; line-height:18px; color:#6B6E7B;",
-      )}</td></tr>
-      <tr><td bgcolor="#020040" style="background:#020040; padding:24px 40px; text-align:center;">
-        <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">Fixfy · Bookings with vetted independent professionals across London<br>GETFIXFY LTD, trading as Fixfy · 124 City Road, London EC1V 2NX · Company number 15406523<br><a href="https://getfixfy.com/terms" style="color:#AAAAD0;">Terms</a> · <a href="https://getfixfy.com/privacy" style="color:#AAAAD0;">Privacy</a> · <a href="https://getfixfy.com/guarantee" style="color:#AAAAD0;">Guarantee</a></p>
+      <tr><td style="padding:10px 32px 24px 32px; text-align:center; font-size:14px; line-height:20px; color:#4A4A55;">Need to change something? Just reply to this email.<br>Free to change or cancel up to 48 hours before.</td></tr>
+      <tr><td style="padding:0 32px;"><div style="border-top:1px solid #EEEEF2; line-height:1px; font-size:1px;">&nbsp;</div></td></tr>
+      <tr><td style="padding:24px 32px 10px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${passo("1", "The day before", `We message you to confirm ${pro} and how they get in.`)}
+          ${passo("2", "On the day", `${pro} arrives ${janelaCurta} and photographs the work as they finish.`)}
+          ${passo("3", "Same day", "Your photo report lands in your inbox.")}
+        </table>
+      </td></tr>
+      <tr><td style="padding:0 32px 24px 32px;"><p style="margin:0; padding:14px 16px; background:#F0FDF4; border-radius:10px; font-size:14px; line-height:20px; color:#14532D;"><strong>${esc(guarantee.title)}</strong> ${esc(guarantee.body)}</p></td></tr>
+      <tr><td style="padding:20px 32px 24px 32px; background:#FAFAFB; border-top:1px solid #EEEEF2;">
+        <p style="margin:0 0 8px 0; font-size:12px; font-weight:700; color:#4A4A55;">Booking details</p>
+        ${linhasDoValor.map((t) => `<p style="${fino}">${t}</p>`).join("")}
+        <p style="${fino}">${esc(pro)} is an independent trader${i.professionalAddress ? `, business address ${esc(i.professionalAddress)}` : ""}. VAT: ${esc(vatText)}.</p>
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6E7B;">Your contract for this job is with ${esc(pro)}. GETFIXFY LTD (Fixfy) arranged the booking as their agent and received your payment on their behalf, so paying Fixfy counts as paying them. Your rights under the Consumer Rights Act 2015 are against ${esc(pro)} as the trader, and we will help you resolve any problem. Your booking is under our <a href="https://getfixfy.com/terms" style="color:#6B6E7B;">booking terms</a> (version of 6 October 2026), which also explain your legal right to cancel within 14 days. You asked for the work to be done on the day you picked, so once it is done it can no longer be cancelled.</p>
+      </td></tr>
+      <tr><td style="padding:18px 32px 22px 32px; text-align:center;">
+        <p style="margin:0; font-size:11px; line-height:17px; color:#9A9CA8;">hello@getfixfy.com · +44 20 4538 4668<br>GETFIXFY LTD, trading as Fixfy · 124 City Road, London EC1V 2NX · Company number 15406523<br><a href="https://getfixfy.com/terms" style="color:#9A9CA8;">Terms</a> · <a href="https://getfixfy.com/privacy" style="color:#9A9CA8;">Privacy</a> · <a href="https://getfixfy.com/guarantee" style="color:#9A9CA8;">Guarantee</a></p>
       </td></tr>
     </table>
   </td></tr></table>
 </body></html>`;
 
   const text = [
-    `Job Confirmed. See you on ${i.dateLabel}.`,
+    `You're booked. See you on ${i.dateLabel}.`,
     "",
     `Hi ${i.firstName},`,
     `Your booking ${i.ref} with ${pro} is confirmed.`,

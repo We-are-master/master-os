@@ -28,8 +28,8 @@ const input = {
 describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
   it("names the professional in the subject and the body, as agent", () => {
     const m = buildProfessionalConfirmedEmail(input);
-    assert.equal(m.subject, "Booking confirmed with Sparkle Clean Ltd: End of tenancy clean on Thursday 8 October (JOB-9701)");
-    assert.match(m.html, /Job Confirmed\./);
+    assert.equal(m.subject, "You're booked: Sparkle Clean Ltd, Thursday 8 October, 9am to 12pm");
+    assert.match(m.html, /You're booked, Jane\./);
     assert.match(m.html, /Paid to GETFIXFY LTD \(Fixfy\), as agent for Sparkle Clean Ltd/);
     assert.match(m.html, /Not VAT registered, so no VAT is charged/);
     assert.match(m.html, /Free re-clean within 7 days\./);
