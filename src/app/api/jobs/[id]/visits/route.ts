@@ -4,6 +4,8 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
+import { avisarClienteDaVisita } from "@/lib/notify-visit-client-server";
+import { avancarVisitas } from "@/lib/job-visit-advance-server";
 import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
@@ -109,11 +111,11 @@ async function auditVisit(input: AuditInput) {
 
 async function loadJobAndVisits(supabase: ServiceClient, jobId: string) {
   const [{ data: job }, { data: visits }] = await Promise.all([
-    supabase.from("jobs").select("id, reference, status, partner_id, partner_name").eq("id", jobId).maybeSingle(),
+    supabase.from("jobs").select("id, reference, status, partner_id, partner_name, primary_visit_done").eq("id", jobId).maybeSingle(),
     supabase.from("job_visits").select("*").eq("job_id", jobId).is("deleted_at", null),
   ]);
   return {
-    job: job as Pick<Job, "id" | "reference" | "status" | "partner_id" | "partner_name"> | null,
+    job: job as Pick<Job, "id" | "reference" | "status" | "partner_id" | "partner_name" | "primary_visit_done"> | null,
     visits: (visits ?? []) as JobVisit[],
   };
 }
@@ -126,7 +128,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id: jobId } = await ctx.params;
   const { data, error } = await supabase
     .from("job_visits")
-    .select("id, visit_index, partner_id, partner_name, status, completed_at, partner_cost, client_price, self_bill_id, scheduled_date")
+    .select("*")
     .eq("job_id", jobId)
     .is("deleted_at", null)
     .order("visit_index", { ascending: true });
@@ -154,7 +156,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!jobId) return NextResponse.json({ error: "id required" }, { status: 400 });
 
   const body = (await req.json().catch(() => ({}))) as VisitBody;
-  const { job } = await loadJobAndVisits(supabase, jobId);
+  const { job, visits: visitasAntes } = await loadJobAndVisits(supabase, jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   /**
@@ -212,6 +214,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             error: e instanceof Error ? e.message : "notify failed",
           }))
         : { ok: false, skipped: "no_partner" as const };
+      // E o cliente: a visita nova vai no mesmo ticket do job (dono, 19/10/2026).
+      const clientNotified = await avisarClienteDaVisita(jobId, created.id, supabase).catch((e) => ({
+        ok: false as const,
+        error: e instanceof Error ? e.message : "client notify failed",
+      }));
 
       /**
        * Self-bill do parceiro desta visita nasce junto com ela.
@@ -237,7 +244,42 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         // Visita sem parceiro não gera documento: quem vai receber ainda não existe.
         payoutError = "visit has no partner yet, so no self-bill";
       }
-      return NextResponse.json({ ok: true, visit: created, notified, selfBillId, payoutError });
+      /**
+       * Marcar outra visita com o job em andamento = a visita de hoje terminou (dono,
+       * 19/10/2026: o JOB-9719 ganhou a V2 e ficou In progress). A atual vira feita e o
+       * job segue para a próxima, Scheduled. Job que ainda não começou fica como está.
+       */
+      let advanced: Awaited<ReturnType<typeof avancarVisitas>> | null = null;
+      let closedVisitIndex: number | null = null;
+      const extrasEmAndamento = visitasAntes.filter((v) => v.status === "in_progress");
+      const jobEmAndamento = job.status === "in_progress" || job.status === "late";
+      if (jobEmAndamento || extrasEmAndamento.length) {
+        try {
+          const agora = new Date().toISOString();
+          for (const v of extrasEmAndamento) {
+            const { data: fechada } = await supabase
+              .from("job_visits")
+              .update({ status: "completed", completed_at: agora, updated_by: userId })
+              .eq("id", v.id)
+              .select()
+              .single();
+            closedVisitIndex = v.visit_index;
+            if (fechada && (fechada as JobVisit).partner_id) {
+              const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+              if (fullJob) await ensureWeeklySelfBillForVisit(fullJob as Job, fechada as JobVisit, { client: supabase });
+            }
+          }
+          const v1Aberta = !job.primary_visit_done && extrasEmAndamento.length === 0;
+          if (v1Aberta) closedVisitIndex = 1;
+          advanced = await avancarVisitas(supabase, jobId, { primary: v1Aberta, userId, userName });
+        } catch (e) {
+          console.error("closing the current visit on add failed", e);
+        }
+      }
+      return NextResponse.json({
+        ok: true, visit: created, notified, clientNotified, selfBillId, payoutError,
+        closedVisitIndex, advanced,
+      });
     }
     if (error.code !== "23505") {
       return NextResponse.json({ error: error.message }, { status: 400 });

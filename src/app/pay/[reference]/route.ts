@@ -69,17 +69,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
 
     let jobId = "";
     let jobClientId: string | null = null;
-    let jobPrice: { client_price?: number | null; extras_amount?: number | null } | null = null;
+    let jobPrice: { client_price?: number | null; extras_amount?: number | null; total_client_price?: number | null } | null = null;
     if (inv.job_reference?.trim()) {
       const { data: jobRow } = await admin
         .from("jobs")
-        .select("id, client_id, client_price, extras_amount")
+        .select("id, client_id, client_price, extras_amount, total_client_price")
         .eq("reference", inv.job_reference.trim())
         .maybeSingle();
       if (jobRow?.id) {
         jobId = jobRow.id as string;
         jobClientId = (jobRow as { client_id?: string | null }).client_id ?? null;
-        jobPrice = jobRow as { client_price?: number | null; extras_amount?: number | null };
+        jobPrice = jobRow as { client_price?: number | null; extras_amount?: number | null; total_client_price?: number | null };
       }
     }
 
@@ -106,7 +106,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       pagoFatura: Number(inv.amount_paid ?? 0),
       faturaPaga: inv.status === "paid",
       totalDoJob: jobPrice
-        ? Number(jobPrice.client_price ?? 0) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion)
+        ? Math.max(Number(jobPrice.client_price ?? 0), Number(jobPrice.total_client_price ?? 0)) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion)
         : null,
       pagoNoJob,
       faturaUnicaDoJob: faturasDoJob === 1,
@@ -188,7 +188,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       ? Math.max(
           0,
           Math.round(
-            (Number(jobPrice.client_price ?? 0) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion) - (pagoNoJob ?? 0) - amount) * 100,
+            (Math.max(Number(jobPrice.client_price ?? 0), Number(jobPrice.total_client_price ?? 0)) + Number(jobPrice.extras_amount ?? 0) - Math.max(0, promotion) - (pagoNoJob ?? 0) - amount) * 100,
           ) / 100,
         )
       : balanceAfter;

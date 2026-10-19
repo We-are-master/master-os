@@ -8,6 +8,7 @@
  * relatório no mesmo dia da visita, então "hoje" também é a regra deles.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { materialDoJobInteiro } from "@/lib/report-material-extra";
 import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
 import { submeterRelatorioHousekeep } from "./submit-housekeep-report";
@@ -71,6 +72,45 @@ const JOB_SELECT =
   "id, reference, title, status, report_link, start_report, final_report, final_report_submitted, " +
   "partner_timer_started_at, partner_timer_ended_at, partner_name, client_name, property_address, " +
   "external_report_started_at, external_report_submitted_at, external_report_manual_at, external_report_attempts";
+
+/**
+ * O job, com o relatório que vai para a plataforma: o da ÚLTIMA visita que mandou
+ * relatório, quando houver visitas extras (dono, 19/10/2026). A plataforma recebe um
+ * relatório só, o da visita que fechou o trabalho; os outros ficam no job card.
+ * O horário do formulário segue o do job (a visita não tem timer próprio).
+ */
+async function carregarJobComRelatorioDaUltimaVisita(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<Record<string, unknown> | null> {
+  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  if (!job) return null;
+  const { data: visitas } = await supabase
+    .from("job_visits")
+    .select("visit_index, start_report, final_report, report_submitted_at")
+    .eq("job_id", jobId)
+    .is("deleted_at", null)
+    .not("report_submitted_at", "is", null)
+    .order("visit_index", { ascending: false })
+    .limit(1);
+  const ultima = (visitas ?? [])[0] as { start_report?: unknown; final_report?: unknown } | undefined;
+  if (!ultima?.final_report) return job as unknown as Record<string, unknown>;
+  // Material de todas as visitas, somado: a plataforma recebe um relatório só, e o
+  // material da V1 não pode sumir só porque a V2 fechou o trabalho (19/10/2026).
+  const material = await materialDoJobInteiro(supabase, jobId, (job as { final_report?: Record<string, unknown> | null }).final_report ?? null);
+  const finalDaUltima = { ...(ultima.final_report as Record<string, unknown>) };
+  if (material.cost > 0 || material.charge > 0) {
+    finalDaUltima.materials_bought = true;
+    finalDaUltima.materials_extra_cost = material.cost;
+    finalDaUltima.materials_extra_charge = material.charge;
+  }
+  return {
+    ...(job as unknown as Record<string, unknown>),
+    start_report: ultima.start_report ?? (job as { start_report?: unknown }).start_report ?? null,
+    final_report: finalDaUltima,
+    final_report_submitted: true,
+  };
+}
 
 /**
  * Qual dos dois formulários da Housekeep preencher.
@@ -515,7 +555,7 @@ async function executarEnvio(
   opcoes: OpcoesDeEnvio | undefined,
   marca: MarcaDeTrava,
 ): Promise<{ estado: EstadoEnvio; motivo?: string; segundos?: number }> {
-  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  const job = await carregarJobComRelatorioDaUltimaVisita(supabase, jobId);
   if (!job) return { estado: "nao_elegivel", motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);
@@ -845,7 +885,7 @@ export async function previewEnvio(
   | { ok: true; forma: "trade" | "limpeza"; campos: Array<{ rotulo: string; valor: string }>; avisos: string[] }
   | { ok: false; motivo: string }
 > {
-  const { data: job } = await supabase.from("jobs").select(JOB_SELECT).eq("id", jobId).maybeSingle();
+  const job = await carregarJobComRelatorioDaUltimaVisita(supabase, jobId);
   if (!job) return { ok: false, motivo: "job not found" };
 
   const bloqueio = motivoNaoElegivel(job as never);

@@ -55,7 +55,7 @@ type PartnerEmbed = {
 
 const CLIENT_CONFIRMATION_STATUSES = new Set(["scheduled", "late"]);
 
-async function resolveJobTypeOfWorkLabel(
+export async function resolveJobTypeOfWorkLabel(
   supabase: SupabaseClient,
   catalogServiceId: string | null | undefined,
   title: string | null | undefined,

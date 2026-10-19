@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { verifyPartnerReportToken } from "@/lib/quote-response-token";
+import { verifyPartnerReportToken, verifyVisitReportToken } from "@/lib/quote-response-token";
+import { avancarVisitas } from "@/lib/job-visit-advance-server";
+import { ensureWeeklySelfBillForVisit } from "@/services/self-bills";
+import type { Job, JobVisit } from "@/types/database";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import {
   isReportTemplate,
@@ -13,7 +16,7 @@ import { photosRefused } from "@/lib/public-report-templates";
 import { registrarReportLink } from "@/lib/report-link-events";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
-import { aplicarMaterialExtraDoReport } from "@/lib/report-material-extra";
+import { aplicarMaterialDaVisita, aplicarMaterialExtraDoReport, pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +74,9 @@ export async function POST(req: NextRequest) {
   const token = String(form.get("token") ?? "").trim();
   if (!token) return NextResponse.json({ error: "Token is required." }, { status: 400 });
   const verified = verifyPartnerReportToken(token);
+  // Relatório de uma visita extra (19/10/2026): outro caminho, grava na visita.
+  const daVisita = verified ? null : verifyVisitReportToken(token);
+  if (daVisita) return enviarRelatorioDaVisita(form, daVisita.visitId, daVisita.partnerId);
   if (!verified) {
     return NextResponse.json(
       { error: "Invalid or expired report link. Reports must be submitted from the partner-specific link." },
@@ -167,6 +173,12 @@ export async function POST(req: NextRequest) {
     timerStartedAt: job.partner_timer_started_at ?? null,
     timerEndedAt: job.partner_timer_ended_at ?? null,
   });
+  // Material comprado (19/10/2026): resposta obrigatória; Yes exige valor e foto do recibo.
+  const faltaMaterial = pendenciasDeMaterial(template, finalData, (fotos.receipt ?? []).length);
+  if (faltaMaterial.length) {
+    veredito.ok = false;
+    veredito.motivos.push(...faltaMaterial);
+  }
   if (!veredito.ok) {
     await registrarReportLink(supabase, { jobId: job.id, partnerId: tokenPartnerId, event: "submit_refused", ok: false, detail: veredito.motivos.join(" · ").slice(0, 500) });
     return NextResponse.json(
@@ -219,8 +231,9 @@ export async function POST(req: NextRequest) {
   // caso raro de regravação com só o start submetido — nunca soma duas vezes.
   await aplicarMaterialExtraDoReport(supabase, job.id, {
     finalData,
+    // O envelope guarda os campos no topo (buildReportPayload), não em `.data`.
     previousFinalData: job.final_report_submitted
-      ? ((job.final_report as { data?: Record<string, unknown> } | null)?.data ?? null)
+      ? ((job.final_report as { data?: Record<string, unknown> } | null)?.data ?? (job.final_report as Record<string, unknown> | null) ?? null)
       : null,
   });
 
@@ -241,4 +254,136 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, jobReference: job.reference, nota: veredito.nota, faixa: veredito.faixa });
+}
+
+/**
+ * Relatório de UMA visita extra, pelo link dela (19/10/2026).
+ *
+ * Mesmo formulário e mesma checagem da plataforma; grava em `job_visits` e não no
+ * job. Enviar o relatório é dizer que a visita aconteceu: ela fecha, entra no
+ * self-bill do parceiro dela, e o job segue (próxima visita, ou Final review se
+ * era a última).
+ */
+async function enviarRelatorioDaVisita(form: FormData, visitId: string, tokenPartnerId: string) {
+  const template = String(form.get("template") ?? "").trim();
+  if (!isReportTemplate(template)) {
+    return NextResponse.json({ error: "Invalid template." }, { status: 400 });
+  }
+  let startData: Record<string, unknown> = {};
+  let finalData: Record<string, unknown> = {};
+  try {
+    startData = JSON.parse(String(form.get("startData") ?? "{}")) as Record<string, unknown>;
+    finalData = JSON.parse(String(form.get("finalData") ?? "{}")) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid startData/finalData JSON." }, { status: 400 });
+  }
+
+  const supabase = getServiceSupabase();
+  const { data: visitRow } = await supabase
+    .from("job_visits")
+    .select("*")
+    .eq("id", visitId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  const visit = visitRow as (JobVisit & { report_submitted_at?: string | null }) | null;
+  if (!visit) return NextResponse.json({ error: "This visit is no longer in our system." }, { status: 404 });
+  if (visit.partner_id !== tokenPartnerId) {
+    return NextResponse.json({ error: "This visit is no longer assigned to you. Ask the office for an updated link." }, { status: 403 });
+  }
+  if (visit.status === "cancelled") {
+    return NextResponse.json({ error: "This visit was cancelled, so no report is needed." }, { status: 409 });
+  }
+  if (visit.report_submitted_at) {
+    return NextResponse.json({ error: "A report has already been submitted for this visit." }, { status: 409 });
+  }
+  const { data: jobRow } = await supabase
+    .from("jobs")
+    .select("id, reference, status")
+    .eq("id", visit.job_id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!jobRow) return NextResponse.json({ error: "Job not found." }, { status: 404 });
+  const job = jobRow as { id: string; reference: string; status: string };
+
+  const fotos = parseReportPhotoEntries(form);
+  let enviadas: Record<string, string[]> = {};
+  try {
+    enviadas = JSON.parse(String(form.get("uploaded") ?? "{}")) as Record<string, string[]>;
+  } catch {
+    enviadas = {};
+  }
+  const jaNoStart = uploadedPhotoShape(template, "start", enviadas, job.id);
+  const jaNoFinal = uploadedPhotoShape(template, "final", enviadas, job.id);
+  const veredito = validarSubmissaoDeReport({
+    template,
+    finalData,
+    startData,
+    photosRefused: photosRefused({ ...startData, ...finalData }),
+    startPhotos: plannedPhotoShape(template, "start", fotos, jaNoStart),
+    finalPhotos: plannedPhotoShape(template, "final", fotos, jaNoFinal),
+    timerStartedAt: null,
+    timerEndedAt: null,
+  });
+  const faltaMaterial = pendenciasDeMaterial(template, finalData, (fotos.receipt ?? []).length);
+  if (faltaMaterial.length) {
+    veredito.ok = false;
+    veredito.motivos.push(...faltaMaterial);
+  }
+  if (!veredito.ok) {
+    return NextResponse.json(
+      { error: "The report is missing what the client platform requires.", pendencias: veredito.motivos, nota: veredito.nota },
+      { status: 422 },
+    );
+  }
+
+  const result = await persistReportSubmission(
+    supabase,
+    { id: job.id, reference: job.reference, status: job.status, partner_timer_started_at: null, partner_timer_ended_at: null },
+    {
+      template,
+      source: "partner_link",
+      startData,
+      finalData,
+      photos: fotos,
+      writeStart: true,
+      existingStartPhotos: jaNoStart,
+      existingFinalPhotos: jaNoFinal,
+      visit: { id: visit.id, index: visit.visit_index },
+    },
+  );
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error ?? "Could not save the report." }, { status: 500 });
+  }
+
+  // Material da visita: reembolso no parceiro DELA, cobrança somada no job (19/10/2026).
+  await aplicarMaterialDaVisita(supabase, visit, { finalData, previousFinalData: null });
+
+  // A visita aconteceu: fecha, paga o parceiro dela e o job segue.
+  if (visit.status !== "completed") {
+    const { data: fechada } = await supabase
+      .from("job_visits")
+      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", visit.id)
+      .select()
+      .single();
+    after(async () => {
+      try {
+        const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", job.id).maybeSingle();
+        if (fullJob && fechada) await ensureWeeklySelfBillForVisit(fullJob as Job, fechada as JobVisit, { client: supabase });
+        const r = await avancarVisitas(supabase, job.id, { primary: false, userName: "Partner report" });
+        if (r.ok && r.kind === "finish") {
+          // Era a última visita: igual ao relatório da V1, o job vai para Final review.
+          await supabase
+            .from("jobs")
+            .update({ status: "final_check", final_check_at: new Date().toISOString() })
+            .eq("id", job.id)
+            .in("status", ["scheduled", "late", "in_progress"]);
+        }
+      } catch (e) {
+        console.error("[submit-report] visit close failed", e);
+      }
+    });
+  }
+
+  return NextResponse.json({ ok: true, jobReference: `${job.reference} · Visit ${visit.visit_index}`, nota: veredito.nota, faixa: veredito.faixa });
 }

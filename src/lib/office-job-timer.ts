@@ -3,11 +3,27 @@ import { isJobOnSiteWorkStatus } from "@/lib/job-phases";
 
 /** Frozen + current running segment (seconds). Never decreases. */
 export function computeOfficeTimerElapsedSeconds(
-  job: Pick<Job, "timer_elapsed_seconds" | "timer_last_started_at" | "timer_is_running">,
+  job: Pick<Job, "timer_elapsed_seconds" | "timer_last_started_at" | "timer_is_running"> &
+    Partial<Pick<Job, "partner_timer_started_at" | "partner_timer_ended_at" | "partner_timer_accum_paused_ms">>,
   nowMs: number = Date.now(),
 ): number {
   const base = Number(job.timer_elapsed_seconds ?? 0) || 0;
-  if (!job.timer_is_running || !job.timer_last_started_at) return base;
+  if (!job.timer_is_running || !job.timer_last_started_at) {
+    if (base > 0) return base;
+    /**
+     * Sem timer do escritório (as colunas `timer_*` nem existem no banco hoje), vale
+     * a janela do parceiro: entrada e saída, menos as pausas. É onde o Edit job
+     * finances grava o horário de um job por hora (19/10/2026); sem isto o job por
+     * hora cobrava sempre o mínimo de 1h ("Logged: 0s").
+     */
+    const ini = job.partner_timer_started_at ? new Date(job.partner_timer_started_at).getTime() : NaN;
+    const fim = job.partner_timer_ended_at ? new Date(job.partner_timer_ended_at).getTime() : NaN;
+    if (Number.isFinite(ini) && Number.isFinite(fim) && fim > ini) {
+      const pausas = Number(job.partner_timer_accum_paused_ms ?? 0) || 0;
+      return Math.max(0, Math.floor((fim - ini - pausas) / 1000));
+    }
+    return base;
+  }
   const seg = Math.max(0, Math.floor((nowMs - new Date(job.timer_last_started_at).getTime()) / 1000));
   return base + seg;
 }

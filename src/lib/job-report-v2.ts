@@ -172,6 +172,11 @@ export const REPORT_FIELD_LABELS: Record<string, string> = {
   number_of_gardeners:    "Number of gardeners",
   waste_bags:             "Waste bags",
   materials_charges:      "Materials charges",
+  materials_bought:       "Materials bought on site",
+  materials_extra_cost:   "Materials paid on site (partner)",
+  materials_extra_charge: "Materials charged",
+  materials_by_visit:     "Materials by visit",
+  materials_receipt:      "Receipt",
   materials_charges_note: "Materials note",
   all_tasks_done:         "All tasks completed",
   next_visit_tasks:       "Next visit tasks",
@@ -242,6 +247,14 @@ function formatFieldValue(key: string, value: unknown): string {
   if (key === "duration_ms" && typeof value === "number") return formatDurationMs(value);
   if (key === "chargeable_hours" && typeof value === "number") return `${value.toFixed(2)} h`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
+  // Dinheiro de material em libras, e o recibo como contagem (as fotos têm bloco próprio).
+  if ((key === "materials_extra_cost" || key === "materials_extra_charge") && value !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return `£${n.toFixed(2)}`;
+  }
+  if (key === "materials_receipt" && Array.isArray(value)) {
+    return value.length ? `${value.length} receipt photo${value.length === 1 ? "" : "s"}` : "";
+  }
   // Valores de select: sem isto o card e o PDF imprimem `partially_complete`
   // cru, com underscore e tudo.
   if ((key === "certificate_outcome" || key === "completion_status") && typeof value === "string") {

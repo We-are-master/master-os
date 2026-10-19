@@ -16,6 +16,7 @@ import {
 } from "@/lib/public-report-templates";
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
+import { pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { plannedPhotoShape } from "@/lib/report-submission";
 import {
   FIXFY_BORDER,
@@ -309,6 +310,15 @@ export default function PublicReportForm({
             />
           </div>
         );
+      case "receipt":
+        // Foto do recibo (19/10/2026): sobe na hora como as fotos do trabalho, mas
+        // vai para um campo próprio do relatório, nunca para a plataforma do cliente.
+        return renderPhotoSlot("final")({
+          key: "receipt",
+          label: f.label,
+          hint: f.hint,
+          accept: "image/*,application/pdf,.pdf",
+        } as ReportPhotoSlot);
       case "text":
       default:
         return (
@@ -547,7 +557,7 @@ export default function PublicReportForm({
 
   const veredito = useMemo(() => {
     const { startFields, finalFields } = splitReportFields(spec, data);
-    return validarSubmissaoDeReport({
+    const v = validarSubmissaoDeReport({
       template,
       finalData: finalFields,
       // A limpeza guarda escopo, dano e recomendação na seção de chegada.
@@ -561,6 +571,9 @@ export default function PublicReportForm({
       timerStartedAt: Number(hours) || Number(minutes) ? "typed" : null,
       timerEndedAt: Number(hours) || Number(minutes) ? "typed" : null,
     });
+    // Material comprado: pergunta obrigatória; Yes pede valor e foto do recibo.
+    const faltaMaterial = pendenciasDeMaterial(template, finalFields, (fotosValidas["final:receipt"] ?? []).length);
+    return faltaMaterial.length ? { ...v, ok: false, motivos: [...v.motivos, ...faltaMaterial] } : v;
   }, [spec, data, template, fotosValidas, hours, minutes]);
 
   const submit = async () => {
@@ -597,6 +610,12 @@ export default function PublicReportForm({
     for (const [chave, lista] of Object.entries(photos)) {
       const urls = lista.map((f) => estado.get(f)?.url).filter((u): u is string => Boolean(u));
       if (urls.length) enviadas[chave] = urls;
+    }
+    // Recibo do material: endereços no próprio relatório, fora das fotos do trabalho.
+    if (enviadas["final:receipt"]?.length) {
+      finalFields.materials_receipt = enviadas["final:receipt"];
+      form.set("finalData", JSON.stringify(finalFields));
+      delete enviadas["final:receipt"];
     }
     form.set("uploaded", JSON.stringify(enviadas));
     const fotos = Object.values(enviadas).reduce((n, l) => n + l.length, 0);

@@ -362,7 +362,8 @@ function formatBritishDateTime(d: Date): string {
   }).format(d);
 }
 
-const PDF_HIDDEN_FIELD_KEYS = new Set(["photos", "recommend_additional_services"]);
+// O custo do material e o recibo são nossos: o cliente vê só o que paga (19/10/2026).
+const PDF_HIDDEN_FIELD_KEYS = new Set(["photos", "recommend_additional_services", "materials_extra_cost", "materials_receipt"]);
 
 function renderableFieldsFromReport(report: NormalizedReport): RenderableField[] {
   const out: RenderableField[] = [];
@@ -380,6 +381,8 @@ function renderableFieldsFromReport(report: NormalizedReport): RenderableField[]
 }
 
 function formatFieldValue(key: string, v: unknown): string {
+  // Material em libras no relatório do cliente (19/10/2026).
+  if (key === "materials_extra_charge" && v !== "" && Number.isFinite(Number(v))) return `£${Number(v).toFixed(2)}`;
   if (key === "duration_ms" && typeof v === "number") {
     const min = Math.round(v / 60_000);
     const h = Math.floor(min / 60);

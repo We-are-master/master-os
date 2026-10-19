@@ -19,6 +19,9 @@ export interface JobConfirmationEmailArgs {
   propertyAddress: string;
   propertyPostcode: string;
   typeOfWork: string;
+  /** Rótulo e abertura próprios (visita extra, 19/10/2026). Sem eles, o "Job confirmed" de sempre. */
+  eyebrow?: string;
+  intro?: string;
 }
 
 function escapeHtml(s: string): string {
@@ -211,10 +214,10 @@ export function buildJobConfirmationHtml(args: JobConfirmationEmailArgs): string
 
   return envelopeDaConta({
     preheader: semJanela(args.arrivalWindow)
-      ? `Your job is confirmed for ${args.jobDate}. We'll confirm the arrival time.`
-      : `Your job is confirmed for ${args.jobDate} between ${args.arrivalWindow}.`,
-    eyebrow: "&#10003; Job confirmed",
-    corpo: `<p style="margin:0 0 18px 0;font-size:15px;line-height:22px;color:#4A4A55;">Hi <strong style="color:#020040;">${greeting}</strong>, this job is booked and scheduled.</p>
+      ? `${args.eyebrow ?? "Your job is confirmed"} for ${args.jobDate}. We'll confirm the arrival time.`
+      : `${args.eyebrow ?? "Your job is confirmed"} for ${args.jobDate} between ${args.arrivalWindow}.`,
+    eyebrow: args.eyebrow ? `&#10003; ${escapeHtml(args.eyebrow)}` : "&#10003; Job confirmed",
+    corpo: `<p style="margin:0 0 18px 0;font-size:15px;line-height:22px;color:#4A4A55;">Hi <strong style="color:#020040;">${greeting}</strong>, ${args.intro ? escapeHtml(args.intro) : "this job is booked and scheduled."}</p>
 ${blocoDoJob(ref, title)}
 <p style="margin:0 0 6px 0;font-size:15px;line-height:22px;color:#020040;">
 <strong style="font-weight:700;">${date}</strong><span style="color:#9A9AA8;"> &middot; </span><strong style="font-weight:700;">${window}</strong>

@@ -7,6 +7,7 @@ import {
   createPartnerJobAcceptToken,
   createPartnerOnHoldToken,
   createPartnerReportToken,
+  createVisitReportToken,
 } from "@/lib/quote-response-token";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +52,17 @@ function tokenFresco(entityRef: string | null | undefined): string | null {
       return createPartnerBidToken(bid[1]!, bid[2]!);
     } catch (err) {
       console.error("[short-link] não consegui reassinar o token de bid:", err);
+      return null;
+    }
+  }
+
+  // Relatório de uma visita extra (19/10/2026): reassina para o parceiro DA VISITA.
+  const visita = /^visit:([0-9a-f-]{36}):partner:([0-9a-f-]{36}):report$/i.exec(ref);
+  if (visita) {
+    try {
+      return createVisitReportToken(visita[1]!, visita[2]!);
+    } catch (err) {
+      console.error("[short-link] não consegui reassinar o token da visita:", err);
       return null;
     }
   }

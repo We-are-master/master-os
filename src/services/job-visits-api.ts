@@ -20,11 +20,42 @@ async function callVisits(jobId: string, init: RequestInit): Promise<JobVisit | 
   return payload.visit ?? null;
 }
 
-export async function apiCreateJobVisit(input: CreateJobVisitInput): Promise<JobVisit> {
+type AvisoDaVisita = { ok: boolean; skipped?: string; error?: string };
+
+/** Cria e diz quem foi avisado: o parceiro da visita e o cliente, no ticket do job. */
+export async function apiCreateJobVisit(
+  input: CreateJobVisitInput,
+): Promise<{
+  visit: JobVisit;
+  partnerNotified: AvisoDaVisita | null;
+  clientNotified: AvisoDaVisita | null;
+  /** Visita que fechou junto (job em andamento): o índice dela e para onde o job foi. */
+  closedVisitIndex: number | null;
+  advanced: { ok: boolean; kind?: string; visit?: { visit_index: number; scheduled_date?: string | null } } | null;
+}> {
   const { job_id: jobId, ...rest } = input;
-  const visit = await callVisits(jobId, { method: "POST", body: JSON.stringify(rest) });
-  if (!visit) throw new Error("Visit was not created");
-  return visit;
+  const res = await fetch(`/api/jobs/${jobId}/visits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rest),
+  });
+  const payload = (await res.json().catch(() => ({}))) as {
+    visit?: JobVisit;
+    error?: string;
+    notified?: AvisoDaVisita;
+    clientNotified?: AvisoDaVisita;
+    closedVisitIndex?: number | null;
+    advanced?: { ok: boolean; kind?: string; visit?: { visit_index: number; scheduled_date?: string | null } } | null;
+  };
+  if (!res.ok) throw new Error(payload.error || `Visit request failed (${res.status})`);
+  if (!payload.visit) throw new Error("Visit was not created");
+  return {
+    visit: payload.visit,
+    partnerNotified: payload.notified ?? null,
+    clientNotified: payload.clientNotified ?? null,
+    closedVisitIndex: payload.closedVisitIndex ?? null,
+    advanced: payload.advanced ?? null,
+  };
 }
 
 export async function apiUpdateJobVisit(

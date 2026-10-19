@@ -116,7 +116,7 @@ export const FIXFY_MAX_FOTOS_LIMPEZA = 5;
 
 // ─── Field declarations ──────────────────────────────────────────────────────
 
-export type ReportFieldType = "boolean" | "number" | "text" | "longtext" | "select";
+export type ReportFieldType = "boolean" | "number" | "text" | "longtext" | "select" | "receipt";
 
 export interface ReportField {
   key:           string;
@@ -237,14 +237,23 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         optional: true,
       },
       {
+        // Pergunta obrigatória (dono, 19/10/2026): material comprado na casa nunca
+        // pode ficar de fora do relatório do cliente. Respondeu Yes, valor e foto do
+        // recibo passam a ser obrigatórios.
+        key: "materials_bought",
+        label: "Did you buy any materials for this job?",
+        hint: "Parts, fittings or supplies you paid for. Answer Yes or No.",
+        type: "boolean",
+      },
+      {
         // O VALOR do material vira dinheiro do job na hora da gravação
         // (report-material-extra.ts): custo reembolsa o parceiro, cobrança
         // entra na receita. Em branco, cobrança = custo + 30% (regra da casa).
         key: "materials_extra_cost",
         label: "Materials bought on site (£)",
-        hint: "What was paid for parts/materials. Reimbursed to the partner. Leave empty if none.",
+        hint: "What you paid for parts/materials. Reimbursed to you.",
         type: "number",
-        optional: true,
+        showIf: { key: "materials_bought", equals: true },
       },
       {
         key: "materials_extra_charge",
@@ -252,6 +261,14 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         hint: "Leave empty to charge cost + 30% (our standard).",
         type: "number",
         optional: true,
+        showIf: { key: "materials_bought", equals: true },
+      },
+      {
+        key: "materials_receipt",
+        label: "Photo of the receipt",
+        hint: "Required when you bought materials. We reimburse you from this.",
+        type: "receipt",
+        showIf: { key: "materials_bought", equals: true },
       },
       {
         key: "completion_status",
@@ -315,9 +332,15 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       {
         key: "materials_extra_cost",
         label: "Materials bought on site (£)",
-        hint: "What was paid for materials. Reimbursed to the partner. Leave empty if none.",
+        hint: "What you paid for materials. Reimbursed to you.",
         type: "number",
-        optional: true,
+        showIf: { key: "materials_charges", equals: true },
+      },
+      {
+        key: "materials_receipt",
+        label: "Photo of the receipt",
+        hint: "Required when you bought materials. We reimburse you from this.",
+        type: "receipt",
         showIf: { key: "materials_charges", equals: true },
       },
       {
@@ -393,11 +416,20 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
       { key: "job_complete",       label: "Job complete?",            type: "boolean" },
       { key: "customer_inspected", label: "Customer inspected the work?", type: "boolean" },
       {
+        // Pergunta obrigatória (dono, 19/10/2026): material comprado na casa nunca
+        // pode ficar de fora do relatório do cliente. Respondeu Yes, valor e foto do
+        // recibo passam a ser obrigatórios.
+        key: "materials_bought",
+        label: "Did you buy any materials for this job?",
+        hint: "Parts, fittings or supplies you paid for. Answer Yes or No.",
+        type: "boolean",
+      },
+      {
         key: "materials_extra_cost",
         label: "Materials bought on site (£)",
-        hint: "Cleaning products/supplies paid on site. Reimbursed to the partner. Leave empty if none.",
+        hint: "Cleaning products/supplies you paid for on site. Reimbursed to you.",
         type: "number",
-        optional: true,
+        showIf: { key: "materials_bought", equals: true },
       },
       {
         key: "materials_extra_charge",
@@ -405,6 +437,14 @@ const SPECS: Record<ReportTemplate, TemplateSpec> = {
         hint: "Leave empty to charge cost + 30% (our standard).",
         type: "number",
         optional: true,
+        showIf: { key: "materials_bought", equals: true },
+      },
+      {
+        key: "materials_receipt",
+        label: "Photo of the receipt",
+        hint: "Required when you bought materials. We reimburse you from this.",
+        type: "receipt",
+        showIf: { key: "materials_bought", equals: true },
       },
     ],
   },

@@ -80,7 +80,7 @@ export function verifyQuoteResponseToken(token: string): string | null {
 //   Earlier prototype tied this to quoteId — switched to jobId so jobs created
 //   without a parent quote can still produce a report link.
 
-type PartnerTokenKind = "report" | "bid" | "accept" | "on_hold";
+type PartnerTokenKind = "report" | "bid" | "accept" | "on_hold" | "visit_report";
 
 function makePartnerToken(kind: PartnerTokenKind, entityId: string, partnerId: string): string {
   const secret = getSecret();
@@ -121,6 +121,18 @@ export function createPartnerReportToken(jobId: string, partnerId: string): stri
 export function verifyPartnerReportToken(token: string): { jobId: string; partnerId: string } | null {
   const v = verifyPartnerToken(token, "report");
   return v ? { jobId: v.entityId, partnerId: v.partnerId } : null;
+}
+
+/**
+ * Relatório de UMA visita extra (19/10/2026): liga a visita ao parceiro DELA, que pode
+ * não ser o do job. O token do job não serve aqui, ele exige `jobs.partner_id`.
+ */
+export function createVisitReportToken(visitId: string, partnerId: string): string {
+  return makePartnerToken("visit_report", visitId, partnerId);
+}
+export function verifyVisitReportToken(token: string): { visitId: string; partnerId: string } | null {
+  const v = verifyPartnerToken(token, "visit_report");
+  return v ? { visitId: v.entityId, partnerId: v.partnerId } : null;
 }
 
 export function createPartnerBidToken(quoteId: string, partnerId: string): string {
