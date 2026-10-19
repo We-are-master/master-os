@@ -285,7 +285,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
   // Docs must exist; report upload/approve is no longer a hard gate —
   // office attests “report submitted to the customer” (partners rarely use the app).
-  const docsReady = invoiceStatus === "issued" && selfBillStatus === "issued";
+  // Job a £0 (refação, cortesia) não tem o que faturar: a fatura não segura o fechamento (19/10/2026).
+  const docsReady = (invoiceStatus === "issued" || jobValue <= 0.02) && selfBillStatus === "issued";
   /**
    * Só resta UMA atestação humana: a de responsabilidade.
    *
