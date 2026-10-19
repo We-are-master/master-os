@@ -3096,7 +3096,8 @@ function JobsPageContent() {
             <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
               <div className="inline-flex flex-wrap items-center gap-1.5">
                 <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
-                <JobOverdueBadge job={item} />
+                {/* Late e Overdue dizem o mesmo (data passou): fica só o Late (dono, 19/10/2026). */}
+                {st !== "late" ? <JobOverdueBadge job={item} /> : null}
                 <JobCardRefusedBadge job={item} />
               </div>
             </div>
@@ -3129,7 +3130,7 @@ function JobsPageContent() {
           <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={c.variant} dot={c.dot} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
-              <JobOverdueBadge job={item} />
+              {st !== "late" ? <JobOverdueBadge job={item} /> : null}
                 <JobCardRefusedBadge job={item} />
             </div>
           </div>
