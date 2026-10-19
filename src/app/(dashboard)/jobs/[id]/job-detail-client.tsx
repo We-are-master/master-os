@@ -7747,7 +7747,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               label: "Add visit",
                               icon: CalendarPlus,
                               onSelect: () => {
-                                setDetailTab(1);
+                                setDetailTab(0);
                                 setVisitOpenCreateSignal((k) => k + 1);
                               },
                             }]
@@ -8295,9 +8295,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
-                            onClick={() => setDetailTab(1)}
+                            onClick={() => {
+                              // Visitas moram no Details (19/10/2026): abre e rola até a seção.
+                              setDetailTab(0);
+                              queueMicrotask(() => document.getElementById("job-visits")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+                            }}
                             className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
-                            title="Open the visits tab"
+                            title="Show the visits"
                           >
                             <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
@@ -8532,7 +8536,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 1 as const }] : []),
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
@@ -8872,8 +8875,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {/* Sempre montada (só escondida): o "Add visit" do menu manda um sinal
                   que a aba lê ao montar; remontar a cada troca reabriria o formulário. */}
+              {/* Visitas dentro do Details (dono, 19/10/2026): quase todo job tem uma só, então
+                  é uma linha; com mais de uma, viram cartões. Fica montada para o "Add visit" do menu. */}
               {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                <div hidden={detailTab !== 1}>
+                <div hidden={detailTab !== 0} id="job-visits" className="mt-3 space-y-1.5 border-t border-border pt-2">
+                  <p className="m-0 text-xs font-semibold text-text-primary">Visits</p>
                   <VisitsTab
                     job={job}
                     openCreateSignal={visitOpenCreateSignal}
@@ -8902,6 +8908,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         openFinalReview();
                       })();
                     }}
+                    onJobChanged={() => void refreshJobFinance()}
                     onJobStatusBumpRequested={(suggestedStatus) => {
                       void handleStatusChange(job, suggestedStatus);
                     }}

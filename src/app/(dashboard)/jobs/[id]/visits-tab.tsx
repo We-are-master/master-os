@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Loader2, X, Save, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, X, Save, Check, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,8 @@ import {
 import { getSupabase } from "@/services/base";
 import { jobStatusRank } from "@/lib/job-phases";
 import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
+import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
 import { toast } from "sonner";
 import type { CatalogService, Job, JobVisit, JobVisitStatus, Partner } from "@/types/database";
 
@@ -91,6 +92,7 @@ export function VisitsTab({
   onCompletePrimary,
   completePrimaryLabel,
   onFinishJob,
+  onJobChanged,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
@@ -111,6 +113,8 @@ export function VisitsTab({
    * abre a revisão. Vem do card, que é quem tem o modal e as regras.
    */
   onFinishJob?: () => void;
+  /** O job mudou no servidor (seguiu para a próxima visita): o card recarrega. */
+  onJobChanged?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -161,42 +165,81 @@ export function VisitsTab({
 
   const summary = useMemo(() => summariseVisits(job, visits), [job, visits]);
 
-  // Auto-derive parent status hints (Etapa 5).
+  // Visita extra começou: o job vai junto para In progress. O fim não sobe sozinho:
+  // quem decide é o Done de cada visita, pela rota `advance` (19/10/2026).
   useEffect(() => {
     if (!onJobStatusBumpRequested) return;
-    if (visits.length === 0) return;
     const live = visits.filter((v) => !v.deleted_at && v.status !== "cancelled");
-    if (live.length === 0) return;
-    const anyInProgress = live.some((v) => v.status === "in_progress");
-    if (anyInProgress && job.status === "scheduled") {
+    if (live.some((v) => v.status === "in_progress") && job.status === "scheduled") {
       onJobStatusBumpRequested("in_progress");
-      return;
-    }
-    const allCompleted = live.every((v) => v.status === "completed");
-    if (allCompleted && job.status === "in_progress") {
-      onJobStatusBumpRequested("final_check");
     }
   }, [visits, job.status, onJobStatusBumpRequested]);
+
+  /** Depois de um Done: segue para a próxima visita ou, se era a última, oferece fechar. */
+  async function avancar(index: number, primary: boolean) {
+    const res = await fetch(`/api/jobs/${job.id}/visits/advance`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ primary }),
+    });
+    const r = (await res.json().catch(() => ({}))) as {
+      kind?: "primary_pending" | "next_visit" | "finish";
+      visit?: { visit_index: number; scheduled_date?: string | null };
+      error?: string;
+    };
+    if (!res.ok) throw new Error(r.error || "Could not move the job on");
+    if (r.kind === "next_visit" && r.visit) {
+      toast.success(`Visit ${index} done · job back to Scheduled for visit ${r.visit.visit_index} on ${diaCurto(r.visit.scheduled_date)}`);
+      onJobChanged?.();
+      return "next" as const;
+    }
+    if (r.kind === "primary_pending") {
+      toast.success(`Visit ${index} done · visit 1 is still open`);
+      return "pending" as const;
+    }
+    return "finish" as const;
+  }
 
   async function handleComplete(visit: JobVisit) {
     try {
       const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
       setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
-      setJustCompleted(visit.visit_index);
-      toast.success(`Visit ${visit.visit_index} completed`);
       onVisitsChanged?.();
-      setJustCompleted(visit.visit_index);
+      const passo = await avancar(visit.visit_index, false);
+      if (passo === "finish") setJustCompleted(visit.visit_index);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to complete visit");
     }
   }
 
+  async function handleCompletePrimary() {
+    try {
+      const pendentes = visits.some((v) => !v.deleted_at && (v.status === "scheduled" || v.status === "in_progress"));
+      if (pendentes) {
+        await avancar(1, true);
+        return;
+      }
+      // Sem outra visita: o caminho de sempre, que leva para Final review com as regras do job.
+      if (!onCompletePrimary) return;
+      const ok = await onCompletePrimary();
+      if (ok) setJustCompleted(1);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to complete visit 1");
+    }
+  }
+
   async function handleCreate(input: CreateJobVisitInput) {
     try {
-      const created = await apiCreateJobVisit(input);
+      const { visit: created, partnerNotified, clientNotified } = await apiCreateJobVisit(input);
       setVisits((rows) => [...rows, created]);
       setEditTarget(null);
-      toast.success(`Visit ${created.visit_index} created`);
+      const quem = [partnerNotified?.ok ? "partner" : null, clientNotified?.ok ? "client" : null].filter(Boolean);
+      toast.success(
+        `Visit ${created.visit_index} created${quem.length ? ` · ${quem.join(" and ")} notified on the ticket` : ""}`,
+      );
+      if (clientNotified && !clientNotified.ok) {
+        toast.message(`Client not notified: ${clientNotified.skipped ?? clientNotified.error ?? "unknown"}`);
+      }
       onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create visit");
@@ -229,9 +272,9 @@ export function VisitsTab({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16 text-text-tertiary">
-        <Loader2 className="h-5 w-5 animate-spin mr-2" />
-        <span className="text-sm">Loading visits…</span>
+      <div className="flex items-center gap-2 px-4 py-3 text-text-tertiary">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span className="text-xs">Loading visits…</span>
       </div>
     );
   }
@@ -244,109 +287,103 @@ export function VisitsTab({
    */
   const jobHasPartner = Boolean(job.partner_id?.trim());
   /**
-   * A visita 1 é o job, então o status dela é o estágio do job traduzido:
-   * de Final checks em diante o trabalho aconteceu, e a linha diz "Completed"
-   * em vez de um "From job" que não informa nada.
+   * A visita 1 é o job: feita quando ficou registrada (`primary_visit_done`) ou
+   * quando o job já passou de campo (Final review em diante).
    */
+  const primaryDone = Boolean(job.primary_visit_done) || jobStatusRank(job.status) >= 40;
   const primaryStatus: { label: string; variant: "info" | "warning" | "success" | "default" | "primary" } =
     job.status === "cancelled"
       ? { label: "Cancelled", variant: "default" }
-      : jobStatusRank(job.status) >= 40
+      : primaryDone
         ? { label: "Completed", variant: "success" }
         : job.status === "in_progress"
           ? { label: "In progress", variant: "warning" }
           : { label: "Scheduled", variant: "info" };
+  const vivas = visits.filter((v) => !v.deleted_at).sort((a, b) => a.visit_index - b.visit_index);
+  const botaoAdd = (
+    <Button
+      size="sm"
+      variant="outline"
+      icon={<Plus className="h-3.5 w-3.5" />}
+      disabled={!jobHasPartner}
+      title={jobHasPartner ? "Book another visit for this job" : "Assign a partner to visit 1 first"}
+      onClick={() => setEditTarget({ mode: "create" })}
+    >
+      Add visit
+    </Button>
+  );
 
   return (
-    <div className="space-y-3 px-4 sm:px-5 py-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">Visits</p>
-          <p className="text-xs text-text-secondary">
-            {summary.count} {summary.count === 1 ? "visit" : "visits"}
-            {" · "}client {formatCurrency(summary.totalClientPrice)}
-            {" · "}partner {formatCurrency(summary.totalPartnerCost)}
+    <div className="space-y-2.5">
+      {vivas.length === 0 ? (
+        // Quase todo job tem uma visita só: aqui fica uma linha, nada de tabela.
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-light px-3 py-2">
+          <p className="m-0 text-[12px] text-text-secondary">
+            <span className="font-semibold text-text-primary">1 visit.</span>{" "}
+            {jobHasPartner ? "Need to go back? Add another visit." : "Assign a partner to visit 1 before adding another."}
           </p>
+          {botaoAdd}
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <Button
-            size="sm"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            disabled={!jobHasPartner}
-            title={jobHasPartner ? undefined : "Assign a partner to visit 1 first"}
-            onClick={() => setEditTarget({ mode: "create" })}
-          >
-            Add visit
-          </Button>
-          {!jobHasPartner ? (
-            <p className="max-w-[15rem] text-right text-[11px] text-text-tertiary">
-              Assign a partner to visit 1 before adding another.
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <p className="m-0 text-[12px] text-text-secondary">
+              <span className="font-semibold text-text-primary">{summary.count} visits</span>
+              {" · "}client {formatCurrency(summary.totalClientPrice)}
+              {" · "}partner {formatCurrency(summary.totalPartnerCost)}
             </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-lg border border-border-light">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-surface-hover/50 text-left text-[10px] uppercase tracking-wide text-text-tertiary">
-              <th className="w-10 px-2.5 py-1.5 font-semibold">#</th>
-              <th className="px-2.5 py-1.5 font-semibold">Partner</th>
-              <th className="w-24 whitespace-nowrap px-2.5 py-1.5 font-semibold">When</th>
-              <th className="w-32 whitespace-nowrap px-2.5 py-1.5 text-right font-semibold">In / out</th>
-              <th className="w-24 px-2.5 py-1.5 font-semibold">Status</th>
-              <th className="w-20 px-2.5 py-1.5" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border-light">
-            <VisitRow
+            {botaoAdd}
+          </div>
+          <div className="space-y-1.5">
+            <VisitCard
               index={1}
-              title={primary.partner_name ?? "No partner"}
+              partner={primary.partner_name ?? "No partner"}
               service={job.title ?? null}
               date={primary.scheduled_date}
               startAt={primary.scheduled_start_at}
+              endAt={primary.scheduled_end_at}
               clientPrice={primary.client_price}
               partnerCost={primary.partner_cost}
               statusLabel={primaryStatus.label}
               statusVariant={primaryStatus.variant}
-              onComplete={
-                onCompletePrimary
-                  ? () => {
-                      // Só pergunta "e agora?" se a visita fechou mesmo: a regra
-                      // do job pode recusar (ex.: precisa passar pelo on-site) e
-                      // aí a mensagem de recusa é a resposta, não um menu.
-                      void onCompletePrimary().then((ok) => { if (ok) setJustCompleted(1); });
-                    }
-                  : undefined
-              }
-              completeTitle={completePrimaryLabel ?? "Mark this visit done"}
+              done={primaryDone}
+              notified="Client and partner got the job confirmation"
+              onComplete={!primaryDone && job.status !== "cancelled" && (onCompletePrimary || vivas.length) ? () => void handleCompletePrimary() : undefined}
+              completeTitle={completePrimaryLabel ?? "Mark visit 1 done"}
             />
-            {visits.map((v) => (
-              <VisitRow
+            {vivas.map((v) => (
+              <VisitCard
                 key={v.id}
                 index={v.visit_index}
-                title={v.partner_name ?? "No partner"}
+                partner={v.partner_name ?? "No partner"}
                 service={v.catalog_service_name ?? null}
                 date={v.scheduled_date ?? null}
                 startAt={v.scheduled_start_at ?? null}
+                endAt={v.scheduled_end_at ?? null}
                 clientPrice={v.client_price}
                 partnerCost={v.partner_cost}
                 statusLabel={STATUS_BADGE[v.status].label}
                 statusVariant={STATUS_BADGE[v.status].variant}
+                done={v.status === "completed"}
+                notified={
+                  v.client_confirmation_sent_at
+                    ? `Client notified ${new Date(v.client_confirmation_sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`
+                    : null
+                }
                 onEdit={() => setEditTarget({ mode: "edit", visit: v })}
                 onDelete={() => handleDelete(v)}
                 onComplete={v.status === "completed" || v.status === "cancelled" ? undefined : () => handleComplete(v)}
               />
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </>
+      )}
 
       {justCompleted != null ? (
         <SectionPortal>
         <Modal open onClose={() => setJustCompleted(null)} title={`Visit ${justCompleted} done`} size="sm">
           <div className="space-y-4 p-4">
-            <p className="text-sm text-text-secondary">What happens next on this job?</p>
+            <p className="text-sm text-text-secondary">That was the last visit booked. What happens next?</p>
             <div className="flex flex-col gap-2">
               <Button
                 variant="outline"
@@ -389,76 +426,91 @@ export function VisitsTab({
   );
 }
 
-/** Uma visita = uma linha da tabela. A visita 1 é o job e entra aqui igual às outras. */
-function VisitRow({
-  index, title, service, date, startAt, clientPrice, partnerCost,
-  statusLabel, statusVariant, onEdit, onDelete, onComplete, completeTitle,
+function diaCurto(ymd: string | null | undefined): string {
+  if (!ymd) return "the next date";
+  return new Date(`${ymd}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** Uma visita = um cartão. Feita fica riscada e apagada, mas fica: é o histórico do job. */
+function VisitCard({
+  index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
+  statusLabel, statusVariant, done, notified, onEdit, onDelete, onComplete, completeTitle,
 }: {
   index: number;
-  title: string;
+  partner: string;
   service: string | null;
   date: string | null;
   startAt: string | null;
+  endAt: string | null;
   clientPrice: number;
   partnerCost: number;
   statusLabel: string;
   statusVariant: "info" | "warning" | "success" | "default" | "primary";
+  done: boolean;
+  notified?: string | null;
   onEdit?: () => void;
   onDelete?: () => void;
   onComplete?: () => void;
   completeTitle?: string;
 }) {
-  const when = [
-    date ? new Date(`${date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" }) : null,
-    startAt ? startAt.slice(11, 16) : null,
-  ].filter(Boolean).join(" ");
-
+  const janela = startAt && endAt ? formatArrivalTimeRange(startAt, endAt) : startAt ? startAt.slice(11, 16) : null;
   return (
-    <tr className="align-middle">
-      <td className="px-2.5 py-2 font-mono text-[10px] uppercase text-text-tertiary">V{index}</td>
-      <td className="max-w-0 px-2.5 py-2">
-        <span className="block truncate font-medium text-text-primary">
-          {title}
-          {service ? <span className="font-normal text-text-tertiary"> · {service}</span> : null}
+    <div className={cn("flex items-center gap-3 rounded-lg border border-border-light bg-card px-3 py-2", done && "bg-surface-hover/40")}>
+      <span
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+          done ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-primary/10 text-primary",
+        )}
+      >
+        {done ? <Check className="h-3.5 w-3.5" /> : `V${index}`}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className={cn("m-0 text-[13px] font-semibold tabular-nums text-text-primary", done && "text-text-tertiary line-through")}>
+          {date ? diaCurto(date) : "No date"}
+          {janela ? <span className="font-normal text-text-tertiary"> · {janela}</span> : null}
+        </p>
+        <p className="m-0 truncate text-[12px] text-text-secondary">
+          <span className="text-text-tertiary">V{index} · </span>
+          {partner}
+          {service ? <span className="text-text-tertiary"> · {service}</span> : null}
+        </p>
+      </div>
+      <div className="hidden shrink-0 text-right text-[11px] leading-tight tabular-nums sm:block">
+        <p className="m-0 text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)} <span className="text-text-tertiary">client</span></p>
+        <p className="m-0 text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)} <span className="text-text-tertiary">partner</span></p>
+      </div>
+      {notified ? (
+        <span title={notified} aria-label={notified} className="shrink-0 text-text-tertiary">
+          <Mail className="h-3.5 w-3.5" />
         </span>
-      </td>
-      <td className="whitespace-nowrap px-2.5 py-2 text-text-secondary tabular-nums">{when || "No date"}</td>
-      <td className="whitespace-nowrap px-2.5 py-2 text-right tabular-nums">
-        <span className="text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)}</span>
-        <span className="text-text-tertiary"> / </span>
-        <span className="text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)}</span>
-      </td>
-      <td className="px-2.5 py-2">
-        <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
-      </td>
-      <td className="px-2.5 py-2">
-        <span className="flex items-center justify-end gap-1.5">
-          {onComplete ? (
-            <button
-              type="button"
-              onClick={onComplete}
-              title={completeTitle ?? "Mark this visit done"}
-              className="inline-flex items-center gap-1 rounded-md border border-border-light px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
-            >
-              <Check className="h-3 w-3" />
-              Done
-            </button>
-          ) : null}
-          {onEdit ? (
-            <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
-              className="text-text-tertiary transition-colors hover:text-text-primary">
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-          {onDelete ? (
-            <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
-              className="text-text-tertiary transition-colors hover:text-red-500">
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </span>
-      </td>
-    </tr>
+      ) : null}
+      <Badge variant={statusVariant} size="sm">{statusLabel}</Badge>
+      <span className="flex shrink-0 items-center gap-1.5">
+        {onComplete ? (
+          <button
+            type="button"
+            onClick={onComplete}
+            title={completeTitle ?? "Mark this visit done"}
+            className="inline-flex items-center gap-1 rounded-md border border-border-light px-2 py-1 text-[11px] font-semibold text-text-secondary transition-colors hover:border-emerald-500/50 hover:text-emerald-600"
+          >
+            <Check className="h-3 w-3" />
+            Done
+          </button>
+        ) : null}
+        {onEdit ? (
+          <button type="button" onClick={onEdit} title="Edit visit" aria-label="Edit visit"
+            className="text-text-tertiary transition-colors hover:text-text-primary">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+        {onDelete ? (
+          <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
+            className="text-text-tertiary transition-colors hover:text-red-500">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
@@ -637,6 +689,19 @@ function VisitEditModal({
   return (
     <Modal open onClose={onClose} title={target.mode === "edit" ? "Edit visit" : "Add visit"} size="md">
       <form onSubmit={handleSubmit} className="space-y-4 p-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+          <div>
+            <label className="block text-xs font-semibold text-text-secondary mb-1">Date *</label>
+            <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
+          </div>
+          <ArrivalSlotPicker
+            arrivalFrom={form.arrival_from}
+            arrivalWindowMins={form.arrival_window_mins}
+            onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
+            rowLayout
+          />
+        </div>
+
         <ServiceCatalogSelect
           label="Service"
           catalog={catalog}
@@ -659,19 +724,6 @@ function VisitEditModal({
               </option>
             ))}
           </select>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">Date *</label>
-            <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
-          </div>
-          <ArrivalSlotPicker
-            arrivalFrom={form.arrival_from}
-            arrivalWindowMins={form.arrival_window_mins}
-            onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
-            rowLayout
-          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -717,6 +769,12 @@ function VisitEditModal({
             placeholder="What this visit covers. The partner sees this."
           />
         </div>
+
+        {target.mode === "create" ? (
+          <p className="m-0 text-[11px] text-text-tertiary">
+            The client and the partner get a confirmation for this visit on the job&apos;s ticket.
+          </p>
+        ) : null}
 
         <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
           <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>

@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth-api";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
+import { avisarClienteDaVisita } from "@/lib/notify-visit-client-server";
 import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
@@ -212,6 +213,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             error: e instanceof Error ? e.message : "notify failed",
           }))
         : { ok: false, skipped: "no_partner" as const };
+      // E o cliente: a visita nova vai no mesmo ticket do job (dono, 19/10/2026).
+      const clientNotified = await avisarClienteDaVisita(jobId, created.id, supabase).catch((e) => ({
+        ok: false as const,
+        error: e instanceof Error ? e.message : "client notify failed",
+      }));
 
       /**
        * Self-bill do parceiro desta visita nasce junto com ela.
@@ -237,7 +243,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         // Visita sem parceiro não gera documento: quem vai receber ainda não existe.
         payoutError = "visit has no partner yet, so no self-bill";
       }
-      return NextResponse.json({ ok: true, visit: created, notified, selfBillId, payoutError });
+      return NextResponse.json({ ok: true, visit: created, notified, clientNotified, selfBillId, payoutError });
     }
     if (error.code !== "23505") {
       return NextResponse.json({ error: error.message }, { status: 400 });

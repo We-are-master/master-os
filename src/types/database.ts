@@ -666,6 +666,8 @@ export interface Job {
   cancellation_reason?: string | null;
   /** Preset id when cancelled from office or Zendesk (client_requested, other, …). */
   cancellation_reason_preset_id?: string | null;
+  /** Visita 1 já feita e o job seguiu para a próxima visita (mig 337). */
+  primary_visit_done?: PrimaryVisitDone | null;
   cancelled_at?: string | null;
   cancelled_by?: string | null;
   /** Snapshot of `client_price` at the moment the job was cancelled (pre-zeroing). Drives "lost revenue" KPIs in Pulse / Live View. */
@@ -792,6 +794,8 @@ export interface JobVisit {
   zendesk_side_conversation_id?: string | null;
   /** Self-bill do parceiro DESTA visita (mig 276). O do job é do parceiro da visita 1. */
   self_bill_id?: string | null;
+  /** Confirmação ao cliente desta visita, no ticket do job (mig 337). */
+  client_confirmation_sent_at?: string | null;
   scope?: string | null;
   notes?: string | null;
   created_at: string;
@@ -801,6 +805,14 @@ export interface JobVisit {
   updated_by?: string | null;
   /** Join enrichment when listing. */
   catalog_service_name?: string | null;
+}
+
+/** Visita 1 feita com outra visita pela frente (mig 337): a data dela, antes de o job ir para a próxima. */
+export interface PrimaryVisitDone {
+  scheduled_date: string | null;
+  scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
+  done_at: string;
 }
 
 export type JobPaymentType = "partner" | "customer_deposit" | "customer_final";

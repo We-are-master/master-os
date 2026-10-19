@@ -12,7 +12,25 @@ function mergeFetchedScheduleRowsIntoJobs(
 ): Job[] {
   const merged = new Map<string, Job>();
   for (const row of [...byScheduledDate, ...byFinishDate, ...byStartAt, ...byEndAt]) {
-    merged.set(row.id, row as Job);
+    const v1 = (row as Job).primary_visit_done;
+    /**
+     * Visita 1 feita e o job seguiu para a próxima (19/10/2026): a data do job já é
+     * a da V2, que entra abaixo como visita própria. A linha do job volta para o
+     * dia da V1, como feita, para não aparecer duas vezes no dia da V2.
+     */
+    merged.set(
+      row.id,
+      v1
+        ? ({
+            ...row,
+            scheduled_date: v1.scheduled_date ?? row.scheduled_date,
+            scheduled_start_at: v1.scheduled_start_at ?? row.scheduled_start_at,
+            scheduled_end_at: v1.scheduled_end_at ?? row.scheduled_end_at,
+            scheduled_finish_date: v1.scheduled_date ?? row.scheduled_finish_date,
+            status: "completed",
+          } as Job)
+        : (row as Job),
+    );
   }
   for (const v of byVisits) {
     if (!v.parent) continue;
@@ -56,7 +74,7 @@ export async function fetchScheduleCalendarJobsOverlappingYmdRange(padStart: str
   const supabase = getSupabase();
   const { startIso: padStartUtc, endIso: padEndUtc } = localYmdBoundsToUtcIso(padStart, padEnd);
 
-  const [byScheduledDate, byFinishDate, byStartAt, byEndAt, byVisits] = await Promise.all([
+  const [byScheduledDate, byFinishDate, byStartAt, byEndAt, byVisits, byPrimaryDone] = await Promise.all([
     supabase
       .from("jobs")
       .select("*")
@@ -96,10 +114,19 @@ export async function fetchScheduleCalendarJobsOverlappingYmdRange(padStart: str
       .gte("scheduled_date", padStart)
       .lte("scheduled_date", padEnd)
       .order("scheduled_date", { ascending: true }),
+    // Visita 1 feita e o job já seguiu para a próxima: busca também pelo dia da V1,
+    // para ela continuar no calendário, riscada (dono, 19/10/2026). Sem a mig 337
+    // a consulta falha e só fica vazia.
+    supabase
+      .from("jobs")
+      .select("*")
+      .is("deleted_at", null)
+      .gte("primary_visit_done->>scheduled_date", padStart)
+      .lte("primary_visit_done->>scheduled_date", padEnd),
   ]);
 
   return mergeFetchedScheduleRowsIntoJobs(
-    (byScheduledDate.data ?? []) as Job[],
+    [...((byScheduledDate.data ?? []) as Job[]), ...((byPrimaryDone.data ?? []) as Job[])],
     (byFinishDate.data ?? []) as Job[],
     (byStartAt.data ?? []) as Job[],
     (byEndAt.data ?? []) as Job[],
