@@ -32,6 +32,8 @@ interface QuoteSentArgs {
   items?:          QuoteLineItem[];
   /** Tokenised accept/reject links — when provided, rendered as CTA buttons. */
   acceptUrl?:      string;
+  /** Datas de início que o parceiro ofereceu (YYYY-MM-DD); o cliente escolhe uma no aceite. */
+  startDates?:     string[];
   rejectUrl?:      string;
   /**
    * Schedule A (modelo de agente, 06/10/2026): o preço é do profissional e a
@@ -52,6 +54,12 @@ function escapeHtml(s: string): string {
 
 function firstName(full: string): string {
   return (full.trim().split(/\s+/)[0] ?? "").trim();
+}
+
+function formatShortDay(ymd: string): string {
+  const dt = new Date(`${ymd.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).format(dt);
 }
 
 function formatLongDate(iso: string): string {
@@ -135,6 +143,14 @@ export function buildQuoteSentHtml(args: QuoteSentArgs): string {
       `</div>`
     : "";
 
+  // Datas do parceiro (20/10/2026): o cliente já escolhe uma no aceite, sem vai e volta.
+  const datas = (args.startDates ?? []).map((d) => formatShortDay(d)).filter(Boolean);
+  const datasBlock = datas.length
+    ? `<p style="margin:20px 0 0;font-size:14px;line-height:21px;color:#3A3A55;text-align:center;">` +
+        `<strong style="color:#1C1B2E;">Available start dates:</strong> ${escapeHtml(datas.join(" or "))}. You can pick one when you accept.` +
+      `</p>`
+    : "";
+
   const ctaButtons: string[] = [];
   if (args.acceptUrl) {
     ctaButtons.push(
@@ -189,6 +205,7 @@ export function buildQuoteSentHtml(args: QuoteSentArgs): string {
       `</div>` +
       detailsCard +
       validityBlock +
+      datasBlock +
       ctaBlock +
       `<p style="margin:24px 0 0;font-size:13px;line-height:20px;color:#6B6B85;">Got a question or want to talk through the proposal? Reply to this email and we'll get back to you.</p>` +
     `</div>`;

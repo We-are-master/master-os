@@ -133,6 +133,8 @@ export function textoDaQuote(a: {
   link?: string | null;
   /** entrada que o aceite cobra (regra da conta); 0 ou ausente = sem entrada */
   entrada?: number | null;
+  /** Datas de início do parceiro já formatadas ("Fri 24 Oct"); o cliente escolhe no link. */
+  datas?: string[];
 }): string {
   const sobre = a.servico?.trim() ? ` for the ${a.servico.trim().toLowerCase()} work` : "";
   const ref = a.referencia ? ` (${a.referencia})` : "";
@@ -144,8 +146,10 @@ export function textoDaQuote(a: {
       : entrada > 0.01
         ? ` Payment of £${entrada.toFixed(2)} secures the booking.`
         : "";
+  const datas = (a.datas ?? []).filter(Boolean);
+  const quando = datas.length ? ` The professional can start ${datas.join(" or ")}, and you pick the day when you accept.` : "";
   const seguir = a.link
-    ? `If you're happy to go ahead, accept it here: ${a.link}${pagamento}`
+    ? `If you're happy to go ahead, accept it here: ${a.link}${pagamento}${quando}`
     : "If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in.";
   return `Hi ${a.nome}, your quote${sobre} is ready${ref}: £${a.total.toFixed(2)} for the job as described, fixed price. ${seguir} Any questions, just ask.`;
 }

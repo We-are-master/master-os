@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { datasDisponiveis } from "@/lib/quote-accept-job-fields";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { Resend } from "resend";
 import React from "react";
@@ -468,6 +469,7 @@ export async function POST(req: NextRequest) {
           acceptUrl,
           rejectUrl,
           agentModel:      agentModelQuote,
+          startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
         });
         const anexo = { filename: `${pdfAttachmentBase}_quote.pdf`, content: pdfBuffer, contentType: "application/pdf" };
         // Ticket de WhatsApp com a janela de 24 h fechada (ONE_TICKET_WA_LINKED_ON): a proposta
@@ -611,6 +613,7 @@ export async function POST(req: NextRequest) {
           acceptUrl,
           rejectUrl,
           agentModel:      agentModelQuote,
+          startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
         });
         const r = await entregarEmailNoTicket({
           ticket: achadoDaQuote,

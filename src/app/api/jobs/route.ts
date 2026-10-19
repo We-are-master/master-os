@@ -351,6 +351,11 @@ export async function POST(req: NextRequest) {
   const accountId       = str(body.account_id);
   const date            = str(body.date);
   const arrivalTime     = str(body.arrival_time);
+  /**
+   * Job sem data (dono, 19/10/2026): pedido B2B por hora que o Harvey aceitou e a data ainda
+   * vai ser combinada. Nasce `unassigned`, sem agenda, e aparece como "Date TBC".
+   */
+  const dataAConfirmar  = body.date_tbc === true || body.date_tbc === "true";
   const title           = str(body.title);
   /**
    * O nome do cliente entra com a inicial de cada parte em maiúscula.
@@ -509,7 +514,7 @@ export async function POST(req: NextRequest) {
   // client_email / client_phone are optional — Zendesk forms often leave one
   // blank and the macro shouldn't 400 just because of that.
   if (
-    !accountId || !date || !arrivalTime ||
+    !accountId || (!dataAConfirmar && (!date || !arrivalTime)) ||
     !clientName || !propertyAddress ||
     (!serviceType && !catalogServiceIdIn)
   ) {
@@ -539,33 +544,39 @@ export async function POST(req: NextRequest) {
     if (!serviceType) serviceType = catalogServiceIdIn;
     catalogServiceIdIn = null;
   }
-  const isoDate = normalizeDateToIso(date);
-  if (!isoDate) {
-    return NextResponse.json(
-      { error: "date must be YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, or DD/MM/YY." },
-      { status: 400 },
-    );
-  }
-  const arrivalWindow = parseArrivalTime(arrivalTime);
-  if (!arrivalWindow) {
-    return NextResponse.json(
-      { error: "arrival_time must be \"HH:MM - HH:MM\" or \"HH:MM\" (24h, UK wall-clock)." },
-      { status: 400 },
-    );
-  }
-
-  const startIso = ukWallClockToUtcIso(isoDate, arrivalWindow.start);
-  if (!startIso) {
-    return NextResponse.json({ error: "date + arrival_time did not parse to a valid timestamp." }, { status: 400 });
-  }
+  // Sem data não há parceiro a convidar: auto-assign e rota ficam para quando a data vier.
+  if (dataAConfirmar) autoAssign = false;
+  let isoDate: string | null = null;
+  let startIso: string | null = null;
   let endIso: string | null = null;
-  if (arrivalWindow.end) {
-    endIso = ukWallClockToUtcIso(isoDate, arrivalWindow.end);
-    if (!endIso) {
-      return NextResponse.json({ error: "arrival_time end did not parse to a valid timestamp." }, { status: 400 });
+  if (!dataAConfirmar) {
+    isoDate = normalizeDateToIso(date);
+    if (!isoDate) {
+      return NextResponse.json(
+        { error: "date must be YYYY-MM-DD, DD-MM-YYYY, DD-MM-YY, DD/MM/YYYY, or DD/MM/YY." },
+        { status: 400 },
+      );
     }
-    if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
-      return NextResponse.json({ error: "arrival_time end must be after start." }, { status: 400 });
+    const arrivalWindow = parseArrivalTime(arrivalTime);
+    if (!arrivalWindow) {
+      return NextResponse.json(
+        { error: "arrival_time must be \"HH:MM - HH:MM\" or \"HH:MM\" (24h, UK wall-clock)." },
+        { status: 400 },
+      );
+    }
+
+    startIso = ukWallClockToUtcIso(isoDate, arrivalWindow.start);
+    if (!startIso) {
+      return NextResponse.json({ error: "date + arrival_time did not parse to a valid timestamp." }, { status: 400 });
+    }
+    if (arrivalWindow.end) {
+      endIso = ukWallClockToUtcIso(isoDate, arrivalWindow.end);
+      if (!endIso) {
+        return NextResponse.json({ error: "arrival_time end did not parse to a valid timestamp." }, { status: 400 });
+      }
+      if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+        return NextResponse.json({ error: "arrival_time end must be after start." }, { status: 400 });
+      }
     }
   }
 
@@ -1412,7 +1423,7 @@ export async function POST(req: NextRequest) {
   // serviço, não há o que leiloar. Fica atrás de PARTNER_ROUTING_ENABLED
   // porque a consequência é email saindo para parceiro de verdade.
   let routedPartner: { partner_id: string; email_sent: boolean } | undefined;
-  if (partnerRoutingEnabled()) {
+  if (partnerRoutingEnabled() && !dataAConfirmar) {
     const rota = await routePartnerForJob(supabase, {
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
       scheduledDate: isoDate,
