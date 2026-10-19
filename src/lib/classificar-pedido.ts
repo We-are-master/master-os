@@ -37,7 +37,7 @@ export type Classificacao = {
 
 /** Obra, projeto ou serviço que não cabe num dia de handyman: vai para os parceiros cotarem. */
 const OBRA =
-  /\b(renovat|refurbish|refit|install(ation)? of (a )?(new )?(kitchen|bathroom)|new (kitchen|bathroom)|bathroom (fit|install|renovat)|kitchen (fit|install|renovat)|extension|loft|rewire|re-?plaster|plasterboard|skim(ming)?|ceiling (repair|replace|collapse)|flood|insurance work|subsidence|damp proof|tanking|flooring (install|fit)|lay(ing)? (a )?(new )?floor|tiling (a|the) (whole|entire)|roof|chimney|whole (house|flat)|entire (house|flat)|(3|three|4|four|5|five) (rooms|bedrooms)|several rooms|multiple rooms|wet ?room|worktop replace|stone worktop)\b/i;
+  /\b(renovat|refurbish|refit|install(ation)? of (a )?(new )?(kitchen|bathroom)|new (kitchen|bathroom)|bathroom (fit|install|renovat)|kitchen (fit|install|renovat)|extension|loft|rewire|re-?plaster|plasterboard|skim(ming)?|ceiling (repair|replace|collapse)|flood|insurance work|subsidence|damp proof|tanking|flooring (install|fit)|lay(ing)? (a |the )?(new )?(wood(en)? )?floor(s|boards?|ing)?|tiling (a|the) (whole|entire)|roof|chimney|whole (house|flat)|entire (house|flat)|(3|three|4|four|5|five) (rooms|bedrooms)|several rooms|multiple rooms|wet ?room|worktop replace|stone worktop)\b/i;
 
 /** Horas que o pedido anuncia ("about 3 hours", "half a day", "full day"). */
 export function horasDoTexto(texto: string): number | null {

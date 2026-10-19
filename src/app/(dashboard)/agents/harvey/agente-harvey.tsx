@@ -19,6 +19,7 @@ import { Tabs } from "@/components/ui/tabs";
 import type { SecaoDoPrompt, PerfilDoHarvey } from "@/lib/harvey-wa/prompt";
 import type { EdicaoSalva } from "@/lib/harvey-wa/conhecimento";
 import type { AjustesDoHarvey } from "@/lib/harvey-wa/ajustes";
+import type { AreaDeAutonomia, Autonomia, ModoDeAutonomia } from "@/lib/harvey/autonomia";
 import type { PapeisDaEquipe, PapelDaEquipe } from "@/lib/responsavel-operacao";
 
 type Precos = Record<string, number | null>;
@@ -69,6 +70,8 @@ export function AgenteHarvey({
   catalogo,
   ajustes,
   papeis,
+  autonomia,
+  regras,
 }: {
   secoes: Record<PerfilDoHarvey, SecaoDoPrompt[]>;
   edicoes: Record<PerfilDoHarvey, Record<string, EdicaoSalva>>;
@@ -76,6 +79,8 @@ export function AgenteHarvey({
   catalogo: Catalogo | null;
   ajustes: Ajustes;
   papeis: Papeis;
+  autonomia: AutonomiaNaTela;
+  regras: { texto: string; padrao: string; editado: boolean };
 }) {
   const router = useRouter();
   const [aba, setAba] = useState<"cliente" | "parceiro" | "precos">("cliente");
@@ -105,10 +110,12 @@ export function AgenteHarvey({
               <Button variant="outline">Conversations</Button>
             </Link>
             <Button variant={pausado ? "primary" : "outline"} loading={ocupado} onClick={alternarPausa}>
-              {pausado ? "Turn Harvey back on" : "Pause Harvey"}
+              {pausado ? "Turn WhatsApp back on" : "Pause WhatsApp"}
             </Button>
           </div>
         </PageHeader>
+
+        <CartaoDeAutonomia inicial={autonomia} regras={regras} onSalvo={() => router.refresh()} />
 
         <CartaoDeAjustes inicial={ajustes} onSalvo={() => router.refresh()} />
 
@@ -494,6 +501,147 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
         {mudou ? (
           <Button size="sm" variant="outline" onClick={() => setA(base())}>
             Discard changes
+          </Button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+type AutonomiaNaTela = Autonomia & { atualizado_em: string | null; atualizado_por: string | null; teto: Record<AreaDeAutonomia, ModoDeAutonomia> };
+
+const AREAS_NA_TELA: Array<[AreaDeAutonomia, string, string]> = [
+  ["cotacao", "Classify and invite partners", "A request that needs a quote goes to every partner who covers the trade and postcode."],
+  ["lances", "Price partner bids", "Reads bids from the portal and from partner emails and turns the best one into our price."],
+  ["envio", "Send the price to the customer", "The priced quote goes out on its own (WhatsApp or email), up to the limit below."],
+  ["b2b_hora", "Accept B2B hourly jobs", "Business account asks for hourly work: accepted at the account's own rate, job left unassigned."],
+  ["perguntas", "Relay questions", "Partner question goes to the customer and the answer goes back, without the team."],
+  ["aceite", "Read approvals by email", "\"Approved / go ahead\" on a sent quote creates the job and tells the partner."],
+];
+const ROTULO_DO_MODO: Record<ModoDeAutonomia, string> = { on: "On", ensaio: "Dry run", off: "Off" };
+const NIVEL: Record<ModoDeAutonomia, number> = { off: 0, ensaio: 1, on: 2 };
+
+/** O que o Harvey faz sozinho: Pausar tudo, uma linha por área (on, ensaio, off), teto e regras. */
+function CartaoDeAutonomia({ inicial, regras, onSalvo }: { inicial: AutonomiaNaTela; regras: { texto: string; padrao: string; editado: boolean }; onSalvo: () => void }) {
+  const base = (): Autonomia => ({ geral: inicial.geral, areas: { ...inicial.areas }, tetoEnvio: inicial.tetoEnvio });
+  const [a, setA] = useState<Autonomia>(base);
+  const [texto, setTexto] = useState(regras.texto);
+  const [ocupado, setOcupado] = useState<string | null>(null);
+  const mudou = JSON.stringify(a) !== JSON.stringify(base()) || texto.trim() !== regras.texto.trim();
+
+  async function enviar(corpo: Record<string, unknown>, ok: string, qual: string) {
+    setOcupado(qual);
+    try {
+      const res = await fetch("/api/agents/harvey/autonomia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? `failed (${res.status})`);
+      toast.success(ok);
+      onSalvo();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setOcupado(null);
+    }
+  }
+
+  const SELECT = "h-9 rounded-lg border border-border bg-card px-2.5 text-sm text-text-primary focus:border-primary focus:outline-none";
+  return (
+    <section className="space-y-4 rounded-xl border border-border-light bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Autonomy</h2>
+          <p className="text-xs text-text-tertiary">
+            What Harvey does on his own across Zendesk, WhatsApp and quotes. Dry run means he writes what he would do as an internal note and sends nothing.
+          </p>
+          <p className="mt-1 text-xs text-text-tertiary">
+            {inicial.atualizado_em ? `Last changed by ${inicial.atualizado_por ?? "team"}, ${quando(inicial.atualizado_em)}` : "Default settings"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {inicial.geral ? <Badge variant="success" dot>Running</Badge> : <Badge variant="warning">Everything paused</Badge>}
+          <Button
+            variant={inicial.geral ? "danger" : "primary"}
+            loading={ocupado === "geral"}
+            onClick={() =>
+              enviar(
+                { acao: inicial.geral ? "pausar_tudo" : "ligar_tudo" },
+                inicial.geral ? "Harvey paused everywhere: the team does it by hand" : "Harvey is running again",
+                "geral",
+              )
+            }
+          >
+            {inicial.geral ? "Pause everything" : "Turn everything back on"}
+          </Button>
+        </div>
+      </div>
+
+      <ul className={`divide-y divide-border-light ${inicial.geral ? "" : "opacity-60"}`}>
+        {AREAS_NA_TELA.map(([area, rotulo, ajuda]) => {
+          const teto = inicial.teto[area];
+          const limitado = NIVEL[teto] < NIVEL[a.areas[area]];
+          return (
+            <li key={area} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-text-primary">{rotulo}</p>
+                <p className="text-xs text-text-tertiary">{ajuda}</p>
+                {limitado ? <p className="text-xs text-amber-700 dark:text-amber-300">Held at {ROTULO_DO_MODO[teto].toLowerCase()} by the server setting.</p> : null}
+              </div>
+              <select className={SELECT} value={a.areas[area]} onChange={(e) => setA({ ...a, areas: { ...a.areas, [area]: e.target.value as ModoDeAutonomia } })}>
+                <option value="on">On</option>
+                <option value="ensaio">Dry run</option>
+                <option value="off">Off</option>
+              </select>
+            </li>
+          );
+        })}
+      </ul>
+
+      <label className="flex flex-wrap items-center justify-between gap-3 text-sm text-text-secondary">
+        <span>
+          <span className="block text-sm text-text-primary">Most he sends on his own</span>
+          <span className="block text-xs text-text-tertiary">Quotes above this go to the team to send.</span>
+        </span>
+        <span className="flex items-center gap-1">
+          £
+          <input
+            type="number"
+            min={50}
+            step={50}
+            className={`${SELECT} w-28`}
+            placeholder="600"
+            value={a.tetoEnvio ?? ""}
+            onChange={(e) => setA({ ...a, tetoEnvio: e.target.value ? Number(e.target.value) : null })}
+          />
+        </span>
+      </label>
+
+      <div className="space-y-1.5">
+        <p className="text-sm text-text-primary">How Fixfy sells and prices</p>
+        <p className="text-xs text-text-tertiary">Every Harvey reads this before deciding: WhatsApp, the email quoter and the price list matcher.</p>
+        <textarea
+          className="min-h-[180px] w-full rounded-lg border border-border bg-card p-3 text-sm text-text-primary focus:border-primary focus:outline-none"
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={!mudou}
+          loading={ocupado === "salvar"}
+          onClick={() => enviar({ autonomia: a, regras: texto.trim() === regras.padrao.trim() ? "" : texto }, "Saved: Harvey uses it within 30 seconds", "salvar")}
+        >
+          Save
+        </Button>
+        {mudou ? (
+          <Button size="sm" variant="outline" onClick={() => { setA(base()); setTexto(regras.texto); }}>
+            Discard changes
+          </Button>
+        ) : null}
+        {regras.editado ? (
+          <Button size="sm" variant="ghost" onClick={() => setTexto(regras.padrao)}>
+            Reset rules to default
           </Button>
         ) : null}
       </div>

@@ -14,6 +14,7 @@
  *        "https://app.getfixfy.com/api/cron/harvey-wa?dry-run=1"
  */
 
+import { harveyLigado, modoDe } from "@/lib/harvey/autonomia";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
   }
   const ensaio = req.nextUrl.searchParams.get("dry-run") === "1";
   if (process.env.HARVEY_WA_LIGADO !== "1" && !ensaio) return NextResponse.json({ ok: true, desligado: "HARVEY_WA_LIGADO != 1" });
+  if (!(await harveyLigado()) && !ensaio) return NextResponse.json({ ok: true, desligado: "Pause everything on /agents/harvey" });
   try {
     const sb = createServiceClient();
     const chase = await varrerChases(sb, { aplicar: !ensaio });
@@ -52,7 +54,7 @@ export async function GET(req: NextRequest) {
     // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
     const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
     // Needs Quote → parceiros → preço → cliente. Chave HARVEY_AUTO_QUOTE=1; no ensaio só lista.
-    const autoQuote = process.env.HARVEY_AUTO_QUOTE?.trim() === "1";
+    const autoQuote = process.env.HARVEY_AUTO_QUOTE?.trim() === "1" && (await modoDe("cotacao")) === "on";
     const cotacao = autoQuote || ensaio ? await varrerCotacaoAutomatica(sb, { aplicar: !ensaio && autoQuote }) : null;
     return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao });
   } catch (err) {

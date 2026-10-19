@@ -10,6 +10,7 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { harveyLigado } from "@/lib/harvey/autonomia";
 import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
 import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
@@ -426,7 +427,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   }
   // Pausa pela tela do OS (/harvey-whatsapp): tudo que chega vai para a equipe.
   const { data: pausa } = await sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle();
-  if (pausa?.valor === true) {
+  if (pausa?.valor === true || !(await harveyLigado())) {
     await passarParaEquipe(conversa.id, "Harvey is paused");
     if (estado) await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: "Harvey paused" }).eq("conversation_id", conversa.id);
     return "pausado: foi para a equipe";

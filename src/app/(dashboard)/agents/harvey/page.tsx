@@ -7,6 +7,8 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { lerAjustes } from "@/lib/harvey-wa/ajustes";
 import { lerPapeis } from "@/lib/responsavel-operacao";
+import { AREAS, lerAutonomia, tetoDoAmbiente } from "@/lib/harvey/autonomia";
+import { CHAVE_DAS_REGRAS, REGRAS_PADRAO } from "@/lib/harvey/regras-do-negocio";
 import { lerEdicoes } from "@/lib/harvey-wa/conhecimento";
 import { SECOES_CLIENTE, SECOES_PARCEIRO } from "@/lib/harvey-wa/prompt";
 import { versaoAtual, type TabelaDePrecos } from "@/lib/os-documentos";
@@ -17,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HarveyAgentPage() {
   const sb = createServiceClient();
-  const [cliente, parceiro, { data: pausa }, catalogo, ajustes, papeis] = await Promise.all([
+  const [cliente, parceiro, { data: pausa }, catalogo, ajustes, papeis, autonomia, { data: regrasSalvas }] = await Promise.all([
     lerEdicoes(sb, "cliente").catch(() => ({})),
     lerEdicoes(sb, "parceiro").catch(() => ({})),
     sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle(),
@@ -27,7 +29,13 @@ export default async function HarveyAgentPage() {
       .catch(() => null),
     lerAjustes(sb),
     lerPapeis(sb),
+    lerAutonomia(sb),
+    sb.from("harvey_wa_config").select("valor").eq("chave", CHAVE_DAS_REGRAS).maybeSingle(),
   ]);
+  const editado = (regrasSalvas?.valor as { texto?: unknown } | null)?.texto;
+  const regras = typeof editado === "string" && editado.trim() ? { texto: editado, padrao: REGRAS_PADRAO, editado: true } : { texto: REGRAS_PADRAO, padrao: REGRAS_PADRAO, editado: false };
+  // O teto da variável de ambiente de cada área, para a tela avisar quando ela segura o modo.
+  const teto = Object.fromEntries(AREAS.map((a) => [a, tetoDoAmbiente(a)])) as Record<(typeof AREAS)[number], ReturnType<typeof tetoDoAmbiente>>;
   return (
     <AgenteHarvey
       secoes={{ cliente: SECOES_CLIENTE, parceiro: SECOES_PARCEIRO }}
@@ -36,6 +44,8 @@ export default async function HarveyAgentPage() {
       catalogo={catalogo}
       ajustes={ajustes}
       papeis={papeis}
+      autonomia={{ ...autonomia, teto }}
+      regras={regras}
     />
   );
 }

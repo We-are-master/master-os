@@ -7,6 +7,7 @@
  * e-mail do cliente) e abaixo do limite, a proposta SAI SOZINHA (atrás de
  * HARVEY_BID_AUTO_SEND=1); senão a equipe confere e manda com um clique.
  */
+import { modoDe } from "@/lib/harvey/autonomia";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { appBaseUrl } from "@/lib/app-base-url";
 import { insertQuoteLineItemsResilient } from "@/lib/quote-line-items-insert";
@@ -59,6 +60,7 @@ export type ResultadoDoLance =
 
 export async function prepararPropostaDoLance(sb: SupabaseClient, quoteId: string, bidId: string): Promise<ResultadoDoLance> {
   if (process.env.HARVEY_BID_PROPOSALS?.trim() !== "1") return { feito: false, motivo: "off" };
+  if ((await modoDe("lances")) !== "on") return { feito: false, motivo: "off" };
   const { data: q } = await sb
     .from("quotes")
     .select("id, reference, status, title, description, scope, client_email, property_address, images, partner_id, external_source, external_ref")
@@ -103,7 +105,7 @@ export async function prepararPropostaDoLance(sb: SupabaseClient, quoteId: strin
     .eq("id", quoteId);
 
   let enviado = false;
-  if (decisao.auto && process.env.HARVEY_BID_AUTO_SEND?.trim() === "1") {
+  if (decisao.auto && process.env.HARVEY_BID_AUTO_SEND?.trim() === "1" && (await modoDe("envio")) === "on") {
     const res = await fetch(`${appBaseUrl()}/api/quotes/send-pdf`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-internal-secret": process.env.INTERNAL_SYNC_SECRET?.trim() ?? "" },

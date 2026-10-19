@@ -1,5 +1,6 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { validarAutonomia } from "@/lib/harvey/autonomia";
 import { contaEhDireta, maximoDoEnvioAutomatico, podeMandarSozinho, envioAutomaticoLigado, type EntradaDoEnvio } from "./quote-envio-automatico";
 
 const seguro: EntradaDoEnvio = {
@@ -13,10 +14,19 @@ describe("auto send of a drafted quote", () => {
     delete process.env.HARVEY_QUOTE_AUTO_MAX;
   });
 
-  it("is off unless the owner turns it on", () => {
-    assert.equal(envioAutomaticoLigado(), false);
+  it("is off unless the owner turns it on (env and the app)", () => {
+    const padrao = validarAutonomia(null);
+    assert.equal(envioAutomaticoLigado(padrao), false);
     process.env.HARVEY_QUOTE_AUTO_SEND = "1";
-    assert.equal(envioAutomaticoLigado(), true);
+    assert.equal(envioAutomaticoLigado(padrao), true);
+    assert.equal(envioAutomaticoLigado(validarAutonomia({ areas: { envio: "ensaio" } })), false);
+    assert.equal(envioAutomaticoLigado(validarAutonomia({ geral: false })), false);
+    // Nunca leu a tela (sem banco): não manda.
+    assert.equal(envioAutomaticoLigado(), false);
+  });
+
+  it("the app limit wins over the env limit", () => {
+    assert.equal(maximoDoEnvioAutomatico(validarAutonomia({ tetoEnvio: 900 })), 900);
   });
 
   it("the ceiling defaults to £600 (one rule for every path) and reads the env", () => {
