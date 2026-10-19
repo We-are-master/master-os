@@ -232,7 +232,7 @@ export function VisitsTab({
 
   async function handleCreate(input: CreateJobVisitInput) {
     try {
-      const { visit: created, partnerNotified, clientNotified } = await apiCreateJobVisit(input);
+      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced } = await apiCreateJobVisit(input);
       // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
       setVisits((rows) => [
         ...rows,
@@ -243,6 +243,16 @@ export function VisitsTab({
       toast.success(
         `Visit ${created.visit_index} created${quem.length ? ` · ${quem.join(" and ")} notified on the ticket` : ""}`,
       );
+      if (closedVisitIndex != null && advanced?.ok && advanced.kind === "next_visit" && advanced.visit) {
+        // A visita em andamento fechou junto: o job foi para a próxima, Scheduled.
+        if (closedVisitIndex > 1) {
+          setVisits((rows) => rows.map((r) => (r.visit_index === closedVisitIndex ? { ...r, status: "completed" } : r)));
+        }
+        toast.success(
+          `Visit ${closedVisitIndex} marked done · job back to Scheduled for visit ${advanced.visit.visit_index} on ${diaCurto(advanced.visit.scheduled_date)}`,
+        );
+        onJobChanged?.();
+      }
       if (clientNotified && !clientNotified.ok) {
         toast.message(`Client not notified: ${clientNotified.skipped ?? clientNotified.error ?? "unknown"}`);
       }
@@ -422,6 +432,9 @@ export function VisitsTab({
           accountId={accountId}
           parentCatalogServiceId={job.catalog_service_id ?? null}
           parentCatalogPricingPresetId={job.catalog_pricing_preset_id ?? null}
+          primaryPartner={job.partner_id ? { id: job.partner_id, name: job.partner_name ?? "" } : null}
+          jobSlot={{ startAt: job.scheduled_start_at ?? null, endAt: job.scheduled_end_at ?? null }}
+          nextIndex={Math.max(1, ...visits.filter((v) => !v.deleted_at).map((v) => v.visit_index)) + 1}
           onClose={() => setEditTarget(null)}
           onCreate={handleCreate}
           onUpdate={handleUpdate}
@@ -550,6 +563,7 @@ function VisitEditModal({
   target, jobId, accountId,
   parentCatalogServiceId,
   parentCatalogPricingPresetId,
+  primaryPartner, jobSlot, nextIndex,
   onClose, onCreate, onUpdate,
 }: {
   target: NonNullable<EditTarget>;
@@ -557,6 +571,11 @@ function VisitEditModal({
   accountId: string | null;
   parentCatalogServiceId?: string | null;
   parentCatalogPricingPresetId?: string | null;
+  /** Parceiro da visita 1: quase sempre é quem volta, então vem marcado e no topo. */
+  primaryPartner: { id: string; name: string } | null;
+  /** Janela do job: a visita nova nasce com o mesmo horário. */
+  jobSlot: { startAt: string | null; endAt: string | null };
+  nextIndex: number;
   onClose: () => void;
   onCreate: (input: CreateJobVisitInput) => void;
   onUpdate: (id: string, patch: Partial<JobVisit>) => void;
@@ -578,7 +597,16 @@ function VisitEditModal({
     // Visita nova herda o serviço do job: quase sempre é o mesmo trabalho, e
     // já vindo escolhido o resolver de preço tem a tripla completa assim que
     // o parceiro entrar. Trocar é um clique.
-    return { ...EMPTY_FORM, catalog_service_id: parentCatalogServiceId ?? "" };
+    return {
+      ...EMPTY_FORM,
+      catalog_service_id: parentCatalogServiceId ?? "",
+      // Padrões do que quase sempre acontece (19/10/2026): mesmo parceiro, mesma
+      // janela, próximo dia útil.
+      partner_id: primaryPartner?.id ?? "",
+      partner_name: primaryPartner?.name ?? "",
+      scheduled_date: proximoDiaUtil(),
+      ...(jobSlot.startAt ? arrivalFromStored(jobSlot.startAt, jobSlot.endAt) : {}),
+    };
   });
   const [catalog, setCatalog] = useState<CatalogService[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -692,105 +720,154 @@ function VisitEditModal({
     }
   }
 
+  const parceirosOrdenados = useMemo(() => {
+    const lista = [...partners].sort((a, b) => nomeDoParceiro(a).localeCompare(nomeDoParceiro(b)));
+    const i = lista.findIndex((p) => p.id === primaryPartner?.id);
+    if (i > 0) lista.unshift(...lista.splice(i, 1));
+    return lista;
+  }, [partners, primaryPartner?.id]);
+  // Chip só quando o preço veio de um acordo da conta ou do parceiro: "Standard" nos dois era ruído.
+  const fonteDoCliente = pricing
+    ? pricing.pricing_mode === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source
+    : null;
+  const fonteDoParceiro = pricing
+    ? pricing.pricing_mode === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source
+    : null;
+  const margem = (() => {
+    const c = Number(form.client_price) || 0;
+    const p = Number(form.partner_cost) || 0;
+    if (!c && !p) return null;
+    return { valor: Math.round((c - p) * 100) / 100, pct: c > 0 ? Math.round(((c - p) / c) * 100) : null };
+  })();
+
   return (
-    <Modal open onClose={onClose} title={target.mode === "edit" ? "Edit visit" : "Add visit"} size="md">
+    <Modal
+      open
+      onClose={onClose}
+      title={target.mode === "edit" ? `Edit visit ${target.visit.visit_index}` : `Book visit ${nextIndex}`}
+      size="md"
+    >
       <form onSubmit={handleSubmit} className="space-y-4 p-2">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">Date *</label>
-            <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
-          </div>
-          <ArrivalSlotPicker
-            arrivalFrom={form.arrival_from}
-            arrivalWindowMins={form.arrival_window_mins}
-            onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
-            rowLayout
-          />
-        </div>
-
-        <ServiceCatalogSelect
-          label="Service"
-          catalog={catalog}
-          value={form.catalog_service_id}
-          onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
-          compactOptionLabels
-        />
-
-        <div>
-          <label className="block text-xs font-semibold text-text-secondary mb-1">Partner</label>
-          <select
-            className="h-10 w-full rounded-lg border border-border-light bg-surface px-3 text-sm"
-            value={form.partner_id}
-            onChange={(e) => pickPartner(e.target.value)}
-          >
-            <option value="">No partner yet</option>
-            {partners.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.company_name?.trim() || p.contact_name}{p.trade ? ` · ${p.trade}` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">
-              Client price (£)
-              {pricing ? (
-                <span className="ml-1.5">
-                  <PricingSourceChip
-                    source={pricing.pricing_mode === "hourly" ? pricing.client.hourly_rate_source : pricing.client.fixed_price_source}
-                  />
-                </span>
-              ) : null}
-            </label>
-            <Input type="number" step="0.01" min={0} value={form.client_price}
-              onChange={(e) => setForm((p) => ({ ...p, client_price: e.target.value }))}
+        <section className="space-y-2">
+          <p className={SECAO}>When</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-text-secondary">Date *</label>
+              <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
+            </div>
+            <ArrivalSlotPicker
+              arrivalFrom={form.arrival_from}
+              arrivalWindowMins={form.arrival_window_mins}
+              onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
+              rowLayout
             />
           </div>
+        </section>
+
+        <section className="space-y-2">
+          <p className={SECAO}>Who and what</p>
           <div>
-            <label className="block text-xs font-semibold text-text-secondary mb-1">
-              Partner cost (£)
-              {pricing ? (
-                <span className="ml-1.5">
-                  <PricingSourceChip
-                    source={pricing.pricing_mode === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source}
-                  />
-                </span>
-              ) : null}
-            </label>
-            <Input type="number" step="0.01" min={0} value={form.partner_cost}
-              onChange={(e) => setForm((p) => ({ ...p, partner_cost: e.target.value }))}
+            <label className="mb-1 block text-xs font-semibold text-text-secondary">Partner</label>
+            <select
+              className="h-10 w-full rounded-lg border border-border-light bg-surface px-3 text-sm"
+              value={form.partner_id}
+              onChange={(e) => pickPartner(e.target.value)}
+            >
+              <option value="">No partner yet</option>
+              {parceirosOrdenados.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {nomeDoParceiro(p)}
+                  {p.id === primaryPartner?.id ? " (visit 1)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ServiceCatalogSelect
+            label="Service"
+            catalog={catalog}
+            value={form.catalog_service_id}
+            onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
+            compactOptionLabels
+          />
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-text-secondary">Scope (optional)</label>
+            <textarea
+              value={form.scope}
+              onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
+              rows={2}
+              className="w-full rounded-lg border border-border-light bg-surface px-3 py-2 text-sm"
+              placeholder="What the partner does on this visit. They see this."
             />
           </div>
-        </div>
+        </section>
 
-        <div>
-          <label className="block text-xs font-semibold text-text-secondary mb-1">Scope (optional)</label>
-          <textarea
-            value={form.scope}
-            onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
-            rows={2}
-            className="w-full rounded-lg border border-border-light bg-surface px-3 py-2 text-sm"
-            placeholder="What this visit covers. The partner sees this."
-          />
-        </div>
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className={SECAO}>Price</p>
+            {margem ? (
+              <span className={cn("text-[11px] tabular-nums", margem.valor < 0 ? "text-red-600" : "text-text-tertiary")}>
+                Margin {formatCurrency(margem.valor)}
+                {margem.pct != null ? ` · ${margem.pct}%` : ""}
+              </span>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
+                Client pays (£)
+                {pricing && fonteDoCliente === "custom" ? <PricingSourceChip source="custom" /> : null}
+              </label>
+              <Input type="number" step="0.01" min={0} value={form.client_price}
+                onChange={(e) => setForm((p) => ({ ...p, client_price: e.target.value }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div>
+              <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
+                Partner gets (£)
+                {pricing && fonteDoParceiro === "custom" ? <PricingSourceChip source="custom" /> : null}
+              </label>
+              <Input type="number" step="0.01" min={0} value={form.partner_cost}
+                onChange={(e) => setForm((p) => ({ ...p, partner_cost: e.target.value }))}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+          {(Number(form.client_price) || 0) === 0 && (Number(form.partner_cost) || 0) === 0 ? (
+            <p className="m-0 text-[11px] text-amber-700">Both at £0: this visit adds nothing to the invoice or the self-bill.</p>
+          ) : null}
+        </section>
 
-        {target.mode === "create" ? (
-          <p className="m-0 text-[11px] text-text-tertiary">
-            The client and the partner get a confirmation for this visit on the job&apos;s ticket.
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-light pt-3">
+          <p className="m-0 max-w-[16rem] text-[11px] leading-snug text-text-tertiary">
+            {target.mode === "create" ? "The client and the partner get a confirmation on the job's ticket." : ""}
           </p>
-        ) : null}
-
-        <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
-          <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving}>
-            {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : "Add visit"}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving}>
+              {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
+            </Button>
+          </div>
         </div>
       </form>
     </Modal>
   );
+}
+
+const SECAO = "m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary";
+
+function nomeDoParceiro(p: Partner): string {
+  return (p.company_name?.trim() || p.contact_name || "Partner").trim();
+}
+
+/** Próximo dia útil em Londres (segunda a sexta), como YYYY-MM-DD. */
+function proximoDiaUtil(): string {
+  const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+  const [y, m, d] = hoje.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  do dt.setUTCDate(dt.getUTCDate() + 1);
+  while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6);
+  return dt.toISOString().slice(0, 10);
 }

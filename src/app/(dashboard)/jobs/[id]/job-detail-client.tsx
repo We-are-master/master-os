@@ -4425,15 +4425,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job, cancelJob, cancelPresetId, cancelDetail, officeCancellationPresets, refreshJobFinance]);
 
   const handleStatusChange = useCallback(
-    async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean; silent?: boolean; skipSelfBillSync?: boolean; extraPatch?: Partial<Job> }): Promise<Job | null> => {
+    async (
+      j: Job,
+      newStatus: Job["status"],
+      opts?: {
+        skipHourlyRecalc?: boolean;
+        silent?: boolean;
+        skipSelfBillSync?: boolean;
+        extraPatch?: Partial<Job>;
+        /** Force approve da Final review: fecha sem o portão do relatório (dono, 19/10/2026). */
+        forced?: boolean;
+        /** Lança o motivo do portão em vez de mostrar um toast: quem chama mostra um só. */
+        throwOnGate?: boolean;
+      },
+    ): Promise<Job | null> => {
     const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
-    if (!forceCloseFromAwaitingPayment) {
+    if (!forceCloseFromAwaitingPayment && !opts?.forced) {
       const check = canAdvanceJob(j, newStatus, {
         customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
         partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
       });
       if (!check.ok) {
-        toast.error(check.message ?? "Complete the current step before advancing.");
+        const motivo = check.message ?? "Complete the current step before advancing.";
+        if (opts?.throwOnGate) throw new Error(motivo);
+        toast.error(motivo);
         return null;
       }
     }
@@ -5970,7 +5985,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     finalizeDocument,
   ]);
 
-  const handleValidateAndComplete = useCallback(async () => {
+  const handleValidateAndComplete = useCallback(async (forced = false) => {
     const j = jobRef.current;
     if (!j) return;
     /**
@@ -6359,17 +6374,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
       // and timer-based recalc would overwrite approved amounts (and desync the finance summary from the invoice).
-      const statusOpts = { skipHourlyRecalc: current.job_type === "hourly", silent: true, skipSelfBillSync: true, extraPatch: linkPatch };
+      const statusOpts = {
+        skipHourlyRecalc: current.job_type === "hourly",
+        silent: true,
+        skipSelfBillSync: true,
+        extraPatch: linkPatch,
+        forced,
+        // O motivo do portão sobe como erro e vira UM toast com a causa real (19/10/2026):
+        // antes saía "Could not move the job…" por cima e escondia o porquê.
+        throwOnGate: true,
+      };
       let approvalToast: string;
-      if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
-        const next = await handleStatusChange(current, "awaiting_payment", { ...statusOpts, silent: true });
+      if (forced && customerDueForStatus <= 0.02) {
+        /**
+         * Force approve com nada a receber do cliente (job zerado, ou já pago): fecha
+         * direto como Paid, sem relatório (dono, 19/10/2026). O parceiro continua a
+         * receber pelo self-bill, que já foi emitido acima.
+         */
+        const next = await handleStatusChange(current, "completed", {
+          ...statusOpts,
+          extraPatch: { ...linkPatch, finance_status: "paid", payment_status: "paid", customer_final_paid: true },
+        });
+        if (!next) throw new Error("Could not mark the job Paid after the force approve.");
+        current = next;
+        approvalToast =
+          partnerDue > 0.02
+            ? "Force approved. Nothing to collect from the client, job marked Paid. The partner is paid through the self-bill."
+            : "Force approved. Job marked Paid.";
+      } else if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
+        const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
         if (!next) {
           throw new Error("Could not move the job to Awaiting payment after approval.");
         }
         current = next;
         approvalToast = "Approved. Job moved to Awaiting payment.";
       } else {
-        const next = await handleStatusChange(current, "completed", { ...statusOpts, silent: true });
+        const next = await handleStatusChange(current, "completed", statusOpts);
         if (!next) {
           throw new Error("Could not mark the job Completed after approval.");
         }
@@ -10432,8 +10472,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onIncludeReportInEmailChange={setIncludeReportInEmail}
         accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
-        onApprove={() => {
-          void handleValidateAndComplete();
+        onApprove={(o) => {
+          void handleValidateAndComplete(o?.forced ?? false);
         }}
         paymentSchedule={{
           invoiceDueYmd: approvalInvoiceDueYmd,

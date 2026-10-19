@@ -144,7 +144,7 @@ export type FinalReviewModalProps = {
     base: { client: number; partner: number };
   } | null;
 
-  /** Wired to existing mutation handler */
-  onApprove: () => void;
+  /** Wired to existing mutation handler. `forced`: fechando sem o relatório ter saído (Force approve). */
+  onApprove: (opts?: { forced?: boolean }) => void;
   submitting?: boolean;
 };

@@ -228,7 +228,8 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
     if (!precisaEnviar) {
       dispararEnvio();
-      onApprove();
+      // Forçado (sem relatório, ou envio bloqueado): o card fecha sem o portão do relatório.
+      onApprove({ forced: aprovandoForcado });
       return;
     }
 
@@ -251,7 +252,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
         .catch(() => {})
         .finally(() => recarregar());
     }
-    onApprove();
+    onApprove({ forced: aprovandoForcado });
   };
 
   // Docs must exist; report upload/approve is no longer a hard gate —
