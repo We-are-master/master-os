@@ -499,15 +499,17 @@ function buildJobDetailStatusContext(
   opts?: { forcedPaidBySystemOwner?: boolean },
 ): JobDetailStatusContext | null {
   if (job.status === "on_hold") {
-    // Reclamação: o chip diz só "Complaint"; o texto e a conversa ficam na aba Complaint.
-    const reason = jobOnHoldPorReclamacao(job) ? "Complaint" : job.on_hold_reason?.trim() || "No reason recorded";
+    // Reclamação: o status vermelho já diz "Complaint"; o chip amarelo repetia (dono, 19/10/2026).
+    // O texto e a conversa ficam na aba Complaint.
+    if (jobOnHoldPorReclamacao(job)) return null;
+    const reason = job.on_hold_reason?.trim() || "No reason recorded";
     const since = formatJobStatusContextTimestamp(job.on_hold_at);
     const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
     const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
     return {
       chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
       primary: reason,
-      secondary: jobOnHoldPorReclamacao(job) ? undefined : since ?? undefined,
+      secondary: since ?? undefined,
       title,
     };
   }
