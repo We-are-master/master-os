@@ -572,10 +572,10 @@ function VisitCard({
           {date ? diaCurto(date) : "No date"}
           {janela ? <span className="font-normal text-text-tertiary"> · {janela}</span> : null}
         </p>
-        <p className="m-0 truncate text-[12px] text-text-secondary">
+        {/* Serviço só no hover (dono, 20/10/2026): a linha fica com visita e parceiro. */}
+        <p className="m-0 truncate text-[12px] text-text-secondary" title={service ?? undefined}>
           <span className="text-text-tertiary">V{index} · </span>
           {partner}
-          {service ? <span className="text-text-tertiary"> · {service}</span> : null}
         </p>
         {report ? (
           <p className="m-0 mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px]">
@@ -605,9 +605,10 @@ function VisitCard({
           </p>
         ) : null}
       </div>
-      <div className="hidden shrink-0 text-right text-[11px] leading-tight tabular-nums sm:block">
-        <p className="m-0 text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)} <span className="text-text-tertiary">client</span></p>
-        <p className="m-0 text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)} <span className="text-text-tertiary">partner</span></p>
+      {/* Cliente e parceiro lado a lado, na mesma linha; o rótulo aparece só no hover. */}
+      <div className="hidden shrink-0 items-center gap-3 text-[12px] font-medium tabular-nums sm:flex">
+        <span className="text-emerald-700 dark:text-emerald-400" title="Client pays">{formatCurrency(clientPrice)}</span>
+        <span className="text-rose-700 dark:text-rose-300" title="Partner gets">{formatCurrency(partnerCost)}</span>
       </div>
       {notified ? (
         <span title={notified} aria-label={notified} className="shrink-0 text-text-tertiary">
