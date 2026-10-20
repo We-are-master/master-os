@@ -1,5 +1,6 @@
 "use client";
 
+import { rotuloDaFaturaDoJob } from "@/lib/rotulo-da-fatura-do-job";
 import { DATE_TBC_BADGE, jobDataAConfirmar } from "@/lib/job-data-a-confirmar";
 import { resolveJobCompletionInstant } from "@/lib/job-completion-anchor";
 import type { JobDetailBundle } from "@/services/jobs";
@@ -10164,7 +10165,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     No invoices linked yet. They appear when finance raises an invoice for this job reference (or when a job is created with auto-invoice).
                   </p>
                 ) : (
-                  jobInvoices.map((inv) => {
+                  // O sinal primeiro: é o que se cobra agora.
+                  [...jobInvoices].sort((a, b) => Number(b.invoice_kind === "deposit") - Number(a.invoice_kind === "deposit")).map((inv) => {
+                      // Sinal e saldo de cotação aceita: cada um diz o que é (JOB-9773, 20/10/2026).
+                      const faturaDoSinal = jobInvoices.find((i) => i.invoice_kind === "deposit" && i.status !== "cancelled");
+                      const totalDasFaturas = jobInvoices.filter((i) => i.status !== "cancelled").reduce((n, i) => n + Number(i.amount || 0), 0);
+                      const rotulo = rotuloDaFaturaDoJob(inv, {
+                        temSinal: !!faturaDoSinal,
+                        percentualDoSinal: faturaDoSinal && totalDasFaturas > 0 ? (Number(faturaDoSinal.amount) / totalDasFaturas) * 100 : null,
+                        statusDoJob: job.status,
+                      });
                       const stripePaid = inv.stripe_payment_status === "paid";
                       const invOpen = expandedInvoiceIds.has(inv.id);
                       const canEditInvoiceDueDate = inv.status !== "paid" && inv.status !== "cancelled";
@@ -10199,8 +10209,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   className="flex cursor-pointer flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pt-0.5"
                                 >
                                   <div className="min-w-0">
-                                    <p className="text-xs font-semibold text-text-primary truncate">{inv.reference}</p>
-                                    {inv.due_date ? (
+                                    <p className="text-xs font-semibold text-text-primary truncate">
+                                      {rotulo.nome ? <span className="mr-1 text-text-secondary">{rotulo.nome} ·</span> : null}
+                                      {inv.reference}
+                                    </p>
+                                    {rotulo.vencimento ? (
+                                      <p className="text-[10px] text-text-tertiary mt-0.5">{rotulo.vencimento}</p>
+                                    ) : inv.due_date ? (
                                       <p className="text-[10px] text-text-tertiary mt-0.5">Due {formatDate(inv.due_date)}</p>
                                     ) : null}
                                   </div>
