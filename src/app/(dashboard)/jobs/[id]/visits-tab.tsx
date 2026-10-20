@@ -568,13 +568,14 @@ function VisitCard({
         {done ? <Check className="h-3.5 w-3.5" /> : `V${index}`}
       </span>
       <div className="min-w-0 flex-1">
-        <p className={cn("m-0 text-[13px] font-semibold tabular-nums text-text-primary", done && "text-text-tertiary line-through")}>
-          {date ? diaCurto(date) : "No date"}
-          {janela ? <span className="font-normal text-text-tertiary"> · {janela}</span> : null}
-        </p>
-        {/* Parceiro e tipo de trabalho; o número da visita já está no círculo (dono, 20/10/2026). */}
-        <p className="m-0 truncate text-[12px] text-text-secondary">
-          {partner}
+        {/* Uma linha só, na altura dos preços (dono, 20/10/2026): dia e janela, parceiro e
+            tipo de trabalho. O número da visita já está no círculo. */}
+        <p className="m-0 truncate text-[13px] tabular-nums">
+          <span className={cn("font-semibold text-text-primary", done && "text-text-tertiary line-through")}>
+            {date ? diaCurto(date) : "No date"}
+          </span>
+          {janela ? <span className="text-text-tertiary"> · {janela}</span> : null}
+          <span className="text-text-secondary"> · {partner}</span>
           {service ? <span className="text-text-tertiary"> · {service}</span> : null}
         </p>
         {report ? (
