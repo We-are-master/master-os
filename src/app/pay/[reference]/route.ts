@@ -42,7 +42,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     const admin = createServiceClient();
     const { data: invRow } = await admin
       .from("invoices")
-      .select("id, reference, client_name, amount, amount_paid, status, job_reference, stripe_customer_email")
+      .select("id, reference, client_name, amount, amount_paid, status, job_reference, stripe_customer_email, invoice_kind")
       // O cliente pode chegar com o prefixo antigo (RCP-) ou o novo (INV-): é a mesma fatura.
       .in("reference", billingReferenceCandidates(reference))
       .order("created_at", { ascending: false })
@@ -61,6 +61,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
       status?: string | null;
       job_reference?: string | null;
       stripe_customer_email?: string | null;
+      invoice_kind?: string | null;
     };
 
     if (inv.status === "cancelled") {
@@ -70,7 +71,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     let jobId = "";
     let jobClientId: string | null = null;
     let jobPrice: { client_price?: number | null; extras_amount?: number | null; total_client_price?: number | null } | null = null;
-    if (inv.job_reference?.trim()) {
+    // Fatura semanal: o saldo é o da fatura (vários jobs); o job da referência não manda no valor.
+    if (inv.job_reference?.trim() && inv.invoice_kind !== "weekly_batch") {
       const { data: jobRow } = await admin
         .from("jobs")
         .select("id, client_id, client_price, extras_amount, total_client_price")

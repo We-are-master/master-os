@@ -92,11 +92,15 @@ export async function loadInvoicePdfData(
   const setup = parseFrontendSetup(companyRow?.frontend_setup);
   const platformFeePct = resolveInvoicePlatformFeePct(setup);
   // Schedule A (modelo de agente): recibo em nome do profissional. Null = B, documento de sempre.
-  const agentParty = await loadAgentReceiptParty(admin, job);
-  const { trade, fee } = splitInvoiceTradeAndFee(invAmt, job, {
-    defaultPlatformFeePct: platformFeePct,
-    schedule: agentParty ? "A" : "B",
-  });
+  // Fatura semanal da conta: uma linha por job, e o serviço/taxa somados job a job.
+  const semanal = inv.invoice_kind === "weekly_batch" ? await dadosDaFaturaSemanal(admin, inv, platformFeePct) : null;
+  const agentParty = semanal ? null : await loadAgentReceiptParty(admin, job);
+  const { trade, fee } = semanal
+    ? semanal.split
+    : splitInvoiceTradeAndFee(invAmt, job, {
+        defaultPlatformFeePct: platformFeePct,
+        schedule: agentParty ? "A" : "B",
+      });
   const agent = agentParty
     ? buildAgentReceiptView({
         party: agentParty,
@@ -126,9 +130,9 @@ export async function loadInvoicePdfData(
     contactName: accountFormat ? (billing?.displayName ?? inv.client_name) : undefined,
     billTo: accountFormat?.billTo,
     feeVat: accountFormat?.feeVat,
-    jobTitle: job?.title ?? inv.job_reference ?? "Job",
-    jobReference: inv.job_reference?.trim() ?? job?.reference ?? "",
-    propertyAddress: job?.property_address ?? undefined,
+    jobTitle: semanal ? `Weekly invoice · ${semanal.jobs.length} job${semanal.jobs.length === 1 ? "" : "s"}` : job?.title ?? inv.job_reference ?? "Job",
+    jobReference: semanal ? "" : inv.job_reference?.trim() ?? job?.reference ?? "",
+    propertyAddress: semanal ? undefined : job?.property_address ?? undefined,
     issueDate: formatDisplayDate(inv.created_at),
     dueDate: formatDisplayDate(inv.due_date),
     paymentDate: paid
@@ -143,7 +147,8 @@ export async function loadInvoicePdfData(
     // `jobs.service_type` não existe em produção: pedi-la derrubava a consulta inteira e a fatura
     // saía sem o job (sem endereço, sem data, taxa da Fixfy em £0). O serviço é o título do job.
     serviceType: job?.title ?? undefined,
-    completionDate: job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
+    completionDate: semanal ? undefined : job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
+    semanal: semanal ? { rotulo: semanal.rotulo, jobs: semanal.jobs } : undefined,
     tradeAmount: trade,
     feeAmount: fee,
     logoUrl,
@@ -151,5 +156,33 @@ export async function loadInvoicePdfData(
     amountDueNow: opts?.amountDueNow,
     requestPercent: opts?.requestPercent,
     agent,
+  };
+}
+
+/** As linhas da fatura semanal (fatura-semanal.ts) e o serviço/taxa somados job a job. */
+async function dadosDaFaturaSemanal(admin: SupabaseClient, inv: Invoice, platformFeePct: number) {
+  const { linhasDaFaturaSemanal } = await import("@/lib/fatura-semanal");
+  const { linhas, jobs } = await linhasDaFaturaSemanal(admin, inv.id);
+  const porId = new Map(jobs.map((j) => [j.id, j]));
+  const split = linhas.reduce(
+    (acc, l) => {
+      const s = splitInvoiceTradeAndFee(l.amount, porId.get(l.jobId) ?? null, { defaultPlatformFeePct: platformFeePct, schedule: "B" });
+      return { trade: Math.round((acc.trade + s.trade) * 100) / 100, fee: Math.round((acc.fee + s.fee) * 100) / 100 };
+    },
+    { trade: 0, fee: 0 },
+  );
+  const inicio = (inv as { billing_week_start?: string | null }).billing_week_start ?? null;
+  const fim = inicio ? new Date(new Date(`${inicio}T12:00:00Z`).getTime() + 6 * 864e5).toISOString().slice(0, 10) : null;
+  return {
+    split,
+    rotulo: inicio && fim ? `${formatDisplayDate(inicio)} to ${formatDisplayDate(fim)}` : "this week",
+    jobs: linhas.map((l) => ({
+      reference: l.reference,
+      title: l.title,
+      address: l.address ?? undefined,
+      completed: l.completed ? formatDisplayDate(l.completed) : undefined,
+      amount: l.amount,
+      reportUrl: l.reportUrl,
+    })),
   };
 }

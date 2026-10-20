@@ -42,6 +42,23 @@ export async function applyOsPayLinkPayment(
   const paidNow = Math.round(Number(session.amount_total ?? 0)) / 100;
   if (paidNow <= EPS) return inv.status === "paid";
 
+  // Fatura semanal da conta: o valor é repartido entre os jobs do lote (fatura-semanal-pagamento.ts).
+  if (inv.invoice_kind === "weekly_batch") {
+    const { repartirPagamentoDaFaturaSemanal } = await import("@/lib/fatura-semanal-pagamento");
+    await repartirPagamentoDaFaturaSemanal(admin, invoiceId, paidNow, `Stripe checkout ${session.id}`, { atualizarFatura: true });
+    const { data: depois } = await admin.from("invoices").select("status").eq("id", invoiceId).maybeSingle();
+    const quitada = (depois as { status?: string } | null)?.status === "paid";
+    await admin
+      .from("invoices")
+      .update({
+        stripe_payment_status: quitada ? "paid" : "pending",
+        ...(quitada ? { stripe_paid_at: new Date().toISOString() } : {}),
+        ...(session.payment_intent ? { stripe_payment_intent_id: session.payment_intent } : {}),
+      })
+      .eq("id", invoiceId);
+    return quitada;
+  }
+
   const total = Math.round((Number(inv.amount ?? 0) || 0) * 100) / 100;
   const alreadyPaid = Math.round((Number(inv.amount_paid ?? 0) || 0) * 100) / 100;
 

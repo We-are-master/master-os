@@ -124,3 +124,10 @@ test("sem conseguir ler o ticket, fica para a equipe", () => {
   assert.equal(d.acao, "equipe");
   assert.match(d.acao === "equipe" ? d.motivo : "", /could not read/);
 });
+
+test("conta de fatura semanal automática aprova sem fatura própria", () => {
+  const d = decidirFinalCheck(base({ weeklyInvoice: true, weeklyInvoiceAuto: true, invoicesTotal: null }));
+  assert.equal(d.acao, "aprovar");
+  assert.equal(d.acao === "aprovar" && d.semanal, true);
+  assert.equal(codigo(decidirFinalCheck(base({ weeklyInvoice: true, weeklyInvoiceAuto: false }))), "weekly_invoice");
+});
