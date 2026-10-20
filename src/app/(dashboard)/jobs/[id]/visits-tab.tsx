@@ -572,10 +572,10 @@ function VisitCard({
           {date ? diaCurto(date) : "No date"}
           {janela ? <span className="font-normal text-text-tertiary"> · {janela}</span> : null}
         </p>
-        {/* Serviço só no hover (dono, 20/10/2026): a linha fica com visita e parceiro. */}
-        <p className="m-0 truncate text-[12px] text-text-secondary" title={service ?? undefined}>
-          <span className="text-text-tertiary">V{index} · </span>
+        {/* Parceiro e tipo de trabalho; o número da visita já está no círculo (dono, 20/10/2026). */}
+        <p className="m-0 truncate text-[12px] text-text-secondary">
           {partner}
+          {service ? <span className="text-text-tertiary"> · {service}</span> : null}
         </p>
         {report ? (
           <p className="m-0 mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px]">
