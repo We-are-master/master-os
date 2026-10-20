@@ -28,6 +28,7 @@ import {
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
 import { jobStatusRank } from "@/lib/job-phases";
+import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 import { ukWallClockToUtcIso, utcIsoToUkWallClock } from "@/lib/utils/uk-time";
 import { cn, formatCurrency } from "@/lib/utils";
 import { formatArrivalTimeRange } from "@/lib/schedule-calendar";
@@ -348,7 +349,9 @@ export function VisitsTab({
         ? { label: "Completed", variant: "success" }
         : job.status === "in_progress"
           ? { label: "In progress", variant: "warning" }
-          : { label: "Scheduled", variant: "info" };
+          : effectiveJobStatusForDisplay(job) === "late"
+            ? { label: "Late", variant: "warning" }
+            : { label: "Scheduled", variant: "info" };
   const vivas = visits.filter((v) => !v.deleted_at).sort((a, b) => a.visit_index - b.visit_index);
   const botaoAdd = (
     <Button
@@ -365,25 +368,23 @@ export function VisitsTab({
 
   return (
     <div className="space-y-2.5">
-      {vivas.length === 0 ? (
-        // Quase todo job tem uma visita só: aqui fica uma linha, nada de tabela.
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-light px-3 py-2">
-          <p className="m-0 text-[12px] text-text-secondary">
-            <span className="font-semibold text-text-primary">1 visit.</span>{" "}
-            {jobHasPartner ? "Need to go back? Add another visit." : "Assign a partner to visit 1 before adding another."}
-          </p>
-          {botaoAdd}
-        </div>
-      ) : (
+      {/* Mesmo desenho com uma visita ou várias (dono, 20/10/2026): cabeçalho com o
+          resumo e um cartão por visita. */}
+      {(
         <>
           <div className="flex items-center justify-between gap-3">
             <p className="m-0 text-[12px] text-text-secondary">
-              <span className="font-semibold text-text-primary">{summary.count} visits</span>
+              <span className="font-semibold text-text-primary">
+                {summary.count} {summary.count === 1 ? "visit" : "visits"}
+              </span>
               {" · "}client {formatCurrency(summary.totalClientPrice)}
               {" · "}partner {formatCurrency(summary.totalPartnerCost)}
             </p>
             {botaoAdd}
           </div>
+          {!jobHasPartner ? (
+            <p className="m-0 text-[11px] text-text-tertiary">Assign a partner to visit 1 before adding another visit.</p>
+          ) : null}
           <div className="space-y-1.5">
             <VisitCard
               index={1}
@@ -397,7 +398,7 @@ export function VisitsTab({
               statusLabel={primaryStatus.label}
               statusVariant={primaryStatus.variant}
               done={primaryDone}
-              notified="Client and partner got the job confirmation"
+              notified={jobHasPartner ? "Client and partner got the job confirmation" : null}
               onComplete={!primaryDone && job.status !== "cancelled" && (onCompletePrimary || vivas.length) ? () => void handleCompletePrimary() : undefined}
               completeTitle={completePrimaryLabel ?? "Mark visit 1 done"}
             />
@@ -567,13 +568,14 @@ function VisitCard({
         {done ? <Check className="h-3.5 w-3.5" /> : `V${index}`}
       </span>
       <div className="min-w-0 flex-1">
-        <p className={cn("m-0 text-[13px] font-semibold tabular-nums text-text-primary", done && "text-text-tertiary line-through")}>
-          {date ? diaCurto(date) : "No date"}
-          {janela ? <span className="font-normal text-text-tertiary"> · {janela}</span> : null}
-        </p>
-        <p className="m-0 truncate text-[12px] text-text-secondary">
-          <span className="text-text-tertiary">V{index} · </span>
-          {partner}
+        {/* Uma linha só, na altura dos preços (dono, 20/10/2026): dia e janela, parceiro e
+            tipo de trabalho. O número da visita já está no círculo. */}
+        <p className="m-0 truncate text-[13px] tabular-nums">
+          <span className={cn("font-semibold text-text-primary", done && "text-text-tertiary line-through")}>
+            {date ? diaCurto(date) : "No date"}
+          </span>
+          {janela ? <span className="text-text-tertiary"> · {janela}</span> : null}
+          <span className="text-text-secondary"> · {partner}</span>
           {service ? <span className="text-text-tertiary"> · {service}</span> : null}
         </p>
         {report ? (
@@ -604,9 +606,10 @@ function VisitCard({
           </p>
         ) : null}
       </div>
-      <div className="hidden shrink-0 text-right text-[11px] leading-tight tabular-nums sm:block">
-        <p className="m-0 text-emerald-700 dark:text-emerald-400">{formatCurrency(clientPrice)} <span className="text-text-tertiary">client</span></p>
-        <p className="m-0 text-rose-700 dark:text-rose-300">{formatCurrency(partnerCost)} <span className="text-text-tertiary">partner</span></p>
+      {/* Cliente e parceiro lado a lado, na mesma linha; o rótulo aparece só no hover. */}
+      <div className="hidden shrink-0 items-center gap-3 text-[12px] font-medium tabular-nums sm:flex">
+        <span className="text-emerald-700 dark:text-emerald-400" title="Client pays">{formatCurrency(clientPrice)}</span>
+        <span className="text-rose-700 dark:text-rose-300" title="Partner gets">{formatCurrency(partnerCost)}</span>
       </div>
       {notified ? (
         <span title={notified} aria-label={notified} className="shrink-0 text-text-tertiary">
