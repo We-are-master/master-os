@@ -7,6 +7,8 @@ export type JobBillingContactSnapshot = {
   mode: "end_client" | "account";
   displayName: string;
   sourceAccountId: string | null;
+  /** Só em mode "account": nome da empresa para a saudação B2B (nunca o contato). */
+  companyName?: string | null;
 };
 
 export type JobBillingInput = {
@@ -90,6 +92,7 @@ function snapshotFromBilling(
     mode: billing.mode,
     displayName: billing.displayName,
     sourceAccountId: billing.sourceAccountId,
+    companyName: billing.companyName ?? null,
   };
 }
 

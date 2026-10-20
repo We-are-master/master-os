@@ -30,6 +30,7 @@ import { FinalReviewModal } from "@/components/job-card/FinalReviewModal/FinalRe
 import type {
   CompletionDelivery,
   FinalReviewSummarySnapshot,
+  FinalReviewBreakdown,
 } from "@/components/job-card/FinalReviewModal/types";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import {
@@ -195,6 +196,7 @@ import {
 } from "@/lib/job-phases";
 import {
   jobCustomerTotal,
+  precoDasVisitasExtras,
   deriveStoredJobFinancials,
   partnerPaymentCap,
   partnerCashOutDisplaySplit,
@@ -358,6 +360,7 @@ const statusConfig: Record<string, { label: string; variant: BadgeVariant; dot?:
   need_attention: { label: "Final review", variant: JOB_STATUS_BADGE_VARIANT.need_attention, dot: true },
   completed: { label: "Completed", variant: JOB_STATUS_BADGE_VARIANT.completed, dot: true },
   cancelled: { label: "Cancelled", variant: JOB_STATUS_BADGE_VARIANT.cancelled, dot: true },
+  deleted: { label: "Deleted", variant: "default", dot: true },
 };
 
 /** Neutral fields + brand focus ring (replaces one-off beige / mint hex pairs). */
@@ -483,6 +486,42 @@ type JobDetailStatusContext = {
   title: string;
 };
 
+/**
+ * Texto da pergunta antes de trocar o modo de cobrança (por hora ↔ preço fechado) ou
+ * os valores (dono, 19/10/2026: "tem que ser sempre perguntado").
+ */
+function confirmacaoDoModoDeCobranca(a: {
+  para: "fixed" | "hourly";
+  antes: { client: number; partner: number; hourly: boolean };
+  depois: { client: number; partner: number };
+  taxas?: { client: number; partner: number; horas: number };
+}): string {
+  const gbp = (n: number) => `£${(Math.round((Number(n) || 0) * 100) / 100).toFixed(2)}`;
+  const modoAntes = a.antes.hourly ? "charged by the hour" : "a fixed price";
+  const titulo =
+    a.para === "hourly"
+      ? a.antes.hourly
+        ? "Change the hourly rates on this job?"
+        : `This job is ${modoAntes}. Charge it by the hour instead?`
+      : a.antes.hourly
+        ? "This job is charged by the hour. Make it a fixed price?"
+        : "Change the fixed price on this job?";
+  const linhas = [titulo, ""];
+  if (a.para === "hourly" && a.taxas) {
+    linhas.push(
+      `Client: ${gbp(a.antes.client)} → ${gbp(a.taxas.client)}/h (${gbp(a.depois.client)} for ${a.taxas.horas}h)`,
+      `Partner: ${gbp(a.antes.partner)} → ${gbp(a.taxas.partner)}/h (${gbp(a.depois.partner)} for ${a.taxas.horas}h)`,
+      "",
+      "Before the work, the total follows the timer, with a 1 hour minimum.",
+    );
+  } else {
+    if (a.antes.hourly && a.taxas) linhas.push(`Now: client ${gbp(a.taxas.client)}/h, partner ${gbp(a.taxas.partner)}/h`);
+    linhas.push(`Client: ${gbp(a.antes.client)} → ${gbp(a.depois.client)}`, `Partner: ${gbp(a.antes.partner)} → ${gbp(a.depois.partner)}`);
+  }
+  linhas.push("", "The invoice and the partner self-bill change to these amounts.");
+  return linhas.join("\n");
+}
+
 function formatJobStatusContextTimestamp(iso: string | null | undefined): string | null {
   if (!iso?.trim()) return null;
   try {
@@ -499,15 +538,17 @@ function buildJobDetailStatusContext(
   opts?: { forcedPaidBySystemOwner?: boolean },
 ): JobDetailStatusContext | null {
   if (job.status === "on_hold") {
-    // Reclamação: o chip diz só "Complaint"; o texto e a conversa ficam na aba Complaint.
-    const reason = jobOnHoldPorReclamacao(job) ? "Complaint" : job.on_hold_reason?.trim() || "No reason recorded";
+    // Reclamação: o status vermelho já diz "Complaint"; o chip amarelo repetia (dono, 19/10/2026).
+    // O texto e a conversa ficam na aba Complaint.
+    if (jobOnHoldPorReclamacao(job)) return null;
+    const reason = job.on_hold_reason?.trim() || "No reason recorded";
     const since = formatJobStatusContextTimestamp(job.on_hold_at);
     const was = job.on_hold_previous_status ? jobStatusLabel(job.on_hold_previous_status) : null;
     const title = [reason, since ? `Since ${since}` : null, was ? `Was ${was}` : null].filter(Boolean).join(" · ");
     return {
       chipClass: "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100",
       primary: reason,
-      secondary: jobOnHoldPorReclamacao(job) ? undefined : since ?? undefined,
+      secondary: since ?? undefined,
       title,
     };
   }
@@ -565,14 +606,6 @@ function buildJobDetailStatusContext(
       };
     }
     return null;
-  }
-
-  if (job.status === "deleted") {
-    return {
-      chipClass: "border-border bg-muted/50 text-text-secondary",
-      primary: "Deleted",
-      title: "Job archived",
-    };
   }
 
   return null;
@@ -1333,6 +1366,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [financeHubOpen, setFinanceHubOpen] = useState(false);
   const [financeHubTab, setFinanceHubTab] = useState<"client" | "partner">("client");
   const [financeHubBaseDraft, setFinanceHubBaseDraft] = useState<string | null>(null);
+  /** Job por hora no Edit job finances: taxa da hora e horário de entrada e saída (19/10/2026). */
+  const [financeHubHourlyDraft, setFinanceHubHourlyDraft] = useState<{ rate?: string; start?: string; end?: string }>({});
   const [financeHubExtraDrafts, setFinanceHubExtraDrafts] = useState<Record<string, { amount?: string; reason?: string }>>({});
   const [savingFinanceHub, setSavingFinanceHub] = useState(false);
   const [moneySubmitting, setMoneySubmitting] = useState(false);
@@ -1966,7 +2001,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     const useOffice =
       job.timer_is_running ||
       (Number(job.timer_elapsed_seconds ?? 0) > 0) ||
-      !!job.timer_last_started_at;
+      !!job.timer_last_started_at ||
+      // Janela do parceiro fechada (entrada e saída): conta como tempo trabalhado.
+      (!!job.partner_timer_started_at && !!job.partner_timer_ended_at);
     if (!useOffice) return null;
     return computeOfficeTimerElapsedSeconds(job);
   }, [job, officeTimerTick]);
@@ -3666,6 +3703,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const customer_final_payment =
         Math.round(Math.max(0, totals.clientTotal + extras - deposit) * 100) / 100;
       const titleOut = normalizeTypeOfWork(service.name) || service.name;
+      /**
+       * Trocar o modo de cobrança muda o que o cliente paga e o que o parceiro recebe:
+       * sempre pergunta, com o antes e o depois (dono, 19/10/2026: JOB-9766 virou £90/h
+       * sem ninguém ver e a fatura saiu de £78 para £90).
+       */
+      if (
+        !window.confirm(
+          confirmacaoDoModoDeCobranca({
+            para: "hourly",
+            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
+            depois: { client: totals.clientTotal, partner: totals.partnerTotal },
+            taxas: { client: clientRate, partner: partnerRate, horas: totals.billedHours },
+          }),
+        )
+      ) {
+        return;
+      }
       const patch: Partial<Job> = {
         job_type: "hourly",
         catalog_service_id: jobTypeEditCatalogId,
@@ -3751,6 +3805,25 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           partnerHourlyRate: partnerRate,
         })
       : null;
+    const clientFixo = clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0);
+    const partnerFixo = partnerCostConfirmed > 0 ? partnerCostConfirmed : matchedTotals?.partnerTotal ?? Number(job.partner_cost ?? 0);
+    const mudouValor =
+      Math.abs(clientFixo - Number(job.client_price ?? 0)) >= 0.01 || Math.abs(partnerFixo - Number(job.partner_cost ?? 0)) >= 0.01;
+    if (
+      (job.job_type === "hourly" || mudouValor) &&
+      !window.confirm(
+        confirmacaoDoModoDeCobranca({
+          para: "fixed",
+          antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
+          depois: { client: clientFixo, partner: partnerFixo },
+          taxas: job.job_type === "hourly"
+            ? { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) }
+            : undefined,
+        }),
+      )
+    ) {
+      return;
+    }
     const patch: Partial<Job> = {
       job_type: "fixed",
       catalog_service_id: matchedService?.id ?? null,
@@ -3915,8 +3988,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** Writes the base amount for one side and hands back the updated job, so a
    *  single Save can chain base + extras without any of them reading a stale job. */
   const persistFinanceHubBase = useCallback(
-    async (baseJob: Job, side: "client" | "partner", amount: number): Promise<Job> => {
-      const patch: Partial<Job> =
+    async (baseJob: Job, side: "client" | "partner", amount: number, extraPatch?: Partial<Job>): Promise<Job> => {
+      const patchDoLado: Partial<Job> =
         side === "client"
           ? {
               client_price: amount,
@@ -3950,6 +4023,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               partner_agreed_value:
                 Math.round((amount + Number(baseJob.materials_cost ?? 0)) * 100) / 100,
             };
+      // Job por hora grava junto a taxa, o horário e os dois totais (19/10/2026).
+      const patch: Partial<Job> = { ...patchDoLado, ...(extraPatch ?? {}) };
       const updated = await handleJobUpdate(baseJob.id, patch, { silent: true });
       if (!updated) return baseJob;
 
@@ -4119,7 +4194,34 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       let customer_final_payment = r2(finForm.customer_final_payment);
       let billed_hours: number | undefined;
       const novasTaxas: { hourly_client_rate?: number; hourly_partner_rate?: number } = {};
-      if (job.job_type === "hourly") {
+      let virouFixo = false;
+      const mexeuNoValor =
+        Math.abs(r2(finForm.client_price) - (Number(job.client_price) || 0)) >= 0.01 ||
+        Math.abs(r2(finForm.partner_cost) - (Number(job.partner_cost) || 0)) >= 0.01;
+      if (
+        job.job_type === "hourly" &&
+        mexeuNoValor &&
+        !job.internal_invoice_approved &&
+        job.status !== "awaiting_payment" &&
+        job.status !== "completed"
+      ) {
+        /**
+         * Valor digitado num job por hora, antes do trabalho: sem perguntar, o OS
+         * recalculava pelo timer (mínimo 1h) e o valor digitado sumia (JOB-9766,
+         * 19/10/2026). Agora pergunta: vira preço fechado com esse valor, ou nada muda.
+         */
+        const ok = window.confirm(
+          confirmacaoDoModoDeCobranca({
+            para: "fixed",
+            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: true },
+            depois: { client: client_price, partner: partner_cost },
+            taxas: { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) },
+          }),
+        );
+        if (!ok) return;
+        virouFixo = true;
+      }
+      if (job.job_type === "hourly" && !virouFixo) {
         const billedH = Number(job.billed_hours ?? 0);
         const approvedStage =
           job.internal_invoice_approved ||
@@ -4182,6 +4284,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_final_payment,
         ...(billed_hours != null ? { billed_hours } : {}),
         ...novasTaxas,
+        ...(virouFixo
+          ? {
+              job_type: "fixed" as const,
+              billed_hours: null,
+              customer_final_payment: Math.round(Math.max(0, client_price + extras_amount - customer_deposit) * 100) / 100,
+            }
+          : {}),
       };
       const updated = await handleJobUpdate(job.id, newFields);
       await logFieldChanges(
@@ -4324,15 +4433,30 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [job, cancelJob, cancelPresetId, cancelDetail, officeCancellationPresets, refreshJobFinance]);
 
   const handleStatusChange = useCallback(
-    async (j: Job, newStatus: Job["status"], opts?: { skipHourlyRecalc?: boolean; silent?: boolean; skipSelfBillSync?: boolean; extraPatch?: Partial<Job> }): Promise<Job | null> => {
+    async (
+      j: Job,
+      newStatus: Job["status"],
+      opts?: {
+        skipHourlyRecalc?: boolean;
+        silent?: boolean;
+        skipSelfBillSync?: boolean;
+        extraPatch?: Partial<Job>;
+        /** Force approve da Final review: fecha sem o portão do relatório (dono, 19/10/2026). */
+        forced?: boolean;
+        /** Lança o motivo do portão em vez de mostrar um toast: quem chama mostra um só. */
+        throwOnGate?: boolean;
+      },
+    ): Promise<Job | null> => {
     const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
-    if (!forceCloseFromAwaitingPayment) {
+    if (!forceCloseFromAwaitingPayment && !opts?.forced) {
       const check = canAdvanceJob(j, newStatus, {
         customerPayments: customerPayments.map((p) => ({ type: p.type, amount: p.amount })),
         partnerPayments: partnerPayments.map((p) => ({ type: p.type, amount: p.amount })),
       });
       if (!check.ok) {
-        toast.error(check.message ?? "Complete the current step before advancing.");
+        const motivo = check.message ?? "Complete the current step before advancing.";
+        if (opts?.throwOnGate) throw new Error(motivo);
+        toast.error(motivo);
         return null;
       }
     }
@@ -5869,7 +5993,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     finalizeDocument,
   ]);
 
-  const handleValidateAndComplete = useCallback(async () => {
+  const handleValidateAndComplete = useCallback(async (forced = false) => {
     const j = jobRef.current;
     if (!j) return;
     /**
@@ -6258,17 +6382,42 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
       // Never re-derive hourly totals from the office timer here — this flow already applied modal hours + rates,
       // and timer-based recalc would overwrite approved amounts (and desync the finance summary from the invoice).
-      const statusOpts = { skipHourlyRecalc: current.job_type === "hourly", silent: true, skipSelfBillSync: true, extraPatch: linkPatch };
+      const statusOpts = {
+        skipHourlyRecalc: current.job_type === "hourly",
+        silent: true,
+        skipSelfBillSync: true,
+        extraPatch: linkPatch,
+        forced,
+        // O motivo do portão sobe como erro e vira UM toast com a causa real (19/10/2026):
+        // antes saía "Could not move the job…" por cima e escondia o porquê.
+        throwOnGate: true,
+      };
       let approvalToast: string;
-      if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
-        const next = await handleStatusChange(current, "awaiting_payment", { ...statusOpts, silent: true });
+      if (forced && customerDueForStatus <= 0.02) {
+        /**
+         * Force approve com nada a receber do cliente (job zerado, ou já pago): fecha
+         * direto como Paid, sem relatório (dono, 19/10/2026). O parceiro continua a
+         * receber pelo self-bill, que já foi emitido acima.
+         */
+        const next = await handleStatusChange(current, "completed", {
+          ...statusOpts,
+          extraPatch: { ...linkPatch, finance_status: "paid", payment_status: "paid", customer_final_paid: true },
+        });
+        if (!next) throw new Error("Could not mark the job Paid after the force approve.");
+        current = next;
+        approvalToast =
+          partnerDue > 0.02
+            ? "Force approved. Nothing to collect from the client, job marked Paid. The partner is paid through the self-bill."
+            : "Force approved. Job marked Paid.";
+      } else if (customerDueForStatus > 0.02 || partnerDue > 0.02) {
+        const next = await handleStatusChange(current, "awaiting_payment", statusOpts);
         if (!next) {
           throw new Error("Could not move the job to Awaiting payment after approval.");
         }
         current = next;
         approvalToast = "Approved. Job moved to Awaiting payment.";
       } else {
-        const next = await handleStatusChange(current, "completed", { ...statusOpts, silent: true });
+        const next = await handleStatusChange(current, "completed", statusOpts);
         if (!next) {
           throw new Error("Could not mark the job Completed after approval.");
         }
@@ -6385,7 +6534,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const approvalBillableRevenue = useMemo(() => {
     if (!job) return 0;
     if (job.job_type === "hourly" && approvalModalHourlyTotals) {
-      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0) + extraAditivo.client;
+      // Visitas 2+ entram no que o cliente paga (19/10/2026); no preço fechado já vêm em jobCustomerTotal.
+      return approvalModalHourlyTotals.clientTotal + Number(job.extras_amount ?? 0) + extraAditivo.client + precoDasVisitasExtras(job);
     }
     return billableRevenueForApproval + extraAditivo.client;
   }, [job, approvalModalHourlyTotals, billableRevenueForApproval, extraAditivo]);
@@ -6862,7 +7012,50 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const clientBaseAmount = Math.max(0, Math.round(Number(job.client_price ?? 0) * 100) / 100);
   const financeHubEntries = getExtraManagerData(financeHubTab).entries;
   const financeHubLiveBase = financeHubTab === "client" ? clientBaseAmount : partnerInitialBalance;
-  const financeHubBaseValue = financeHubBaseDraft ?? String(financeHubLiveBase);
+  /**
+   * Job por hora: o valor base é taxa × horas, e as horas saem do horário de entrada
+   * e saída (mínimo 1h, depois de 30 em 30 min). Mexer aqui grava a taxa do lado
+   * aberto e o horário, que vale para os dois lados.
+   */
+  const financeHubHourly = (() => {
+    if (job.job_type !== "hourly") return null;
+    const { clientRate, partnerRate } = resolveJobHourlyRates(job);
+    const hhmm = (iso: string | null | undefined) =>
+      iso
+        ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/London" }).format(new Date(iso))
+        : "";
+    const liveStart = hhmm(job.partner_timer_started_at ?? job.scheduled_start_at) || "09:00";
+    const segundosVivos =
+      job.partner_timer_started_at && job.partner_timer_ended_at
+        ? Math.max(0, (new Date(job.partner_timer_ended_at).getTime() - new Date(job.partner_timer_started_at).getTime()) / 1000)
+        : computeOfficeTimerElapsedSeconds(job) || (Number(job.billed_hours ?? 0) > 0 ? Number(job.billed_hours) * 3600 : 3600);
+    const [sh, sm] = liveStart.split(":").map(Number);
+    const fimMin = (sh * 60 + sm + Math.round(segundosVivos / 60)) % (24 * 60);
+    const liveEnd = job.partner_timer_ended_at
+      ? hhmm(job.partner_timer_ended_at)
+      : `${String(Math.floor(fimMin / 60)).padStart(2, "0")}:${String(fimMin % 60).padStart(2, "0")}`;
+    const liveRate = financeHubTab === "client" ? clientRate : partnerRate;
+    const rate = financeHubHourlyDraft.rate ?? String(liveRate);
+    const start = financeHubHourlyDraft.start ?? liveStart;
+    const end = financeHubHourlyDraft.end ?? liveEnd;
+    const minutos = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return (h || 0) * 60 + (m || 0);
+    };
+    const segundos = Math.max(0, (minutos(end) - minutos(start)) * 60);
+    const taxaCliente = financeHubTab === "client" ? Number(rate) || 0 : clientRate;
+    const taxaParceiro = financeHubTab === "partner" ? Number(rate) || 0 : partnerRate;
+    const totals = computeHourlyTotals({ elapsedSeconds: segundos, clientHourlyRate: taxaCliente, partnerHourlyRate: taxaParceiro });
+    const dirty =
+      (financeHubHourlyDraft.rate != null && Math.abs((Number(financeHubHourlyDraft.rate) || 0) - liveRate) >= 0.009) ||
+      (financeHubHourlyDraft.start != null && financeHubHourlyDraft.start !== liveStart) ||
+      (financeHubHourlyDraft.end != null && financeHubHourlyDraft.end !== liveEnd);
+    return {
+      rate, start, end, segundos, totals, dirty, taxaCliente, taxaParceiro,
+      base: financeHubTab === "client" ? totals.clientTotal : totals.partnerTotal,
+    };
+  })();
+  const financeHubBaseValue = financeHubHourly ? String(financeHubHourly.base) : financeHubBaseDraft ?? String(financeHubLiveBase);
   const financeHubExtraValue = (entry: ExtraHistoryEntry) => {
     const draft = financeHubExtraDrafts[entry.idRaw];
     return {
@@ -6879,6 +7072,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return sum + sign * Math.abs(typed);
     }, 0);
   const financeHubDirty =
+    !!financeHubHourly?.dirty ||
     (financeHubBaseDraft != null &&
       Math.abs((Number(financeHubBaseDraft) || 0) - financeHubLiveBase) >= 0.009) ||
     financeHubEntries.some((entry) => {
@@ -6894,6 +7088,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setFinanceHubExtraDrafts((prev) => ({ ...prev, [entry.idRaw]: { ...prev[entry.idRaw], ...patch } }));
   const resetFinanceHubDrafts = () => {
     setFinanceHubBaseDraft(null);
+    setFinanceHubHourlyDraft({});
     setFinanceHubExtraDrafts({});
   };
 
@@ -6973,7 +7168,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.error(side === "client" ? "Base price must be a number." : "Base pay must be a number.");
       return;
     }
-    const baseDirty = Math.abs(baseAmount - liveBase) >= 0.009;
+    const horaSujo = !!financeHubHourly?.dirty;
+    const baseDirty = horaSujo || Math.abs(baseAmount - liveBase) >= 0.009;
 
     const dirtyExtras: { entry: ExtraHistoryEntry; amount: number; reason: string }[] = [];
     for (const entry of entries) {
@@ -7008,7 +7204,29 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     setSavingFinanceHub(true);
     try {
       let current: Job = job;
-      if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
+      if (horaSujo && financeHubHourly) {
+        const h = financeHubHourly;
+        if (h.segundos <= 0) {
+          toast.error("Leave time must be after arrival.");
+          setSavingFinanceHub(false);
+          return;
+        }
+        const ymd = String(current.scheduled_date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+        const clientTotal = h.totals.clientTotal;
+        const partnerTotal = h.totals.partnerTotal;
+        current = await persistFinanceHubBase(current, side, h.base, {
+          hourly_client_rate: h.taxaCliente,
+          hourly_partner_rate: h.taxaParceiro,
+          billed_hours: h.totals.billedHours,
+          partner_timer_started_at: ukWallClockToUtcIso(ymd, h.start),
+          partner_timer_ended_at: ukWallClockToUtcIso(ymd, h.end),
+          client_price: clientTotal,
+          customer_final_payment:
+            Math.round(Math.max(0, clientTotal + Number(current.extras_amount ?? 0) - Number(current.customer_deposit ?? 0)) * 100) / 100,
+          partner_cost: partnerTotal,
+          partner_agreed_value: Math.round((partnerTotal + Number(current.materials_cost ?? 0)) * 100) / 100,
+        });
+      } else if (baseDirty) current = await persistFinanceHubBase(current, side, baseAmount);
       for (const row of dirtyExtras) {
         current = await persistExtraEntryEdit(
           current,
@@ -7222,13 +7440,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       : 0;
 
   const approvalMaterialsCost = Number(job.materials_cost ?? 0);
-  const approvalProfit = approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost;
+  // As visitas 2+ entram na receita (acima) e o custo delas sai aqui: o parceiro de cada
+  // visita é pago no self-bill dele, mas a margem do job é uma só (19/10/2026).
+  const approvalProfit =
+    approvalBillableRevenue - approvalPartnerCostForDirect - approvalMaterialsCost - extraVisitsPartner - extraVisitsMaterials;
   const approvalMarginPct = approvalBillableRevenue > 0 ? Math.round((approvalProfit / approvalBillableRevenue) * 10000) / 100 : 0;
 
   const approvalAmountDue = Math.max(0, approvalBillableRevenue - customerPaidTotal);
   /** Matches the main finance card: partner takes labour cap + materials reimbursement (same basis as partnerSelfBillGrossAmount). */
   const approvalPartnerGross = Math.max(0, approvalPartnerCap + approvalMaterialsCost);
   const approvalPartnerPayRemaining = Math.max(0, approvalPartnerGross - partnerPaidTotal);
+  /** Quadro de valores da Final review (19/10/2026): por hora ou preço fechado, linha a linha. */
+  const finalReviewBreakdown: FinalReviewBreakdown = (() => {
+    const horasDoJob = job.job_type === "hourly" && approvalModalHourlyTotals ? approvalModalHourlyTotals : null;
+    const taxas = horasDoJob ? resolveJobHourlyRates(job) : null;
+    const clientExtras = Math.max(0, Number(job.extras_amount ?? 0)) + extraAditivo.client;
+    const visitsClient = extraVisitsClient;
+    return {
+      type: horasDoJob ? "hourly" : "fixed",
+      hours: horasDoJob?.billedHours ?? null,
+      clientRate: taxas?.clientRate ?? null,
+      partnerRate: taxas?.partnerRate ?? null,
+      clientBase: Math.max(0, Math.round((approvalBillableRevenue - clientExtras - visitsClient) * 100) / 100),
+      partnerBase: approvalPartnerExtrasSplit.base,
+      clientExtras,
+      partnerExtras: approvalPartnerExtrasSplit.extra,
+      partnerMaterials: approvalMaterialsCost,
+      visitsCount: extraVisitsCount,
+      visitsClient,
+      visitsPartner: Math.round((extraVisitsPartner + extraVisitsMaterials) * 100) / 100,
+      clientTotal: approvalBillableRevenue,
+      partnerTotal: approvalPartnerGross,
+      margin: approvalProfit,
+      marginPct: approvalMarginPct,
+    };
+  })();
   const approvalPrimaryInvoice = job.invoice_id
     ? jobInvoices.find((i) => i.id === job.invoice_id) ??
       jobInvoices.find((i) => i.invoice_kind === "combined" || i.invoice_kind === "weekly_batch") ??
@@ -7509,7 +7755,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <JobScheduleTimingChip job={job} />
                   {jobStatusContext ? <JobDetailStatusContextChip ctx={jobStatusContext} /> : null}
                 </div>
-                <JobOverdueBadge job={job} size="sm" />
+                {/* Late e Overdue dizem o mesmo (data passou): fica só o Late (dono, 19/10/2026). */}
+                {displayStatus !== "late" ? <JobOverdueBadge job={job} size="sm" /> : null}
                 <JobCardRefusedBadge job={job} size="sm" showHistory />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -7751,7 +7998,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               label: "Add visit",
                               icon: CalendarPlus,
                               onSelect: () => {
-                                setDetailTab(1);
+                                setDetailTab(0);
                                 setVisitOpenCreateSignal((k) => k + 1);
                               },
                             }]
@@ -8299,9 +8546,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         {nextIsExtra && nextVisit ? (
                           <button
                             type="button"
-                            onClick={() => setDetailTab(1)}
+                            onClick={() => {
+                              // Visitas moram no Details (19/10/2026): abre e rola até a seção.
+                              setDetailTab(0);
+                              queueMicrotask(() => document.getElementById("job-visits")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+                            }}
                             className="mt-1.5 flex items-center gap-2 text-sm text-text-secondary transition-colors hover:text-primary dark:text-[#d2d8e2]"
-                            title="Open the visits tab"
+                            title="Show the visits"
                           >
                             <Layers className="h-[13px] w-[13px] shrink-0 text-text-tertiary dark:text-text-tertiary" />
                             <span>
@@ -8536,7 +8787,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 {(
                   [
                     { label: "Details", index: 0 as const },
-                    ...(JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? [{ label: "Visits", index: 1 as const }] : []),
                     { label: "Documents", index: 2 as const },
                     { label: "Reports", index: 3 as const },
                     ...(temReclamacao ? [{ label: "Complaint", index: 6 as const }] : []),
@@ -8876,8 +9126,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
               {/* Sempre montada (só escondida): o "Add visit" do menu manda um sinal
                   que a aba lê ao montar; remontar a cada troca reabriria o formulário. */}
+              {/* Visitas dentro do Details (dono, 19/10/2026): quase todo job tem uma só, então
+                  é uma linha; com mais de uma, viram cartões. Fica montada para o "Add visit" do menu. */}
               {JOB_DETAIL_MULTI_VISITS_UI_ENABLED ? (
-                <div hidden={detailTab !== 1}>
+                <div hidden={detailTab !== 0} id="job-visits" className="mt-3 space-y-1.5 border-t border-border pt-2">
+                  <p className="m-0 text-xs font-semibold text-text-primary">Visits</p>
                   <VisitsTab
                     job={job}
                     openCreateSignal={visitOpenCreateSignal}
@@ -8906,6 +9159,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         openFinalReview();
                       })();
                     }}
+                    onJobChanged={() => void refreshJobFinance()}
                     onJobStatusBumpRequested={(suggestedStatus) => {
                       void handleStatusChange(job, suggestedStatus);
                     }}
@@ -10260,6 +10514,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         currentUserName={attestationDisplayName}
         jobValue={approvalBillableRevenue}
         partnerPayout={approvalPartnerGross}
+        breakdown={finalReviewBreakdown}
         extra={
           finalExtraConfig
             ? {
@@ -10323,8 +10578,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onIncludeReportInEmailChange={setIncludeReportInEmail}
         accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
-        onApprove={() => {
-          void handleValidateAndComplete();
+        onApprove={(o) => {
+          void handleValidateAndComplete(o?.forced ?? false);
         }}
         paymentSchedule={{
           invoiceDueYmd: approvalInvoiceDueYmd,
@@ -10959,6 +11214,59 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ))}
           </div>
 
+          {financeHubHourly ? (
+            <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-3 dark:border-[#2f3642]">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Charged by the hour</p>
+                <span className="text-[11px] tabular-nums text-text-tertiary">
+                  {financeHubHourly.totals.billedHours}h billed · min 1h, then every 30 min
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">Arrived</label>
+                  <Input
+                    type="time"
+                    value={financeHubHourly.start}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, start: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">Left</label>
+                  <Input
+                    type="time"
+                    value={financeHubHourly.end}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, end: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-text-secondary">
+                    {financeHubTab === "client" ? "Client £/h" : "Partner £/h"}
+                  </label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={financeHubHourly.rate}
+                    onChange={(e) => setFinanceHubHourlyDraft((d) => ({ ...d, rate: e.target.value }))}
+                    className="h-9 text-sm tabular-nums"
+                    disabled={savingFinanceHub}
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-text-secondary">
+                  {financeHubTab === "client" ? "Base price" : "Base pay"} · {financeHubHourly.totals.billedHours}h × {formatCurrency(Number(financeHubHourly.rate) || 0)}
+                </span>
+                <span className="font-semibold tabular-nums">{formatCurrency(financeHubHourly.base)}</span>
+              </div>
+              <p className="m-0 text-[11px] text-text-tertiary">The times apply to client and partner.</p>
+            </div>
+          ) : (
           <div className="flex flex-wrap items-center gap-2">
             <JobCardTitleWithHint
               className="min-w-0 flex-1"
@@ -10982,6 +11290,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             />
             <span className="w-3.5 shrink-0" aria-hidden />
           </div>
+          )}
 
           <div className="space-y-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Extras</p>

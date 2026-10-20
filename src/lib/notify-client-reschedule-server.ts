@@ -28,7 +28,8 @@ import { confirmacaoPorWhatsApp, mensagensAoClienteLigadas } from "@/lib/client-
 import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
 import { avisarNoTicketDoJob } from "@/lib/um-ticket/aviso-do-job";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
-import { buildJobRescheduledHtml, splitPropertyAddressAndPostcode } from "@/lib/zendesk-job-confirmation";
+import { buildJobRescheduledEmail, splitPropertyAddressAndPostcode } from "@/lib/zendesk-job-confirmation";
+import { dataLonga, janelaTexto } from "@/lib/emails/fixfy-shell";
 
 export interface AvisoDeRemarcacao {
   oldDateLine?: string | null;
@@ -36,6 +37,8 @@ export interface AvisoDeRemarcacao {
   newDateLine?: string | null;
   newTimeLine?: string | null;
   reason?: string | null;
+  /** A Fixfy mudou a data (não o cliente). Sem saber, o e-mail não pede desculpas nem agradece. */
+  iniciadoPelaFixfy?: boolean;
 }
 
 export type ResultadoAvisoCliente =
@@ -116,23 +119,44 @@ export async function avisarClienteDaRemarcacao(
       .eq("id", jobId);
   };
 
+  /**
+   * A data NOVA sai da linha do job (já gravada quando isto roda), no formato da
+   * copy: `Wednesday 21 October 2026`, `between 9am and midday`. A linha que veio
+   * no aviso só vale quando o job não tem a data.
+   */
+  const dataNova = dataLonga(typeof j.scheduled_date === "string" ? j.scheduled_date.slice(0, 10) : null) ?? aviso.newDateLine ?? "";
+  const janelaNova = janelaTexto(j.scheduled_start_at as string | null, j.scheduled_end_at as string | null) ?? aviso.newTimeLine ?? "";
+
   if (paraAConta) {
     const { propertyAddress, propertyPostcode } = splitPropertyAddressAndPostcode(
       String(j.property_address ?? ""),
     );
-    const html = buildJobRescheduledHtml({
-      greetingName: billing.displayName || String(j.client_name ?? "there"),
+    // B2B: "Hi {empresa} team,"; nunca o nome da pessoa de contato (handoff).
+    let empresa: string | null = null;
+    if (billing.sourceAccountId) {
+      const { data: conta } = await supabase
+        .from("accounts")
+        .select("company_name")
+        .eq("id", billing.sourceAccountId)
+        .maybeSingle();
+      empresa = (conta as { company_name?: string | null } | null)?.company_name?.trim() || null;
+    }
+    const email = buildJobRescheduledEmail({
+      greetingName: empresa ?? "",
+      publico: { tipo: "b2b", empresa },
       jobReference: String(j.reference ?? ""),
       jobTitle: String(j.title ?? ""),
-      jobDate: aviso.newDateLine ?? "New date",
-      arrivalWindow: aviso.newTimeLine ?? "To be confirmed",
-      previousDate: aviso.oldDateLine ?? "Previous date",
+      jobDate: dataNova,
+      arrivalWindow: janelaNova,
+      previousDate: aviso.oldDateLine ?? "",
       previousArrivalWindow: aviso.oldTimeLine ?? undefined,
       propertyAddress,
       propertyPostcode,
       typeOfWork: String(j.title ?? ""),
+      iniciadoPelaFixfy: aviso.iniciadoPelaFixfy,
     });
-    const assunto = `Job rescheduled · ${String(j.reference ?? "")}`;
+    const assunto = email.subject;
+    const html = email.html;
     if (await pelaTicket(assunto, html)) {
       await carimbar();
       return { ok: true, to: para, layout: "account", ticketId: ticketId ?? undefined };
@@ -144,6 +168,7 @@ export async function avisarClienteDaRemarcacao(
         to: [para],
         subject: assunto,
         html,
+        text: email.text,
       });
       if (error) return { ok: false, error: error.message ?? "send failed" };
     } catch (err) {
@@ -153,16 +178,18 @@ export async function avisarClienteDaRemarcacao(
     return { ok: true, to: para, layout: "account" };
   }
 
-  const primeiroNome = String(billing.displayName || j.client_name || "").trim().split(/\s+/)[0] || "there";
+  const primeiroNome = String(billing.displayName || j.client_name || "").trim().split(/\s+/)[0] || "";
   const email = buildClientJobRescheduledEmail({
     clientFirstName: primeiroNome,
+    publico: { tipo: "b2c", primeiroNome },
+    iniciadoPelaFixfy: aviso.iniciadoPelaFixfy,
     jobReference: String(j.reference ?? ""),
     jobTitle: String(j.title ?? ""),
     propertyAddress: String(j.property_address ?? ""),
-    oldDateLine: aviso.oldDateLine ?? "Previous date",
+    oldDateLine: aviso.oldDateLine ?? "",
     oldTimeLine: aviso.oldTimeLine ?? null,
-    newDateLine: aviso.newDateLine ?? "New date",
-    newTimeLine: aviso.newTimeLine ?? null,
+    newDateLine: dataNova,
+    newTimeLine: janelaNova || null,
     reason: aviso.reason ?? null,
   });
 

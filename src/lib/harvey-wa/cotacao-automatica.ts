@@ -20,6 +20,8 @@
 import { MARGEM_MINIMA } from "./desconto";
 import { precoDeVendaDoLance } from "@/lib/quotes/lance-para-proposta";
 import { extractUkPostcode } from "@/lib/uk-postcode";
+import { gbp, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
+import { fraseDePagamentoDaCotacao, servicoCurto } from "@/lib/zendesk-quote-sent";
 
 /** Pedimos ao cliente o que faltava. */
 export const TAG_PEDIU_CONTEXTO = "harvey_aq_asked_context";
@@ -77,11 +79,27 @@ export function enderecoNasMensagens(textos: readonly string[]): string | null {
   return null;
 }
 
-/** "Lead · Carpentry · Chloe Doak · NW2 6XJ" → "Carpentry". */
+/**
+ * "Lead · Carpentry · Chloe Doak · NW2 6XJ" → "Carpentry". O ticket de lead que
+ * já falou com o cliente por e-mail tem o assunto da copy ("Your carpentry
+ * enquiry · A few details to get started"): dali sai "carpentry".
+ */
 export function servicoDoAssunto(assunto: string | null | undefined): string | null {
-  const partes = String(assunto ?? "").split("·").map((p) => p.trim());
+  const a = String(assunto ?? "");
+  const daCopy = a.match(/^Your (.+?) enquiry · /i);
+  if (daCopy) return daCopy[1]!.trim() || null;
+  const partes = a.split("·").map((p) => p.trim());
   if (partes.length >= 3 && /^lead$/i.test(partes[0]!)) return partes[1] || null;
   return null;
+}
+
+/** Quem recebe: o primeiro nome (B2C) ou o público já resolvido (B2B pela conta). */
+export type Destinatario = string | Publico;
+
+/** "Hi Chloe," / "Hi there," / "Hi Acme Lettings team,". "there" conta como sem nome. */
+export function saudacaoDe(quem: Destinatario): string {
+  if (typeof quem !== "string") return saudacao(quem);
+  return saudacao({ tipo: "b2c", primeiroNome: /^there$/i.test(quem.trim()) ? "" : quem });
 }
 
 export function faltandoNoContexto(c: ContextoDaCotacao): Falta[] {
@@ -97,10 +115,12 @@ export function faltandoNoContexto(c: ContextoDaCotacao): Falta[] {
 const PEDIDO: Record<Falta, string> = {
   service: "what kind of work you need",
   postcode: "the property postcode",
-  address: "the full property address (house number and street)",
-  scope: "a short description of the job",
-  photos: "a few photos of the job",
+  address: "the full property address, including the postcode",
+  scope: "a short description of the work",
+  photos: "a few photos",
 };
+/** A ordem da copy: fotos antes do endereço. */
+const ORDEM_DO_PEDIDO: Falta[] = ["service", "photos", "address", "postcode", "scope"];
 
 function juntar(itens: string[]): string {
   if (itens.length <= 1) return itens[0] ?? "";
@@ -110,22 +130,25 @@ function juntar(itens: string[]): string {
 /** Postcode é parte do endereço: pedir os dois soa a formulário. */
 function oQuePedir(faltando: readonly Falta[]): string[] {
   const f = faltando.includes("address") ? faltando.filter((x) => x !== "postcode") : [...faltando];
-  return f.map((x) => PEDIDO[x]);
+  return ORDEM_DO_PEDIDO.filter((x) => f.includes(x)).map((x) => PEDIDO[x]);
 }
 
-export function textoPedeContexto(nome: string, faltando: readonly Falta[], servico?: string | null): string {
-  const sobre = servico?.trim() ? ` for the ${servico.trim().toLowerCase()} work` : "";
-  return `Hi ${nome}, thanks for your request. To get you a fixed price${sobre}, could you send us ${juntar(oQuePedir(faltando))}? As soon as we have it we'll ask our specialists for prices.`;
+/** Copy 22 "More details needed". WhatsApp ou e-mail, texto livre. */
+export function textoPedeContexto(quem: Destinatario, faltando: readonly Falta[], servico?: string | null): string {
+  const s = servicoCurto(servico);
+  const sobre = s ? `Thanks for your enquiry about ${s}.` : "Thanks for your enquiry.";
+  return `${saudacaoDe(quem)} ${sobre} Could you send ${juntar(oQuePedir(faltando))}? That will help us put together an accurate quote.`;
 }
 
-/** 24h sem lance. Regra do dono: NUNCA prometer hora ou data. */
-export function textoAindaCotando(nome: string, servico?: string | null): string {
-  const sobre = servico?.trim() ? ` for your ${servico.trim().toLowerCase()} job` : "";
-  return `Hi ${nome}, just a quick update: we're still working on the prices${sobre} with our specialists and will send your quote very soon. Thanks for your patience.`;
+/** Copy 22 "Pricing in progress" (24h sem lance). Regra do dono: NUNCA prometer hora ou data. */
+export function textoAindaCotando(quem: Destinatario, servico?: string | null): string {
+  const s = servicoCurto(servico);
+  return `${saudacaoDe(quem)} A quick update on your ${s ? `${s} ` : ""}enquiry: we’re still checking the pricing with our professionals. We’ll send your quote once the details are confirmed. Thank you for your patience.`;
 }
 
+/** Copy 20, WhatsApp "Quote ready": a quote pronta em texto livre, com o link de aceite. */
 export function textoDaQuote(a: {
-  nome: string;
+  nome: Destinatario;
   servico?: string | null;
   total: number;
   referencia?: string | null;
@@ -136,22 +159,23 @@ export function textoDaQuote(a: {
   /** Datas de início do parceiro já formatadas ("Fri 24 Oct"); o cliente escolhe no link. */
   datas?: string[];
 }): string {
-  const sobre = a.servico?.trim() ? ` for the ${a.servico.trim().toLowerCase()} work` : "";
-  const ref = a.referencia ? ` (${a.referencia})` : "";
-  const entrada = Math.round((Number(a.entrada) || 0) * 100) / 100;
-  const saldo = Math.max(0, Math.round((a.total - entrada) * 100) / 100);
-  const pagamento =
-    entrada > 0.01 && saldo > 0.01
-      ? ` A £${entrada.toFixed(2)} deposit secures the booking and the £${saldo.toFixed(2)} balance is due when the job is done.`
-      : entrada > 0.01
-        ? ` Payment of £${entrada.toFixed(2)} secures the booking.`
-        : "";
+  const s = servicoCurto(a.servico);
   const datas = (a.datas ?? []).filter(Boolean);
-  const quando = datas.length ? ` The professional can start ${datas.join(" or ")}, and you pick the day when you accept.` : "";
+  const pagamento = fraseDePagamentoDaCotacao({ total: a.total, entrada: a.entrada });
   const seguir = a.link
-    ? `If you're happy to go ahead, accept it here: ${a.link}${pagamento}${quando}`
-    : "If you're happy to go ahead, reply here with a day that suits you and we'll get it booked in.";
-  return `Hi ${a.nome}, your quote${sobre} is ready${ref}: £${a.total.toFixed(2)} for the job as described, fixed price. ${seguir} Any questions, just ask.`;
+    ? `Review the details and accept here: ${a.link}`
+    : "If you’d like to go ahead, just reply and we’ll help with the next step.";
+  return [
+    `${saudacaoDe(a.nome)} Your quote${s ? ` for ${s}` : ""} is ready: ${gbp(a.total)} for the work described.`,
+    // Sem ponto colado no link: alguns aparelhos levam o ponto para dentro da URL.
+    seguir,
+    datas.length ? `The professional can start on ${datas.join(" or ")}${a.link ? ", and you choose the day when you accept" : ""}.` : "",
+    pagamento,
+    "If you have any questions, just reply.",
+    a.referencia?.trim() ? `Reference: ${a.referencia.trim()}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export type PassoDoLeilao = "lembrar_parceiros" | "avisar_cliente" | "precificar" | null;

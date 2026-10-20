@@ -64,3 +64,15 @@ test("espelho em stud wall é handyman; construir stud wall é obra", async () =
   const obra = matchService("build a new stud wall to split the bedroom", CATALOGO, "General Maintenance");
   assert.equal("service" in obra ? obra.service.name : "", "Builder");
 });
+
+test("e-mail de primeiro contato (copy 30): assunto do cliente, sem Lead, com a origem verificada", async () => {
+  const { emailDePrimeiroContato } = await import("./primeiro-contato");
+  const e = emailDePrimeiroContato({ nome: "Todd", servico: "handyman work" });
+  assert.equal(e.assunto, "Your handyman work enquiry · A few details to get started");
+  assert.doesNotMatch(e.assunto, /^Lead/i);
+  assert.match(e.text, /^Hi Todd,\n\nThanks for getting in touch about handyman work through Checkatrade\. We’d be happy to help\./);
+  assert.doesNotMatch(e.text, /The Fixfy team/);
+  assert.doesNotMatch(e.html + e.text, /[—–]|\{\{/);
+  assert.doesNotMatch(emailDePrimeiroContato({ nome: "there", servico: "painting", checkatrade: false }).text, /Checkatrade/);
+  assert.match(emailDePrimeiroContato({ nome: "there", servico: "painting" }).text, /^Hi there,/);
+});

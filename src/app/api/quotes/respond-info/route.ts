@@ -9,6 +9,7 @@ import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import {
   verifyPartnerBidToken,
   verifyPartnerReportToken,
+  verifyVisitReportToken,
   verifyQuoteResponseToken,
 } from "@/lib/quote-response-token";
 
@@ -47,6 +48,8 @@ export async function GET(req: NextRequest) {
   let tokenJobId: string | null = null;
   let tokenPartnerId: string | null = null;
   let tokenKind: "customer" | "partner_bid" | "partner_report" = "customer";
+  /** Relatório de uma visita extra (19/10/2026): o token traz a visita, não o job. */
+  let visitaDoToken: { visitId: string; partnerId: string } | null = null;
 
   const bidMatch = verifyPartnerBidToken(token);
   if (bidMatch) {
@@ -60,17 +63,37 @@ export async function GET(req: NextRequest) {
       tokenPartnerId = reportMatch.partnerId;
       tokenKind = "partner_report";
     } else {
-      quoteId = verifyQuoteResponseToken(token);
+      const visitMatch = verifyVisitReportToken(token);
+      if (visitMatch) {
+        visitaDoToken = visitMatch;
+        tokenPartnerId = visitMatch.partnerId;
+        tokenKind = "partner_report";
+      } else {
+        quoteId = verifyQuoteResponseToken(token);
+      }
     }
   }
   console.log(
     `[respond-info] tokenKind=${tokenKind} quoteId=${quoteId ?? "null"} tokenJobId=${tokenJobId ?? "null"} tokenPartnerId=${tokenPartnerId ?? "null"} tokenLen=${token.length}`,
   );
+  const supabase = getServiceSupabase();
+
+  type VisitaDoLink = { id: string; job_id: string; visit_index: number; partner_id: string | null; status: string; report_submitted_at: string | null };
+  let visita = null as VisitaDoLink | null;
+  if (visitaDoToken) {
+    const { data } = await supabase
+      .from("job_visits")
+      .select("id, job_id, visit_index, partner_id, status, report_submitted_at")
+      .eq("id", visitaDoToken.visitId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    visita = (data as VisitaDoLink | null) ?? null;
+    if (visita) tokenJobId = visita.job_id;
+  }
+
   if (!quoteId && !tokenJobId) {
     return NextResponse.json({ error: "Invalid or expired link" }, { status: 400 });
   }
-
-  const supabase = getServiceSupabase();
 
   // For partner_report tokens, the token references a job directly (the job
   // may or may not have a parent quote). Resolve the job first, then pull
@@ -230,13 +253,17 @@ export async function GET(req: NextRequest) {
      * "link inválido" e o parceiro achava que o link tinha quebrado.
      */
     const statusJob = String((jobRow as { status?: string } | null)?.status ?? "");
-    reportBlock = !jobRow
+    // Na visita, o dono do link é o parceiro DA VISITA, e o estado que conta é o dela.
+    const parceiroDoLink = visitaDoToken ? visita?.partner_id ?? null : jobRow?.partner_id ?? null;
+    reportBlock = !jobRow || (visitaDoToken && !visita)
       ? { motivo: "job_removido", mensagem: "This job is no longer in our system. Please contact the Fixfy team." }
-      : !jobRow.partner_id || jobRow.partner_id !== tokenPartnerId
+      : visita?.status === "cancelled"
+        ? { motivo: "cancelado", mensagem: "This visit was cancelled, so no report is needed. Thank you." }
+      : !parceiroDoLink || parceiroDoLink !== tokenPartnerId
         ? { motivo: "outro_parceiro", mensagem: "This job is no longer assigned to you, so there is no report to send. If you think this is wrong, contact the Fixfy team." }
         : statusJob === "cancelled"
           ? { motivo: "cancelado", mensagem: "This job was cancelled, so no report is needed. Thank you." }
-          : statusJob === "completed" || statusJob === "awaiting_payment"
+          : !visitaDoToken && (statusJob === "completed" || statusJob === "awaiting_payment")
             ? { motivo: "concluido", mensagem: "This job is already closed and approved. Thank you, nothing else is needed." }
             : null;
     await registrarReportLink(supabase, {
@@ -246,17 +273,18 @@ export async function GET(req: NextRequest) {
       ok: !reportBlock,
       detail: reportBlock?.motivo ?? null,
     });
-    if (jobRow && jobRow.partner_id === tokenPartnerId && !reportBlock) {
+    if (jobRow && parceiroDoLink === tokenPartnerId && !reportBlock) {
+      const visitaEnviada = !!visita?.report_submitted_at;
       linkedJob = {
         id:                    jobRow.id,
-        reference:             jobRow.reference,
+        reference:             visita ? `${jobRow.reference} · Visit ${visita.visit_index}` : jobRow.reference,
         serviceType:           quote.service_type ?? null,
         categorySlug:          await categoriaDoServico(supabase, (jobRow as { catalog_service_id?: string | null }).catalog_service_id),
         status:                jobRow.status as string,
         title:                 (jobRow.title as string | null) ?? null,
         propertyAddress:       (jobRow.property_address as string | null) ?? null,
-        startReportSubmitted:  !!jobRow.start_report_submitted,
-        finalReportSubmitted:  !!jobRow.final_report_submitted,
+        startReportSubmitted:  visita ? visitaEnviada : !!jobRow.start_report_submitted,
+        finalReportSubmitted:  visita ? visitaEnviada : !!jobRow.final_report_submitted,
       };
     }
   }

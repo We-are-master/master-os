@@ -1,116 +1,87 @@
 /**
- * Aviso de remarcação para o CLIENTE.
+ * Aviso de remarcação para o CLIENTE (copy aprovada 20/10/2026, id 6).
  *
  * O par deste email para o parceiro já existia (`buildJobRescheduledEmail`, no
  * layout de parceiro). Faltava a outra metade: quando o escritório movia a
  * data, o parceiro sabia e o cliente descobria no dia, esperando alguém que
- * não ia mais. Este arquivo é a metade que faltava, no layout de cliente.
+ * não ia mais. Este arquivo é a metade que faltava, na moldura única
+ * (`fixfy-shell`, desenho de app).
  *
  * As duas datas aparecem lado a lado, a antiga riscada. Mostrar só a nova
- * obriga o cliente a lembrar qual era a antiga para entender o que mudou, e
- * quem está sendo remarcado costuma estar irritado antes de abrir o email.
+ * obriga o cliente a lembrar qual era a antiga para entender o que mudou.
  */
-import {
-  CLIENT_BRAND,
-  escapeHtml,
-  clientP,
-  clientCallout,
-  renderClientEmail,
-} from "./client-email-layout";
+import { emailFixfy, saudacao, type Publico } from "./fixfy-shell";
+import { lerLinhaDaAgenda } from "@/lib/zendesk-job-confirmation";
 
 export type ClientRescheduleData = {
   clientFirstName: string;
   jobReference: string;
   jobTitle: string;
   propertyAddress: string;
-  /** "Thursday 21 August" */
+  /** "Wednesday 21 October 2026" ou "2026-10-21" */
   oldDateLine: string;
-  /** "09:00 to 12:00", quando existir */
+  /** "9AM – 12PM" ou "between 9am and midday", quando existir */
   oldTimeLine?: string | null;
   newDateLine: string;
   newTimeLine?: string | null;
   /** Motivo, quando o escritório quis dar um. Nunca inventado. */
   reason?: string | null;
+  /** Quem recebe; sem ele, B2C pelo primeiro nome. */
+  publico?: Publico;
+  /**
+   * A Fixfy mudou a data: o fecho vira o pedido de desculpas. O cliente pediu:
+   * agradece. Sem saber quem mudou, nenhum dos dois (não se inventa).
+   */
+  iniciadoPelaFixfy?: boolean;
 };
 
-/** As duas datas, a velha riscada e a nova em destaque. */
-function blocoDeDatas(d: {
-  oldDate: string; oldTime: string; newDate: string; newTime: string;
-}): string {
-  const linha = (rotulo: string, data: string, hora: string, riscado: boolean) => `
-    <td width="50%" valign="top" style="padding:14px 16px;">
-      <p style="margin:0 0 6px; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:${CLIENT_BRAND.gray};">${rotulo}</p>
-      <p style="margin:0; font-size:16px; line-height:22px; font-weight:600; color:${riscado ? CLIENT_BRAND.gray : CLIENT_BRAND.ink}; ${riscado ? "text-decoration:line-through;" : ""}">${data}</p>
-      ${hora ? `<p style="margin:4px 0 0; font-size:14px; line-height:20px; color:${riscado ? CLIENT_BRAND.gray : CLIENT_BRAND.body}; ${riscado ? "text-decoration:line-through;" : ""}">${hora}</p>` : ""}
-    </td>`;
-
-  return `
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-         style="border-collapse:separate; border:1px solid ${CLIENT_BRAND.line}; border-radius:10px; margin:0 0 20px;">
-    <tr>
-      ${linha("Was", d.oldDate, d.oldTime, true)}
-      ${linha("Now", d.newDate, d.newTime, false)}
-    </tr>
-  </table>`;
-}
+const juntar = (...p: Array<string | null | undefined>) => p.map((x) => String(x ?? "").trim()).filter(Boolean).join(" · ");
 
 export function buildClientJobRescheduledEmail(data: ClientRescheduleData): {
   subject: string;
   html: string;
   text: string;
 } {
-  const s = {
-    name: data.clientFirstName?.trim() || "there",
-    ref: escapeHtml(data.jobReference),
-    title: escapeHtml(data.jobTitle || "your booking"),
-    address: escapeHtml(data.propertyAddress || ""),
-    oldDate: escapeHtml(data.oldDateLine || "—"),
-    oldTime: data.oldTimeLine ? escapeHtml(data.oldTimeLine) : "",
-    newDate: escapeHtml(data.newDateLine || "—"),
-    newTime: data.newTimeLine ? escapeHtml(data.newTimeLine) : "",
-    reason: data.reason?.trim() ? escapeHtml(data.reason.trim()) : "",
-  };
+  const novo = lerLinhaDaAgenda(data.newDateLine, data.newTimeLine);
+  const antes = lerLinhaDaAgenda(data.oldDateLine, data.oldTimeLine);
+  const publico: Publico = data.publico ?? { tipo: "b2c", primeiroNome: data.clientFirstName };
+  const motivo = data.reason?.trim() || null;
 
-  const subject = `Your booking has moved to ${data.newDateLine}${data.newTimeLine ? `, ${data.newTimeLine}` : ""}`;
+  const subject = novo.data ? `Your booking has been rescheduled · ${novo.data}` : "Your booking has been rescheduled";
+  const primeiro = novo.data
+    ? novo.janela
+      ? `Your booking has been moved to ${novo.data}, with arrival ${novo.janela}. We’ve included the previous and new details below.`
+      : `Your booking has been moved to ${novo.data}. We’ll confirm the arrival time before the visit. We’ve included the previous and new details below.`
+    : "Your booking has been moved. We’ve included the previous and new details below.";
+  const fecho =
+    data.iniciadoPelaFixfy === true
+      ? "We’re sorry for the change of plan, and thank you for your understanding."
+      : data.iniciadoPelaFixfy === false
+        ? "Thanks for keeping us up to date."
+        : null;
 
-  const corpo = [
-    clientP("We've had to move your booking, and we're sorry for the change of plan."),
-    blocoDeDatas(s),
-    // O motivo só entra quando existe. Frase genérica de desculpa no lugar de
-    // um motivo real é pior que silêncio: soa a script e não informa nada.
-    s.reason ? clientP(`<strong>Why:</strong> ${s.reason}`) : "",
-    clientCallout("Your booking", [
-      `${s.title}`,
-      s.address ? `${s.address}` : "",
-      `Reference ${s.ref}`,
-    ].filter(Boolean)),
-    clientP(
-      "If the new date doesn't work for you, just reply to this email and we'll find one that does.",
-    ),
-  ].join("\n");
-
-  const html = renderClientEmail({
-    preheader: `${s.ref} moved to ${s.newDate}${s.newTime ? ` at ${s.newTime}` : ""}.`,
-    heading: "Your booking has been rescheduled",
-    name: s.name,
-    bodyHtml: corpo,
-    footerNote: "You're receiving this because you have a booking with us.",
+  const { html, text } = emailFixfy({
+    preheader: novo.janela ? `Your revised arrival window is ${novo.janela}.` : "Your revised booking details are below.",
+    estado: { texto: "Rescheduled", cor: "orange" },
+    titulo: "Your new booking details",
+    destaque: novo.data
+      ? { linha1: novo.data, linha2: novo.janela ?? "Arrival time to be confirmed", riscado: juntar(antes.data, antes.janela) || null }
+      : null,
+    saudacao: saudacao(publico),
+    paragrafos: [
+      primeiro,
+      "If the new arrangements don’t suit you, just reply and we’ll help find another option.",
+      ...(fecho ? [fecho] : []),
+    ],
+    linhas: [
+      ["Previously", juntar(antes.data, antes.janela)],
+      ["Now", juntar(novo.data, novo.janela)],
+      ["Service", data.jobTitle],
+      ["Property", data.propertyAddress],
+      ["Booking", data.jobReference],
+      ["Reason", motivo],
+    ],
   });
-
-  const text = [
-    `Hi ${data.clientFirstName?.trim() || "there"},`,
-    "",
-    "We've had to move your booking, and we're sorry for the change of plan.",
-    "",
-    `Was: ${data.oldDateLine}${data.oldTimeLine ? ` ${data.oldTimeLine}` : ""}`,
-    `Now: ${data.newDateLine}${data.newTimeLine ? ` ${data.newTimeLine}` : ""}`,
-    "",
-    data.reason?.trim() ? `Why: ${data.reason.trim()}` : "",
-    `${data.jobTitle || "Your booking"}${data.propertyAddress ? ` · ${data.propertyAddress}` : ""}`,
-    `Reference ${data.jobReference}`,
-    "",
-    "If the new date doesn't work for you, just reply to this email and we'll find one that does.",
-  ].filter((l) => l !== "").join("\n");
 
   return { subject, html, text };
 }

@@ -156,9 +156,10 @@ export function jobToPrimaryVisit(job: Job): PrimaryVisitView {
     catalog_service_id: job.catalog_service_id ?? null,
     partner_id: job.partner_id ?? null,
     partner_name: job.partner_name ?? null,
-    scheduled_date: job.scheduled_date ?? null,
-    scheduled_start_at: job.scheduled_start_at ?? null,
-    scheduled_end_at: job.scheduled_end_at ?? null,
+    // V1 feita e o job já na próxima visita: a V1 mostra a data em que foi feita (mig 337).
+    scheduled_date: job.primary_visit_done?.scheduled_date ?? job.scheduled_date ?? null,
+    scheduled_start_at: job.primary_visit_done ? job.primary_visit_done.scheduled_start_at : (job.scheduled_start_at ?? null),
+    scheduled_end_at: job.primary_visit_done ? job.primary_visit_done.scheduled_end_at : (job.scheduled_end_at ?? null),
     expected_finish_at: job.expected_finish_at ?? null,
     client_price: Number(job.client_price ?? 0),
     partner_cost: Number(job.partner_cost ?? 0),

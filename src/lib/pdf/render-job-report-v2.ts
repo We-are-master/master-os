@@ -7,6 +7,7 @@ import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
 import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
 import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
+import { materialDoJobInteiro } from "@/lib/report-material-extra";
 
 const REPORT_BUCKET = "job-reports";
 const SIGN_TTL_SECONDS = 60 * 60;
@@ -35,6 +36,27 @@ export async function renderJobReportV2PdfBuffer(
   const startNorm = normalizeReport(job.start_report);
   const finalNorm = normalizeReport(job.final_report);
   if (!startNorm && !finalNorm) return null;
+
+  /**
+   * Material de TODAS as visitas no relatório do cliente (19/10/2026): o que ele
+   * paga de material aparece uma vez, somado, com a quebra por visita quando há
+   * mais de uma. O custo que nós pagamos nunca vai para o cliente.
+   */
+  if (finalNorm) {
+    const material = await materialDoJobInteiro(admin, jobId, job.final_report as Record<string, unknown> | null);
+    delete finalNorm.fields.materials_extra_cost;
+    delete finalNorm.fields.materials_receipt;
+    if (material.charge > 0) {
+      finalNorm.fields.materials_bought = true;
+      finalNorm.fields.materials_extra_charge = material.charge;
+      if (material.porVisita.length > 1) {
+        finalNorm.fields.materials_by_visit = material.porVisita
+          .filter((v) => v.charge > 0)
+          .map((v) => `Visit ${v.index}: £${v.charge.toFixed(2)}`)
+          .join(" · ");
+      }
+    }
+  }
 
   const start = startNorm
     ? {

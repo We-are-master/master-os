@@ -7,10 +7,11 @@
  * interno e não vai no e-mail.
  */
 import { Resend } from "resend";
+import { dataLonga, emailFixfy, gbp, saudacao, type Publico } from "./fixfy-shell";
+import { semTravessao } from "./billing-email-common";
 
 const REMETENTE = "Fixfy Team <no-reply@getfixfy.com>";
 const RESPONDER_PARA = "hello@getfixfy.com";
-const LOGO = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 
 export type DadosDoReembolso = {
   primeiroNome: string | null;
@@ -20,43 +21,54 @@ export type DadosDoReembolso = {
   metodo: "stripe" | "bank_transfer";
   /** Final do cartão, quando a Stripe devolveu. */
   finalDoCartao?: string | null;
+  /**
+   * Reembolso a uma conta (cobrança B2B): "Hi {empresa} team,". Ausente = B2C pelo
+   * primeiro nome. Nunca o nome da pessoa de contato em B2B.
+   */
+  empresa?: string | null;
+  /** Quando o reembolso saiu (padrão: agora). Mostrado em Europe/London. */
+  emitidoEm?: string | Date | null;
 };
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/**
+ * Prazo de cada método, só o que se sabe (handoff: "Refund processing times must follow
+ * the actual provider/method"). Cartão: o prazo que a Stripe publica para o reembolso
+ * aparecer no extrato. Transferência: a equipe manda pelo banco; sem prazo prometido.
+ */
+function fraseDoPrazo(metodo: DadosDoReembolso["metodo"]): string {
+  return metodo === "stripe"
+    ? "Card refunds usually show on your statement within 5 to 10 working days, depending on your bank."
+    : "We’ve sent it by bank transfer. If it hasn’t reached your account when you expect it, just reply and we’ll check it for you.";
 }
 
+/** Copy 19 na moldura única. Só chamar depois do reembolso feito (Stripe ok / transferência registrada). */
 export function montarEmailDeReembolso(d: DadosDoReembolso): { subject: string; html: string; text: string } {
-  const valor = `£${d.valor.toFixed(2)}`;
-  const oi = d.primeiroNome?.trim() ? `Hi ${d.primeiroNome.trim().split(/\s+/)[0]},` : "Hi,";
-  const job = d.tituloDoJob?.trim() ? `${d.referenciaDoJob} (${d.tituloDoJob.trim()})` : d.referenciaDoJob;
-  const como =
+  const valor = gbp(d.valor);
+  const publico: Publico = d.empresa?.trim() ? { tipo: "b2b", empresa: d.empresa } : { tipo: "b2c", primeiroNome: d.primeiroNome };
+  const destino =
     d.metodo === "stripe"
-      ? `we've refunded ${valor} to your card${d.finalDoCartao ? ` ending ${d.finalDoCartao}` : ""} for job ${job}.`
-      : `we're sending you a refund of ${valor} by bank transfer for job ${job}.`;
-  const quando =
-    d.metodo === "stripe"
-      ? "It usually shows on your statement within 5 to 10 working days, depending on your bank."
-      : "It should reach your account within 1 to 3 working days.";
-  const subject = `Your ${valor} refund is on its way · ${d.referenciaDoJob}`;
-  const text = `${oi}\n\n${como.charAt(0).toUpperCase()}${como.slice(1)} ${quando}\n\nAny questions, reply to this email or write to ${RESPONDER_PARA}.\n\nFixfy Team`;
-  const html = `
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:#F7F7FB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<tr><td align="center" style="border:0;padding:32px 16px;">
-<div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:12px;overflow:hidden;text-align:left;">
-<div style="background:#020040;padding:16px 24px;"><img src="${LOGO}" alt="Fixfy" width="74" height="32" style="display:block;margin:0 auto;width:74px;height:32px;border:0;"></div>
-<div style="background:#ED4B00;height:4px;line-height:4px;font-size:4px;">&nbsp;</div>
-<div style="padding:22px 24px 20px 24px;">
-<p style="margin:0 0 10px 0;font-size:10px;font-weight:700;letter-spacing:2.5px;color:#ED4B00;text-transform:uppercase;">Refund</p>
-<p style="margin:0 0 14px 0;font-size:15px;line-height:22px;color:#4A4A55;">${esc(oi)} ${esc(como)}</p>
-<p style="margin:0 0 16px 0;font-size:24px;font-weight:700;line-height:30px;color:#020040;">${esc(valor)}</p>
-<p style="margin:0;font-size:14px;line-height:21px;color:#4A4A55;">${esc(quando)}</p>
-<p style="margin:20px 0 0 0;font-size:13px;line-height:20px;color:#4A4A55;">Any questions, reply to this email or write to <a href="mailto:${RESPONDER_PARA}" style="color:#020040;font-weight:600;text-decoration:none;">${RESPONDER_PARA}</a>.</p>
-</div>
-<div style="background:#020040;padding:24px;text-align:center;"><p style="margin:0;font-size:11px;line-height:16px;color:#AAAAD0;">Getfixfy Ltd &middot; 124 City Road, London EC1V 2NX &middot; <a href="https://getfixfy.com" style="color:#AAAAD0;text-decoration:none;">getfixfy.com</a></p></div>
-</div>
-</td></tr>
-</table>`.trim();
+      ? `your card${d.finalDoCartao ? ` ending ${d.finalDoCartao}` : ""}`
+      : "your bank account";
+  const servico = semTravessao(d.tituloDoJob) || `booking ${d.referenciaDoJob}`;
+  const emitido = dataLonga(d.emitidoEm ?? new Date());
+  const subject = `Your ${valor} refund has been issued · ${d.referenciaDoJob}`;
+  const { html, text } = emailFixfy({
+    preheader: `Your refund has been sent to ${destino}.`,
+    estado: { texto: "Refund issued", cor: "green" },
+    titulo: "Your refund is on its way",
+    destaque: { linha1: `${valor} refunded`, linha2: `to ${destino}` },
+    saudacao: saudacao(publico),
+    paragrafos: [
+      `We’ve issued a refund of ${valor} for ${servico} to ${destino}.`,
+      fraseDoPrazo(d.metodo),
+      "If you have any questions about the refund, just reply and we’ll help.",
+    ],
+    linhas: [
+      ["Refund", valor],
+      ["Issued", emitido],
+      ["Booking", d.referenciaDoJob],
+    ],
+  });
   return { subject, html, text };
 }
 

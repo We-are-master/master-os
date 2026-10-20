@@ -7,7 +7,7 @@ import { QuotePDF, type QuotePDFData, type CompanyBranding } from "@/lib/pdf/quo
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { segredoInternoValido } from "@/lib/internal-secret";
 import { createQuoteResponseToken } from "@/lib/quote-response-token";
-import { buildQuoteEmailHTML } from "@/lib/quote-email-template";
+import { buildQuoteClientEmail } from "@/lib/quote-client-email-template";
 import { createServiceClient } from "@/lib/supabase/service";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { buildNewQuoteEmail } from "@/lib/portal-email-templates";
@@ -15,7 +15,8 @@ import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, getTicketRequester, setTicketRequester, ticketDoWhatsApp } from "@/lib/zendesk";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
 import { ZD_STATUS_AWAITING_APPROVAL } from "@/lib/zendesk-statuses";
-import { buildQuoteSentHtml } from "@/lib/zendesk-quote-sent";
+import { montarQuoteSent } from "@/lib/zendesk-quote-sent";
+import type { Publico } from "@/lib/emails/fixfy-shell";
 import { persistQuoteSentToCustomer } from "@/lib/quotes/persist-quote-sent-to-customer";
 import { acaoFeita } from "@/lib/fila-de-acao";
 import { resolveClientWorkSchedule } from "@/lib/agent-model/schedule";
@@ -323,6 +324,31 @@ export async function POST(req: NextRequest) {
     const acceptUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=accept`;
     const rejectUrl = `${baseUrl}/quote/respond?token=${encodeURIComponent(responseToken)}&action=reject`;
 
+    // Quem recebe sai da relação com a conta (handoff 20/10/2026): cotação cobrada da
+    // conta é B2B ("Hi Acme Lettings team,"), nunca o nome da pessoa de contato.
+    const publicoDaCotacao: Publico =
+      docParty?.mode === "account"
+        ? { tipo: "b2b", empresa: docParty.displayName }
+        : { tipo: "b2c", primeiroNome: pdfClientName || qForBill.client_name || "" };
+    const quoteSentArgs = {
+      customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
+      reference:       String(quote.reference ?? ""),
+      title:           String(quote.title ?? "Quote"),
+      propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+      scope:           safePdfData.scope ?? null,
+      totalGbp:        Number(quote.total_value) || 0,
+      expiresAt:       quote.expires_at ?? null,
+      items:           lineItemsForPdf,
+      acceptUrl,
+      rejectUrl,
+      agentModel:      agentModelQuote,
+      serviceType:     safePdfData.serviceType ?? null,
+      depositRequired: safePdfData.depositRequired ?? null,
+      publico:         publicoDaCotacao,
+      pdfAttached:     true,
+      startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
+    };
+
     // ─── Choose delivery channel (computed up-front) ────────────────────────
     // Zendesk takes priority when the quote came from a ticket — the customer
     // already receives ticket replies through Zendesk, so duplicating the same
@@ -457,20 +483,7 @@ export async function POST(req: NextRequest) {
       // ─── Zendesk delivery (awaited — sole channel) ────────────────────────
       const tZd = nowMs();
       try {
-        const html = buildQuoteSentHtml({
-          customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
-          reference:       String(quote.reference ?? ""),
-          title:           String(quote.title ?? "Quote"),
-          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
-          scope:           safePdfData.scope ?? null,
-          totalGbp:        Number(quote.total_value) || 0,
-          expiresAt:       quote.expires_at ?? null,
-          items:           lineItemsForPdf,
-          acceptUrl,
-          rejectUrl,
-          agentModel:      agentModelQuote,
-          startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
-        });
+        const { html, assunto } = montarQuoteSent(quoteSentArgs);
         const anexo = { filename: `${pdfAttachmentBase}_quote.pdf`, content: pdfBuffer, contentType: "application/pdf" };
         // Ticket de WhatsApp com a janela de 24 h fechada (ONE_TICKET_WA_LINKED_ON): a proposta
         // sai por e-mail numa conversa lateral do mesmo ticket. Fora isso, comentário público como sempre.
@@ -479,7 +492,7 @@ export async function POST(req: NextRequest) {
           const r = await entregarEmailNoTicket({
             ticket: { id: Number(zdTicketId), origem: "quote", canal: "whatsapp" },
             para: { email: destino, nome: pdfClientName || null },
-            assunto: `Your quote ${quote.reference} from Fixfy`,
+            assunto,
             html,
             anexos: [anexo],
             customStatusId: ZD_STATUS_AWAITING_APPROVAL,
@@ -601,24 +614,11 @@ export async function POST(req: NextRequest) {
     if (achadoDaQuote) {
       const paraEmail = recipientTrimmed || pdfClientEmail;
       try {
-        const html = buildQuoteSentHtml({
-          customerName:    pdfClientName || (quote as { client_name?: string }).client_name || "",
-          reference:       String(quote.reference ?? ""),
-          title:           String(quote.title ?? "Quote"),
-          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
-          scope:           safePdfData.scope ?? null,
-          totalGbp:        Number(quote.total_value) || 0,
-          expiresAt:       quote.expires_at ?? null,
-          items:           lineItemsForPdf,
-          acceptUrl,
-          rejectUrl,
-          agentModel:      agentModelQuote,
-          startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
-        });
+        const { html, assunto } = montarQuoteSent(quoteSentArgs);
         const r = await entregarEmailNoTicket({
           ticket: achadoDaQuote,
           para: { email: paraEmail, nome: pdfClientName || null },
-          assunto: `Your quote ${quote.reference} from Fixfy`,
+          assunto,
           html,
           anexos: [{ filename: `${pdfAttachmentBase}_quote.pdf`, content: pdfBuffer, contentType: "application/pdf" }],
           customStatusId: ZD_STATUS_AWAITING_APPROVAL,
@@ -682,7 +682,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? `${branding.companyName} <quotes@${branding.website ?? "mastergroup.com"}>`;
+    // Sem o remetente configurado, sai como Fixfy (copy 21: nada de remetente da marca antiga).
+    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "Fixfy <no-reply@getfixfy.com>";
 
     const resendKey = process.env.RESEND_API_KEY?.trim();
     if (!resendKey) {
@@ -713,22 +714,26 @@ export async function POST(req: NextRequest) {
       marks.push(["photos_wait", nowMs() - tPhotos]);
     }
 
+    const emailDaQuote = buildQuoteClientEmail(safePdfData, {
+      acceptUrl,
+      rejectUrl,
+      customMessage,
+      agentModel: agentModelQuote,
+      publico: publicoDaCotacao,
+      pdfAttached: true,
+      context: {
+        propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
+        postcode: (quote as { postcode?: string | null }).postcode ?? null,
+        serviceType: (quote as { service_type?: string | null }).service_type ?? null,
+      },
+    });
     const tEmail = nowMs();
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [emailTo],
-      subject: `Quote ${quote.reference} · ${quote.title}`,
-      html: buildQuoteEmailHTML(safePdfData, branding, {
-        acceptUrl,
-        rejectUrl,
-        customMessage,
-        agentModel: agentModelQuote,
-        context: {
-          propertyAddress: (quote as { property_address?: string | null }).property_address ?? null,
-          postcode: (quote as { postcode?: string | null }).postcode ?? null,
-          serviceType: (quote as { service_type?: string | null }).service_type ?? null,
-        },
-      }),
+      subject: emailDaQuote.assunto,
+      html: emailDaQuote.html,
+      text: emailDaQuote.text,
       attachments: emailAttachments,
     });
     marks.push(["email_send", nowMs() - tEmail]);

@@ -1,5 +1,6 @@
 "use client";
 
+import { parseMaterialExtra, recibosDoMaterial } from "@/lib/report-material-extra";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, Download, FileText, ImageIcon, Loader2, ShieldCheck, Sparkles, Upload, ExternalLink, Undo2 } from "lucide-react";
 import { toast } from "sonner";
@@ -86,6 +87,15 @@ export function JobReportV2Card({
     };
   }, [kind, report?.template, rawReport]);
 
+  /** Material do relatório final: só aparece quando o relatório responde sobre ele. */
+  const materialDoRelatorio = useMemo(() => {
+    if (kind !== "final" || !report) return null;
+    const f = report.fields as Record<string, unknown>;
+    const pergunta = f.materials_bought ?? f.materials_charges;
+    const m = parseMaterialExtra(f);
+    if (pergunta === undefined && m.cost === 0 && m.charge === 0) return null;
+    return { comprou: pergunta === true || m.cost > 0, ...m, recibos: recibosDoMaterial(f) };
+  }, [kind, report]);
   const [openingImageKey, setOpeningImageKey] = useState<string | null>(null);
   const [savingApproval, setSavingApproval] = useState(false);
   const [readingCertificate, setReadingCertificate] = useState(false);
@@ -377,9 +387,41 @@ export function JobReportV2Card({
         />
       ) : null}
 
+      {materialDoRelatorio ? (
+        /* Material comprado na casa, sempre à vista (19/10/2026): quanto o parceiro
+           pagou (reembolso), quanto o cliente paga e o recibo. Sem recibo, aviso. */
+        <div
+          className="rounded-[8px] p-3 space-y-1.5 text-[12px]"
+          style={{ border: "0.5px solid #F0D6B8", background: "#FFF6EC", color: "#4A2A00" }}
+        >
+          <p className="m-0 font-semibold" style={{ color: "#7A3D00" }}>
+            {materialDoRelatorio.comprou ? "Materials bought on site" : "No materials bought"}
+          </p>
+          {materialDoRelatorio.comprou ? (
+            <>
+              <p className="m-0 tabular-nums">
+                Partner paid £{materialDoRelatorio.cost.toFixed(2)} (reimbursed on the self-bill) · client pays £
+                {materialDoRelatorio.charge.toFixed(2)} (added to the invoice)
+              </p>
+              {materialDoRelatorio.recibos.length ? (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {materialDoRelatorio.recibos.map((u, i) => (
+                    <a key={u} href={u} target="_blank" rel="noopener noreferrer" className="font-medium underline">
+                      Receipt {i + 1}
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p className="m-0 font-semibold" style={{ color: "#B42318" }}>No receipt photo. Ask the partner for it.</p>
+              )}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
       {fields.length > 0 ? (
         <div className="rounded-[8px] p-3 bg-white space-y-1.5" style={{ border: "0.5px solid #E4E4E8" }}>
-          {fields.map((f) => (
+          {fields.filter((f) => !f.key.startsWith("materials_")).map((f) => (
             <div key={f.key} className="flex flex-wrap items-baseline gap-x-2 text-[12px]">
               <span className="font-semibold shrink-0" style={{ color: "#020040" }}>
                 {f.label}:

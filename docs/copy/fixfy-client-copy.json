@@ -1,0 +1,974 @@
+[
+  {
+    "id": 1,
+    "original": "Job confirmed",
+    "source": "src/lib/zendesk-job-confirmation.ts buildJobConfirmationHtml (chamado em src/lib/zendesk-lifecycle.ts:198)",
+    "subject": "Your Fixfy booking is confirmed · {{visit_date}}",
+    "preheader": "{{service}} at {{property_address}}. Arrival {{arrival_window}}.",
+    "heading": "Your booking is confirmed",
+    "body": [
+      "Lovely, that’s in the diary. Your professional is confirmed for {{visit_date}}, arriving {{arrival_window}}.",
+      "You’ll find the booking details below. If there’s anything we should know about access or parking, just reply and we’ll make a note.",
+      "We look forward to getting everything sorted for you."
+    ],
+    "cta": "",
+    "fields": [
+      "Service: {{service}}",
+      "Date: {{visit_date}}",
+      "Arrival: {{arrival_window}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Only after professional assignment and schedule confirmation. Existing Zendesk threads retain their subject.",
+    "whatsapp": {
+      "Open conversation": "{{greeting}} Your Fixfy booking is confirmed for {{visit_date}}, arriving {{arrival_window}}. Your professional is confirmed for {{service}} at {{property_address}}. If anything changes, just reply here. Reference: {{job_reference}}.",
+      "Confirmation template proposal": "{{greeting}} Your Fixfy booking for {{service}} is confirmed for {{visit_date}}, arriving {{arrival_window}}. If we need to know anything about access or parking, please reply here."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 2,
+    "original": "Booking confirmed with professional (agent model)",
+    "source": "src/lib/client-confirmation/professional-email.ts buildProfessionalConfirmedEmail",
+    "subject": "Your {{professional_name}} booking is confirmed · {{visit_date}}",
+    "preheader": "{{service}} at {{property_address}}, arriving {{arrival_window}}.",
+    "heading": "Your professional is confirmed",
+    "body": [
+      "Your booking with {{professional_name}} is confirmed. They’ll arrive on {{visit_date}}, {{arrival_window}}, ready to carry out the work agreed.",
+      "We’ve included the details below so you have everything in one place.",
+      "If you have a question before the visit, just reply. We’re happy to help."
+    ],
+    "cta": "",
+    "fields": [
+      "Professional: {{professional_name}}",
+      "Service: {{service}}",
+      "Date: {{visit_date}}",
+      "Arrival: {{arrival_window}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Preserve Schedule A eligibility, provider identity and required agent disclosures. Do not also send card 1 for the same confirmation.",
+    "whatsapp": {},
+    "audience": "b2c"
+  },
+  {
+    "id": 3,
+    "original": "Booking payment request \"almost there\" (50% deposit)",
+    "source": "src/lib/booking-payment-email.ts (chamado em src/lib/invoice-send-email.ts:227)",
+    "subject": "Confirm your booking with a {{deposit_amount}} deposit",
+    "preheader": "{{deposit_amount}} now, with {{balance_amount}} due after the work is complete.",
+    "heading": "One last step to confirm",
+    "body": [
+      "Your booking details are ready. Please have a look below, then pay your {{deposit_amount}} deposit to confirm.",
+      "The remaining {{balance_amount}} is due once the agreed work is complete.",
+      "Once payment is received, we’ll confirm the next steps. If you’d like to change anything before paying, just reply."
+    ],
+    "cta": "Pay {{deposit_amount}} deposit",
+    "fields": [
+      "Service: {{service}}",
+      "Work included: {{scope}}",
+      "Proposed visit: {{visit_date}} · {{arrival_window}}",
+      "Property: {{property_address}}",
+      "Total: {{total_amount}}",
+      "Deposit: {{deposit_amount}}",
+      "Remaining balance: {{balance_amount}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Only show agreed schedule. Use existing payment terms, not a universal after-completion promise. Add verified bank details and transfer instructions below the primary CTA; see shared payment rules.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 4,
+    "original": "Booking payment request \"almost there\" (full payment)",
+    "source": "src/lib/booking-payment-email.ts (chamado em src/lib/invoice-send-email.ts:227)",
+    "subject": "Confirm your Fixfy booking · {{amount_due}}",
+    "preheader": "Review your booking details and pay {{amount_due}} to confirm.",
+    "heading": "Your booking is ready to confirm",
+    "body": [
+      "Thanks for choosing Fixfy. Your booking details are ready below. Please check everything looks right, then pay {{amount_due}} to confirm.",
+      "Once payment is received, we’ll confirm the next steps.",
+      "Need to make a change or ask a question first? Just reply and we’ll help."
+    ],
+    "cta": "Pay {{amount_due}} and confirm",
+    "fields": [
+      "Service: {{service}}",
+      "Work included: {{scope}}",
+      "Proposed visit: {{visit_date}} · {{arrival_window}}",
+      "Property: {{property_address}}",
+      "Amount due: {{amount_due}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Use full-payment branch only. Shared payment and bank-transfer rules apply.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 5,
+    "original": "Job rescheduled (account layout)",
+    "source": "src/lib/zendesk-job-confirmation.ts buildJobRescheduledHtml (src/lib/notify-client-reschedule-server.ts:123)",
+    "subject": "Booking rescheduled · {{job_reference}} · {{visit_date}}",
+    "preheader": "The revised date and arrival window for {{property_address}} are below.",
+    "heading": "Your revised booking details",
+    "body": [
+      "We’re writing to confirm a change to the booking at {{property_address}}. The previous and revised arrangements are below.",
+      "Please let us know if the new time affects access, key collection or arrangements with the occupier. We’ll help coordinate the next steps."
+    ],
+    "cta": "",
+    "fields": [
+      "Previous visit: {{previous_date}} · {{previous_window}}",
+      "Revised visit: {{visit_date}} · {{arrival_window}}",
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Add “We’re sorry for the disruption.” only for a Fixfy-initiated change. Preserve account messaging policy.",
+    "whatsapp": {},
+    "audience": "b2b"
+  },
+  {
+    "id": 6,
+    "original": "Job rescheduled (client layout)",
+    "source": "src/lib/emails/client-job-rescheduled.ts buildClientJobRescheduledEmail",
+    "subject": "Your booking has been rescheduled · {{visit_date}}",
+    "preheader": "Your revised arrival window is {{arrival_window}}.",
+    "heading": "Your new booking details",
+    "body": [
+      "Your booking has been moved to {{visit_date}}, with arrival {{arrival_window}}. We’ve included the previous and new details below.",
+      "If the new arrangements don’t suit you, just reply and we’ll help find another option.",
+      "Thanks for keeping us up to date."
+    ],
+    "cta": "",
+    "fields": [
+      "Previously: {{previous_date}} · {{previous_window}}",
+      "Now: {{visit_date}} · {{arrival_window}}",
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "For Fixfy-initiated changes replace final paragraph with “We’re sorry for the change of plan, and thank you for your understanding.”",
+    "whatsapp": {
+      "Rescheduling template proposal": "{{greeting}} Your {{service}} booking has been rescheduled to {{visit_date}}, arriving {{arrival_window}}. If the new arrangements don’t suit you, please reply and we’ll help. Reference: {{job_reference}}."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 7,
+    "original": "Checkatrade Express welcome",
+    "source": "src/lib/harvey-wa/express.ts variaveisDoExpress",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "WhatsApp only. Acknowledges acceptance, not professional assignment. Template rewrite requires the existing provider approval workflow.",
+    "whatsapp": {
+      "Checkatrade Express welcome": "{{greeting}} Thanks for booking through Checkatrade. We’re Fixfy, and we’ll be looking after your {{service}} booking for {{visit_date}}. We’ll message you here once your professional and arrival window are confirmed. If you have any questions in the meantime, just reply."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 8,
+    "original": "Harvey: payment received (WhatsApp)",
+    "source": "src/lib/harvey-wa/motor.ts confirmarPagamentoNaConversa (~linha 709)",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "WhatsApp only. Add receipt line only after successful delivery hand-off. Payment alone does not mean a professional is assigned.",
+    "whatsapp": {
+      "Full payment received": "{{greeting}} Thank you, we’ve received your payment of {{amount_paid}} for booking {{job_reference}}. We’ll keep you updated on the booking arrangements here. If you have a question, just reply.",
+      "Deposit received": "{{greeting}} Thank you, we’ve received your {{deposit_amount}} deposit for booking {{job_reference}}. The remaining {{balance_amount}} is due {{balance_due_terms}}. We’ll keep you updated on the booking arrangements here.",
+      "Optional verified receipt line": "Your receipt has been sent to {{masked_email}}."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 9,
+    "original": "Day-before reminder",
+    "source": "src/lib/client-confirmation/sweep-24h.ts",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "WhatsApp only in the original. Do not add a new email fallback or enable disabled channels as part of copy implementation.",
+    "whatsapp": {
+      "Day-before reminder": "{{greeting}} A quick reminder that your professional is due tomorrow, {{visit_date}}, {{arrival_window}}, at {{property_address}}. Please make sure they can access the property. If anything has changed, just reply here. We look forward to getting the work sorted."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 10,
+    "original": "Invoice (Request payment / Send via email)",
+    "source": "src/lib/invoice-client-email-template.ts + src/lib/email-templates/invoice-client.html (Schedule B)",
+    "subject": "Your {{document_name_lower}} {{billing_reference}} is ready",
+    "preheader": "{{amount_due}} due by {{due_date}} for {{service}}.",
+    "heading": "Your {{document_name_lower}} is ready",
+    "body": [
+      "Your {{document_name_lower}} for {{service}} is ready. You’ll find the amount due and payment details below.",
+      "Please pay {{amount_due}} by {{due_date}}, using the button or bank details provided.",
+      "If anything needs clarifying, just reply. We’re happy to help."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Amount due: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "Use the legally correct document name for the existing billing model consistently; do not relabel a statement as a VAT invoice. Preserve itemisation and disclosures. Completion labels only for completed jobs.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 11,
+    "original": "Payment receipt (deposit or full payment)",
+    "source": "src/lib/quote-deposit-paid-server.ts:180 → sendInvoiceEmail → invoice-client-email-template (paid)",
+    "subject": "Payment received · {{billing_reference}}",
+    "preheader": "Thank you. Your receipt for {{amount_paid}} is attached.",
+    "heading": "Thank you for your payment",
+    "body": [
+      "We’ve received {{amount_paid}} for {{service}}. Your receipt is attached for your records.",
+      "{{payment_balance_sentence}}",
+      "If you have any questions about the payment, just reply and we’ll help."
+    ],
+    "cta": "",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Amount received: {{amount_paid}}",
+      "Payment date: {{payment_date}}",
+      "Payment method: {{payment_method}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Deposit/partial balance sentence: “Your remaining balance is {{balance_amount}}, due {{balance_due_terms}}.” Fully settled: “There is no remaining balance on this {{document_name_lower}}.” Use actual payment amount, not invoice total. No completed-work claim for a deposit. Omit raw Stripe IDs from primary copy; retain internal reconciliation data.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 12,
+    "original": "Final email: invoice + report, with Pay now",
+    "source": "src/lib/final-review-email.ts sendFinalReviewEmail → buildInvoiceEmailHTML com reportAttachmentCount",
+    "subject": "Your job report and {{document_name_lower}} · {{job_reference}}",
+    "preheader": "Your report is attached, with {{amount_due}} due by {{due_date}}.",
+    "heading": "Your work is complete",
+    "body": [
+      "The agreed work is complete, and your final report is attached. We hope you’re pleased with the result.",
+      "Your {{document_name_lower}} is also included. The remaining amount to pay is {{amount_due}}, due by {{due_date}}.",
+      "Please have a look through the report. If anything needs our attention, just reply and let us know."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}",
+      "Billing reference: {{billing_reference}}",
+      "Balance due: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "Unpaid final branch only. If paid, remove payment CTA/amount-due copy and say “Your payment receipt is also attached. Thank you for your payment.” Only mention actual attachments. Deduplicate against card 37.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 13,
+    "original": "Final email: report only (no invoice)",
+    "source": "src/lib/final-review-email.ts (~linha 362, HTML inline; assinatura = company_settings.company_name)",
+    "subject": "Your job report is ready · {{job_reference}}",
+    "preheader": "The final report for {{service}} is attached.",
+    "heading": "Your job report is ready",
+    "body": [
+      "The work at {{property_address}} is complete, and your final report is attached for you to look through.",
+      "Thank you for choosing Fixfy. If you have any questions about the work or the report, just reply or call us on +44 20 4538 4668.",
+      "We’re happy to help."
+    ],
+    "cta": "",
+    "fields": [
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Do not imply an invoice will follow for accounts that do not receive one. No download button unless a real report URL exists.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 14,
+    "original": "Instalment due today",
+    "source": "src/app/api/cron/parcelas-cliente/route.ts (~linha 107, HTML inline)",
+    "subject": "Your {{amount_due}} instalment is due today · {{billing_reference}}",
+    "preheader": "Instalment {{instalment_number}} of {{instalment_count}} is due on {{due_date}}.",
+    "heading": "Your next instalment",
+    "body": [
+      "A quick reminder that instalment {{instalment_number}} of {{instalment_count}} for {{service}} is due today, {{due_date}}. The amount to pay is {{amount_due}}.",
+      "You can pay using the button or bank details below. If you’ve already paid, thank you. Please reply with the payment date and reference so we can check.",
+      "Any questions about the instalment? Just let us know."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Instalment: {{instalment_number}} of {{instalment_count}}",
+      "Amount due: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "Display normalised billing reference everywhere. Do not expose raw RCP when PDF shows INV.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 15,
+    "original": "Overdue reminder 1 (day 1)",
+    "source": "texto: src/lib/invoice-overdue-reminders.ts reminderCopy (renderizado); moldura HTML transcrita de src/app/api/internal/invoices/overdue-reminders/route.ts",
+    "subject": "Payment reminder · {{billing_reference}}",
+    "preheader": "Our records show {{amount_due}} outstanding, due on {{due_date}}.",
+    "heading": "A reminder about your payment",
+    "body": [
+      "Just a reminder that {{amount_due}} remains outstanding on {{document_name_lower}} {{billing_reference}}, which was due on {{due_date}}.",
+      "If you’ve already paid, thank you. Please reply with the payment date and reference so we can check. Otherwise, the payment details are below.",
+      "If there’s anything you’d like us to look into, we’re happy to help."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Outstanding balance: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 16,
+    "original": "Overdue reminder 2 (day 3)",
+    "source": "texto: src/lib/invoice-overdue-reminders.ts reminderCopy (renderizado); moldura HTML transcrita de src/app/api/internal/invoices/overdue-reminders/route.ts",
+    "subject": "Payment outstanding · {{billing_reference}}",
+    "preheader": "Please check the outstanding balance of {{amount_due}}.",
+    "heading": "Your outstanding balance",
+    "body": [
+      "We’re following up on {{document_name_lower}} {{billing_reference}}. Our records still show {{amount_due}} outstanding, with payment due on {{due_date}}.",
+      "Please arrange payment using the details below. If payment is on its way, or there’s a query we need to resolve, just reply and let us know.",
+      "Thank you for your help."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Outstanding balance: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 17,
+    "original": "Overdue reminder 3 (day 4)",
+    "source": "texto: src/lib/invoice-overdue-reminders.ts reminderCopy (renderizado); moldura HTML transcrita de src/app/api/internal/invoices/overdue-reminders/route.ts",
+    "subject": "Payment update requested · {{billing_reference}}",
+    "preheader": "Please let us know about the outstanding {{amount_due}} balance.",
+    "heading": "Could you update us on payment?",
+    "body": [
+      "We haven’t yet been able to match a payment to the outstanding {{amount_due}} on {{document_name_lower}} {{billing_reference}}.",
+      "Could you please arrange payment or reply with an update? If you’ve already paid, the payment date and reference will help us check.",
+      "If something on the document doesn’t look right, please tell us so we can look into it."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Outstanding balance: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "Distinct from day-3 reminder. Preserve current cadence; propose any reduction separately.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 18,
+    "original": "Overdue: final reminder (day 7)",
+    "source": "texto: src/lib/invoice-overdue-reminders.ts reminderCopy (renderizado); moldura HTML transcrita de src/app/api/internal/invoices/overdue-reminders/route.ts",
+    "subject": "Final payment reminder · {{billing_reference}}",
+    "preheader": "{{amount_due}} remains outstanding from {{due_date}}.",
+    "heading": "Final payment reminder",
+    "body": [
+      "This is our final scheduled reminder for {{document_name_lower}} {{billing_reference}}. Our records show {{amount_due}} remains outstanding, due on {{due_date}}.",
+      "Please arrange payment today, or reply if there is a question or issue we need to resolve first.",
+      "If you’ve already paid, please send the payment date and reference so we can check. Thank you for your attention."
+    ],
+    "cta": "Pay {{amount_due}}",
+    "fields": [
+      "Reference: {{billing_reference}}",
+      "Outstanding balance: {{amount_due}}",
+      "Due date: {{due_date}}"
+    ],
+    "notes": "No invented fees, legal threats or service restrictions. Suppress when payment is settled, disputed or otherwise excluded by existing policy.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 19,
+    "original": "Refund",
+    "source": "src/lib/emails/refund-client.ts montarEmailDeReembolso (variante cartão)",
+    "subject": "Your {{refund_amount}} refund has been issued · {{job_reference}}",
+    "preheader": "Your refund has been sent to {{refund_destination}}.",
+    "heading": "Your refund is on its way",
+    "body": [
+      "We’ve issued a refund of {{refund_amount}} for {{service}} to {{refund_destination}}.",
+      "{{refund_timing_sentence}}",
+      "If you have any questions about the refund, just reply and we’ll help."
+    ],
+    "cta": "",
+    "fields": [
+      "Refund: {{refund_amount}}",
+      "Issued: {{refund_date}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Use “issued” only after provider success. Timing sentence comes from verified payment-method policy. Pending/failed refunds need their own accurate status, never this confirmation.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 20,
+    "original": "Quote sent (Zendesk ticket)",
+    "source": "src/lib/zendesk-quote-sent.ts buildQuoteSentHtml (src/app/api/quotes/send-pdf/route.ts:459)",
+    "subject": "Your {{service_short}} quote is ready · {{quote_reference}}",
+    "preheader": "{{quote_total}} for the work outlined below.",
+    "heading": "Your quote is ready",
+    "body": [
+      "Thanks for telling us what you need. We’ve put together your quote for {{service}}, with the work included and price set out below.",
+      "Have a look through the details. If everything looks right, you can accept the quote using the button.",
+      "{{quote_payment_sentence}}",
+      "If you’d like to ask a question or adjust the work included, just reply. We’ll be happy to help."
+    ],
+    "cta": "Review and accept quote",
+    "fields": [
+      "Reference: {{quote_reference}}",
+      "Property: {{property_address}}",
+      "Work included: {{scope}}",
+      "Itemised pricing: {{line_items}}",
+      "Total: {{quote_total}}",
+      "Valid until: {{quote_expiry_date}}"
+    ],
+    "notes": "Zendesk preserves an existing thread subject. PDF mention only if attached. Secondary text action: Decline quote. Preserve tax treatment and terms from the actual quote.",
+    "whatsapp": {
+      "Quote ready": "{{greeting}} Your quote for {{service}} is ready: {{quote_total}} for the work described. Review the details and accept here: {{quote_url}}. {{quote_payment_sentence}} If you have any questions, just reply. Reference: {{quote_reference}}."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 21,
+    "original": "Quote sent (Resend, no ticket)",
+    "source": "src/lib/quote-client-email-template.ts + src/lib/email-templates/quote-client.html (send-pdf/route.ts:717)",
+    "subject": "Your {{service_short}} quote is ready · {{quote_reference}}",
+    "preheader": "{{quote_total}} for the work outlined below.",
+    "heading": "Your quote is ready",
+    "body": [
+      "Thanks for telling us what you need. We’ve put together your quote for {{service}}, with the work included and price set out below.",
+      "Have a look through the details. If everything looks right, you can accept the quote using the button.",
+      "{{quote_payment_sentence}}",
+      "If you’d like to ask a question or adjust the work included, just reply. We’ll be happy to help."
+    ],
+    "cta": "Review and accept quote",
+    "fields": [
+      "Reference: {{quote_reference}}",
+      "Property: {{property_address}}",
+      "Work included: {{scope}}",
+      "Itemised pricing: {{line_items}}",
+      "Total: {{quote_total}}",
+      "Valid until: {{quote_expiry_date}}"
+    ],
+    "notes": "Same copy as 20, rendered in shared Resend layout. Secondary text action: Decline quote. Keep required quote terms. No old-brand sender fallback.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 22,
+    "original": "Auto-quote: WhatsApp texts while pricing",
+    "source": "src/lib/harvey-wa/cotacao-automatica.ts textoPedeContexto / textoAindaCotando",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "No unsupported “very soon” or same-day promise. Keep each variant tied to the correct enquiry state.",
+    "whatsapp": {
+      "More details needed": "{{greeting}} Thanks for your enquiry about {{service}}. Could you send a few photos and the full property address, including the postcode? That will help us put together an accurate quote.",
+      "Pricing in progress": "{{greeting}} A quick update on your {{service}} enquiry: we’re still checking the pricing with our professionals. We’ll send your quote once the details are confirmed. Thank you for your patience.",
+      "Closed-window template proposal": "{{greeting}} Are you still looking for help with {{service}}? If so, reply with a few photos or a convenient time to call, and we’ll help with the next step."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 23,
+    "original": "Quote rejected / closed",
+    "source": "src/lib/zendesk-lifecycle-templates.ts buildQuoteRejectedHtml (zendesk-lifecycle.ts:567)",
+    "subject": "Your quote has been closed · {{quote_reference}}",
+    "preheader": "Thank you for letting us know about your {{service_short}} quote.",
+    "heading": "Your quote is now closed",
+    "body": [
+      "We’ve recorded that you won’t be going ahead with quote {{quote_reference}} for {{service}}.",
+      "Thank you for considering Fixfy. If your plans change, just reply and we’ll be happy to look at the work again."
+    ],
+    "cta": "",
+    "fields": [
+      "Quote: {{quote_reference}}",
+      "Service: {{service}}"
+    ],
+    "notes": "Customer rejection only; do not use for expiry or system cancellation. Do not repeat private rejection notes automatically. WhatsApp channel must receive plain text.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 24,
+    "original": "Quote follow-up 1 of 3 (B2C)",
+    "source": "src/lib/harvey-wa/followup-quotes.ts textoDaCobranca + email-do-leo.ts htmlDoEmail",
+    "subject": "Your {{service_short}} quote · Ready to proceed?",
+    "preheader": "Review your quote or let us know what you need.",
+    "heading": "Shall we help with the next step?",
+    "body": [
+      "Have you had a chance to look through your quote for {{service}}?",
+      "If you’d like to go ahead, you can review and accept it below. If you have a preferred date, let us know and we’ll check availability.",
+      "Any questions before you decide? Just reply. We’re happy to help."
+    ],
+    "cta": "Review your quote",
+    "fields": [],
+    "notes": "No booking promise before availability and payment conditions are met.",
+    "whatsapp": {
+      "Open conversation": "{{greeting}} Have you had a chance to look through your {{service}} quote? You can review it here: {{quote_url}}. If you have a question or a preferred date, just reply and we’ll help.",
+      "Closed-window template proposal": "{{greeting}} Would you like to discuss the {{service}} quote we sent you? Reply with any questions or changes you’d like us to review."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 25,
+    "original": "Quote follow-up 2 of 3 (B2C)",
+    "source": "src/lib/harvey-wa/followup-quotes.ts textoDaCobranca + email-do-leo.ts htmlDoEmail",
+    "subject": "Any changes to your {{service_short}} quote?",
+    "preheader": "We can review the work included or your preferred timing.",
+    "heading": "Let’s make sure it suits you",
+    "body": [
+      "If anything in your {{service}} quote needs adjusting, we’re happy to take another look.",
+      "Perhaps the work has changed, or you have a different date in mind. Just reply with what you need and we’ll check the options.",
+      "You can also review the current quote below."
+    ],
+    "cta": "Review your quote",
+    "fields": [],
+    "notes": "",
+    "whatsapp": {
+      "Open conversation": "{{greeting}} Does anything need changing in your {{service}} quote? Let us know about the work or timing you have in mind and we’ll take another look.",
+      "Closed-window template proposal": "{{greeting}} Is there anything you’d like us to review in your {{service}} quote? Reply with your questions or changes and we’ll help."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 26,
+    "original": "Quote follow-up 3 of 3 (B2C)",
+    "source": "src/lib/harvey-wa/followup-quotes.ts textoDaCobranca + email-do-leo.ts htmlDoEmail",
+    "subject": "A final follow-up on your quote · {{quote_reference}}",
+    "preheader": "Please let us know if you would still like to go ahead.",
+    "heading": "Are you still looking to proceed?",
+    "body": [
+      "One last follow-up on your quote for {{service}}. If you’d still like to go ahead, please review the quote or reply with any questions.",
+      "If we don’t hear from you by {{quote_close_date}}, we’ll close this enquiry for now. You’re welcome to get back in touch whenever you need us.",
+      "Thank you for considering Fixfy."
+    ],
+    "cta": "Review your quote",
+    "fields": [],
+    "notes": "Use actual scheduled close date. Omit closure sentence when no closure is scheduled. Expired links must lead to a refresh request.",
+    "whatsapp": {
+      "Open conversation": "{{greeting}} A final follow-up on your {{service}} quote. If you’re still interested, just reply or review it here: {{quote_url}}. Otherwise, we’ll close the enquiry on {{quote_close_date}}. You’re welcome to contact us again whenever you need us.",
+      "Closed-window template proposal": "{{greeting}} Are you still interested in your {{service}} quote? Please reply if you’d like help with the next step. If you’ve already arranged the work, thank you for letting us know."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 27,
+    "original": "Quote follow-up 1 of 2 (B2B)",
+    "source": "src/lib/harvey-wa/followup-quotes.ts textoDaCobranca + email-do-leo.ts htmlDoEmail",
+    "subject": "Quote follow-up · {{property_short}} · {{quote_reference}}",
+    "preheader": "Please let us know whether you would like to proceed.",
+    "heading": "Your quote for {{property_short}}",
+    "body": [
+      "We’re following up on quote {{quote_reference}} for {{service}} at {{property_address}}.",
+      "If you’d like to proceed, please confirm your approval and preferred dates through the usual quote process. We’ll then check availability and coordinate access.",
+      "If you’re waiting for the property owner’s approval or need any changes to the scope, just let us know."
+    ],
+    "cta": "Review your quote",
+    "fields": [],
+    "notes": "Use actual approval mechanism. Do not substitute a reply for formal acceptance when required.",
+    "whatsapp": {},
+    "audience": "b2b"
+  },
+  {
+    "id": 28,
+    "original": "Quote follow-up 2 of 2 (B2B)",
+    "source": "src/lib/harvey-wa/followup-quotes.ts textoDaCobranca + email-do-leo.ts htmlDoEmail",
+    "subject": "Final quote follow-up · {{quote_reference}}",
+    "preheader": "Please confirm whether the work at {{property_short}} is still required.",
+    "heading": "An update on your quote",
+    "body": [
+      "Could you let us know whether you still require the work at {{property_address}}?",
+      "We’re happy to review the scope, proposed timing or access arrangements if anything has changed.",
+      "If we don’t hear from you by {{quote_close_date}}, we’ll close the enquiry for now. Should the work be needed later, reply here and we’ll check the quote and availability again."
+    ],
+    "cta": "Review your quote",
+    "fields": [],
+    "notes": "Actual scheduled close date only. No same-day revised-quote guarantee.",
+    "whatsapp": {},
+    "audience": "b2b"
+  },
+  {
+    "id": 29,
+    "original": "Quote closed after customer says no",
+    "source": "src/lib/harvey-wa/followup-quotes.ts RESPOSTA_DE_FECHAMENTO (não exportado)",
+    "subject": "Your quote has been closed · {{quote_reference}}",
+    "preheader": "Thank you for the update.",
+    "heading": "Thank you for letting us know",
+    "body": [
+      "We’ve closed your quote for {{service}} as requested.",
+      "Thank you for considering Fixfy. If your plans change or you need help with another job, we’ll be happy to hear from you."
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Use either card 23 or this acknowledgement for the same rejection, not both.",
+    "whatsapp": {
+      "Same-channel acknowledgement": "{{greeting}} Thank you for letting us know. We’ve closed your quote for {{service}} as requested. If your plans change or you need help with another job, we’ll be happy to hear from you."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 30,
+    "original": "Lead first contact",
+    "source": "src/lib/harvey-wa/primeiro-contato.ts mandarPrimeiroContatoPorEmail (~linha 214) + assuntoDoLead",
+    "subject": "Your {{service_short}} enquiry · A few details to get started",
+    "preheader": "Send a few photos so we can help with your quote.",
+    "heading": "Thanks for your enquiry",
+    "body": [
+      "Thanks for getting in touch about {{service}}{{enquiry_source_phrase}}. We’d be happy to help.",
+      "Could you reply with a few photos and the property postcode? A short description of what needs doing will help us check the work and prepare your quote.",
+      "If you’d rather talk it through, let us know a convenient time to call."
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Source phrase is “ through Checkatrade” only for verified Checkatrade leads; otherwise empty. Never expose “Lead” or internal routing labels in customer subjects.",
+    "whatsapp": {
+      "First-contact template proposal": "{{greeting}} Thanks for your enquiry about {{service}}{{enquiry_source_phrase}}. We’re Fixfy, and we’d be happy to help. Could you send a few photos and the property postcode? If you’d rather talk, let us know a convenient time to call."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 31,
+    "original": "Lead follow-up step 1 (WhatsApp)",
+    "source": "src/lib/harvey-wa/followup-leads.ts emailDoPasso + email-do-leo.ts htmlDoEmail",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "WhatsApp only. Stop on reply, opt-out or a completed conversion according to existing eligibility rules.",
+    "whatsapp": {
+      "First follow-up template proposal": "{{greeting}} Are you still looking for help with {{service}}? Send us a few photos and the property postcode, or let us know a convenient time to call. We’ll help with the next step.",
+      "Reply buttons": "Yes, still needed | No longer needed"
+    },
+    "audience": "both"
+  },
+  {
+    "id": 32,
+    "original": "Lead follow-up step 2 (email)",
+    "source": "src/lib/harvey-wa/followup-leads.ts emailDoPasso + email-do-leo.ts htmlDoEmail",
+    "subject": "Your {{service_short}} enquiry · Photos for your quote",
+    "preheader": "Reply with a few photos and the property postcode.",
+    "heading": "Let’s take a look at the job",
+    "body": [
+      "We’re following up on your enquiry about {{service}}. If email is easier, you can send the details here.",
+      "Please reply with a few photos, the property postcode and a short description of the work. That will help us prepare an accurate quote.",
+      "Prefer to talk? Let us know a convenient time to call."
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Do not claim a WhatsApp message was sent unless verified. No hard-coded Checkatrade source.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 33,
+    "original": "Lead follow-up step 3 (email)",
+    "source": "src/lib/harvey-wa/followup-leads.ts emailDoPasso + email-do-leo.ts htmlDoEmail",
+    "subject": "What to expect from your Fixfy quote",
+    "preheader": "Clear details about the work, price and next steps.",
+    "heading": "A clear plan for the work",
+    "body": [
+      "When we prepare your quote, we’ll set out the work included and the price for you to review before booking.",
+      "If any details need checking first, we’ll let you know. If the scope changes, we’ll discuss any effect on the price before going ahead.",
+      "To get started, just reply with a few photos and the property postcode. We’ll be happy to take a look."
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Remove unverified stock claims about no call-out fees, available slots, insurance and guarantees. Add only confirmed service-specific terms.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 34,
+    "original": "Lead follow-up step 4 (email)",
+    "source": "src/lib/harvey-wa/followup-leads.ts emailDoPasso + email-do-leo.ts htmlDoEmail",
+    "subject": "Do you still need help with {{service_short}}?",
+    "preheader": "Let us know if you would like us to take another look.",
+    "heading": "We’re here if you still need us",
+    "body": [
+      "A final email about your enquiry for {{service}}. If you’d still like help, reply with the details and we’ll take a look.",
+      "If you’ve already arranged the work, no problem at all. Thank you for considering Fixfy.",
+      "You’re welcome to get in touch whenever another job needs sorting."
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "No promise to price today. Stop follow-ups when customer declines.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 35,
+    "original": "Lead follow-up step 5 (WhatsApp)",
+    "source": "src/lib/harvey-wa/followup-leads.ts emailDoPasso + email-do-leo.ts htmlDoEmail",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Distinct from card 31. Requires an approved dedicated template before outside-window use; do not silently reuse the first follow-up.",
+    "whatsapp": {
+      "Final follow-up template proposal": "{{greeting}} A final message about your {{service}} enquiry. If you still need help, just reply and we’ll pick it up from here. If it’s already sorted, no problem. Thank you for considering Fixfy.",
+      "Reply buttons": "Still need help | No longer needed"
+    },
+    "audience": "both"
+  },
+  {
+    "id": 36,
+    "original": "Phone call quote follow-up",
+    "source": "src/lib/harvey-wa/ligacao-quote.ts",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "Do not promise a fixed price before checking whether a site visit is needed.",
+    "whatsapp": {
+      "After-call template proposal": "{{greeting}} Thanks for speaking with Fixfy about {{service}}. As discussed, you can send the details for your quote here. Please reply with a few photos, the property postcode and a short description of the work. We’ll review everything and come back to you with the next step.",
+      "Reply buttons": "Send photos | Request a call"
+    },
+    "audience": "both"
+  },
+  {
+    "id": 37,
+    "original": "Job completed (with photos)",
+    "source": "src/lib/zendesk-lifecycle-templates.ts buildJobCompletedHtml (zendesk-lifecycle.ts:501)",
+    "subject": "Your {{service_short}} work is complete · {{job_reference}}",
+    "preheader": "Photos of the finished work are attached for you to review.",
+    "heading": "That’s another job sorted",
+    "body": [
+      "Your {{service}} work at {{property_address}} is complete, and we’ve attached photos of the finished work for you to look through.",
+      "We hope you’re pleased with the result. If anything needs our attention, just reply and tell us.",
+      "Thank you for choosing Fixfy."
+    ],
+    "cta": "",
+    "fields": [
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Only mention photos when attached. Do not automatically promise an invoice. If final report and invoice are being sent in card 12, consolidate or suppress this duplicate. Claim report review only if verified.",
+    "whatsapp": {},
+    "audience": "both"
+  },
+  {
+    "id": 38,
+    "original": "Job cancelled",
+    "source": "src/lib/zendesk-lifecycle-templates.ts buildJobCancelledHtml (zendesk-lifecycle.ts:405)",
+    "subject": "Your booking has been cancelled · {{job_reference}}",
+    "preheader": "An update on your {{service_short}} booking.",
+    "heading": "Your booking has been cancelled",
+    "body": [
+      "Your booking for {{service}} on {{visit_date}} has been cancelled.",
+      "If you weren’t expecting this, or would like help arranging another visit, please reply and we’ll look into it.",
+      "{{cancellation_payment_sentence}}"
+    ],
+    "cta": "",
+    "fields": [
+      "Service: {{service}}",
+      "Property: {{property_address}}",
+      "Booking: {{job_reference}}"
+    ],
+    "notes": "Omit cancellation_payment_sentence unless verified payment/refund status exists. Never imply automatic refund. Add separate WhatsApp delivery only as an explicitly implemented channel change.",
+    "whatsapp": {
+      "Cancellation text proposal": "{{greeting}} Your {{service}} booking on {{visit_date}} has been cancelled. If this wasn’t expected, or you’d like help arranging another visit, please reply. Reference: {{job_reference}}."
+    },
+    "audience": "both"
+  },
+  {
+    "id": 39,
+    "original": "Post-job feedback",
+    "source": "src/lib/feedback/pos-job.ts",
+    "subject": "",
+    "preheader": "",
+    "heading": "",
+    "body": [
+      ""
+    ],
+    "cta": "",
+    "fields": [],
+    "notes": "WhatsApp only. Avoid “a human will read it”. Preserve existing audience eligibility.",
+    "whatsapp": {
+      "Post-job feedback template proposal": "{{greeting}} We hope you’re pleased with your {{service}} work. How did everything go? If anything needs our attention, please reply here and let us know. We’d love to hear your feedback."
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 40,
+    "original": "Review + referral (day 10+)",
+    "source": "src/lib/marketing/agente/avaliacao.ts htmlDaAvaliacao",
+    "subject": "How was your experience with Fixfy?",
+    "preheader": "We’d love your feedback, and there’s an offer to share with a friend.",
+    "heading": "We’d love to hear how it went",
+    "body": [
+      "Thank you again for choosing Fixfy. We hope you’re pleased with the work.",
+      "If you have a moment, a short review would mean a great deal to us and help other customers decide who to book. If anything needs our attention, please reply and let us know.",
+      "Know someone with a job on their list? They can use {{referral_code}} for {{referral_discount}} off an eligible booking of {{referral_minimum}} or more. The offer is valid until {{referral_expiry_date}}.",
+      "Thank you for passing us on."
+    ],
+    "cta": "Leave a review",
+    "fields": [],
+    "notes": "One primary review CTA; referral is secondary. Only show active configured referral terms and real full-year expiry. No retroactive “reply within 14 days” promise. Signed The Fixfy team unless an authorised monitored sender is configured.",
+    "whatsapp": {},
+    "audience": "b2c"
+  },
+  {
+    "id": 41,
+    "original": "Fixfy Club edition (2026-10-20, half_day_list)",
+    "source": "src/lib/marketing/agente/clube.ts htmlDaEdicao + clube-servicos.ts",
+    "subject": "A handyman half day for your home",
+    "preheader": "Make a start on the little jobs you’ve been putting off.",
+    "heading": "Let’s get that list sorted",
+    "body": [
+      "The shelf waiting to go up. The door that sticks. The silicone that could do with replacing. Those little jobs have a habit of staying on the list.",
+      "A handyman half day gives you {{service_duration}} to work through suitable jobs, for {{service_price}}. Send your list when you book so we can check what can be covered.",
+      "{{materials_terms_sentence}}",
+      "Use {{offer_code}} for {{offer_discount}} off {{eligible_service_label}} until {{offer_expiry_date}}.",
+      "Not sure whether your list will fit? Reply with it and we’ll help you work out the next step."
+    ],
+    "cta": "Book a handyman half day",
+    "fields": [],
+    "notes": "Price, duration, materials terms and discount must come from current configuration. Omit offer paragraph when inactive. No guarantee the whole list will fit.",
+    "whatsapp": {},
+    "audience": "b2c"
+  },
+  {
+    "id": 42,
+    "original": "Flash offer (2026-10-21, PAINT15)",
+    "source": "src/lib/marketing/agente/relampago.ts htmlDoRelampago + TEMPLATE_DO_WHATSAPP",
+    "subject": "{{offer_discount}} off {{eligible_service_label}} · Ends {{offer_end_short}}",
+    "preheader": "Use {{offer_code}} before {{offer_deadline}}.",
+    "heading": "A little help with your next project",
+    "body": [
+      "If {{eligible_service_label}} is on your list, this could be a good time to get started.",
+      "Use {{offer_code}} for {{offer_discount}} off eligible {{eligible_service_label}} bookings made by {{offer_deadline}}. You can choose from the available appointment dates when you book.",
+      "{{offer_conditions_sentence}}",
+      "Have a question about the work before booking? Just reply. We’re happy to help."
+    ],
+    "cta": "View the offer",
+    "fields": [],
+    "notes": "Use a single source of truth for eligible services, expiry and any booking cap. Do not hard-code 36 hours, Thursday or 25 bookings unless valid. If all services qualify, subject and body must both say so.",
+    "whatsapp": {
+      "Flash-offer template proposal": "{{greeting}} Save {{offer_discount}} on eligible {{eligible_service_label}} bookings with {{offer_code}} until {{offer_deadline}}. View the offer and full details here: {{offer_url}}. If you have a question, just reply.",
+      "Buttons": "View offer | Stop promotions"
+    },
+    "audience": "b2c"
+  },
+  {
+    "id": 43,
+    "original": "Abandoned booking 1 (30 min)",
+    "source": "src/lib/emails/reserva-abandonada.ts email1/email2/email3 (agenda em src/lib/site-leads/agenda.ts)",
+    "subject": "Your Fixfy booking is saved",
+    "preheader": "Pick up your {{service_short}} booking where you left off.",
+    "heading": "Ready when you are",
+    "body": [
+      "Your {{service}} booking details are saved, so you don’t need to start again.",
+      "You can review the details and available appointment times using the button below. Nothing is confirmed until you complete the booking.",
+      "If there’s something you’d like to check first, just reply. We’re happy to help."
+    ],
+    "cta": "Continue your booking",
+    "fields": [
+      "Service: {{service}}",
+      "Property postcode: {{postcode}}",
+      "Saved price: {{saved_price}}"
+    ],
+    "notes": "Only claim details/price are saved when persisted. Revalidate availability and price at checkout. Never claim a slot is reserved.",
+    "whatsapp": {},
+    "audience": "b2c"
+  },
+  {
+    "id": 44,
+    "original": "Abandoned booking 2 (next day 9:30)",
+    "source": "src/lib/emails/reserva-abandonada.ts email1/email2/email3 (agenda em src/lib/site-leads/agenda.ts)",
+    "subject": "A question about your Fixfy booking?",
+    "preheader": "We’re happy to help before you decide.",
+    "heading": "Let’s clear up any questions",
+    "body": [
+      "If you paused your {{service}} booking because you wanted to check something first, just ask.",
+      "Whether it’s the work included, access to the property or finding a suitable date, we’re happy to talk it through.",
+      "Your saved details are ready whenever you’d like to take another look."
+    ],
+    "cta": "Review your booking",
+    "fields": [],
+    "notes": "Optional secondary WhatsApp link. No unverified guarantee, “one minute” promise or blanket no-hidden-charges claim.",
+    "whatsapp": {},
+    "audience": "b2c"
+  },
+  {
+    "id": 45,
+    "original": "Abandoned booking 3 (10% off) + WhatsApp",
+    "source": "src/lib/emails/reserva-abandonada.ts email1/email2/email3 (agenda em src/lib/site-leads/agenda.ts)",
+    "subject": "{{offer_discount}} off your saved Fixfy booking",
+    "preheader": "Use {{offer_code}} when you return to your {{service_short}} booking.",
+    "heading": "A little help to get it booked",
+    "body": [
+      "If you’re still considering your {{service}} booking, you can use {{offer_code}} for {{offer_discount}} off your eligible booking.",
+      "That brings the price from {{original_price}} to {{discounted_price}}. The offer is valid until {{offer_expiry_date}}.",
+      "Follow the link below to review the details and choose from the available appointment times. If you have any questions before confirming, just reply."
+    ],
+    "cta": "Review your discounted booking",
+    "fields": [
+      "Service: {{service}}",
+      "Original price: {{original_price}}",
+      "Discounted price: {{discounted_price}}",
+      "Code: {{offer_code}}",
+      "Valid until: {{offer_expiry_date}}"
+    ],
+    "notes": "Only send for valid eligible discounts. If no expiry exists, replace date sentence with actual applicable conditions. “Already applied” only when checkout link verifiably applies the code. Preserve recovery suppression rules.",
+    "whatsapp": {
+      "Recovery template proposal": "{{greeting}} You can use {{offer_code}} for {{offer_discount}} off your eligible saved {{service}} booking until {{offer_expiry_date}}. Review the details here: {{recovery_url}}. If there’s anything you’d like to check first, just reply.",
+      "Buttons": "Review booking | Stop promotions"
+    },
+    "audience": "b2c"
+  }
+]

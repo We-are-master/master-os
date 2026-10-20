@@ -3016,7 +3016,9 @@ function JobsPageContent() {
           );
         }
         const feito = ["final_check", "awaiting_payment", "completed", "cancelled"].includes(item.status);
-        const atrasado = !feito && !isOnsiteInProgress && ag.relativeTone === "past";
+        // Status já diz "Late": aqui volta a data, para não repetir o chip (dono, 19/10/2026).
+        const atrasado =
+          !feito && !isOnsiteInProgress && ag.relativeTone === "past" && effectiveJobStatusForDisplay(item) !== "late";
         // Sem chip "On site" (dono, 15/10/2026): só os de data.
         const chip: { texto: string; cls: string } | null = atrasado
             ? { texto: "Late", cls: "bg-[var(--danger-light,#fee2e2)] text-[var(--bad,#dc2626)]" }

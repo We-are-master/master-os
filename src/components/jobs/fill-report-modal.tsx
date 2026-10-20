@@ -20,6 +20,7 @@ import {
 import { isPdfFile, prepareUploadFile, splitReportFields } from "@/lib/report-photo-upload";
 import { apagarRascunho, lerRascunho, salvarRascunho } from "@/lib/report-draft";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
+import { pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { plannedPhotoShape } from "@/lib/report-submission";
 import { createSignedJobReportAssetUrl } from "@/services/job-reports";
 import { categoriaDoServico } from "@/lib/report-category";
@@ -419,6 +420,40 @@ export function FillReportModal({
             />
           </div>
         );
+      case "receipt": {
+        // Foto do recibo do material (19/10/2026): sobe ao salvar, vai para um campo
+        // próprio do relatório e nunca para as fotos que a plataforma recebe.
+        const novos = photos.receipt ?? [];
+        const salvos = Array.isArray(val) ? (val as string[]) : [];
+        return (
+          <div key={f.key} className="space-y-1.5">
+            {label}
+            {hint}
+            <input
+              type="file"
+              accept="image/*,application/pdf,.pdf"
+              multiple
+              onChange={(e) => onPhotosChange("receipt", e.target.files)}
+              className="block text-[12px]"
+            />
+            {salvos.length || novos.length ? (
+              <ul className="m-0 list-none space-y-0.5 p-0 text-[11px]" style={{ color: MUTED }}>
+                {salvos.map((u, i) => (
+                  <li key={u}>
+                    <a href={u} target="_blank" rel="noopener noreferrer" className="underline">Receipt {i + 1}</a> · saved
+                  </li>
+                ))}
+                {novos.map((file, i) => (
+                  <li key={`${file.name}-${i}`} className="flex items-center gap-2">
+                    {file.name}
+                    <button type="button" className="underline" onClick={() => removePhoto("receipt", i)}>Remove</button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        );
+      }
       default:
         return (
           <div key={f.key} className="space-y-1.5">
@@ -538,7 +573,7 @@ export function FillReportModal({
   const veredito = useMemo(() => {
     const { finalFields } = splitReportFields(spec, data);
     const metadeIntocada = startAlreadySubmitted && !isEdit;
-    return validarSubmissaoDeReport({
+    const v = validarSubmissaoDeReport({
       template,
       finalData: finalFields,
       startPhotos: metadeIntocada
@@ -551,6 +586,9 @@ export function FillReportModal({
       timerStartedAt: startTime ? "typed" : timerStartedAt,
       timerEndedAt: finishTime ? "typed" : timerEndedAt,
     });
+    // Material comprado: pergunta obrigatória; Yes pede valor e foto do recibo.
+    const faltaMaterial = pendenciasDeMaterial(template, finalFields, (photos.receipt ?? []).length);
+    return faltaMaterial.length ? { ...v, ok: false, motivos: [...v.motivos, ...faltaMaterial] } : v;
   }, [spec, data, template, photos, isEdit, startAlreadySubmitted, existingStart, existingFinal, startTime, finishTime, timerStartedAt, timerEndedAt]);
 
   /**
