@@ -52,11 +52,6 @@ export type EntradaFinalCheck = {
   customerPaid: number;
   /** Conta de fatura semanal: não ganha fatura por job, é a equipe que fecha o lote. */
   weeklyInvoice: boolean;
-  /**
-   * A fatura semanal sai sozinha toda segunda (`accounts.weekly_invoice_auto`, fatura-semanal.ts):
-   * o job aprova com o e-mail só do relatório e entra no lote da semana.
-   */
-  weeklyInvoiceAuto?: boolean;
   /** Política do e-mail final da conta (`email_include_invoice_on_final` / `..._report_...`). */
   emailPolicy: { canIncludeInvoice: boolean; canIncludeReport: boolean };
   billingEmail: string | null;
@@ -65,7 +60,7 @@ export type EntradaFinalCheck = {
 export type DecisaoFinalCheck =
   | { acao: "ignorar"; motivo: string }
   | { acao: "equipe"; codigo: MotivoParaEquipe; motivo: string }
-  | { acao: "aprovar"; pagoTotal: boolean; saldo: number; semanal?: boolean };
+  | { acao: "aprovar"; pagoTotal: boolean; saldo: number };
 
 const SIM = new Set(["true", "yes", "y", "1", "sim"]);
 const NAO = new Set(["false", "no", "n", "0", "nao", "não"]);
@@ -135,8 +130,7 @@ export function decidirFinalCheck(e: EntradaFinalCheck): DecisaoFinalCheck {
   }
   if (e.jobType === "hourly") return equipe("hourly", "hourly job: billed hours need confirming");
   if (e.platformReport) return equipe("platform", "platform job: the report goes to the client platform");
-  const semanal = e.weeklyInvoice && e.weeklyInvoiceAuto === true;
-  if (e.weeklyInvoice && !semanal) return equipe("weekly_invoice", "account billed on a weekly invoice");
+  if (e.weeklyInvoice) return equipe("weekly_invoice", "account billed on a weekly invoice");
 
   const total = Math.round(Math.max(0, e.jobTotal) * 100) / 100;
   if (total <= EPS) return equipe("no_price", "the job has no customer price");
@@ -144,13 +138,13 @@ export function decidirFinalCheck(e: EntradaFinalCheck): DecisaoFinalCheck {
     return equipe("price_mismatch", `job total ${libras(total)} differs from its invoices ${libras(e.invoicesTotal)}`);
   }
 
-  if (!semanal && !e.emailPolicy.canIncludeInvoice && !e.emailPolicy.canIncludeReport) {
+  if (!e.emailPolicy.canIncludeInvoice && !e.emailPolicy.canIncludeReport) {
     return equipe("email_off", "the account does not allow the completion email");
   }
   if (!e.billingEmail?.trim()) return equipe("no_email", "no billing email for the customer");
 
   const saldo = Math.max(0, Math.round((total - e.customerPaid) * 100) / 100);
-  return { acao: "aprovar", pagoTotal: saldo <= EPS, saldo: saldo <= EPS ? 0 : saldo, ...(semanal ? { semanal: true } : {}) };
+  return { acao: "aprovar", pagoTotal: saldo <= EPS, saldo: saldo <= EPS ? 0 : saldo };
 }
 
 /** A varredura só pega relatório dos últimos 7 dias, e não o que acabou de chegar (o gatilho da submissão cuida). */
