@@ -848,6 +848,44 @@ async function ciclo(): Promise<void> {
     console.error(`[harvey] leitor de lances por e-mail morreu: ${err}`);
   }
 
+  // B3: resposta do cliente à pergunta que o parceiro fez volta ao parceiro na side
+  // conversation dele (ponte-cliente-parceiro.ts). Só há o que devolver se a pergunta saiu.
+  try {
+    const { devolverRespostasAosParceiros } = await import("../../src/lib/harvey/ponte-cliente-parceiro");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const devolvidas = await devolverRespostasAosParceiros(createServiceClient(), notaComReserva(postarNotaInterna));
+    for (const d of devolvidas) console.log(`[harvey] ponte: ${d}`);
+  } catch (err) {
+    console.error(`[harvey] ponte cliente-parceiro morreu: ${err}`);
+  }
+
+  // B3: cliente respondeu a cotação enviada por e-mail ("approved", "go ahead"): aceite pela
+  // mesma rota do link, com a data escolhida (aceite-escrito.ts). Área "aceite" da autonomia.
+  try {
+    const { lerAceitesPorEmail } = await import("../../src/lib/harvey/aceite-escrito");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const aceites = await lerAceitesPorEmail(createServiceClient(), notaComReserva(postarNotaInterna));
+    for (const a of aceites) console.log(`[harvey] aceite escrito: ${a}`);
+  } catch (err) {
+    console.error(`[harvey] aceite escrito morreu: ${err}`);
+  }
+
+  // B4: a equipe respondeu o pedido de ajuda com "#harvey send / price N / stop" (pedir-ajuda.ts).
+  try {
+    const { lerComandosDaEquipe } = await import("../../src/lib/harvey/pedir-ajuda");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
+    const { notaComReserva } = await import("../../src/lib/harvey-wa/zendesk-wa");
+    const feitos = await lerComandosDaEquipe(createServiceClient(), notaComReserva(postarNotaInterna));
+    for (const f of feitos) console.log(`[harvey] comando da equipe: ${f}`);
+  } catch (err) {
+    console.error(`[harvey] comandos da equipe morreram: ${err}`);
+  }
+
   // Lances que chegaram e ninguém viu: 2h depois do convite vira rascunho de
   // preço na thread, com margem de 40%. Nasce em ensaio (HARVEY_RASCUNHO_LANCE=1).
   // Fase 1: quando é seguro, o preço sai sozinho para o cliente (HARVEY_QUOTE_AUTO_SEND=1).

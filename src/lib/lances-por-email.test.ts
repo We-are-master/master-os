@@ -60,6 +60,15 @@ describe("partner bids by email: classification", () => {
     assert.equal(c?.labour, 300);
   });
 
+  it("a partner question goes to the customer (B3)", () => {
+    const c = lerClassificacaoJson('{"type":"question","total":null,"question":"Is there parking outside the property?"}');
+    assert.equal(c?.tipo, "question");
+    assert.equal(c?.pergunta, "Is there parking outside the property?");
+    assert.equal(passoDaMensagem(c!), "pergunta_ao_cliente");
+    // Sem a pergunta reescrita não há o que mandar.
+    assert.equal(passoDaMensagem(lerClassificacaoJson('{"type":"question","total":null,"question":null}')!), "nada");
+  });
+
   it("a bid without a number is not a bid", () => {
     assert.equal(lerClassificacaoJson('{"type":"bid","total":null}')?.tipo, "other");
     assert.equal(passoDaMensagem(lerClassificacaoJson('{"type":"bid","total":0}')!), "nada");

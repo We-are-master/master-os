@@ -277,7 +277,7 @@ async function criarOuAbrirQuote(sb: SupabaseClient, t: Ticket, user: Usuario, q
 
 async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, agora: Date, out: ResultadoCotacaoAutomatica): Promise<boolean> {
   const quem = `#${t.id} ${t.subject.slice(0, 50)}`;
-  if (t.tags.includes(TAG_CONVIDOU) || t.tags.includes(TAG_FIM)) return false;
+  if (t.tags.includes(TAG_CONVIDOU) || t.tags.includes(TAG_FIM) || t.tags.includes("harvey_off")) return false;
   const { user } = await zendeskApi<{ user: Usuario }>(`users/${t.requester_id}.json`);
   const desde = await entrouEmNeedsQuote(t.id);
   const conv = await lerConversa(sb, t, user, desde, agora);
@@ -425,6 +425,7 @@ async function lembrarParceiros(sb: SupabaseClient, t: Ticket, q: QuoteRow, apli
 
 async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, agora: Date, out: ResultadoCotacaoAutomatica): Promise<boolean> {
   const quem = `#${t.id} ${t.subject.slice(0, 50)}`;
+  if (t.tags.includes("harvey_off")) return false;
   const q = await quoteDoTicket(sb, t.id);
   if (!q) { out.pulados.push(`${quem}: no quote in the OS`); return false; }
   if (["awaiting_customer", "awaiting_payment", "converted_to_job", "rejected"].includes(q.status)) {

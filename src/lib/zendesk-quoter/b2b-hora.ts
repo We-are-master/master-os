@@ -21,6 +21,7 @@ import { updateTicket, addTicketTags } from "@/lib/zendesk";
 import { ZD_STATUS_UNASSIGNED } from "@/lib/zendesk-statuses";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
 import { autorDoAviso } from "./aviso-de-cotacao";
+import { conferirMensagem } from "@/lib/harvey/conferente";
 import type { Classificacao } from "@/lib/classificar-pedido";
 import type { ModoDeAutonomia } from "@/lib/harvey/autonomia";
 
@@ -147,6 +148,12 @@ export async function taxaPorHoraDaConta(accountId: string, catalogServiceId: st
 const primeiroNome = (nome: string | null) => (nome ?? "").trim().split(/\s+/)[0] || "there";
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const html = (t: string) => `<p>${esc(t).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
+/** Conferente (B4) antes de toda resposta à conta: travessão vira vírgula; problema sério segura. */
+function conferido(t: string): string {
+  const c = conferirMensagem(t, { publico: "cliente" });
+  if (!c.ok) throw new Error(`checker blocked the reply: ${c.problemas.join("; ")}`);
+  return c.texto;
+}
 
 /**
  * O braço B2B por hora do quoter. Devolve a nota interna; age só com o modo "on".
@@ -168,6 +175,7 @@ export async function aceitarHoraB2B(args: {
 }): Promise<string> {
   const titulo = "── B2B hourly ──";
   if (args.tags.includes(TAG_B2B_HORA)) return `${titulo}\nAlready handled on this ticket.`;
+  if (args.tags.includes("harvey_off")) return `${titulo}\nharvey_off: the team handles this ticket.`;
 
   const v = await lerValorDoEmail(args.texto, args.apiKey);
   v.endereco ??= args.enderecoDoPedido;
@@ -198,9 +206,9 @@ export async function aceitarHoraB2B(args: {
     if (!args.tags.includes(TAG_B2B_HORA_FALTA)) {
       await updateTicket({
         ticketId: args.ticketId,
-        htmlBody: html(
+        htmlBody: html(conferido(
           `Hi ${primeiroNome(args.remetente)},\n\nThanks, we can book this in. To confirm it, could you send ${faltas.join(" and ")}, and a contact number for access?\n\nKind regards,\nFixfy Team`,
-        ),
+        )),
         publicComment: true,
         authorId: await autorDoAviso(),
         additionalTags: [TAG_B2B_HORA_FALTA],
@@ -247,9 +255,9 @@ export async function aceitarHoraB2B(args: {
   await updateTicket({
     ticketId: args.ticketId,
     customStatusId: ZD_STATUS_UNASSIGNED,
-    htmlBody: html(
+    htmlBody: html(conferido(
       `Hi ${primeiroNome(args.remetente)},\n\nThanks, this is booked in ${comoPreco}, ${quando}. We'll let you know who is attending.\n\nJob reference: ${job.reference}\n\nKind regards,\nFixfy Team`,
-    ),
+    )),
     publicComment: true,
     authorId: await autorDoAviso(),
     additionalTags: [TAG_B2B_HORA],

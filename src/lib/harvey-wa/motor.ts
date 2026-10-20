@@ -103,6 +103,7 @@ export async function contextoDaPessoa(
     reservarPrecoDaEquipe: async (r) => reservarPrecoDaEquipe(sb, { ...r, telefone, ticketId: await ticketPeloTelefone(telefone).catch(() => null), quemDeuOPreco: extra.falaComo ?? null }),
     statusDasCotacoes: () => statusDasCotacoes(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null }),
     perguntarAoParceiro: (pergunta) => perguntarAoParceiro(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null, pergunta }),
+    aceitarCotacao: async (data) => (await import("@/lib/harvey/aceite-escrito")).aceitarPeloWhatsApp(sb, { telefone, clienteId: quem.tipo === "cliente" ? quem.cliente.id : null, data }),
     ...(quem.tipo === "parceiro"
       ? {
           situacaoDoParceiro: () => situacaoDoParceiro(sb, quem.parceiro),
