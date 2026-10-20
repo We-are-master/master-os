@@ -36,6 +36,8 @@ export async function falarComClienteDoTicket(
 ): Promise<{ via: Canal | null; motivo?: string }> {
   const conferido = conferirMensagem(texto, { publico: "cliente" });
   if (!conferido.ok) return { via: null, motivo: `blocked by the checker: ${conferido.problemas.join("; ")}` };
+  const { ticket: doTicket } = await zendeskApi<{ ticket: { tags?: string[] } }>(`tickets/${ticketId}.json`);
+  if ((doTicket?.tags ?? []).includes("harvey_off")) return { via: null, motivo: "harvey_off: the team handles this ticket" };
 
   const { conversaDoTicket } = await import("@/lib/harvey-wa/controle");
   const conversa = await conversaDoTicket(sb, ticketId).catch(() => null);

@@ -30,6 +30,7 @@ import { tipoDoPedido, classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 import { aceitarHoraB2B } from "./b2b-hora";
+import { pedirInfoQueFalta } from "./pedir-info";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
@@ -682,11 +683,13 @@ async function precosCombinadosDaConta(accountId: string): Promise<string | null
   return ["── Agreed prices for this account (use these, not the generic pricebook) ──", ...linhas].join("\n");
 }
 
-export async function cotarTicket(ticketId: number, postar: boolean): Promise<ResultadoDoQuoter> {
+export async function cotarTicket(ticketId: number, postarPedido: boolean): Promise<ResultadoDoQuoter> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
   const ticket = await lerTicketCompleto(ticketId);
+  // "#harvey stop" (pedir-ajuda.ts): a equipe cuida, nada é escrito neste ticket.
+  const postar = postarPedido && !ticket.tags.includes("harvey_off");
   const pedido = await consolidarPedido(ticket, apiKey);
   const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.scopeOfWork);
 
@@ -787,6 +790,20 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
     return null;
   });
 
+  // Pedido B2B com informação faltando: até 3 perguntas essenciais, uma vez por ticket (pedir-info.ts).
+  const pedidoDeInfo =
+    org.ok && quoteRef
+      ? await pedirInfoQueFalta({
+          ticketId,
+          tags: ticket.tags,
+          pedido: pedido.quoteRequest,
+          faltando: pedido.missingInfo.filter((f) => !/^postcode:/i.test(f)),
+          remetente: ticket.requesterName,
+          modo: await modoDe("perguntas"),
+          postar,
+        }).catch((e) => `── Missing info ──\nFailed: ${e instanceof Error ? e.message : String(e)}`)
+      : null;
+
   const tabelaDaConta = org.ok ? await precosCombinadosDaConta(org.id).catch(() => null) : null;
   // Fase 3: sem conta e com cara de empresa, a equipe recebe o aviso e o link da tabela de parceiro.
   const b2b = org.ok ? null : detectarB2B({ texto: `${ticket.subject}\n${ticket.thread}`, email: ticket.requesterEmail });
@@ -803,6 +820,7 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
     ...(avisoB2b ? ["", "──────────", avisoB2b] : []),
     ...(convite ? ["", "──────────", convite.nota] : []),
     ...(aviso ? ["", "──────────", aviso] : []),
+    ...(pedidoDeInfo ? ["", "──────────", pedidoDeInfo] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
     ...(notaHora ? ["", "──────────", notaHora] : []),
   ].join("\n");

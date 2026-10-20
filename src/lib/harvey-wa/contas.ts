@@ -160,7 +160,7 @@ export async function situacaoDoParceiro(sb: SupabaseClient, p: Parceiro) {
 type QuoteDoCliente = { id: string; reference: string; status: string; title: string | null; service_type: string | null; total_value: number | null; external_ref: string | null; created_at: string };
 
 /** As cotações abertas de quem escreve: pela conversa do WhatsApp (ticket) e pelo cliente do OS. */
-async function cotacoesDoCliente(sb: SupabaseClient, a: { telefone: string | null; clienteId?: string | null }): Promise<{ ticket: number | null; quotes: QuoteDoCliente[] }> {
+export async function cotacoesDoCliente(sb: SupabaseClient, a: { telefone: string | null; clienteId?: string | null }): Promise<{ ticket: number | null; quotes: QuoteDoCliente[] }> {
   const { ticketPeloTelefone } = await import("./zendesk-wa");
   const ticket = await ticketPeloTelefone(a.telefone).catch(() => null);
   const desde = new Date(Date.now() - 60 * 86_400_000).toISOString();

@@ -33,6 +33,8 @@ import { modoDe } from "@/lib/harvey/autonomia";
 import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
+import { conferirMensagem, conferirPreco } from "@/lib/harvey/conferente";
+import { pedirAjuda, TAG_OFF } from "@/lib/harvey/pedir-ajuda";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 
 /** O leilão fecha 2h depois do primeiro convite. */
@@ -323,7 +325,18 @@ export async function varrerLancesParaRascunho(
       if (envio.linha) r.detalhes.push(`${q.reference}: ${envio.linha}`);
       enviada = envio.enviado;
       if (enviada) r.enviadasSozinhas++;
-      else {
+      else if (envio.linha && /^não sai sozinha: over £\d+(\.\d+)?$/.test(envio.linha)) {
+        // Só o teto segurou (o resto está certo): o Harvey pergunta e segue com a resposta da equipe (B4, pedir-ajuda.ts).
+        await pedirAjuda(
+          Number(q.external_ref),
+          `${q.reference} is priced at ${libras(escolhaFinal.precoAoCliente)} from ${escolhaFinal.melhor.partner_name?.trim() || "the partner"}'s ${libras(escolhaFinal.melhor.valor)} bid (${escolhaFinal.margem}% margin), above the ${libras(maximoDoEnvioAutomatico())} limit for sending on my own. Send it to the customer?`,
+          postarNotaInterna,
+        ).catch((err: unknown) => r.detalhes.push(`${q.reference}: pedido de ajuda falhou (${String(err).slice(0, 100)})`));
+        r.detalhes.push(`${q.reference}: acima do teto, pedi ajuda à equipe (#harvey send / price / stop)`);
+      } else {
+        if (envio.linha?.startsWith("conferente:")) {
+          await postarNotaInterna(Number(q.external_ref), `🤖 HARVEY — ${q.reference} NOT sent: the checker blocked it (${envio.linha.slice(12)}). Review the draft and send it from Quotes.`).catch(() => null);
+        }
         const aviso = await chamarEquipeParaOLance(supabase, q.id, q.reference, Number(q.external_ref));
         if (aviso) r.detalhes.push(`${q.reference}: ${aviso}`);
       }
@@ -353,6 +366,8 @@ async function mandarSozinho(
   escolha: Escolha,
   escopoConferido: boolean,
   postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+  /** "#harvey send / price" da equipe (pedir-ajuda.ts): a pessoa já decidiu, só falta canal. */
+  opts: { decididoPorGente?: boolean } = {},
 ): Promise<{ enviado: boolean; linha: string | null }> {
   const ticketId = Number(q.external_ref);
   const { data: qq } = await supabase.from("quotes").select("client_id, client_name, client_email").eq("id", q.id).maybeSingle();
@@ -365,6 +380,7 @@ async function mandarSozinho(
   const { tryGetFixfyAccountId } = await import("@/lib/fixfy-account");
   const contaFixfy = await tryGetFixfyAccountId(supabase).catch(() => null);
   const tags = await zendeskApi<{ ticket: { tags?: string[] } }>(`tickets/${ticketId}.json`).then((t) => t.ticket?.tags ?? []).catch(() => [] as string[]);
+  if (tags.includes(TAG_OFF)) return { enviado: false, linha: "harvey_off: a equipe cuida deste ticket" };
   const conversa = await conversaDoTicket(supabase, ticketId).catch(() => null);
   const { historico, enviarTexto, vozDaConversa } = await import("@/lib/harvey-wa/sunshine");
   const msgs = conversa ? await historico(conversa.conversation_id, 50).catch(() => []) : [];
@@ -373,7 +389,12 @@ async function mandarSozinho(
   const email = quote.client_email?.includes("@") && !/@getfixfy\.com$/i.test(quote.client_email) ? quote.client_email.trim() : null;
   const pelaConversa = !!conversa && conversa.estado === "harvey" && janelaAberta;
   const total = escolha.precoAoCliente;
-  const decisao = podeMandarSozinho({
+  const decisao = opts.decididoPorGente
+    ? {
+        enviar: (pelaConversa || !!email) && conversa?.estado !== "equipe",
+        motivos: [...(pelaConversa || email ? [] : ["no way to reach the customer (WhatsApp window closed and no email)"]), ...(conversa?.estado === "equipe" ? ["the team is talking to the customer"] : [])],
+      }
+    : podeMandarSozinho({
     ligado: envioAutomaticoLigado(),
     total,
     maximo: maximoDoEnvioAutomatico(),
@@ -386,6 +407,11 @@ async function mandarSozinho(
     equipeNaConversa: conversa?.estado === "equipe",
   });
   if (!decisao.enviar) return { enviado: false, linha: `não sai sozinha: ${decisao.motivos.join(", ")}` };
+  // Conferente (B4): preço fora do esperado não sai sozinho. Preço dado pela equipe vale.
+  if (!opts.decididoPorGente) {
+    const preco = conferirPreco({ total, custo: escolha.melhor.valor });
+    if (!preco.ok) return { enviado: false, linha: `conferente: ${preco.problemas.join("; ")}` };
+  }
 
   // O PDF e a tela de Quotes leem as linhas: uma linha com o preço, se ainda não houver.
   const { count } = await supabase.from("quote_line_items").select("id", { count: "exact", head: true }).eq("quote_id", q.id);
@@ -419,8 +445,10 @@ async function mandarSozinho(
     const datas = datasDisponiveis(comDatas ?? {}).map((d) =>
       new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).format(new Date(`${d}T12:00:00Z`)),
     );
-    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada, datas });
-    await enviarTexto(conversa.conversation_id, texto, vozDaConversa(msgs));
+    const bruto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada, datas });
+    const conferido = conferirMensagem(bruto, { publico: "cliente", custo: escolha.melhor.valor, nomesDeParceiros: [escolha.melhor.partner_name ?? ""] });
+    if (!conferido.ok) return { enviado: false, linha: `conferente: ${conferido.problemas.join("; ")}` };
+    await enviarTexto(conversa.conversation_id, conferido.texto, vozDaConversa(msgs));
     const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
     const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString(), email ?? undefined);
     if (gravado.error) console.error(`[lances] ${q.reference}: enviada no WhatsApp mas o status não gravou`, gravado.error.message);
@@ -451,7 +479,9 @@ async function mandarSozinho(
   await postarNotaInterna(ticketId, [
     `🤖 HARVEY — ${q.reference} SENT to the customer by ${via}: ${libras(total)}`,
     "",
-    `Best bid ${libras(escolha.melhor.valor)} from ${escolha.melhor.partner_name?.trim() || "partner"}, ${escolha.margem}% margin. Scope checked, direct customer, under £${maximoDoEnvioAutomatico()}.`,
+    opts.decididoPorGente
+      ? `Sent on the team's #harvey instruction. Partner cost ${libras(escolha.melhor.valor)} (${escolha.melhor.partner_name?.trim() || "partner"}), ${escolha.margem}% margin.`
+      : `Best bid ${libras(escolha.melhor.valor)} from ${escolha.melhor.partner_name?.trim() || "partner"}, ${escolha.margem}% margin. Scope checked, under £${maximoDoEnvioAutomatico()}.`,
     "Harvey keeps the WhatsApp chat. The approval follow-up takes it from here.",
   ].join("\n")).catch((err: unknown) => console.error(`[lances] ${q.reference}: nota do envio`, err));
   return { enviado: true, linha: `enviada sozinha ao cliente (${via}), ${libras(total)}` };
@@ -870,4 +900,37 @@ async function pisoDaConta(supabase: SupabaseClient, quoteId: string): Promise<{
   ]);
   const valor = ov && !ov.use_standard ? Number(ov.fixed_price) || 0 : 0;
   return valor > 0 ? { valor, conta: String(a?.company_name ?? "the account") } : null;
+}
+
+
+/**
+ * A equipe respondeu "#harvey send" ou "#harvey price N" (pedir-ajuda.ts): manda a quote já
+ * precificada pelo mesmo caminho do envio automático, sem o teto. Com preço novo, grava o
+ * preço e a linha antes.
+ */
+export async function enviarQuotePelaEquipe(
+  supabase: SupabaseClient,
+  quoteId: string,
+  novoTotal: number | null,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<{ enviado: boolean; linha: string | null }> {
+  const { data } = await supabase
+    .from("quotes")
+    .select("id, reference, title, service_type, external_ref, total_value, partner_cost, partner_id, partner_name, created_at")
+    .eq("id", quoteId)
+    .maybeSingle();
+  const q = data as { id: string; reference: string; title: string | null; service_type: string | null; external_ref: string; total_value: number | null; partner_cost: number | null; partner_id: string | null; partner_name: string | null; created_at: string } | null;
+  if (!q) return { enviado: false, linha: "quote not found" };
+  const custo = Number(q.partner_cost) || 0;
+  const total = novoTotal ?? (Number(q.total_value) || 0);
+  if (!(total > 0)) return { enviado: false, linha: "the quote has no price" };
+  const margem = total > 0 && custo > 0 ? Math.round(((total - custo) / total) * 1000) / 10 : 0;
+  if (novoTotal) {
+    await supabase.from("quotes").update({ total_value: total, sell_price: total, margin_percent: margem, updated_at: new Date().toISOString() }).eq("id", q.id);
+    const { data: linhas } = await supabase.from("quote_line_items").select("id").eq("quote_id", q.id);
+    if ((linhas ?? []).length === 1) await supabase.from("quote_line_items").update({ unit_price: total }).eq("id", (linhas![0] as { id: string }).id);
+  }
+  const melhor = { id: "", partner_id: q.partner_id, partner_name: q.partner_name, bid_amount: custo, status: "submitted", created_at: q.created_at, valor: custo };
+  const escolha: Escolha = { melhor, ordenados: [melhor], descartados: [], precoAoCliente: total, margem };
+  return mandarSozinho(supabase, q, escolha, true, postarNotaInterna, { decididoPorGente: true });
 }

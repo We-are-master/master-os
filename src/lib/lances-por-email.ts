@@ -43,7 +43,7 @@ const MAX_POR_CICLO = 8;
 
 /* ============================== partes puras ============================== */
 
-export type TipoDaMensagem = "bid" | "revised_bid" | "answer" | "other";
+export type TipoDaMensagem = "bid" | "revised_bid" | "answer" | "question" | "other";
 
 export type Classificacao = {
   tipo: TipoDaMensagem;
@@ -54,6 +54,8 @@ export type Classificacao = {
   notas: string | null;
   /** A resposta à nossa pergunta, nas palavras do parceiro (resumida). */
   resposta: string | null;
+  /** A pergunta do parceiro, reescrita para o cliente (classe question). */
+  pergunta?: string | null;
 };
 
 /** Evento como o Zendesk devolve em /side_conversations/{id}/events.json. */
@@ -134,14 +136,14 @@ export function lerClassificacaoJson(texto: string): Classificacao | null {
   } catch {
     return null;
   }
-  const tipos: TipoDaMensagem[] = ["bid", "revised_bid", "answer", "other"];
+  const tipos: TipoDaMensagem[] = ["bid", "revised_bid", "answer", "question", "other"];
   const tipo = tipos.includes(j.type as TipoDaMensagem) ? (j.type as TipoDaMensagem) : null;
   if (!tipo) return null;
   let total = numero(j.total);
   let labour = numero(j.labour);
   let materials = numero(j.materials);
   if (total === null && labour !== null) total = Math.round((labour + (materials ?? 0)) * 100) / 100;
-  const base = { duracao: textoOuNull(j.duration, 120), notas: textoOuNull(j.notes), resposta: textoOuNull(j.answer) };
+  const base = { duracao: textoOuNull(j.duration, 120), notas: textoOuNull(j.notes), resposta: textoOuNull(j.answer), pergunta: textoOuNull(j.question) };
   if ((tipo === "bid" || tipo === "revised_bid") && total === null) return { tipo: "other", total: null, labour: null, materials: null, ...base };
   if (total !== null) {
     if (materials !== null && materials >= total) materials = null;
@@ -150,7 +152,7 @@ export function lerClassificacaoJson(texto: string): Classificacao | null {
   return { tipo, total, labour, materials, ...base };
 }
 
-export type PassoDaMensagem = "gravar_lance" | "nota_resposta" | "nada";
+export type PassoDaMensagem = "gravar_lance" | "nota_resposta" | "pergunta_ao_cliente" | "nada";
 
 /**
  * O que fazer com a mensagem lida. Resposta que traz preço novo vale como lance
@@ -159,6 +161,7 @@ export type PassoDaMensagem = "gravar_lance" | "nota_resposta" | "nada";
 export function passoDaMensagem(c: Classificacao): PassoDaMensagem {
   if ((c.tipo === "bid" || c.tipo === "revised_bid") && c.total) return "gravar_lance";
   if (c.tipo === "answer") return c.total ? "gravar_lance" : "nota_resposta";
+  if (c.tipo === "question" && c.pergunta) return "pergunta_ao_cliente";
   return "nada";
 }
 
@@ -181,12 +184,14 @@ export function notasDoLancePorEmail(c: Classificacao, a: { quando: string; text
 
 export const SISTEMA_CLASSIFICACAO = [
   "A tradesperson replied by email to a UK home services company about a job we asked them to price. Read ONLY their new message.",
-  'Answer in strict JSON: {"type":"bid"|"revised_bid"|"answer"|"other","total":number|null,"labour":number|null,"materials":number|null,"duration":string|null,"notes":string|null,"answer":string|null}.',
+  'Answer in strict JSON: {"type":"bid"|"revised_bid"|"answer"|"question"|"other","total":number|null,"labour":number|null,"materials":number|null,"duration":string|null,"notes":string|null,"answer":string|null,"question":string|null}.',
   "",
   "type = bid when they give a price for the job (a total, or labour and materials).",
   "type = revised_bid when they change a price they gave before.",
   "type = answer when they answer a question we asked about the work, without a new price (if the answer comes with a new total price, put it in total).",
-  "type = other for anything else: questions back to us, availability only, declining, thanks, out of office, unclear.",
+  "type = question when, without giving a price, they ask something only the customer can answer to price the job (access, parking, sizes, photos, materials or finish, timing, what exactly is wanted).",
+  "type = other for anything else: questions about payment or our process, availability only, declining, thanks, out of office, unclear.",
+  "question = for type question only: their question rewritten for the customer in one or two plain sentences, UK English, polite, no names, no prices, no em dashes.",
   "total = the full price in GBP for the whole job as a number, labour plus materials. null if none.",
   "labour, materials = the split if they gave one, else null. duration = how long the job takes if they said, short text.",
   "notes = one or two sentences in UK English describing the work they will do for that price (the scope). No prices, no names, no em dashes.",
@@ -316,6 +321,7 @@ export async function lerLancesPorEmail(
         const lida = c ?? { tipo: "other" as const, total: null, labour: null, materials: null, duracao: null, notas: null, resposta: null };
         const passo = passoDaMensagem(lida);
         let bidId: string | null = null;
+        let perguntaEnviada = false;
         try {
           if (passo === "gravar_lance" && !emLeilao) {
             // Quote já precificada: preço novo não troca sozinho, gente decide (o trigger do Zendesk já pôs em Action Required).
@@ -357,14 +363,32 @@ export async function lerLancesPorEmail(
             // O trigger do Zendesk pôs Action Required ao chegar o e-mail; o lance já está no OS e segue para o rascunho.
             await acaoFeita(ticketId);
             await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Read ${antes ? "a revised bid" : "a bid"} of ${libras(lida.total!)} from ${nome} in their email and saved it`, regra: "partner bid by email in the side conversation" }, supabase);
+          } else if (passo === "pergunta_ao_cliente") {
+            // B3: o parceiro precisa de algo do cliente para cotar: a pergunta vai ao cliente.
+            const { perguntaDoParceiroAoCliente } = await import("@/lib/harvey/ponte-cliente-parceiro");
+            const res = await perguntaDoParceiroAoCliente(supabase, { ticketId, quoteRef: q.reference, parceiroNome: nome, pergunta: lida.pergunta!, modo: await modoDe("perguntas") });
+            perguntaEnviada = res.enviada;
+            await postarNotaInterna(ticketId, [`🤖 HARVEY — ${nome} asked a question by email on ${q.reference}`, "", res.linha, `Partner wrote: "${m.texto.slice(0, 800)}"`].join("\n"));
+            if (res.enviada) await acaoFeita(ticketId);
+            await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: res.enviada ? `Passed ${nome}'s question to the customer` : `${nome} asked a question (not sent: dry run or no channel)`, regra: "partner question by email" }, supabase);
+            r.respostas++;
           } else if (passo === "nota_resposta") {
+            // Resposta à pergunta que o CLIENTE fez (ask_partner): vai ao cliente na hora (B3).
+            const { data: dele } = await supabase.from("quote_partner_messages").select("created_at").eq("quote_id", q.id).eq("kind", "question").lt("created_at", m.em).limit(1);
+            let linha: string | null = null;
+            if ((dele ?? []).length && lida.resposta) {
+              const { respostaDoParceiroAoCliente } = await import("@/lib/harvey/ponte-cliente-parceiro");
+              linha = await respostaDoParceiroAoCliente(supabase, { ticketId, quoteRef: q.reference, parceiroNome: nome, resposta: lida.resposta, modo: await modoDe("perguntas") });
+            }
             await postarNotaInterna(ticketId, [
               `🤖 HARVEY — ${nome} answered by email on ${q.reference}`,
               "",
               lida.resposta ? `In short: ${lida.resposta}` : null,
+              linha,
               `Partner wrote: "${m.texto.slice(0, 800)}"`,
             ].filter((l) => l !== null).join("\n"));
-            await precisaDeAcao(ticketId, `${nome} answered by email on ${q.reference}: read the answer and decide the next step`);
+            if (linha?.startsWith("Partner answer sent")) await acaoFeita(ticketId);
+            else if (!linha) await precisaDeAcao(ticketId, `${nome} answered by email on ${q.reference}: read the answer and decide the next step`);
             r.respostas++;
           } else {
             r.outras++;
@@ -374,7 +398,8 @@ export async function lerLancesPorEmail(
           r.detalhes.push(`${q.reference}: e-mail de ${nome} lido, mas a ação falhou (${String(err).slice(0, 120)})`);
           continue;
         }
-        const tipo = passo === "gravar_lance" ? (lida.tipo === "bid" ? "bid" : "revised_bid") : lida.tipo;
+        const tipo =
+          passo === "gravar_lance" ? (lida.tipo === "bid" ? "bid" : "revised_bid") : lida.tipo === "question" ? (perguntaEnviada ? "partner_question" : "other") : lida.tipo;
         const { error: errMarca } = await supabase.from("quote_partner_messages").insert({
           message_id: m.id,
           quote_id: q.id,
@@ -382,7 +407,7 @@ export async function lerLancesPorEmail(
           ticket_id: ticketId,
           side_conversation_id: m.scId,
           kind: tipo,
-          body: (lida.resposta ?? m.texto).slice(0, 4000),
+          body: (lida.pergunta ?? lida.resposta ?? m.texto).slice(0, 4000),
           amount: lida.total,
           bid_id: bidId,
         });

@@ -35,6 +35,8 @@ export type Contas = {
   statusDasCotacoes?: () => Promise<unknown>;
   /** Pergunta do cliente ao profissional que cotou, na side conversation dele (ask_partner). */
   perguntarAoParceiro?: (pergunta: string) => Promise<unknown>;
+  /** O cliente aceitou a cotação enviada no chat (accept_quote, ver harvey/aceite-escrito.ts). */
+  aceitarCotacao?: (data: string | null) => Promise<unknown>;
 };
 
 export type Contexto = {
@@ -326,6 +328,18 @@ const FERRAMENTAS_CLIENTE = [
       description:
         "Where their quote is now (inviting professionals, waiting for prices, priced, sent) with the total and the accept link once it was sent, and the professional's answer to any question they asked. Use it whenever they ask for news on a quote, instead of handing off.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "accept_quote",
+      description:
+        "The customer clearly says yes to the quote we SENT them (\"yes\", \"go ahead\", \"book it\"). Accepts it exactly like the accept link: creates the booking and returns the deposit payment link if there is one. If the quote offered start dates, pass the one they chose (YYYY-MM-DD) or \"none\" if none works; without a date it tells you to ask. Never call it for a maybe, a discount request or a change of scope.",
+      parameters: {
+        type: "object",
+        properties: { start_date: { type: "string", description: "the start date they chose (YYYY-MM-DD from the offered dates) or \"none\"" } },
+      },
     },
   },
   {
@@ -721,6 +735,10 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     };
   }
   if (nome === "get_quote_status") return ctx.contas?.statusDasCotacoes ? ctx.contas.statusDasCotacoes() : { error: "not available" };
+  if (nome === "accept_quote") {
+    if (!ctx.contas?.aceitarCotacao) return { error: "not available" };
+    return ctx.contas.aceitarCotacao(typeof a.start_date === "string" ? a.start_date.trim() : null);
+  }
   if (nome === "ask_partner") {
     if (!ctx.contas?.perguntarAoParceiro) return { error: "not available" };
     return ctx.contas.perguntarAoParceiro(String(a.question ?? ""));
