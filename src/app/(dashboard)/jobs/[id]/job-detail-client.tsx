@@ -906,7 +906,9 @@ function extraHistoryBucket(extraType: string): ExtraHistoryBucket {
   const key = extraType.trim().toUpperCase();
   if (key === "CCZ") return "ccz";
   if (key === "PARKING") return "parking";
-  if (key === "MATERIALS") return "materials";
+  // "report_materials" é o material que o relatório lança (19/10/2026): sem isto ele contava
+  // também como extra de mão de obra e o parceiro recebia o material duas vezes (JOB-9737).
+  if (key === "MATERIALS" || key.includes("MATERIAL")) return "materials";
   return "extra";
 }
 
