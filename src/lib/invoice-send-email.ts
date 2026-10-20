@@ -151,6 +151,8 @@ export async function sendInvoiceEmail(
     jobId?: string | null;
     /** "booking": e-mail de "almost there" da cobrança na criação do job, em vez do e-mail de fatura. */
     variant?: "booking";
+    /** Fatura semanal da conta (fatura-semanal.ts): assunto e corpo próprios, com a lista de jobs. */
+    semanal?: { assunto: string; html: string };
   },
 ): Promise<SendInvoiceEmailResult> {
   const ctx = await loadInvoiceSendContext(admin, invoiceId, { jobId: options.jobId });
@@ -249,6 +251,10 @@ export async function sendInvoiceEmail(
     subject = buildBookingPaymentSubject(booking);
     bodyHtml = buildBookingPaymentEmailHTML(booking);
     bodyText = undefined;
+  }
+  if (options.semanal) {
+    subject = options.semanal.assunto;
+    bodyHtml = options.semanal.html;
   }
   const safeName = pdfResult.reference.replace(/[^\w.-]+/g, "_");
 

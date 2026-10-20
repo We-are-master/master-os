@@ -242,6 +242,7 @@ async function executar(
     invoicesTotal: faturas.total,
     customerPaid: pago,
     weeklyInvoice: faturas.semanal || Boolean(weeklyInvoiceSkipReason(termos, conta?.company_name)),
+    weeklyInvoiceAuto: (conta as { weekly_invoice_auto?: boolean | null } | null)?.weekly_invoice_auto === true,
     emailPolicy: politica,
     billingEmail: billing?.documentEmail ?? null,
   });
@@ -264,6 +265,7 @@ async function executar(
     return { feito: "equipe", codigo: decisao.codigo, motivo: decisao.motivo, notaNoTicket: nota };
   }
 
+  if (decisao.semanal) return aprovarSemanal(admin, job, { origem: opts.origem, enviado, politica, conta: conta?.company_name ?? null });
   return aprovar(admin, job, { origem: opts.origem, termos, enviado, politica });
 }
 
@@ -399,4 +401,59 @@ async function aprovar(
   });
 
   return { feito: "aprovado", status: depois.status ?? "awaiting_payment", saldo, vencimento, email, ...(cartao ? { cartao } : {}) };
+}
+
+/**
+ * Conta de fatura semanal automática (fatura-semanal.ts): o job aprova sem fatura própria,
+ * o cliente recebe só o relatório, e o valor entra na fatura da semana que sai na segunda.
+ */
+async function aprovarSemanal(
+  admin: SupabaseClient,
+  job: Job,
+  ctx: { origem: OrigemFinalCheck; enviado: string; politica: { canIncludeInvoice: boolean; canIncludeReport: boolean }; conta: string | null },
+): Promise<ResultadoFinalCheck> {
+  const atual = (await carregarJob(admin, job.id)) ?? job;
+  const patch: Record<string, unknown> = {
+    ...buildJobReviewApprovalPatch({ submittedAt: atual.report_1_approved_at ?? undefined }),
+    status: "awaiting_payment",
+    ...statusChangePartnerTimerPatch(atual, "awaiting_payment"),
+    ...statusChangeOfficeTimerPatch(atual, "awaiting_payment"),
+    ...(atual.completed_date?.trim() ? {} : { completed_date: new Date().toISOString().slice(0, 10) }),
+    updated_at: new Date().toISOString(),
+  };
+  const moveu = await atualizarJobDeFinalCheck(admin, job.id, patch);
+  if (!moveu) return { feito: "ignorado", motivo: "job left final check before approval (someone finished it by hand)" };
+  await admin.from("audit_logs").insert({
+    entity_type: "job",
+    entity_id: job.id,
+    entity_ref: job.reference ?? null,
+    action: "status_changed",
+    field_name: "status",
+    old_value: "final_check",
+    new_value: "awaiting_payment",
+    user_name: "Final check (automatic)",
+  });
+  try {
+    await syncJobFinanceServer(admin, job.id);
+  } catch (e) {
+    console.error("[final-check-auto] sync-finance", job.reference, e);
+  }
+
+  let email: { ok: true; canal: string } | { ok: false; erro: string } = { ok: false, erro: "the account does not take the report by email" };
+  if (ctx.politica.canIncludeReport) {
+    const r = await sendFinalReviewEmail(admin, job.id, { includeInvoice: false, includeReport: true, source: "final_check_auto" });
+    email = r.ok ? { ok: true, canal: r.channel === "zendesk" ? "Zendesk ticket" : "email" } : { ok: false, erro: r.error };
+  }
+  try {
+    await syncJobZendeskStatus(job.id, admin);
+  } catch (e) {
+    console.error("[final-check-auto] status do ticket", job.reference, e);
+  }
+  const nota = await notaInterna(
+    job,
+    `Final check approved automatically: report submitted ${ctx.enviado}, ${email.ok ? `report sent (${email.canal})` : `report NOT sent (${email.erro})`}. ${ctx.conta ?? "The account"} is billed weekly: this job goes into next Monday's invoice.`,
+  );
+  await filaDoJob(job, email.ok || !ctx.politica.canIncludeReport ? null : `${job.reference}: report email not sent, send it from the job`);
+  await registrar(admin, job, "awaiting_payment", { origem: ctx.origem, semanal: true, email: email.ok ? email.canal : `failed: ${email.erro}`, nota_no_ticket: nota });
+  return { feito: "aprovado", status: "awaiting_payment", saldo: 0, vencimento: "weekly invoice", email };
 }

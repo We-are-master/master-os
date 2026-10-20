@@ -1,5 +1,5 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { formatGbpIncVat } from "@/lib/money-display-label";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { invoicePayLinkUrl } from "@/lib/pay-link-url";
@@ -58,6 +58,11 @@ export interface InvoicePdfData {
   billTo?: InvoiceBillTo;
   /** A taxa da Fixfy aberta em líquido + VAT. O total não muda. */
   feeVat?: FeeVatBreakdown;
+  /** Fatura semanal da conta: os jobs do lote, cada um com o link do relatório. */
+  semanal?: {
+    rotulo: string;
+    jobs: Array<{ reference: string; title: string; address?: string; completed?: string; amount: number; reportUrl: string }>;
+  };
 }
 
 const NAVY = FIXFY_PDF_NAVY;
@@ -576,7 +581,9 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
 
   const servico = [data.jobTitle, data.propertyAddress].filter(Boolean).join(" · ");
   const quando = data.completionDate ? `Completed on ${data.completionDate}` : "";
-  const sub = [servico, quando].filter(Boolean).join("\n");
+  const sub = data.semanal
+    ? `${data.semanal.jobs.length} job${data.semanal.jobs.length === 1 ? "" : "s"} completed ${data.semanal.rotulo}, itemised below`
+    : [servico, quando].filter(Boolean).join("\n");
 
   const linhas: SheetLine[] = data.feeVat
     ? [
@@ -699,6 +706,22 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
             </View>
           )}
         </View>
+
+        {data.semanal ? (
+          <View style={{ marginTop: 14 }}>
+            <Text style={[sheet.thText, { marginBottom: 4 }]}>JOBS IN THIS INVOICE</Text>
+            {data.semanal.jobs.map((j) => (
+              <View key={j.reference} style={sheet.tr} wrap={false}>
+                <View style={sheet.cDesc}>
+                  <Text style={sheet.desc}>{[j.reference, j.title].filter(Boolean).join(" · ")}</Text>
+                  <Text style={sheet.descSub}>{[j.address, j.completed ? `Completed ${j.completed}` : ""].filter(Boolean).join("\n")}</Text>
+                  <Link src={j.reportUrl} style={[sheet.descSub, { color: NAVY, textDecoration: "underline" }]}>View report</Link>
+                </View>
+                <Text style={[sheet.desc, sheet.cAmt]}>{plainMoney(j.amount).slice(1)}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
 
         {paid ? (
           <View style={sheet.paidStamp}>

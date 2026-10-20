@@ -195,6 +195,7 @@ export async function syncJobAfterInvoicePaidToLedger(
   invoiceId: string,
   sourceLabel: "Stripe" | "Manual",
 ): Promise<void> {
+  if (await repartirSeForSemanal(client, invoiceId, sourceLabel)) return;
   const jobId = await applyManualInvoicePaymentToJobLedger(client, invoiceId, sourceLabel);
   if (!jobId) return;
   await finalizeJobAfterInvoicePaid(client, jobId);
@@ -223,12 +224,35 @@ export async function syncJobAfterInvoicePaidToLedger(
   }
 }
 
+/**
+ * Fatura semanal paga por inteiro (Stripe antigo ou "mark paid"): o que ainda não entrou
+ * nos jobs do lote é repartido entre eles. Devolve true quando era semanal.
+ */
+async function repartirSeForSemanal(client: SupabaseClient, invoiceId: string, sourceLabel: "Stripe" | "Manual"): Promise<boolean> {
+  const { data } = await client.from("invoices").select("invoice_kind, status, amount_paid, amount").eq("id", invoiceId).maybeSingle();
+  const inv = data as { invoice_kind?: string | null; status?: string; amount_paid?: number | null; amount?: number | null } | null;
+  if (inv?.invoice_kind !== "weekly_batch") return false;
+  if (inv.status !== "paid") return true;
+  const pago = Math.max(invoiceAmountPaid(inv as { amount_paid?: number }), Number(inv.amount ?? 0));
+  const jaNosJobs = await sumLinkedInvoicePayments(client, invoiceId);
+  const falta = Math.round((pago - jaNosJobs) * 100) / 100;
+  if (falta > EPS) {
+    const { repartirPagamentoDaFaturaSemanal } = await import("@/lib/fatura-semanal-pagamento");
+    await repartirPagamentoDaFaturaSemanal(client, invoiceId, falta, sourceLabel, { atualizarFatura: false });
+  }
+  return true;
+}
+
 /** Bulk mark-paid: ledger rows in parallel, then one finalize pass per unique job. */
 export async function syncJobsAfterBulkInvoicesMarkedPaid(
   client: SupabaseClient,
   invoiceIds: string[],
   sourceLabel: "Stripe" | "Manual" = "Manual",
 ): Promise<void> {
+  // Faturas semanais repartem entre os jobs do lote; as outras seguem o caminho de um job.
+  const naoSemanais: string[] = [];
+  for (const id of invoiceIds) if (!(await repartirSeForSemanal(client, id, sourceLabel))) naoSemanais.push(id);
+  invoiceIds = naoSemanais;
   if (invoiceIds.length === 0) return;
   const jobIds = new Set<string>();
   await Promise.all(
