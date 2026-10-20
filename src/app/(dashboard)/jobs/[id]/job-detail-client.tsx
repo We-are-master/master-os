@@ -905,7 +905,8 @@ function extraHistoryBucket(extraType: string): ExtraHistoryBucket {
   const key = extraType.trim().toUpperCase();
   if (key === "CCZ") return "ccz";
   if (key === "PARKING") return "parking";
-  if (key === "MATERIALS") return "materials";
+  // O material que o report grava (report_materials) é material, não "Extra labour" (20/10/2026: JOB-9737 contava £91,75 três vezes).
+  if (key === "MATERIALS" || key === "REPORT_MATERIALS") return "materials";
   return "extra";
 }
 
@@ -6706,7 +6707,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, 0);
   const partnerExtrasFromLedger = extraHistory.reduce((acc, row) => {
     if (row.side !== "partner") return acc;
-    if (extraHistoryBucket(row.extraType) === "materials") return acc;
+    if (!isPartnerNonMaterialsExtraRow(row)) return acc;
     return acc + extraHistorySignedAmount(row);
   }, 0);
   const clientExtrasFromLedgerRounded = Math.max(0, Math.round(clientExtrasFromLedger * 100) / 100);
