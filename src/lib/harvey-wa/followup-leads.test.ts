@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { destinoDoLead, ehDaReguaAntiga, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, type PedidoDoOs } from "./followup-leads";
+import { assuntoInterno, destinoDoLead, ehDaReguaAntiga, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, servicoDoTicketDeLead, type PedidoDoOs } from "./followup-leads";
+import { montarEmail } from "./email-do-leo";
 
 // Horários em BST (UTC+1): "2026-10-14T09:00:00Z" é 10h em Londres.
 const d = (iso: string) => new Date(iso);
@@ -51,13 +52,31 @@ describe("régua do follow-up de lead", () => {
     assert.equal(proximoPasso(1, vespera, vespera, d("2026-10-14T09:00:00Z")), 2);
   });
 
-  it("os três e-mails não têm travessão e fecham com Thank you (a assinatura é a do Leo)", () => {
+  it("os três e-mails seguem a copy: sem travessão, sem Lead no assunto, assinados pela equipe", () => {
     for (const p of [2, 3, 4]) {
-      const t = emailDoPasso(p, "Ann", "handyman work");
-      assert.ok(!t.includes("—"), `passo ${p}`);
-      assert.ok(t.startsWith("Hi Ann,") && t.endsWith("Thank you,") && !t.includes("Fixfy Team"), `passo ${p}`);
-      assert.ok(t.split("\n").length > 5, `passo ${p}`);
+      const e = emailDoPasso(p, "Ann", "handyman work");
+      const { html, text } = montarEmail(e);
+      for (const x of [e.assunto, html, text]) {
+        assert.doesNotMatch(x, /[—–]/, `passo ${p}`);
+        assert.doesNotMatch(x, /\{\{/, `passo ${p}`);
+      }
+      assert.doesNotMatch(e.assunto, /^Lead/i);
+      assert.equal(e.saudacao, "Hi Ann,");
+      assert.doesNotMatch(text, /The Fixfy team/);
+      assert.doesNotMatch(text, /Checkatrade|same day|call-out|insured|guarantee|this week/i, `passo ${p}`);
     }
+    assert.equal(emailDoPasso(2, "Ann", "handyman work").assunto, "Your handyman work enquiry · Photos for your quote");
+    assert.equal(emailDoPasso(3, "Ann", "handyman work").assunto, "What to expect from your Fixfy quote");
+    assert.equal(emailDoPasso(4, "Ann", "handyman work").assunto, "Do you still need help with handyman work?");
+    assert.equal(emailDoPasso(2, "there", "handyman work").saudacao, "Hi there,");
+  });
+
+  it("o assunto interno de lead troca no primeiro e-mail; o serviço sai dos dois formatos", () => {
+    assert.equal(assuntoInterno("Lead · Handyman work · Ann · SW2 3HT"), true);
+    assert.equal(assuntoInterno("Your handyman work enquiry · Photos for your quote"), false);
+    assert.equal(servicoDoTicketDeLead("Lead · Handyman work · Ann · SW2 3HT"), "handyman work");
+    assert.equal(servicoDoTicketDeLead("Your handyman work enquiry · A few details to get started"), "handyman work");
+    assert.equal(servicoDoTicketDeLead("Re: your quote QT-1"), null);
   });
 });
 

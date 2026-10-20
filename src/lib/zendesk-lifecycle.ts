@@ -33,9 +33,10 @@ import {
   updateTicket as zdUpdateTicket,
 } from "@/lib/zendesk";
 import {
-  buildJobCancelledHtml,
-  buildJobCompletedHtml,
-  buildQuoteRejectedHtml,
+  buildJobCancelled,
+  buildJobCompleted,
+  buildQuoteRejected,
+  publicoDoAviso,
 } from "@/lib/zendesk-lifecycle-templates";
 import {
   buildJobConfirmationHtml,
@@ -369,7 +370,7 @@ async function dispatchJobTerminalNotice(args: {
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
       client_id, client_name, final_report, partner_timer_ended_at, completed_date,
-      scheduled_date, scheduled_start_at,
+      scheduled_date, scheduled_start_at, property_address, catalog_service_id,
       clients ( full_name, source_account_id )
     `)
     .eq("id", args.jobId)
@@ -400,12 +401,18 @@ async function dispatchJobTerminalNotice(args: {
   }).clients;
   const clientRow = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
   const orgName = await loadAccountOrganizationName(supabase, clientRow?.source_account_id);
-  const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
+  const servico = await resolveJobTypeOfWorkLabel(
+    supabase,
+    (job as { catalog_service_id?: string | null }).catalog_service_id,
+    String(job.title ?? ""),
+  );
 
-  const html = buildJobCancelledHtml({
-    customerName: clientName,
+  const { html } = buildJobCancelled({
+    publico: publicoDoAviso(orgName, clientRow?.full_name ?? job.client_name ?? ""),
     reference: String(job.reference ?? ""),
-    title: String(job.title ?? ""),
+    service: servico,
+    propertyAddress: (job as { property_address?: string | null }).property_address ?? null,
+    visitDate: (job as { scheduled_date?: string | null }).scheduled_date ?? null,
   });
 
   try {
@@ -439,6 +446,8 @@ type JobDaConclusao = {
   completed_date: string | null;
   scheduled_date: string | null;
   scheduled_start_at: string | null;
+  property_address?: string | null;
+  catalog_service_id?: string | null;
   clients?: { full_name?: string | null; source_account_id?: string | null } | { full_name?: string | null; source_account_id?: string | null }[] | null;
 };
 
@@ -487,7 +496,7 @@ async function enviarAvisoDeConclusao(
       fallbackName: rel?.full_name ?? job.client_name ?? "",
     });
     const orgName = await loadAccountOrganizationName(supabase, rel?.source_account_id);
-    const nome = resolveCustomerGreetingName(orgName, billing.displayName || rel?.full_name || "");
+    const servico = await resolveJobTypeOfWorkLabel(supabase, job.catalog_service_id, job.title);
 
     // Fotos do "depois", assinadas (o bucket é privado) e anexadas: até 6.
     const assinadas = await assinarFotos(supabase, urlsDeFoto(job.final_report)).catch(() => [] as string[]);
@@ -498,17 +507,19 @@ async function enviarAvisoDeConclusao(
       contentType: f.contentType,
     }));
 
-    const html = buildJobCompletedHtml({
-      customerName: nome,
+    // Sem frase de fatura: o aviso não sabe se a conta recebe fatura (email_include_invoice_on_final).
+    const aviso = buildJobCompleted({
+      publico: publicoDoAviso(orgName, billing.displayName || rel?.full_name || job.client_name || ""),
       reference: String(job.reference ?? ""),
-      title: String(job.title ?? ""),
+      service: servico,
+      propertyAddress: job.property_address ?? null,
       photoCount: anexos.length,
     });
     await avisarNoTicketDoJob({
       ticketId,
       para: { email: billing.documentEmail ?? null, nome: billing.displayName || null },
-      assunto: `Job completed · ${job.reference ?? ""}`,
-      html,
+      assunto: aviso.assunto,
+      html: aviso.html,
       anexos,
     });
     return { ok: true, posted: true };
@@ -536,7 +547,7 @@ export async function dispatchQuoteRejectedZendesk(
   const { data: quote, error } = await supabase
     .from("quotes")
     .select(`
-      id, reference, status,
+      id, reference, status, title, catalog_service_id,
       external_source, external_ref,
       rejection_reason, rejection_notice_sent_at,
       clients ( full_name, source_account_id )
@@ -562,17 +573,27 @@ export async function dispatchQuoteRejectedZendesk(
   }).clients;
   const clientRow = Array.isArray(clientRowRaw) ? (clientRowRaw[0] ?? null) : (clientRowRaw ?? null);
   const orgName = await loadAccountOrganizationName(supabase, clientRow?.source_account_id);
-  const clientName = resolveCustomerGreetingName(orgName, clientRow?.full_name ?? "");
+  const servico = await resolveJobTypeOfWorkLabel(
+    supabase,
+    (quote as { catalog_service_id?: string | null }).catalog_service_id,
+    (quote as { title?: string | null }).title ?? "",
+  );
 
-  const html = buildQuoteRejectedHtml({
-    customerName: clientName,
+  // A nota de recusa (rejection_reason) fica só no OS: não volta automaticamente ao cliente.
+  const aviso = buildQuoteRejected({
+    publico: publicoDoAviso(orgName, clientRow?.full_name ?? ""),
     reference: String(quote.reference ?? ""),
-    title: "your quote",
-    reason: (quote.rejection_reason as string | null) ?? null,
+    service: servico,
   });
 
   try {
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: true });
+    // Ticket de WhatsApp recebe texto puro, nunca HTML. Continua comentário público, como antes.
+    const viaWhatsApp = await ticketDoWhatsApp(ticketId);
+    await zdUpdateTicket(
+      viaWhatsApp
+        ? { ticketId, commentBody: aviso.whatsapp, publicComment: true }
+        : { ticketId, htmlBody: aviso.html, publicComment: true },
+    );
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

@@ -43,7 +43,9 @@
  * Roda na rota /api/cron/harvey-wa (n8n a cada 10 min); ?dry-run=1 só lista.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { autorDosEmails, comentarioDoEmail } from "./email-do-leo";
+import { autorDosEmails, comentarioDoEmail, type EmailDeAcompanhamento } from "./email-do-leo";
+import { saudacao } from "@/lib/emails/fixfy-shell";
+import { servicoCurto } from "@/lib/zendesk-quote-sent";
 import { zendeskApi, addTicketTags, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { ajustesDoHarvey, janelaAberta } from "./ajustes";
@@ -61,7 +63,6 @@ const PASSOS_DE_WHATSAPP = new Set([1, 5]);
 const RESOLUCAO = 5872761703199; // campo Resolution
 /** Estágio 🎯 Lead (categoria pending). Só `status: pending` cairia no On Hold padrão, que é a Needs Attention. */
 const ESTAGIO_LEAD = 6417913706527;
-const WHATSAPP_DA_FIXFY = "020 4538 4668";
 const WHAT_HAPPENED = 5687150349343;
 /** Lead que já tem pedido no OS: a régua não volta a olhar. */
 const TAG_TEM_PEDIDO = "lead_has_order";
@@ -178,40 +179,70 @@ export function notaDoPedidoExistente(d: Exclude<DestinoDoLead, { acao: "seguir"
 
 // ─── Os textos ──────────────────────────────────────────────────────────────
 
-export function emailDoPasso(passo: number, nome: string, servico: string): string {
-  const fim = ["", "Thank you,"];
-  const corpos: Record<number, string[]> = {
-    2: [
-      `We sent you a WhatsApp about your Checkatrade request for ${servico}, and thought email might be easier.`,
-      "",
-      "Could you reply with a few photos of the job? We'll come back with a clear price, usually the same day.",
-      "",
-      `Prefer to chat? Message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
-    ],
-    3: [
-      `A quick note on how we work, in case it helps with your ${servico} job:`,
-      "",
-      "· A clear price agreed before any work starts",
-      "· No call-out fee",
-      "· Vetted, insured professionals",
-      "· Every job backed by our workmanship guarantee",
-      "",
-      "We still have availability this week. Reply with a photo and your postcode and we'll get you booked in.",
-    ],
-    4: [
-      `A last note from us about your request for ${servico}. If you'd still like it done, just reply and we'll price it today. If you've already sorted it, no problem.`,
-      "",
-      "Whenever you need anything else, we're here. Across London we cover:",
-      "",
-      "· Handyman jobs, carpentry and furniture assembly",
-      "· Plumbing and electrical work",
-      "· Painting and decorating",
-      "· End of tenancy and deep cleaning",
-      "",
-      `Just reply to this email or message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
+/**
+ * Os e-mails da régua (copy 32, 33 e 34). Saem como comentário público do ticket
+ * do lead; o assunto vale quando o ticket ainda tem o nome interno ("Lead · ...")
+ * e passa a ser o do cliente (nunca expor "Lead" ao cliente, handoff 20/10/2026).
+ * Sem promessa de preço no dia, sem "vaga esta semana", sem garantia ou seguro
+ * que não esteja confirmado para o serviço, e sem citar o Checkatrade: a régua
+ * também pega lead de outras origens.
+ */
+export function emailDoPasso(passo: number, nome: string, servico: string): EmailDeAcompanhamento {
+  const s = servicoCurto(servico) || "your job";
+  const sCurto = servicoCurto(servico);
+  const saud = saudacao({ tipo: "b2c", primeiroNome: /^there$/i.test(nome.trim()) ? "" : nome });
+  if (passo === 2) {
+    return {
+      assunto: `Your ${sCurto ? `${sCurto} ` : ""}enquiry · Photos for your quote`,
+      preheader: "Reply with a few photos and the property postcode.",
+      saudacao: saud,
+      paragrafos: [
+        `We’re following up on your enquiry about ${s}. If email is easier, you can send the details here.`,
+        "Please reply with a few photos, the property postcode and a short description of the work. That will help us prepare an accurate quote.",
+        "Prefer to talk? Let us know a convenient time to call.",
+      ],
+    };
+  }
+  if (passo === 3) {
+    return {
+      assunto: "What to expect from your Fixfy quote",
+      preheader: "Clear details about the work, price and next steps.",
+      saudacao: saud,
+      paragrafos: [
+        "When we prepare your quote, we’ll set out the work included and the price for you to review before booking.",
+        "If any details need checking first, we’ll let you know. If the scope changes, we’ll discuss any effect on the price before going ahead.",
+        "To get started, just reply with a few photos and the property postcode. We’ll be happy to take a look.",
+      ],
+    };
+  }
+  return {
+    assunto: `Do you still need help with ${sCurto || "your job"}?`,
+    preheader: "Let us know if you would like us to take another look.",
+    saudacao: saud,
+    paragrafos: [
+      `A final email about your enquiry for ${s}. If you’d still like help, reply with the details and we’ll take a look.`,
+      "If you’ve already arranged the work, no problem at all. Thank you for considering Fixfy.",
+      "You’re welcome to get in touch whenever another job needs sorting.",
     ],
   };
-  return [`Hi ${nome},`, "", ...(corpos[passo] ?? []), ...fim].join("\n");
+}
+
+/** O ticket ainda tem o nome interno de lead: o primeiro e-mail ao cliente troca pelo assunto da copy. */
+export function assuntoInterno(assunto: string | null | undefined): boolean {
+  return /^lead\b/i.test(String(assunto ?? "").trim());
+}
+
+/**
+ * O serviço do ticket de lead que nasceu por e-mail: "Lead · Handyman work · Nome"
+ * (antigo) ou "Your handyman work enquiry · A few details to get started" (copy 30).
+ * Ticket renomeado para outra coisa (conversa, quote, job) já não é lead da régua.
+ */
+export function servicoDoTicketDeLead(assunto: string | null | undefined): string | null {
+  const a = String(assunto ?? "").trim();
+  const daCopy = a.match(/^Your (.+?) enquiry · /i);
+  if (daCopy) return daCopy[1]!.trim().toLowerCase() || null;
+  if (!assuntoInterno(a)) return null;
+  return a.split("·")[1]?.trim().toLowerCase() || null;
 }
 
 // ─── Zendesk ────────────────────────────────────────────────────────────────
@@ -367,7 +398,10 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
       }
     } else if (cliente) {
       // Sai de quem assina os e-mails (papel autor_emails), com a assinatura que o Zendesk acrescenta (dono, 15/10/2026).
-      corpoDoTicket.comment = { ...comentarioDoEmail(emailDoPasso(passo, l.nome, l.servico).replace(/\n\nThank you,$/, ""), (await autorDosEmails()).zendesk_user_id, "Thank you,") };
+      const email = emailDoPasso(passo, l.nome, l.servico);
+      corpoDoTicket.comment = comentarioDoEmail(email, (await autorDosEmails()).zendesk_user_id);
+      // Primeiro e-mail ao cliente neste ticket: o assunto deixa de ser o interno "Lead · ...".
+      if (assuntoInterno(t.subject)) corpoDoTicket.subject = email.assunto;
       feito.push(`email to ${cliente.email}`);
     }
     if (!corpoDoTicket.comment) {
@@ -444,10 +478,10 @@ export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { a
   const { results } = await zendeskApi<{ results?: Ticket[] }>(`search.json?query=${encodeURIComponent(q)}`).catch(() => ({ results: [] as Ticket[] }));
   for (const t of results ?? []) {
     if (!t.created_at) continue;
-    // Só ticket de lead com o assunto padrão ("Lead · Serviço · Nome"): é de lá que sai o serviço do texto.
+    // Só ticket de lead com o assunto padrão ("Lead · Serviço · Nome" ou o da copy 30): é de lá que sai o serviço.
     // Ticket renomeado (virou conversa, quote, job) já não é lead da régua.
-    const servico = String(t.subject ?? "").split("·")[1]?.trim().toLowerCase();
-    if (!/^lead\b/i.test(String(t.subject ?? "")) || !servico) continue;
+    const servico = servicoDoTicketDeLead(t.subject);
+    if (!servico) continue;
     const cliente = await emailDoCliente(t).catch(() => null);
     await seguirLead(
       sb,

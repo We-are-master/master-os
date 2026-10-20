@@ -8,6 +8,8 @@ import { invoiceBalanceDue } from "@/lib/invoice-balance";
 import { invoicePayLinkForAmount } from "@/lib/pay-link-url";
 import { londonTodayYmd } from "@/lib/invoice-overdue-reminders";
 import type { Invoice } from "@/types/database";
+import { buildInstalmentDueEmail } from "@/lib/emails/instalment-due-email";
+import { publicoDaCobranca } from "@/lib/emails/billing-email-common";
 
 /**
  * Cobrança de cada parcela do cliente (dono, 15/10/2026): job avulso parcelado
@@ -33,10 +35,6 @@ function secretsMatch(provided: string | null | undefined, expected: string | nu
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**
@@ -101,21 +99,21 @@ export async function GET(req: NextRequest) {
       .eq("invoice_id", inv.id)
       .neq("status", "cancelled");
     const payUrl = inv.reference ? invoicePayLinkForAmount(inv.reference, valor) : null;
-    const dueLabel = new Date(`${p.due_date.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", {
-      day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London",
-    });
     const jobLabel = ctx.job?.reference ?? inv.job_reference ?? "your job";
-    const subject = `Instalment due today · ${inv.reference} · £${valor.toFixed(2)}`;
+    // Copy 14 na moldura única: referência normalizada (INV-), saudação da conta em B2B.
+    const email = buildInstalmentDueEmail({
+      publico: publicoDaCobranca(ctx.billing.mode, ctx.billing.displayName, ctx.billing.companyName),
+      invoiceReference: inv.reference ?? "",
+      instalmentNumber: p.sequence,
+      instalmentCount: total ?? p.sequence,
+      amount: valor,
+      dueDate: p.due_date.slice(0, 10),
+      service: ctx.job?.title?.trim() || jobLabel,
+      payUrl,
+    });
+    const subject = email.subject;
     if (ensaio) { out.push(`${tag}: would request £${valor.toFixed(2)} from ${to}`); continue; }
     if (!resendKey || !fromEmail) return NextResponse.json({ error: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" }, { status: 503 });
-
-    const html = `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1a1a2e;max-width:560px">
-<p>Hi ${esc(ctx.billing.displayName ?? "there")},</p>
-<p>Instalment ${p.sequence} of ${total ?? p.sequence} for ${esc(jobLabel)} is due today, ${esc(dueLabel)}: <strong>£${valor.toFixed(2)}</strong>.</p>
-${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:#ED4B00;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Pay £${valor.toFixed(2)} now</a></p>` : ""}
-<p>Bank transfer: GETFIXFY LTD · sort code 04-00-03 · account 06913415 · reference ${esc(inv.reference ?? "")}.</p>
-<p>If you have already paid, please reply with the payment date and reference so we can check. For questions about this instalment, reply to this email.</p>
-<p>Thank you,<br>The Fixfy team</p></div>`;
 
     const cc = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
     const { error: sendErr } = await new Resend(resendKey).emails.send({
@@ -124,7 +122,8 @@ ${payUrl ? `<p><a href="${payUrl}" style="display:inline-block;background:#ED4B0
       ...(cc.length ? { cc } : {}),
       replyTo: "hello@getfixfy.com",
       subject,
-      html,
+      html: email.html,
+      text: email.text,
     });
     if (sendErr) { out.push(`${tag}: send failed`); continue; }
 

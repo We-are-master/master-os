@@ -28,6 +28,8 @@ import type { CatalogService } from "@/types/database";
 import { chaveDoTelefone } from "./identidade";
 import { scApi, scNotificacao } from "./sunshine";
 import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
+import { emailPessoal, saudacao } from "@/lib/emails/fixfy-shell";
+import { servicoCurto } from "@/lib/zendesk-quote-sent";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -196,8 +198,29 @@ export function decidirLead(r: LinhaDeCliente, catalogo: CatalogService[]): Deci
   };
 }
 
-/** O WhatsApp que cai no Zendesk e no Harvey. */
-const WHATSAPP_DA_FIXFY = "020 4538 4668";
+/**
+ * O e-mail de primeiro contato (copy 30). Lead desta régua é sempre do Checkatrade
+ * (decidirLead só deixa passar quem tem o id do Checkatrade), então a origem
+ * entra na frase; lead de outra origem passa `checkatrade: false` e ela some.
+ * O assunto é o do cliente: nada de "Lead" nem rótulo interno (handoff 20/10/2026).
+ */
+export function emailDePrimeiroContato(c: { nome: string; servico: string; checkatrade?: boolean }): { assunto: string; preheader: string; html: string; text: string } {
+  const s = servicoCurto(c.servico);
+  const origem = c.checkatrade === false ? "" : " through Checkatrade";
+  const assunto = `Your ${s ? `${s} ` : ""}enquiry · A few details to get started`;
+  const preheader = "Send a few photos so we can help with your quote.";
+  const { html, text } = emailPessoal({
+    preheader,
+    saudacao: saudacao({ tipo: "b2c", primeiroNome: /^there$/i.test(c.nome.trim()) ? "" : c.nome }),
+    paragrafos: [
+      `Thanks for getting in touch about ${s || "your job"}${origem}. We’d be happy to help.`,
+      "Could you reply with a few photos and the property postcode? A short description of what needs doing will help us check the work and prepare your quote.",
+      "If you’d rather talk it through, let us know a convenient time to call.",
+    ],
+    zendesk: true,
+  });
+  return { assunto, preheader, html, text };
+}
 
 /**
  * Primeiro contato por E-MAIL, para o lead do Checkatrade que veio sem telefone.
@@ -211,24 +234,14 @@ export async function mandarPrimeiroContatoPorEmail(c: ContatoPorEmail): Promise
     const externalId = externalIdDoLead(c.leadExterno);
     const { tickets } = await zendeskApi<{ tickets: Array<{ id: number }> }>(`tickets.json?external_id=${encodeURIComponent(externalId)}`);
     if (tickets?.length) return { kind: "ja_falamos" };
-    const corpo = [
-      `Hi ${c.nome},`,
-      "",
-      `This is Fixfy. We've just received your Checkatrade request for ${c.servico}.`,
-      "",
-      "Could you reply to this email with a few photos of the job? That way we can give you an accurate price with no surprises.",
-      "",
-      `If it's easier, you can also message us on WhatsApp on ${WHATSAPP_DA_FIXFY}.`,
-      "",
-      "Thank you,",
-      "Fixfy Team",
-    ].join("\n");
+    const email = emailDePrimeiroContato({ nome: c.nome, servico: c.servico });
     const r = await zendeskApi<{ ticket: { id: number } }>("tickets.json", {
       method: "POST",
       body: {
         ticket: {
-          subject: assuntoDoLead(c.servico, c.nomeCompleto, c.postcode),
-          comment: { body: corpo, public: true },
+          // O assunto é o e-mail que o cliente recebe: o da copy, não o "Lead · ..." interno.
+          subject: email.assunto,
+          comment: { html_body: email.html, public: true },
           requester: { name: c.nomeCompleto || "Checkatrade lead", email: c.email },
           priority: "high",
           status: "pending",

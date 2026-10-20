@@ -1,7 +1,14 @@
-import { readFileSync } from "fs";
-import { join } from "path";
-import { addDays, format, parseISO, isValid } from "date-fns";
+import { addDays, parseISO, isValid, format } from "date-fns";
 import type { QuotePDFData, CompanyBranding, QuoteLineItem } from "@/lib/pdf/quote-template";
+import type { Publico } from "@/lib/emails/fixfy-shell";
+import { emailDaCotacao } from "@/lib/zendesk-quote-sent";
+
+/**
+ * A cotação que sai pela Resend, sem ticket (copy 21). Mesmo miolo do comentário
+ * do Zendesk (copy 20, zendesk-quote-sent.ts) na moldura de e-mail. O antigo
+ * quote-client.html (botões verde e vermelho, "How to accept") não é mais lido.
+ */
+
 export type QuoteClientEmailContext = {
   propertyAddress?: string | null;
   postcode?: string | null;
@@ -18,100 +25,13 @@ export interface QuoteEmailOptions {
    * Ausente/false = Schedule B, e-mail de sempre.
    */
   agentModel?: boolean;
-}
-
-const DEFAULT_INTRO = "Thanks for the request. Please find your quote below.";
-
-/** Schedule A: o preço é do profissional, a Fixfy cota e agenda como agente dele. */
-const AGENT_INTRO =
-  "Thanks for the request. Here is the price for your job. The work is carried out by a vetted independent professional, and Fixfy arranges the booking as their agent.";
-
-/** Schedule A: quem faz o trabalho e quem recebe o pagamento, curto. */
-function buildAgentNoticeBlock(): string {
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 24px 40px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;">
-                <tr>
-                  <td style="padding:14px 18px;">
-                    <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Who does the work</p>
-                    <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">This is the price of the independent, vetted professional who will carry out your job. Your contract for the work is with them: GETFIXFY LTD (Fixfy) arranges the booking and receives your payment as their agent. No Fixfy fee and no VAT added on top. If your professional is VAT registered, their VAT is included and shown on your receipt.</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
-}
-
-let cachedTemplate: string | null = null;
-
-function loadQuoteClientTemplate(): string {
-  if (cachedTemplate) return cachedTemplate;
-  cachedTemplate = readFileSync(
-    join(process.cwd(), "src/lib/email-templates/quote-client.html"),
-    "utf8",
-  );
-  return cachedTemplate;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function formatMoneyPlain(value: number): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "0.00";
-  return n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function clientFirstName(fullName: string): string {
-  const t = fullName.trim();
-  if (!t) return "there";
-  return t.split(/\s+/)[0] ?? t;
-}
-
-function quoteRefForTemplate(reference: string): string {
-  return reference.replace(/^QT-/i, "").trim() || reference;
-}
-
-function formatValidUntil(createdAt: string, expiresAt?: string): string {
-  if (expiresAt?.trim()) {
-    const d = parseISO(expiresAt);
-    if (isValid(d)) {
-      return format(d, "d MMM yyyy");
-    }
-  }
-  const created = parseISO(createdAt);
-  if (isValid(created)) {
-    return format(addDays(created, 14), "d MMM yyyy");
-  }
-  return "—";
-}
-
-const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
-
-function splitAddressAndPostcode(
-  address?: string | null,
-  postcode?: string | null,
-): { street: string; outward: string } {
-  const pc = postcode?.trim() ?? "";
-  const raw = (address ?? "").trim();
-  if (pc) {
-    const street = raw.replace(UK_POSTCODE_RE, "").replace(/,\s*$/, "").trim() || raw || "—";
-    return { street: street || "—", outward: pc };
-  }
-  const match = raw.match(UK_POSTCODE_RE);
-  if (match) {
-    const outward = match[1].toUpperCase().replace(/\s+/g, " ");
-    const street = raw.replace(match[0], "").replace(/,\s*$/, "").trim();
-    return { street: street || raw, outward };
-  }
-  return { street: raw || "—", outward: "—" };
+  /**
+   * Quem recebe, da relação da conta (nunca do nome ou do domínio). Cotação
+   * cobrada da conta: B2B com o nome da empresa. Ausente: B2C pelo primeiro nome.
+   */
+  publico?: Publico;
+  /** O PDF vai anexado. Padrão true (o send-pdf sempre anexa). */
+  pdfAttached?: boolean;
 }
 
 /** OS quotes: line 0 = labour, line 1+ = materials (inc VAT totals). */
@@ -135,55 +55,55 @@ export function splitQuoteLabourMaterials(
   return { labour, materials };
 }
 
-function buildAcceptRejectBlock(acceptUrl?: string, rejectUrl?: string): string {
-  if (!acceptUrl || !rejectUrl) return "";
-  return `
-          <tr>
-            <td class="px" style="padding:0 40px 20px 40px; text-align:center;">
-              <table cellpadding="0" cellspacing="0" style="margin:0 auto;">
-                <tr>
-                  <td style="padding:0 8px 0 0;">
-                    <a href="${escapeHtml(acceptUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">Accept quote</a>
-                  </td>
-                  <td>
-                    <a href="${escapeHtml(rejectUrl)}" style="display:inline-block;background:#DC2626;color:#fff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">Decline</a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>`;
+/** Validade: a da cotação, senão 14 dias da criação (regra de sempre deste e-mail). YYYY-MM-DD. */
+export function validadeDaCotacao(createdAt: string, expiresAt?: string): string | null {
+  if (expiresAt?.trim()) {
+    const d = parseISO(expiresAt);
+    if (isValid(d)) return expiresAt;
+  }
+  const created = parseISO(createdAt);
+  return isValid(created) ? format(addDays(created, 14), "yyyy-MM-dd") : null;
+}
+
+function enderecoCompletoDoContexto(context?: QuoteClientEmailContext): string | null {
+  const rua = context?.propertyAddress?.trim() ?? "";
+  const pc = context?.postcode?.trim() ?? "";
+  if (!rua) return pc || null;
+  if (!pc || rua.toUpperCase().replace(/\s+/g, "").includes(pc.toUpperCase().replace(/\s+/g, ""))) return rua;
+  return `${rua}, ${pc}`;
+}
+
+/** A cotação pronta pela Resend: assunto, HTML e texto puro do mesmo conteúdo. */
+export function buildQuoteClientEmail(
+  data: QuotePDFData,
+  options?: QuoteEmailOptions,
+  context?: QuoteClientEmailContext,
+): { assunto: string; preheader: string; html: string; text: string } {
+  const ctx = context ?? options?.context;
+  const items =
+    data.items?.length
+      ? data.items
+      : [{ description: data.title || "Services", quantity: 1, unitPrice: data.totalValue, total: data.totalValue }];
+  return emailDaCotacao({
+    publico: options?.publico ?? { tipo: "b2c", primeiroNome: data.clientName },
+    referencia: String(data.reference ?? ""),
+    servico: ctx?.serviceType?.trim() || data.serviceType?.trim() || data.title || null,
+    endereco: enderecoCompletoDoContexto(ctx) ?? data.propertyAddress ?? null,
+    escopo: typeof data.scope === "string" && data.scope.trim() ? data.scope.trim() : null,
+    itens: items,
+    total: Number(data.totalValue) || 0,
+    entrada: data.depositRequired ?? null,
+    validoAte: validadeDaCotacao(data.createdAt, data.expiresAt),
+    acceptUrl: options?.acceptUrl ?? null,
+    rejectUrl: options?.rejectUrl ?? null,
+    agentModel: options?.agentModel === true,
+    pdfAnexado: options?.pdfAttached !== false,
+    mensagem: options?.customMessage ?? null,
+  });
 }
 
 /**
- * O quadro "How to accept" (16/10/2026). Antes dizia sempre "reply to this email",
- * mesmo com o botão Accept logo acima, e nunca falava da entrada: o cliente só
- * descobria o sinal depois de aceitar. Agora diz o que fazer e o que pagar agora.
- */
-export function buildHowToAcceptText(args: {
-  hasAcceptButton: boolean;
-  total: number;
-  depositRequired?: number;
-}): string {
-  const total = Math.round((Number(args.total) || 0) * 100) / 100;
-  const deposit = Math.round((Number(args.depositRequired) || 0) * 100) / 100;
-  const passo = args.hasAcceptButton
-    ? "Tap Accept quote above."
-    : "Reply to this email to go ahead.";
-  const pagamento =
-    deposit > 0.02 && deposit < total - 0.02
-      ? ` A deposit of £${formatMoneyPlain(deposit)} secures the booking, and the balance of £${formatMoneyPlain(total - deposit)} is due when the job is done.`
-      : deposit > 0.02
-        ? ` Payment of £${formatMoneyPlain(deposit)} secures the booking.`
-        : "";
-  return `${passo}${pagamento} We'll then confirm the date and arrival window by email.`;
-}
-
-function replaceAll(template: string, key: string, value: string): string {
-  return template.split(`{{${key}}}`).join(value);
-}
-
-/**
- * Fixfy client quote email (HTML body) — used by send-pdf and email-preview.
+ * Fixfy client quote email (HTML body), used by send-pdf and email-preview.
  * PDF attachment remains the react-pdf quote; invoice template is separate.
  */
 export function buildQuoteClientEmailHTML(
@@ -192,55 +112,5 @@ export function buildQuoteClientEmailHTML(
   options?: QuoteEmailOptions,
   context?: QuoteClientEmailContext,
 ): string {
-  const { acceptUrl, rejectUrl, customMessage } = options ?? {};
-  const items =
-    data.items?.length
-      ? data.items
-      : [{ description: data.title || "Services", quantity: 1, unitPrice: data.totalValue, total: data.totalValue }];
-  const { labour, materials } = splitQuoteLabourMaterials(items, Number(data.totalValue) || 0);
-  const { street, outward } = splitAddressAndPostcode(context?.propertyAddress, context?.postcode);
-  const scope =
-    typeof data.scope === "string" && data.scope.trim()
-      ? escapeHtml(data.scope.trim())
-      : escapeHtml(data.title || "As discussed");
-
-  let html = loadQuoteClientTemplate();
-  const agent = options?.agentModel === true;
-  const intro = customMessage?.trim()
-    ? escapeHtml(customMessage.trim())
-    : agent
-      ? AGENT_INTRO
-      : DEFAULT_INTRO;
-
-  html = replaceAll(html, "client_first_name", escapeHtml(clientFirstName(data.clientName)));
-  html = replaceAll(html, "job_title", escapeHtml(data.title || "Quote"));
-  html = replaceAll(html, "total_amount", formatMoneyPlain(Number(data.totalValue) || 0));
-  html = replaceAll(html, "quote_reference", escapeHtml(quoteRefForTemplate(data.reference)));
-  html = replaceAll(html, "valid_until", escapeHtml(formatValidUntil(data.createdAt, data.expiresAt)));
-  html = replaceAll(
-    html,
-    "type_of_work",
-    escapeHtml(context?.serviceType?.trim() || data.title || "Property services"),
-  );
-  html = replaceAll(html, "property_address", escapeHtml(street));
-  html = replaceAll(html, "property_postcode", escapeHtml(outward));
-  html = replaceAll(html, "scope", scope);
-  html = replaceAll(html, "labour_amount", formatMoneyPlain(labour));
-  html = replaceAll(html, "materials_amount", formatMoneyPlain(materials));
-  html = replaceAll(html, "intro_message", intro);
-  html = replaceAll(html, "agent_notice_block", agent ? buildAgentNoticeBlock() : "");
-  html = replaceAll(html, "accept_reject_block", buildAcceptRejectBlock(acceptUrl, rejectUrl));
-  html = replaceAll(
-    html,
-    "how_to_accept",
-    escapeHtml(
-      buildHowToAcceptText({
-        hasAcceptButton: Boolean(acceptUrl && rejectUrl),
-        total: Number(data.totalValue) || 0,
-        depositRequired: data.depositRequired,
-      }),
-    ),
-  );
-
-  return html;
+  return buildQuoteClientEmail(data, options, context).html;
 }

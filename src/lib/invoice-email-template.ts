@@ -1,16 +1,19 @@
 import type { Invoice } from "@/types/database";
 import {
+  buildInvoiceClientEmail,
   buildInvoiceClientEmailHTML,
+  type InvoiceClientEmail,
   type InvoiceClientEmailContext,
   type InvoiceEmailOptions,
 } from "@/lib/invoice-client-email-template";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
 
-export type { InvoiceClientEmailContext, InvoiceEmailOptions };
+export type { InvoiceClientEmail, InvoiceClientEmailContext, InvoiceEmailOptions };
+export { buildInvoiceClientEmail };
 
 /**
  * Builds the HTML body for client invoice / payment receipt emails.
- * "Payment received" banner only when payment is verified.
+ * "Payment received" only when payment is verified.
  */
 export function buildInvoiceEmailHTML(
   invoice: Invoice,

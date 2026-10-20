@@ -35,7 +35,7 @@ import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_PEDIU_CONTEXTO, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
   decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres, margemDe, precoDoLance,
-  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoDaQuote, textoPedeContexto,
+  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoDaQuote, textoPedeContexto, type Destinatario,
   type ContextoDaCotacao, type Falta,
 } from "./cotacao-automatica";
 
@@ -176,6 +176,14 @@ function montarContexto(t: Ticket, q: QuoteRow | null, conv: Conversa, servicoDo
   };
 }
 
+/**
+ * Ticket de conta (tag b2b): a saudação é da empresa, nunca o nome de quem abriu
+ * o ticket (handoff 20/10/2026). Sem o nome da empresa aqui, "Hi team,".
+ */
+function destinatarioDoTicket(t: Ticket, nome: string): Destinatario {
+  return t.tags.includes("b2b") ? { tipo: "b2b", empresa: null } : nome;
+}
+
 /** Fala com o cliente pelo canal do ticket. WhatsApp fora da janela só aceita template. */
 async function falarComCliente(t: Ticket, user: Usuario, conv: Conversa, texto: string, servico: string | null): Promise<string> {
   if (conv.canal === "whatsapp") {
@@ -202,7 +210,7 @@ async function falarComCliente(t: Ticket, user: Usuario, conv: Conversa, texto: 
     });
     return "WhatsApp template";
   }
-  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: await autorDoAviso(), body: `${texto}\n\nKind regards,\nFixfy Team` } } } });
+  await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: { public: true, author_id: await autorDoAviso(), body: texto } } } });
   return "email";
 }
 
@@ -331,7 +339,7 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
       out.pulados.push(`${quem}: waiting for the customer (missing ${faltando.join(", ")})`);
       return false;
     }
-    const texto = textoPedeContexto(nome, faltando, ctx.servico);
+    const texto = textoPedeContexto(destinatarioDoTicket(t, nome), faltando, ctx.servico);
     const canal = conv.canal === "whatsapp" ? (conv.janelaAberta ? "WhatsApp" : "WhatsApp template") : "email";
     if (!aplicar) { out.acoes.push(`${quem}: would ask the customer for ${faltando.join(", ")} (${canal}): "${texto}"`); return true; }
     const via = await falarComCliente(t, user, conv, texto, ctx.servico);
@@ -455,7 +463,7 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
   const conv = await lerConversa(sb, t, user, null, agora);
 
   if (passo === "avisar_cliente") {
-    const texto = textoAindaCotando(nome, q.service_type);
+    const texto = textoAindaCotando(destinatarioDoTicket(t, nome), q.service_type);
     // Preço não cabe em template, e "ainda cotando" também não: fora da janela, só a equipe sabe.
     const podeFalar = conv.canal === "email" || (conv.janelaAberta && !!conv.conversa);
     if (!aplicar) { out.acoes.push(`${quem}: ${Math.round(horas)}h, no bid: would ${podeFalar ? `tell the customer (${conv.canal}): "${texto}"` : "NOT message the customer (WhatsApp window closed)"} + note + harvey_no_bids → Action Required`); return true; }
@@ -505,7 +513,7 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
       ? null
       : entradaPelaConta({ total, entradaAtual: Number(qq.deposit_required ?? 0), percentualDaConta: pctDaConta });
   const entrada = entradaPrevista?.deposit_required ?? Number(qq.deposit_required ?? 0);
-  const texto = textoDaQuote({ nome, servico: q.service_type, total, referencia: q.reference, link, entrada });
+  const texto = textoDaQuote({ nome: destinatarioDoTicket(t, nome), servico: q.service_type, total, referencia: q.reference, link, entrada });
   if (!aplicar) {
     out.acoes.push(`${quem}: ${resumo}: would ${decisao.enviar ? `SEND to the customer (${conv.canal}) and move to Approval` : `move to Quote Ready for review (${decisao.motivos.join(", ")})`}`);
     return true;

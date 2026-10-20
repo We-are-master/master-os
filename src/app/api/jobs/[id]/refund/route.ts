@@ -286,6 +286,8 @@ async function avisarClienteDoReembolso(
     valor: a.amount,
     metodo: a.method,
     finalDoCartao: a.method === "stripe" ? a.finalDoCartao : null,
+    // Reembolso para a conta: saudação com a empresa, nunca com a pessoa de contato.
+    empresa: parte.mode === "account" ? parte.companyName || "team" : null,
   });
   if (job.external_source === "zendesk" && job.external_ref) {
     const { updateTicket } = await import("@/lib/zendesk");

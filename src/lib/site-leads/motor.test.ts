@@ -500,7 +500,7 @@ describe("reserva abandonada, de ponta a ponta", () => {
     assert.deepEqual(voltas.flatMap((v) => v.erros), []);
 
     // Às 07:00 UTC (08:00 em Londres) sai o E1 dos três, e nada antes disso.
-    const e1 = emails.filter((e) => e.subject === "You're almost there!");
+    const e1 = emails.filter((e) => e.subject === "Your Fixfy booking is saved");
     assert.equal(e1.length, 3);
     assert.ok(e1.every((e) => e.quando === "2026-09-28T07:00:00.000Z"));
     assert.equal(emails.length, 9);
@@ -541,9 +541,9 @@ describe("reserva abandonada, de ponta a ponta", () => {
       assert.equal(zendesk.usuarios.get(t.requester_id)?.email, l.email);
       assert.ok(t.comentarios.every((x) => x.public === false), "nada público no ticket do lead");
       const notas = t.comentarios.map((x) => x.body).join("\n");
-      assert.match(notas, /Email 1 sent: "You're almost there!"/);
-      assert.match(notas, /Email 2 sent: "Anything we can help with\?"/);
-      assert.match(notas, /Email 3 sent: "Get 10% OFF to finish your booking" with code COMEBACK10/);
+      assert.match(notas, /Email 1 sent: "Your Fixfy booking is saved"/);
+      assert.match(notas, /Email 2 sent: "A question about your Fixfy booking\?"/);
+      assert.match(notas, /Email 3 sent: "10% off your saved Fixfy booking" with code COMEBACK10/);
       if (l.phone) assert.match(notas, /WhatsApp sent \(template fixfy_booking_recovery_v1, code COMEBACK10\)/);
       if (l.phone) assert.equal(zendesk.usuarios.get(t.requester_id)?.phone, `+${l.phone.replace(/\D/g, "").replace(/^0/, "44")}`);
 

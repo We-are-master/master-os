@@ -25,7 +25,8 @@ import { enviarTemplatePeloZendesk, zendeskWhatsAppConfigurado } from "@/lib/har
 import {
   HORA_DO_WHATSAPP_RELAMPAGO, SITE, abreEm, fechaEm, horaDeLondres, linkDoRelampago, type Relampago,
 } from "./calendario";
-import { htmlDoBroadcast, remetente } from "./clube";
+import { emailDeMarketing, remetente, NOME_DO_CONTATO, LINK_DE_SAIDA } from "./clube";
+import { dataLonga, horaCurta } from "@/lib/emails/fixfy-shell";
 import { publico, publicoComPosicao } from "./lista";
 import { agendarBroadcast, broadcasts, criarBroadcast } from "./resend";
 
@@ -99,18 +100,64 @@ export async function garantirCodigo(r: Relampago, aplicar: boolean): Promise<{ 
 
 /* ═══════════════════ E-mail ═══════════════════ */
 
+/**
+ * O parâmetro {{4}} do template `fixfy_flash_offer`. Intocado de propósito na
+ * copy de 20/10/2026: o template não existe na Meta e o envio do WhatsApp não
+ * muda junto com o e-mail. Quando o template novo for aprovado, trocar por
+ * `prazoDoRelampago(r).curto`.
+ */
 const prazoPorExtenso = "Thursday at midnight";
 
-export function htmlDoRelampago(r: Relampago): string {
-  return htmlDoBroadcast({
-    preheader: r.email.preheader,
-    etiqueta: "36 hours only",
-    selo: "36 hours only",
-    titulo: r.email.titulo,
-    blocos: r.email.blocos,
-    oferta: { codigo: r.codigo, valor: `${r.percentual}% off`, sobre: "any Fixfy service, applied for you at checkout", validade: "Thursday, midnight" },
-    cta: { texto: r.email.cta, url: linkDoRelampago(r, "email") },
+/**
+ * O prazo de verdade, do `fechaEm` (quinta 23:59:59 de Londres): "11:59pm on
+ * Thursday 22 October 2026 (UK time)". Nada de "36 hours" ou "Thursday" fixo.
+ */
+export function prazoDoRelampago(r: Relampago): { longo: string; data: string; curto: string } {
+  const fim = fechaEm(r);
+  const data = dataLonga(fim) ?? "";
+  const hora = horaCurta(fim) ?? "";
+  return { longo: `${hora} on ${data} (UK time)`, data, curto: `${hora} on ${data}` };
+}
+
+/**
+ * O que a oferta cobre. O cupom do relâmpago é criado na Stripe sem restrição
+ * de produto (`garantirCodigo`), então vale para qualquer serviço, e assunto e
+ * corpo dizem isso (copy: "If all services qualify, subject and body must both
+ * say so").
+ */
+const ROTULO_DA_OFERTA = "any Fixfy booking";
+
+/** Copy aprovada em 20/10/2026 (docs/copy/fixfy-client-copy.json, id 42). */
+export function assuntoDoRelampago(r: Relampago): string {
+  return `${r.percentual}% off ${ROTULO_DA_OFERTA} · Ends ${prazoDoRelampago(r).data}`;
+}
+
+export function emailDoRelampagoPronto(
+  r: Relampago,
+  opcoes?: { primeiroNome?: string | null; descadastroUrl?: string },
+): { assunto: string; preheader: string; html: string; texto: string } {
+  const prazo = prazoDoRelampago(r);
+  const condicoes = r.maxUsos > 0 ? `The offer is limited to the first ${r.maxUsos} bookings.` : null;
+  const preheader = `Use ${r.codigo} before ${prazo.longo}.`;
+  const { html, text } = emailDeMarketing({
+    preheader,
+    estado: { texto: "Offer", cor: "orange" },
+    titulo: "A little help with your next project",
+    primeiroNome: opcoes?.primeiroNome === undefined ? NOME_DO_CONTATO : opcoes.primeiroNome,
+    paragrafos: [
+      "If there’s a job on your list, this could be a good time to get started.",
+      `Use ${r.codigo} for ${r.percentual}% off ${ROTULO_DA_OFERTA} made by ${prazo.longo}. You can choose from the available appointment dates when you book.`,
+      ...(condicoes ? [condicoes] : []),
+      "Have a question about the work before booking? Just reply. We’re happy to help.",
+    ],
+    cta: { label: "View the offer", url: linkDoRelampago(r, "email") },
+    descadastroUrl: opcoes?.descadastroUrl ?? LINK_DE_SAIDA,
   });
+  return { assunto: assuntoDoRelampago(r), preheader, html, texto: text };
+}
+
+export function htmlDoRelampago(r: Relampago): string {
+  return emailDoRelampagoPronto(r).html;
 }
 
 /** O mesmo e-mail para as duas listas do clube (lead demorando e cliente; lead antigo). */
@@ -125,7 +172,7 @@ async function emailDoRelampago(r: Relampago, segmentos: { duas: string | null; 
     const nome = `${nomeDoBroadcastRelampago(r)}${lista === "semanal" ? " · Weekly" : ""}`;
     const existente = todos.find((b) => b.name === nome);
     if (existente && (existente.scheduled_at || existente.sent_at || existente.status !== "draft")) { feito.push(`${lista}: já estava`); continue; }
-    const id = existente?.id ?? (await criarBroadcast({ segment_id: segmento, from, reply_to, subject: r.email.assunto, html: htmlDoRelampago(r), name: nome })).id;
+    const id = existente?.id ?? (await criarBroadcast({ segment_id: segmento, from, reply_to, subject: assuntoDoRelampago(r), html: htmlDoRelampago(r), name: nome })).id;
     await agendarBroadcast(id, quando.getTime() > agora.getTime() + 2 * 60 * 1000 ? quando : undefined);
     feito.push(`${lista}: ${quando.getTime() > agora.getTime() ? `agendado para ${quando.toISOString()}` : "enviado agora"}`);
   }

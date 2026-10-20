@@ -16,6 +16,12 @@ export type ResolvedNominalBilling = {
   documentEmail: string | null;
   sourceAccountId: string | null;
   mode: AccountBillingAddresseeMode;
+  /**
+   * Só em `mode: "account"`: o nome da EMPRESA (accounts.company_name), sem cair
+   * no contato. É o que a saudação B2B usa ("Hi Acme Lettings team,"); sem ele a
+   * saudação é "Hi team,", nunca o nome de uma pessoa (handoff de copy, 20/10/2026).
+   */
+  companyName?: string | null;
 };
 
 type AccountRow = {
@@ -212,6 +218,7 @@ export async function resolveNominalBillingParty(
     documentEmail,
     sourceAccountId: sourceId,
     mode: "account",
+    companyName: a.company_name?.trim() || null,
   };
 }
 

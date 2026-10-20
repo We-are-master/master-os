@@ -1,29 +1,30 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { comentarioDoEmail, htmlDoEmail, textoDoEmail } from "./email-do-leo";
+import { comentarioDoEmail, montarEmail, REMETENTE_DA_EQUIPE } from "./email-do-leo";
 import { papeisPadrao } from "@/lib/responsavel-operacao";
 
-describe("e-mail de chase", () => {
-  it("sai com quem assina como autor e sem assinatura no corpo (o Zendesk põe a dele)", () => {
-    const c = comentarioDoEmail("Hi Ann, just checking in.", 123);
+const e = { assunto: "Your quote", preheader: "Pre", saudacao: "Hi <b>Ann</b>,", paragrafos: ["Line one", "Line two"] };
+
+describe("e-mail de acompanhamento", () => {
+  it("comentário público com o autor do papel e a moldura leve do Zendesk", () => {
+    const c = comentarioDoEmail(e, 123);
     assert.equal(c.public, true);
     assert.equal(c.author_id, 123);
-    assert.match(c.html_body, /<p style="margin:0">Kind regards,<\/p>$/);
-    assert.doesNotMatch(c.html_body, /\| Operations/);
+    assert.doesNotMatch(c.html_body, /<!DOCTYPE/);
+    assert.doesNotMatch(c.html_body, /The Fixfy team/);
+    assert.doesNotMatch(c.html_body, /\| Operations|Kind regards/);
   });
   it("padrão: o mesmo autor de antes, até alguém editar o papel", () => {
     assert.deepEqual(papeisPadrao({}).autor_emails, { zendesk_user_id: 6227542863391, nome: "Leonardo Piovesan" });
   });
-  it("fora do Zendesk a assinatura de quem assina vai no corpo", () => {
-    assert.match(htmlDoEmail("Hi Ann", "Kind regards,", "Ana Silva"), /<strong>Ana Silva<\/strong> \| Operations/);
-    assert.doesNotMatch(htmlDoEmail("Hi Ann"), /<strong>/);
+  it("texto do cliente é escapado e o texto puro sai do mesmo conteúdo", () => {
+    const { html, text } = montarEmail(e);
+    assert.match(html, /Hi &lt;b&gt;Ann&lt;\/b&gt;,/);
+    assert.match(text, /^Hi <b>Ann<\/b>,\n\nLine one\n\nLine two\n\nNeed a hand/);
+    assert.match(text, /\+44 20 4538 4668/);
+    assert.match(text, /hello@getfixfy\.com/);
   });
-  it("parágrafos viram <p> e o texto do cliente é escapado", () => {
-    const h = htmlDoEmail("Hi <b>Ann</b>,\n\nLine one\nline two");
-    assert.match(h, /<p style="margin:0 0 12px">Hi &lt;b&gt;Ann&lt;\/b&gt;,<\/p>/);
-    assert.match(h, /Line one<br>line two/);
-  });
-  it("texto puro para o Resend termina com a assinatura", () => {
-    assert.match(textoDoEmail("Hi Ann", "Ana Silva"), /Kind regards,\n\nAna Silva \| Operations/);
+  it("fora do Zendesk sai como a equipe, sem nome de pessoa", () => {
+    assert.equal(REMETENTE_DA_EQUIPE, "Fixfy <no-reply@getfixfy.com>");
   });
 });

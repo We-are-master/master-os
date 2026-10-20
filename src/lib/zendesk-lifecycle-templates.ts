@@ -1,130 +1,151 @@
 /**
- * Customer-facing HTML templates for Zendesk public comments fired when a
- * job/quote crosses a terminal lifecycle event:
- *   - Job completed   → "Job done — thanks" (auto-closes ticket via Completed status)
- *   - Job cancelled   → "Job cancelled — here's why"
- *   - Quote rejected  → "Quote closed" (auto-closes ticket via Lost status)
+ * Os avisos ao cliente que saem como comentário no ticket do Zendesk quando o
+ * job ou a cotação chega a um fim:
  *
- * Detailed final-review with report PDFs + invoice still goes through the
- * existing manual `final-review-email` flow — these are short notices.
+ *   - Job concluído  (#37)  "Your work is complete", com as fotos anexadas
+ *   - Job cancelado  (#38)  "Your booking has been cancelled"
+ *   - Cotação fechada (#23) "Your quote is now closed"
+ *
+ * Copy aprovada em docs/copy/fixfy-client-copy.json (ids 23, 37, 38), na
+ * moldura única de `emails/fixfy-shell` com `zendesk: true`.
+ *
+ * Regras que moram aqui (handoff de 20/10/2026):
+ *   - saudação pela RELAÇÃO com a conta (B2B "Hi Acme Lettings team,", B2C
+ *     "Hi Sarah,"), nunca o nome da pessoa de contato no B2B;
+ *   - o aviso de conclusão não promete fatura (nem toda conta recebe uma) e só
+ *     fala de foto quando há foto anexada;
+ *   - o cancelamento não fala de reembolso: não há status de pagamento
+ *     verificado aqui;
+ *   - a cotação fechada não repete a nota de recusa do cliente.
+ *
+ * O e-mail final com relatório e fatura continua no `final-review-email`.
  */
 
-interface CommonArgs {
-  customerName: string;
-  reference:    string;
-  title:        string;
-  /** Optional free-text reason (cancellation reason / rejection note). */
-  reason?:      string | null;
+import { emailFixfy, dataLonga, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
+
+export type AvisoDoCiclo = {
+  assunto: string;
+  preheader: string;
+  html: string;
+  texto: string;
+  /** Texto curto para ticket de WhatsApp (sem HTML, sem rodapé de e-mail). */
+  whatsapp: string;
+};
+
+type Base = {
+  publico: Publico;
+  /** JOB-9800 / QT-1234, sem "#". */
+  reference: string;
+  /** Nome do serviço do catálogo ("End of Tenancy Clean"); cai no título do job. */
+  service: string;
+};
+
+const limpo = (s: string | null | undefined) => String(s ?? "").replace(/\s+/g, " ").trim();
+
+/** #37: job concluído (fim do final check). */
+export function buildJobCompleted(args: Base & { propertyAddress?: string | null; photoCount?: number }): AvisoDoCiclo {
+  const ref = limpo(args.reference);
+  const servico = limpo(args.service) || "maintenance";
+  const endereco = limpo(args.propertyAddress);
+  const fotos = Math.max(0, Math.floor(args.photoCount ?? 0));
+  const onde = endereco ? ` at ${endereco}` : "";
+  const primeiro = fotos > 0
+    ? `Your ${servico} work${onde} is complete, and we’ve attached ${fotos === 1 ? "a photo" : "photos"} of the finished work for you to look through.`
+    : `Your ${servico} work${onde} is complete.`;
+  const assunto = ref ? `Your ${servico} work is complete · ${ref}` : `Your ${servico} work is complete`;
+  const preheader = fotos > 0
+    ? `${fotos === 1 ? "A photo" : "Photos"} of the finished work ${fotos === 1 ? "is" : "are"} attached for you to review.`
+    : `Your ${servico} work is complete.`;
+  const paragrafos = [
+    primeiro,
+    "We hope you’re pleased with the result. If anything needs our attention, just reply and tell us.",
+    "Thank you for choosing Fixfy.",
+  ];
+  const { html, text } = emailFixfy({
+    zendesk: true,
+    preheader,
+    estado: { texto: "Completed", cor: "green" },
+    titulo: "That’s another job sorted",
+    saudacao: saudacao(args.publico),
+    paragrafos,
+    linhas: [
+      ["Service", servico],
+      ["Property", endereco],
+      ["Booking", ref],
+    ],
+  });
+  return { assunto, preheader, html, texto: text, whatsapp: [saudacao(args.publico), ...paragrafos].join(" ") };
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+/** #38: job cancelado. `visitDate` é o `scheduled_date` (YYYY-MM-DD) ou um ISO. */
+export function buildJobCancelled(args: Base & { propertyAddress?: string | null; visitDate?: string | null }): AvisoDoCiclo {
+  const ref = limpo(args.reference);
+  const servico = limpo(args.service) || "maintenance";
+  const endereco = limpo(args.propertyAddress);
+  const dia = dataLonga(args.visitDate ?? null);
+  const assunto = ref ? `Your booking has been cancelled · ${ref}` : "Your booking has been cancelled";
+  const preheader = `An update on your ${servico} booking.`;
+  // cancellation_payment_sentence: omitida. Não há status verificado de pagamento/reembolso neste ponto.
+  const paragrafos = [
+    dia ? `Your booking for ${servico} on ${dia} has been cancelled.` : `Your booking for ${servico} has been cancelled.`,
+    "If you weren’t expecting this, or would like help arranging another visit, please reply and we’ll look into it.",
+  ];
+  const { html, text } = emailFixfy({
+    zendesk: true,
+    preheader,
+    estado: { texto: "Cancelled", cor: "muted" },
+    titulo: "Your booking has been cancelled",
+    saudacao: saudacao(args.publico),
+    paragrafos,
+    linhas: [
+      ["Service", servico],
+      ["Property", endereco],
+      ["Booking", ref],
+    ],
+  });
+  const wa = `${saudacao(args.publico)} Your ${servico} booking${dia ? ` on ${dia}` : ""} has been cancelled. If this wasn’t expected, or you’d like help arranging another visit, please reply.${ref ? ` Reference: ${ref}.` : ""}`;
+  return { assunto, preheader, html, texto: text, whatsapp: wa };
+}
+
+/** #23: cotação recusada pelo cliente. A nota de recusa NÃO volta para o cliente. */
+export function buildQuoteRejected(args: Base): AvisoDoCiclo {
+  const ref = limpo(args.reference);
+  const servico = limpo(args.service);
+  const assunto = ref ? `Your quote has been closed · ${ref}` : "Your quote has been closed";
+  const preheader = servico ? `Thank you for letting us know about your ${servico} quote.` : "Thank you for letting us know about your quote.";
+  const primeiro = ref && servico
+    ? `We’ve recorded that you won’t be going ahead with quote ${ref} for ${servico}.`
+    : ref
+      ? `We’ve recorded that you won’t be going ahead with quote ${ref}.`
+      : servico
+        ? `We’ve recorded that you won’t be going ahead with your quote for ${servico}.`
+        : "We’ve recorded that you won’t be going ahead with your quote.";
+  const paragrafos = [
+    primeiro,
+    "Thank you for considering Fixfy. If your plans change, just reply and we’ll be happy to look at the work again.",
+  ];
+  const { html, text } = emailFixfy({
+    zendesk: true,
+    preheader,
+    estado: { texto: "Quote closed", cor: "muted" },
+    titulo: "Your quote is now closed",
+    saudacao: saudacao(args.publico),
+    paragrafos,
+    linhas: [
+      ["Quote", ref],
+      ["Service", servico],
+    ],
+  });
+  return { assunto, preheader, html, texto: text, whatsapp: [saudacao(args.publico), ...paragrafos].join(" ") };
 }
 
 /**
- * A saudação chega PRONTA de `resolveCustomerGreetingName`.
- *
- * Aplicar `firstName` aqui truncava nome de empresa: um aviso para a conta
- * "Fantastic Services" saía como "Hi Fantastic". Quem sabe se o nome é de
- * pessoa ou de organização é o resolver, que já corta o primeiro nome quando é
- * cliente final.
+ * Quem recebe, pela relação com a conta: organização resolvida (conta B2B que
+ * não é a nossa) vira "Hi {empresa} team,"; sem organização é cliente final.
+ * `loadAccountOrganizationName` já devolve null para a conta da própria Fixfy.
  */
-function escapeHtmlSafeName(name: string): string {
-  return name.trim() || "there";
-}
-
-function compactHtml(html: string): string {
-  return html.replace(/>\s+</g, "><").trim();
-}
-
-function shell(args: { tone: "success" | "warn" | "neutral"; eyebrow: string; heading: string; body: string }): string {
-  const palette = {
-    success: { bg: "#E4F4EC", fg: "#0E8A5F", deep: "#0A5A3F" },
-    warn:    { bg: "#FFF3E0", fg: "#B35900", deep: "#7A3D00" },
-    neutral: { bg: "#F0F1F7", fg: "#444B6B", deep: "#1F2540" },
-  }[args.tone];
-
-  const html = `
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;max-width:600px;">
-  <div style="background:${palette.bg};border-radius:10px;padding:18px 22px;margin-bottom:16px;">
-    <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${palette.fg};">
-      ${escapeHtml(args.eyebrow)}
-    </p>
-    <p style="margin:0;font-size:18px;font-weight:700;color:${palette.deep};">
-      ${escapeHtml(args.heading)}
-    </p>
-  </div>
-  ${args.body}
-</div>
-  `;
-  return compactHtml(html);
-}
-
-export function buildJobCompletedHtml(args: CommonArgs & { photoCount?: number }): string {
-  const fname = escapeHtmlSafeName(args.customerName);
-  const fotos = args.photoCount ?? 0;
-  const fotosLinha = fotos > 0
-    ? `
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    We've attached ${fotos === 1 ? "a photo" : `${fotos} photos`} from the finished job so you can see the result.
-  </p>`
-    : "";
-  const body = `
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    Hi ${escapeHtml(fname)}, your job <strong>#${escapeHtml(args.reference)}</strong>
-    (${escapeHtml(args.title)}) is complete. Our team has checked the report and signed it off.
-  </p>${fotosLinha}
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    Your invoice follows separately. If anything doesn't look right, just reply to this email and we'll sort it out.
-  </p>
-  <p style="margin:0;font-size:13px;line-height:20px;color:#6B6B85;">
-    Thanks for choosing Fixfy.
-  </p>
-  `;
-  return shell({ tone: "success", eyebrow: "✓ Job completed", heading: "All done. Thanks!", body });
-}
-
-export function buildJobCancelledHtml(args: CommonArgs): string {
-  const fname = escapeHtmlSafeName(args.customerName);
-  // Sem bloco de Reason (dono, 26/08): o motivo interno ("Client cancelled",
-  // troca de parceiro, margem) é conversa de escritório. Quem recebe só precisa
-  // saber QUE cancelou e que respondendo a gente resolve.
-  const body = `
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    Hi ${escapeHtml(fname)}, the job <strong>#${escapeHtml(args.reference)}</strong>
-    (${escapeHtml(args.title)}) has been cancelled.
-  </p>
-  <p style="margin:0;font-size:13px;line-height:20px;color:#6B6B85;">
-    If this wasn't expected, just reply to this email. We're happy to help reschedule
-    or sort out any questions.
-  </p>
-  `;
-  return shell({ tone: "warn", eyebrow: "Job cancelled", heading: "Booking cancelled", body });
-}
-
-export function buildQuoteRejectedHtml(args: CommonArgs): string {
-  const fname = escapeHtmlSafeName(args.customerName);
-  const reasonBlock = args.reason?.trim()
-    ? `
-  <div style="background:#F7F7FB;border:1px solid #E4E4EC;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
-    <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#6B6B85;">Your note</p>
-    <p style="margin:0;font-size:14px;line-height:21px;color:#3A3A55;white-space:pre-wrap;">${escapeHtml(args.reason!.trim())}</p>
-  </div>`
-    : "";
-  const body = `
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    Hi ${escapeHtml(fname)}, we've recorded that quote
-    <strong>#${escapeHtml(args.reference)}</strong> won't be going ahead.
-  </p>
-  ${reasonBlock}
-  <p style="margin:0;font-size:13px;line-height:20px;color:#6B6B85;">
-    If you'd like a revised quote or have questions, just reply to this email — we're here.
-  </p>
-  `;
-  return shell({ tone: "neutral", eyebrow: "Quote closed", heading: "Quote no longer active", body });
+export function publicoDoAviso(organizacao: string | null | undefined, nomeDoCliente: string | null | undefined): Publico {
+  const org = limpo(organizacao);
+  if (org) return { tipo: "b2b", empresa: org };
+  return { tipo: "b2c", primeiroNome: limpo(nomeDoCliente).split(" ")[0] || null };
 }

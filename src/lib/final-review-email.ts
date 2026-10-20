@@ -13,8 +13,10 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
-import { buildInvoiceEmailHTML } from "@/lib/invoice-email-template";
-import { buildInvoiceEmailSubject, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
+import { buildInvoiceClientEmail } from "@/lib/invoice-email-template";
+import { renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
+import { buildFinalReportEmail } from "@/lib/emails/final-report-email";
+import { publicoDaCobranca } from "@/lib/emails/billing-email-common";
 import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import type { InvoiceTradeFeeJob } from "@/lib/invoice-trade-fee-split";
@@ -26,14 +28,6 @@ import type { Account, Invoice } from "@/types/database";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 type ReportRow = {
   id: string;
@@ -307,10 +301,13 @@ export async function sendFinalReviewEmail(
 
   const ref = String(j.reference ?? "");
   const title = String(j.title ?? "Job");
+  // Arquivos do relatório anexados ATÉ AQUI (o PDF da fatura entra depois e não conta como relatório).
+  const reportAttachmentCount = includeReport ? attachments.length : 0;
   const missingReportNote =
-    includeReport && attachments.length === 0
-      ? "We could not attach report PDFs (missing files or storage). Your job is finalised; contact us if you need copies."
+    includeReport && reportAttachmentCount === 0
+      ? "We could not attach report PDFs (missing files or storage)."
       : "";
+  const publico = publicoDaCobranca(billing.mode, billing.displayName, billing.companyName);
 
   const tradeFeeJob: InvoiceTradeFeeJob | null =
     typeof j.client_price === "number"
@@ -339,57 +336,63 @@ export async function sendFinalReviewEmail(
   const feeVat = formatoDaConta ? { ratePct: formatoDaConta.feeVat.ratePct, vatNumber: formatoDaConta.feeVat.vatNumber } : null;
 
   // A fatura vai em PDF junto: é o documento que o cliente guarda, e é o mesmo do botão "Send via email".
+  let invoicePdfAttached = false;
   if (includeInvoice && invoiceRow) {
     const pdf = await renderInvoicePdfBuffer(admin, invoiceRow.id);
     if ("error" in pdf) console.error("final-review-email invoice PDF:", pdf.error);
-    else attachments.push({ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" });
+    else {
+      attachments.push({ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" });
+      invoicePdfAttached = true;
+    }
   }
 
-  let html: string;
-  if (includeInvoice && invoiceRow) {
-    html = buildInvoiceEmailHTML(
-      invoiceRow,
-      {
-        clientName: billing.displayName,
-        jobTitle: title,
-        propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
-        // `jobs.service_type` não existe em produção: pedi-la fazia a rota inteira responder "Job not found".
-        serviceType: title,
-        completionDate:
-          typeof j.completed_date === "string"
-            ? j.completed_date
-            : new Date().toISOString().slice(0, 10),
-        quoteReference,
-      },
-      tradeFeeJob,
-      {
-        reportAttachmentCount: includeReport ? attachments.length : 0,
-        missingReportNote: missingReportNote || undefined,
-        // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
-        agentParty,
-        feeVat,
-      },
-    );
-  } else {
-    const reportSentence =
-      includeReport && attachments.length > 0
-        ? `Please find the final report${attachments.length === 1 ? "" : "s"} attached.`
-        : includeReport
-          ? "Final report files were requested; see note below if attachments are missing."
-          : "No report PDFs are included in this message (per your request).";
-
-    html = `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;font-size:15px;color:#111;line-height:1.5;max-width:560px">
-<p>Hi ${escapeHtml(billing.displayName)},</p>
-<p>Your job <strong>${escapeHtml(ref)}</strong> (${escapeHtml(title)}) has been finalised.</p>
-<p>${reportSentence}</p>
-${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(missingReportNote)}</p>` : ""}
-<p style="margin:16px 0">If you have any questions, reply to this email or call us.</p>
-<p style="color:#666;font-size:13px">${escapeHtml(companyName)}</p>
-</body></html>`;
-  }
-
-  // O mesmo assunto de toda fatura ("Your invoice INV-… is ready"); recibo quando já está paga.
-  const emailSubject = includeInvoice && invoiceRow ? buildInvoiceEmailSubject(invoiceRow, ref) : `Job ${ref}: final update`;
+  // Copy 12 (relatório + fatura, ou recibo se já pago) ou 13 (só relatório), na moldura única.
+  // Duas versões do mesmo texto: e-mail inteiro (Resend / ticket) e comentário público do Zendesk.
+  const montar = (zendesk: boolean) => {
+    if (includeInvoice && invoiceRow) {
+      const e = buildInvoiceClientEmail(
+        invoiceRow,
+        {
+          clientName: billing.displayName,
+          jobTitle: title,
+          propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
+          // `jobs.service_type` não existe em produção: pedi-la fazia a rota inteira responder "Job not found".
+          serviceType: title,
+          completionDate:
+            typeof j.completed_date === "string"
+              ? j.completed_date
+              : new Date().toISOString().slice(0, 10),
+          quoteReference,
+          billingMode: billing.mode,
+          jobReference: ref,
+        },
+        tradeFeeJob,
+        {
+          final: true,
+          reportAttachmentCount,
+          missingReportNote: missingReportNote || undefined,
+          documentAttached: invoicePdfAttached,
+          // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
+          agentParty,
+          feeVat,
+          zendesk,
+        },
+      );
+      return { subject: e.subject, html: e.html, text: e.text };
+    }
+    return buildFinalReportEmail({
+      publico,
+      jobReference: ref,
+      service: title,
+      propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
+      reportAttachmentCount,
+      reportRequested: includeReport,
+      zendesk,
+    });
+  };
+  const emailFinal = montar(false);
+  const html = emailFinal.html;
+  const emailSubject = emailFinal.subject;
 
   // Cópia pedida pela conta (o financeiro do cliente), só quando a fatura vai junto (mig 324).
   const ccDaConta = includeInvoice && invoiceRow ? await copiasDaFaturaDaConta(admin, invoiceRow.source_account_id ?? billing.sourceAccountId ?? null, [emailTo]) : [];
@@ -415,7 +418,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
       }
       await zdSendCustomerComment({
         ticketId:    zdTicketId!,
-        htmlBody:    html,
+        htmlBody:    montar(true).html,
         attachments: attachments.length > 0 ? attachments : undefined,
       });
       channel = "zendesk";
@@ -457,6 +460,7 @@ ${missingReportNote ? `<p style="color:#B45309;font-size:14px">${escapeHtml(miss
       ...(ccDaConta.length ? { cc: ccDaConta } : {}),
       subject: emailSubject,
       html,
+      text: emailFinal.text,
       attachments: attachments.length > 0 ? attachments : undefined,
     });
 
