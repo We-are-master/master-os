@@ -156,8 +156,11 @@ export function textoDaQuote(a: {
   link?: string | null;
   /** entrada que o aceite cobra (regra da conta); 0 ou ausente = sem entrada */
   entrada?: number | null;
+  /** Datas de início do parceiro já formatadas ("Fri 24 Oct"); o cliente escolhe no link. */
+  datas?: string[];
 }): string {
   const s = servicoCurto(a.servico);
+  const datas = (a.datas ?? []).filter(Boolean);
   const pagamento = fraseDePagamentoDaCotacao({ total: a.total, entrada: a.entrada });
   const seguir = a.link
     ? `Review the details and accept here: ${a.link}`
@@ -166,6 +169,7 @@ export function textoDaQuote(a: {
     `${saudacaoDe(a.nome)} Your quote${s ? ` for ${s}` : ""} is ready: ${gbp(a.total)} for the work described.`,
     // Sem ponto colado no link: alguns aparelhos levam o ponto para dentro da URL.
     seguir,
+    datas.length ? `The professional can start on ${datas.join(" or ")}${a.link ? ", and you choose the day when you accept" : ""}.` : "",
     pagamento,
     "If you have any questions, just reply.",
     a.referencia?.trim() ? `Reference: ${a.referencia.trim()}.` : "",

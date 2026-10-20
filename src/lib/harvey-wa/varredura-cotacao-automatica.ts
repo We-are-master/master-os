@@ -19,7 +19,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { zendeskApi, addTicketTags, removeTicketTags, updateTicket, replyToSideConversation } from "@/lib/zendesk";
-import { ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_QUOTE_READY } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE } from "@/lib/zendesk-statuses";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { escolherMelhorLance, type Lance } from "@/lib/quote-melhor-lance";
@@ -31,12 +31,12 @@ import { melhoresParceirosParaCotacao, nomeDoParceiro, MIN_CONVIDADOS } from "./
 import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
-import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
+import { precisaDeAcao } from "@/lib/fila-de-acao";
 import {
-  TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_PEDIU_CONTEXTO, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
-  decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres, margemDe, precoDoLance,
-  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoDaQuote, textoPedeContexto, type Destinatario,
-  type ContextoDaCotacao, type Falta,
+  TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PEDIU_CONTEXTO, TAG_SEM_LANCE,
+  enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres,
+  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoPedeContexto, type Destinatario,
+  type ContextoDaCotacao,
 } from "./cotacao-automatica";
 
 const H = 3_600_000;
@@ -478,93 +478,10 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
     return true;
   }
 
-  // precificar
-  const jaPrecificada = q.status === "quote_ready" && Number(q.total_value) > 0 && Number(q.partner_cost) > 0;
-  const custo = jaPrecificada ? Number(q.partner_cost) : (escolha?.melhor.valor ?? 0);
-  const total = jaPrecificada ? Number(q.total_value) : precoDoLance(custo);
-  const faltando: Falta[] = faltandoNoContexto({
-    servico: q.service_type,
-    postcode: q.postcode,
-    endereco: q.property_address,
-    escopo: q.scope,
-    fotos: imagensDaQuote(q).length,
-  });
-  const decisao = decidirEnvio({ total, custo, faltando, canalAberto: conv.canal === "email" || (conv.janelaAberta && !!conv.conversa) });
-  const parceiro = escolha?.melhor.partner_name ?? "partner";
-  const resumo = `bid £${custo.toFixed(2)} (${parceiro}) → £${total.toFixed(2)} at ${Math.round(margemDe(total, custo) * 100)}% margin`;
-  /**
-   * Mesmo caminho das outras quotes (16/10/2026): link de aceite que abre o pagamento da
-   * entrada da conta. Antes pedia "reply with a day" e não havia caminho automático até
-   * pagamento nem job.
-   */
-  const { createQuoteResponseToken } = await import("@/lib/quote-response-token");
-  const { appBaseUrl } = await import("@/lib/app-base-url");
-  const { entradaPelaConta, percentualDeEntradaDaConta } = await import("@/lib/deposito-da-cotacao");
-  const link = `${appBaseUrl()}/quote/respond?token=${encodeURIComponent(createQuoteResponseToken(q.id))}&action=accept`;
-  const qq = q as { client_id?: string | null; deposit_required?: number | null };
-  let contaDoCliente: string | null = null;
-  if (qq.client_id) {
-    const { data: c } = await sb.from("clients").select("source_account_id").eq("id", qq.client_id).maybeSingle();
-    contaDoCliente = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
-  }
-  const pctDaConta = await percentualDeEntradaDaConta(sb, contaDoCliente);
-  const entradaPrevista =
-    pctDaConta === undefined
-      ? null
-      : entradaPelaConta({ total, entradaAtual: Number(qq.deposit_required ?? 0), percentualDaConta: pctDaConta });
-  const entrada = entradaPrevista?.deposit_required ?? Number(qq.deposit_required ?? 0);
-  const texto = textoDaQuote({ nome: destinatarioDoTicket(t, nome), servico: q.service_type, total, referencia: q.reference, link, entrada });
-  if (!aplicar) {
-    out.acoes.push(`${quem}: ${resumo}: would ${decisao.enviar ? `SEND to the customer (${conv.canal}) and move to Approval` : `move to Quote Ready for review (${decisao.motivos.join(", ")})`}`);
-    return true;
-  }
-
-  if (!jaPrecificada && escolha) {
-    const { selectQuoteBidForProposal } = await import("@/lib/quotes/select-quote-bid-for-proposal");
-    const { insertQuoteLineItemsResilient } = await import("@/lib/quote-line-items-insert");
-    await selectQuoteBidForProposal(sb, escolha.melhor.id, q.id);
-    const { count } = await sb.from("quote_line_items").select("id", { count: "exact", head: true }).eq("quote_id", q.id);
-    if (!count) {
-      await insertQuoteLineItemsResilient(sb, [
-        { quote_id: q.id, description: (q.title || q.service_type || "Works as described").slice(0, 300), quantity: 1, unit_price: total, sort_order: 0, partner_unit_cost: custo, notes: `From ${parceiro}'s bid` },
-      ]);
-    }
-    await sb
-      .from("quotes")
-      .update({ status: "quote_ready", total_value: total, sell_price: total, margin_percent: Math.round(margemDe(total, custo) * 1000) / 10, updated_at: new Date().toISOString() })
-      .eq("id", q.id);
-  }
-
-  if (decisao.enviar) {
-    if (entradaPrevista) await sb.from("quotes").update(entradaPrevista).eq("id", q.id);
-    const via = await falarComCliente(t, user, conv, texto, q.service_type);
-    // Quote enviada: Awaiting approval no OS, como o envio pela tela.
-    const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
-    const gravado = await persistQuoteSentToCustomer(sb, q.id, new Date().toISOString(), q.client_email ?? undefined);
-    if (gravado.error) console.error(`[auto-quote] ${q.reference}: enviada mas o status não gravou`, gravado.error.message);
-    await updateTicket({
-      ticketId: t.id,
-      customStatusId: ZD_STATUS_AWAITING_APPROVAL,
-      publicComment: false,
-      commentBody: `🤖 Auto-quote: ${resumo}. Under £600 with full context, so the quote was SENT to the customer (${via}):\n\n"${texto}"\n\nThe approval follow-up takes it from here.`,
-      additionalTags: [TAG_QUOTE_ENVIADA, TAG_FIM],
-    });
-    if (t.tags.includes(TAG_SEM_LANCE)) await removeTicketTags(t.id, [TAG_SEM_LANCE]);
-    await acaoFeita(t.id);
-    out.acoes.push(`${quem}: ${resumo}, sent (${via})`);
-    return true;
-  }
-  await updateTicket({
-    ticketId: t.id,
-    customStatusId: ZD_STATUS_QUOTE_READY,
-    publicComment: false,
-    commentBody: `🤖 Auto-quote: ${resumo}. NOT sent automatically: ${decisao.motivos.join(", ")}.\n\nCheck and send. Suggested message:\n\n${texto}`,
-    additionalTags: [TAG_PARA_REVISAR, TAG_FIM],
-  });
-  if (t.tags.includes(TAG_SEM_LANCE)) await removeTicketTags(t.id, [TAG_SEM_LANCE]);
-  await precisaDeAcao(t.id, `Quote ${q.reference} priced at £${total.toFixed(2)}, not sent automatically (${decisao.motivos.join(", ")}): check and send`);
-  out.acoes.push(`${quem}: ${resumo}, Quote Ready for review (${decisao.motivos.join(", ")})`);
-  return true;
+  // precificar: desde 20/10/2026 só a varredura de lances (quote-lances-sweep.ts) põe preço,
+  // com a janela dos outros parceiros, a conferência de escopo e a regra B2B. Aqui não.
+  out.pulados.push(`${quem}: ${q.reference} has a bid: priced by the bids sweep`);
+  return false;
 }
 
 /* ============================== a varredura ============================== */

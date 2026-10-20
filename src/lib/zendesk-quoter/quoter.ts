@@ -26,7 +26,10 @@ import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL 
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
-import { tipoDoPedido } from "@/lib/classificar-pedido";
+import { tipoDoPedido, classificarPedido } from "@/lib/classificar-pedido";
+import { catalogoAtivo } from "@/lib/catalogo-ativo";
+import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
+import { aceitarHoraB2B } from "./b2b-hora";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
 import { soOqueENovo } from "./sem-citacao";
@@ -701,6 +704,40 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
    */
   const org = await organizacaoDoTicket(ticket);
 
+  /**
+   * Conta B2B pedindo trabalho por hora (dono, 19/10/2026): não vai para cotação. Aceita
+   * no valor do e-mail ou na taxa da conta e o job nasce sem parceiro (b2b-hora.ts).
+   * Em ensaio só escreve "eu faria" e o fluxo de cotação segue como antes.
+   */
+  let notaHora: string | null = null;
+  if (org.ok && !isDirectConsumerAccount(org.id)) {
+    const catalogo = await catalogoAtivo(createServiceClient()).catch(() => []);
+    const classe = classificarPedido({ servico: resultado.quote.services[0]?.trade ?? null, descricao: pedido.scopeOfWork || pedido.quoteRequest }, catalogo);
+    if (classe.modo === "hora") {
+      const modo = await modoDe("b2b_hora");
+      if (modo !== "off") {
+        notaHora = await aceitarHoraB2B({
+          ticketId,
+          tags: ticket.tags,
+          texto: `${ticket.subject}\n${ticket.thread}`,
+          remetente: ticket.requesterName,
+          conta: { id: org.id, nome: org.nome },
+          classe,
+          escopo: pedido.scopeOfWork,
+          enderecoDoPedido: pedido.propertyAddress,
+          postcodeDoPedido: pedido.postcode,
+          modo,
+          postar,
+          apiKey,
+        }).catch((e) => `── B2B hourly ──\nFailed: ${e instanceof Error ? e.message : String(e)}`);
+        if (modo === "on" && postar) {
+          await postarNotaInterna(ticketId, notaHora);
+          return { ticketId, nota: notaHora, pedido, resultado, quoteRef: null };
+        }
+      }
+    }
+  }
+
   let quoteRef: string | null = null;
   if (postar && org.ok) {
     const criada = await garantirQuoteNoOs(ticket, pedido, resultado, org.id).catch((e) => {
@@ -767,6 +804,7 @@ export async function cotarTicket(ticketId: number, postar: boolean): Promise<Re
     ...(convite ? ["", "──────────", convite.nota] : []),
     ...(aviso ? ["", "──────────", aviso] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
+    ...(notaHora ? ["", "──────────", notaHora] : []),
   ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado, quoteRef };

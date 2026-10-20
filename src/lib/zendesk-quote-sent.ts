@@ -81,6 +81,8 @@ export type DadosDaCotacao = {
   pdfAnexado?:      boolean;
   /** Texto que a equipe escreveu no envio: entra no lugar do primeiro parágrafo. */
   mensagem?:        string | null;
+  /** Datas de início do parceiro (YYYY-MM-DD, só as futuras): o cliente escolhe uma no aceite. */
+  datasDeInicio?:   string[];
   zendesk?:         boolean;
 };
 
@@ -117,11 +119,14 @@ export function emailDaCotacao(d: DadosDaCotacao): { assunto: string; preheader:
     ? d.mensagem.trim()
     : `Thanks for telling us what you need. We’ve put together your quote${servico ? ` for ${servico}` : ""}, with the work included and price set out below.`;
   const temBotao = Boolean(d.acceptUrl);
+  // Datas do parceiro (20/10/2026): o cliente já escolhe uma no aceite, sem vai e volta.
+  const datas = (d.datasDeInicio ?? []).map(diaCurto).filter(Boolean).join(" or ");
   const paragrafos = [
     primeiro,
     temBotao
       ? "Have a look through the details. If everything looks right, you can accept the quote using the button."
       : "Have a look through the details. If everything looks right, just reply to accept the quote.",
+    datas ? `The professional can start on ${datas}${temBotao ? ", and you choose the day when you accept" : ""}.` : null,
     pagamento,
     "If you’d like to ask a question or adjust the work included, just reply. We’ll be happy to help.",
   ].filter((p): p is string => Boolean(p));
@@ -144,6 +149,7 @@ export function emailDaCotacao(d: DadosDaCotacao): { assunto: string; preheader:
       ["Work included", d.escopo],
       ["Itemised pricing", itensRotulo(d.itens)],
       ["Total", total],
+      ["Available start dates", datas || null],
       ["Valid until", dataLonga(d.validoAte)],
     ],
     cta: d.acceptUrl ? { label: "Review and accept quote", url: d.acceptUrl } : null,
@@ -175,6 +181,8 @@ interface QuoteSentArgs {
   publico?:        Publico;
   /** O PDF vai anexado ao comentário. Padrão true (os dois caminhos do send-pdf anexam). */
   pdfAttached?:    boolean;
+  /** Datas de início que o parceiro ofereceu (YYYY-MM-DD). */
+  startDates?:     string[];
 }
 
 /** Comentário público do Zendesk com a cotação (copy 20). */
@@ -198,6 +206,14 @@ export function montarQuoteSent(args: QuoteSentArgs): { assunto: string; prehead
     rejectUrl: args.rejectUrl ?? null,
     agentModel: args.agentModel,
     pdfAnexado: args.pdfAttached !== false,
+    datasDeInicio: args.startDates,
     zendesk: true,
   });
+}
+
+/** "Fri 24 Oct" a partir de YYYY-MM-DD. */
+function diaCurto(ymd: string): string {
+  const dt = new Date(`${String(ymd).slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).format(dt);
 }

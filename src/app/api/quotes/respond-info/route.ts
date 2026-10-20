@@ -1,4 +1,5 @@
 import { categoriaDoServico } from "@/lib/report-category";
+import { datasDisponiveis } from "@/lib/quote-accept-job-fields";
 import { registrarReportLink } from "@/lib/report-link-events";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -358,6 +359,8 @@ export async function GET(req: NextRequest) {
     depositRequired: Number(quote.deposit_required) || 0,
     startDateOption1: fmtDate(quote.start_date_option_1 ?? undefined),
     startDateOption2: fmtDate(quote.start_date_option_2 ?? undefined),
+    // As datas que o cliente pode escolher no aceite (só as que não passaram).
+    startDateChoices: datasDisponiveis(quote).map((value) => ({ value, label: fmtDate(value) })),
     status: quote.status,
     lineItems,
     photoUrls,
