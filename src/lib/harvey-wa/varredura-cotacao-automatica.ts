@@ -100,6 +100,21 @@ async function quoteDoTicket(sb: SupabaseClient, ticketId: number): Promise<Quot
   return ((data ?? [])[0] as QuoteRow | undefined) ?? null;
 }
 
+/**
+ * Lead do WhatsApp que virou conversa (20/10/2026): o Harvey cria a cotação no ticket da
+ * CONVERSA e deixa no ticket do lead a nota "Harvey is handling it in the conversation ticket
+ * #N" (zendesk-wa.ts). Sem olhar para lá, o lead parecia "em Bidding sem convite" e ia para o
+ * Action Required com 5 parceiros já convidados (QT-2026-1247/1250/1252).
+ */
+async function ticketDaConversaDoLead(ticketId: number): Promise<number | null> {
+  const { comments } = await zendeskApi<{ comments?: Array<{ plain_body?: string; body?: string }> }>(`tickets/${ticketId}/comments.json?sort_order=desc&per_page=30`);
+  for (const c of comments ?? []) {
+    const m = /conversation ticket #(\d+)/.exec(c.plain_body ?? c.body ?? "");
+    if (m && Number(m[1]) !== ticketId) return Number(m[1]);
+  }
+  return null;
+}
+
 function imagensDaQuote(q: QuoteRow | null): string[] {
   return Array.isArray(q?.images) ? (q!.images as unknown[]).filter((u): u is string => typeof u === "string") : [];
 }
@@ -282,6 +297,19 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
   const desde = await entrouEmNeedsQuote(t.id);
   const conv = await lerConversa(sb, t, user, desde, agora);
   const q = await quoteDoTicket(sb, t.id);
+  if (!q) {
+    const daConversa = await ticketDaConversaDoLead(t.id).catch(() => null);
+    const qc = daConversa ? await quoteDoTicket(sb, daConversa) : null;
+    if (qc) {
+      // A cotação mora no ticket da conversa: o lead não é lugar de convite nem de alarme.
+      out.pulados.push(`${quem}: ${qc.reference} lives in the conversation ticket #${daConversa} (${qc.status}), nothing to do here`);
+      if (aplicar) {
+        await addTicketTags(t.id, [TAG_FIM]);
+        await nota(t.id, `🤖 Auto-quote: ${qc.reference} is handled in the WhatsApp conversation ticket #${daConversa}. Nothing to do on this lead ticket.`);
+      }
+      return false;
+    }
+  }
   const ctx = montarContexto(t, q, conv, await nomeDoTipo(campo(t, CAMPO_TIPO)));
   // Tipo sempre do catálogo (19/10/2026): nome inventado na quote ("Plasterer") não casa parceiro.
   if (ctx.servico) {
