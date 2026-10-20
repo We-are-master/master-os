@@ -50,6 +50,8 @@ type QuoteSummary = {
   depositRequired: number;
   startDateOption1: string | null;
   startDateOption2: string | null;
+  /** Datas do parceiro que o cliente pode escolher no aceite. */
+  startDateChoices?: { value: string; label: string | null }[];
   status: string;
   lineItems: { description: string; quantity: number; unitPrice: number; total: number }[];
   /** Fotos do site (service_request) — galeria com lightbox nas duas visões. */
@@ -72,6 +74,7 @@ function QuoteRespondContent() {
   const action = searchParams.get("action");
 
   const [rejectionReason, setRejectionReason] = useState("");
+  const [dataEscolhida, setDataEscolhida] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +114,7 @@ function QuoteRespondContent() {
             depositRequired: data.depositRequired ?? 0,
             startDateOption1: data.startDateOption1 ?? null,
             startDateOption2: data.startDateOption2 ?? null,
+            startDateChoices: data.startDateChoices ?? [],
             status: data.status ?? "",
             lineItems: data.lineItems ?? [],
             photoUrls: data.photoUrls ?? [],
@@ -193,6 +197,9 @@ function QuoteRespondContent() {
           token,
           action,
           ...(action === "reject" && rejectionReason.trim() ? { rejectionReason: rejectionReason.trim() } : {}),
+          ...(action === "accept" && (dataEscolhida ?? summary?.startDateChoices?.[0]?.value)
+            ? { startDate: dataEscolhida ?? summary?.startDateChoices?.[0]?.value }
+            : {}),
         }),
       });
       const data = await res.json();
@@ -429,6 +436,32 @@ function QuoteRespondContent() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {isAccept && summary?.startDateChoices && summary.startDateChoices.length > 0 ? (
+              <fieldset className="space-y-2">
+                <legend className="mb-1.5 text-sm font-semibold" style={{ color: FIXFY_NAVY }}>
+                  Choose a start date
+                </legend>
+                {[...(summary?.startDateChoices ?? []), { value: "none", label: "None of these dates work for me" }].map((o, i) => {
+                  const marcada = (dataEscolhida ?? summary?.startDateChoices?.[0]?.value) === o.value;
+                  return (
+                    <label
+                      key={o.value}
+                      className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm"
+                      style={{ borderColor: marcada ? FIXFY_NAVY : FIXFY_BORDER, color: FIXFY_NAVY }}
+                    >
+                      <input type="radio" name="startDate" value={o.value} checked={marcada} onChange={() => setDataEscolhida(o.value)} />
+                      {o.value === "none" ? o.label : o.label ?? o.value}
+                      {i === 0 && o.value !== "none" ? <span className="text-xs" style={{ color: FIXFY_MUTED }}>Earliest</span> : null}
+                    </label>
+                  );
+                })}
+                {(dataEscolhida ?? "") === "none" ? (
+                  <p className="text-xs" style={{ color: FIXFY_MUTED }}>
+                    No problem. Accept the quote and we&apos;ll contact you to agree a day.
+                  </p>
+                ) : null}
+              </fieldset>
+            ) : null}
             {!isAccept && (
               <div>
                 <label htmlFor="reason" className="mb-1.5 block text-sm font-semibold" style={{ color: FIXFY_NAVY }}>

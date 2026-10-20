@@ -37,6 +37,10 @@ describe("auto send of a drafted quote", () => {
     assert.equal(maximoDoEnvioAutomatico(), 600);
   });
 
+  it("a business account in the OS can be sent on its own", () => {
+    assert.equal(podeMandarSozinho({ ...seguro, b2b: true, contaDireta: false, contaB2B: true }).enviar, true);
+  });
+
   it("sends when everything is safe", () => {
     assert.deepEqual(podeMandarSozinho(seguro), { enviar: true, motivos: [] });
     assert.equal(podeMandarSozinho({ ...seguro, total: 1001 }).enviar, true);

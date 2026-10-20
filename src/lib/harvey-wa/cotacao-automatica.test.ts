@@ -134,3 +134,8 @@ describe("textoDaQuote com entrada (16/10/2026)", () => {
     assert.doesNotMatch(t, /deposit/);
   });
 });
+
+it("quote text offers the partner's dates to pick on accept", () => {
+  const t = textoDaQuote({ nome: "Chloe", total: 480, link: "https://x", datas: ["Fri 24 Oct", "Mon 27 Oct"] });
+  assert.match(t, /can start on Fri 24 Oct or Mon 27 Oct, and you choose the day when you accept/);
+});

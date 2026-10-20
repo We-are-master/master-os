@@ -51,6 +51,8 @@ export type EntradaDoEnvio = {
   /** Pergunta de escopo ao parceiro ainda sem resposta. */
   perguntaPendente: boolean;
   contaDireta: boolean;
+  /** O cliente é de uma conta de empresa cadastrada (tem taxa, entrada e fatura da conta). */
+  contaB2B?: boolean;
   b2b: boolean;
   /** WhatsApp com a janela aberta ou e-mail do cliente. */
   temCanal: boolean;
@@ -67,8 +69,9 @@ export function podeMandarSozinho(e: EntradaDoEnvio): DecisaoDoEnvio {
   else if (e.total > e.maximo) motivos.push(`over £${e.maximo}`);
   if (!e.escopoConferido) motivos.push("scope not checked against the request");
   if (e.perguntaPendente) motivos.push("scope question pending with the partner");
-  if (e.b2b) motivos.push("business customer");
-  else if (!e.contaDireta) motivos.push("not a direct customer account");
+  // B2B com conta cadastrada sai sozinho desde 20/10/2026 (dono: "um cálculo de preço só, com B2B").
+  if (e.b2b && !e.contaB2B) motivos.push("business customer without an account in the OS");
+  else if (!e.contaDireta && !e.contaB2B) motivos.push("not a direct customer account");
   if (!e.temCanal) motivos.push("no way to reach the customer (WhatsApp window closed and no email)");
   if (e.equipeNaConversa) motivos.push("the team is talking to the customer");
   return { enviar: motivos.length === 0, motivos };

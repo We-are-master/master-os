@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { datasDisponiveis } from "@/lib/quote-accept-job-fields";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { Resend } from "resend";
 import React from "react";
@@ -345,6 +346,7 @@ export async function POST(req: NextRequest) {
       depositRequired: safePdfData.depositRequired ?? null,
       publico:         publicoDaCotacao,
       pdfAttached:     true,
+      startDates:      datasDisponiveis(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null }),
     };
 
     // ─── Choose delivery channel (computed up-front) ────────────────────────

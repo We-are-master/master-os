@@ -1,5 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { dataDoJobNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
+import { dataEscolhidaNoAceite, nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
 import { parceiroQueDeuOLance, prepararJobDoAceite } from "@/lib/quote-deposit-paid-server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyQuoteResponseToken } from "@/lib/quote-response-token";
@@ -55,10 +55,12 @@ export async function POST(req: NextRequest) {
   const marks: Array<[string, number]> = [];
   try {
     const body = await req.json();
-    const { token, action, rejectionReason } = body as {
+    const { token, action, rejectionReason, startDate } = body as {
       token?: string;
       action?: string;
       rejectionReason?: string;
+      /** Uma das datas do lance (YYYY-MM-DD) ou "none". */
+      startDate?: string;
     };
 
     if (!token || typeof token !== "string") {
@@ -154,7 +156,15 @@ export async function POST(req: NextRequest) {
 
     // Job do aceite já com o nome do parceiro e a data proposta no lance (15/10/2026).
     const parceiroNoAceite = await nomeDoParceiroNoAceite(supabase, quote);
-    const dataNoAceite = dataDoJobNoAceite(quote as { start_date_option_1?: string | null; start_date_option_2?: string | null });
+    const { data: dataNoAceite, nenhumaServe } = dataEscolhidaNoAceite(
+      quote as { start_date_option_1?: string | null; start_date_option_2?: string | null },
+      startDate,
+    );
+    // Nenhuma data do parceiro serve: o aceite vale, a equipe combina o dia.
+    if (nenhumaServe && quote.external_source === "zendesk" && quote.external_ref) {
+      const { precisaDeAcao } = await import("@/lib/fila-de-acao");
+      await precisaDeAcao(quote.external_ref, `${quote.reference} accepted, but none of the partner's dates work for the customer: agree a day`).catch(() => null);
+    }
 
     const qClientId = (quote as { client_id?: string | null }).client_id?.trim() ?? "";
     const acceptBilling = await resolveNominalBillingParty(supabase, {

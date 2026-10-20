@@ -32,6 +32,8 @@ import {
 import { modoDe } from "@/lib/harvey/autonomia";
 import { contaEhDireta, envioAutomaticoLigado, maximoDoEnvioAutomatico, podeMandarSozinho } from "@/lib/quote-envio-automatico";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
+import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
+import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -258,6 +260,14 @@ export async function varrerLancesParaRascunho(
       else escopoConferido = true;
     }
 
+    // Conta B2B com preço fechado para o serviço: o preço ao cliente nunca fica abaixo dele.
+    const piso = await pisoDaConta(supabase, q.id).catch(() => null);
+    if (piso && piso.valor > escolhaFinal.precoAoCliente) {
+      const custo = escolhaFinal.melhor.valor;
+      escolhaFinal = { ...escolhaFinal, precoAoCliente: piso.valor, margem: Math.round(((piso.valor - custo) / piso.valor) * 1000) / 10 };
+      avisosDeEscopo.push(`Raised to ${libras(piso.valor)}: ${piso.conta}'s agreed price for this service.`);
+    }
+    const datas = datasDoLance((escolhaFinal.melhor as { notes?: string | null }).notes);
     const nota = await rascunhoDaQuote(q, escolhaFinal, { escopoDoParceiro: escopoConfirmado, avisos: avisosDeEscopo });
 
     if (!armado) {
@@ -295,6 +305,9 @@ export async function varrerLancesParaRascunho(
         partner_cost: escolhaFinal.melhor.valor,
         margin_percent: escolhaFinal.margem,
         total_value: escolhaFinal.precoAoCliente,
+        // As datas que o parceiro ofereceu vão para a quote: o cliente escolhe uma no aceite.
+        start_date_option_1: datas[0] ?? null,
+        start_date_option_2: datas[1] ?? null,
         // A marca de escopo já cumpriu o papel: limpa para a cotação automática não tropeçar nela.
         ...(espera ? { automation_status: "scope_check_resolved" } : {}),
         updated_at: new Date().toISOString(),
@@ -367,6 +380,7 @@ async function mandarSozinho(
     escopoConferido,
     perguntaPendente: false,
     contaDireta: contaEhDireta({ contaDeOrigem, contaFixfy, daConversaDoHarvey: !!conversa }),
+    contaB2B: !!contaDeOrigem && !contaEhDireta({ contaDeOrigem, contaFixfy, daConversaDoHarvey: false }),
     b2b: tags.includes("b2b"),
     temCanal: pelaConversa || !!email,
     equipeNaConversa: conversa?.estado === "equipe",
@@ -400,7 +414,12 @@ async function mandarSozinho(
       contaDeOrigem,
     );
     const entrada = aplicada?.deposit_required ?? entradaAtual;
-    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada });
+    const { data: comDatas } = await supabase.from("quotes").select("start_date_option_1, start_date_option_2").eq("id", q.id).maybeSingle();
+    const { datasDisponiveis } = await import("@/lib/quote-accept-job-fields");
+    const datas = datasDisponiveis(comDatas ?? {}).map((d) =>
+      new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).format(new Date(`${d}T12:00:00Z`)),
+    );
+    const texto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada, datas });
     await enviarTexto(conversa.conversation_id, texto, vozDaConversa(msgs));
     const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
     const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString(), email ?? undefined);
@@ -826,4 +845,29 @@ function montarNota(
     "── To apply in the OS ──",
     `Quotes → ${q.reference} → pick the ${libras(e.melhor.valor)} bid, margin ${e.margem}%.`,
   ].join("\n");
+}
+
+
+/** As datas de início que o parceiro ofereceu no lance, só as que ainda não passaram (YYYY-MM-DD). */
+export function datasDoLance(notes: string | null | undefined, agora: Date = new Date()): string[] {
+  const p = parseBidProposalFromNotes(notes);
+  const hoje = agora.toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  return [p?.start_date_option_1, p?.start_date_option_2]
+    .map((d) => String(d ?? "").trim().slice(0, 10))
+    .filter((d, i, a) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= hoje && a.indexOf(d) === i);
+}
+
+/** Preço fechado da conta B2B do cliente para o serviço da quote (account_service_prices.fixed_price). */
+async function pisoDaConta(supabase: SupabaseClient, quoteId: string): Promise<{ valor: number; conta: string } | null> {
+  const { data: q } = await supabase.from("quotes").select("client_id, catalog_service_id").eq("id", quoteId).maybeSingle();
+  if (!q?.client_id || !q.catalog_service_id) return null;
+  const { data: c } = await supabase.from("clients").select("source_account_id").eq("id", q.client_id).maybeSingle();
+  const conta = (c as { source_account_id?: string | null } | null)?.source_account_id ?? null;
+  if (!conta || isDirectConsumerAccount(conta)) return null;
+  const [{ data: ov }, { data: a }] = await Promise.all([
+    supabase.from("account_service_prices").select("use_standard, fixed_price").eq("account_id", conta).eq("catalog_service_id", q.catalog_service_id).maybeSingle(),
+    supabase.from("accounts").select("company_name").eq("id", conta).maybeSingle(),
+  ]);
+  const valor = ov && !ov.use_standard ? Number(ov.fixed_price) || 0 : 0;
+  return valor > 0 ? { valor, conta: String(a?.company_name ?? "the account") } : null;
 }
