@@ -1,4 +1,4 @@
--- Migration 339: fatura semanal automática por conta (dono, 20/10/2026: "Li & Fung no modo semanal").
+-- Migration 339: fatura semanal automática por conta (opcional, desligada em todas).
 --
 -- Conta com weekly_invoice_auto = true e termos consolidados ("Every Friday"):
 --   - o final check aprova o job e manda só o relatório, sem fatura própria;
@@ -13,11 +13,5 @@ ALTER TABLE public.accounts
 COMMENT ON COLUMN public.accounts.weekly_invoice_auto IS
   'Fatura semanal automática: o OS fecha e envia toda segunda a fatura dos jobs da semana anterior (fatura-semanal.ts).';
 
--- Li & Fung: de "Net 7" por job para uma fatura semanal que vence na sexta.
-UPDATE public.accounts
-   SET weekly_invoice_auto = true,
-       payment_cadence     = 'weekly',
-       payment_pay_dow     = 5,
-       payment_terms       = 'Every Friday'
- WHERE company_name = 'Li & Fung'
-   AND deleted_at IS NULL;
+-- Nenhuma conta liga agora (dono, 20/10/2026: Li & Fung, Checkatrade, Kvadrat, Stylesmiths e as
+-- outras recebem fatura por job; Housekeep, Express e Fantastic pagam no montante pela plataforma).
