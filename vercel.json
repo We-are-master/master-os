@@ -36,10 +36,6 @@
     {
       "path": "/api/cron/final-check-sweep",
       "schedule": "30 17 * * *"
-    },
-    {
-      "path": "/api/cron/fatura-semanal",
-      "schedule": "0 8 * * 1"
     }
   ]
 }
