@@ -305,7 +305,8 @@ export async function POST(req: NextRequest) {
           job_reference: job.reference,
           amount: depositRequired,
           status: "draft",
-          due_date: dueDateStr,
+          // O sinal vence no aceite: é ele que confirma a reserva (20/10/2026, JOB-9773 vencia junto com o saldo).
+          due_date: now.slice(0, 10),
           collection_stage: "awaiting_deposit",
           collection_stage_locked: false,
           invoice_kind: "deposit",
