@@ -5,7 +5,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { renderSelfBillPdfBuffer } from "@/lib/self-bill-pdf-server";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { formatCurrency } from "@/lib/utils";
-import { buildSelfBillEmailHtml } from "@/lib/emails/self-bill-statement";
+import { buildSelfBillEmail, buildSelfBillSideConvHtml } from "@/lib/emails/self-bill-statement";
+import { dataLonga } from "@/lib/emails/fixfy-shell";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -29,10 +30,8 @@ type Warning = { id: string; reference?: string; warning: string };
 /** `2026-08-03` → `3 Aug 2026`. O assunto é lido por gente em Londres. */
 function fmtSubjectDate(ymd?: string | null): string {
   const raw = (ymd ?? "").trim();
-  if (!raw) return "—";
-  const d = new Date(raw.length === 10 ? `${raw}T12:00:00Z` : raw);
-  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  if (!raw) return "TBC";
+  return dataLonga(raw.length === 10 ? raw : raw.slice(0, 10)) ?? raw.slice(0, 10);
 }
 
 
@@ -42,18 +41,6 @@ function fmtSubjectDate(ymd?: string | null): string {
  * Side conversations don't carry PDF attachments — the partner gets the PDF via Resend;
  * Zendesk just records the activity.
  */
-function buildSelfBillSideConvHtml(sb: SelfBill, dueYmd: string | null, partnerEmail: string): string {
-  const week = sb.week_label ?? sb.period ?? "—";
-  const dueLine = dueYmd ? `<p style="margin:0 0 8px;">Payment due: <strong>${dueYmd}</strong></p>` : "";
-  return `<div style="font-family:system-ui,sans-serif;color:#0A0A1F;max-width:560px;">
-      <p style="margin:0 0 8px;">Self-bill <strong>${sb.reference}</strong> sent to <strong>${partnerEmail}</strong>.</p>
-      <p style="margin:0 0 8px;">Week: ${week}</p>
-      ${dueLine}
-      <p style="margin:0 0 8px;">Amount: <strong>${formatCurrency(Number(sb.net_payout ?? 0))}</strong></p>
-      <p style="margin:0;color:#6B6B85;font-size:13px;">PDF was emailed via Resend (Zendesk side conversations don't carry attachments).</p>
-    </div>`;
-}
-
 function parseCycleHint(raw: unknown): PaymentRunCycleKind | "auto" {
   if (raw === "standard" || raw === "off_cycle" || raw === "auto") return raw;
   return "auto";
@@ -306,14 +293,14 @@ export async function POST(req: NextRequest) {
         ? `Payout statement ${sb.reference} | ${
             sb.week_start && sb.week_end
               ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
-              : (sb.week_label ?? sb.period ?? "this period")
+              : String(sb.week_label ?? sb.period ?? "this period").replace(/\s*[—–]\s*/g, " to ")
           }`
         : `Self-bill ${sb.reference} | ${
             sb.week_start && sb.week_end
-              ? `${fmtSubjectDate(sb.week_start)} — ${fmtSubjectDate(sb.week_end)}`
-              : (sb.week_label ?? sb.period ?? "this period")
+              ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
+              : String(sb.week_label ?? sb.period ?? "this period").replace(/\s*[—–]\s*/g, " to ")
           }`,
-      html: buildSelfBillEmailHtml(sb, dueYmd, {
+      ...buildSelfBillEmail(sb, dueYmd, {
         partnerName,
         companyName,
         payoutStatement: payoutStatement
@@ -349,8 +336,8 @@ export async function POST(req: NextRequest) {
     let sideConvId: string | null = sb.zendesk_side_conversation_id?.trim() || null;
 
     if (run?.zendesk_ticket_id) {
-      const subject = `Self-bill ${sb.reference} — ${partnerName ?? partnerEmail}`;
-      const htmlBody = buildSelfBillSideConvHtml(sb, dueYmd, partnerEmail);
+      const subject = `Self-bill ${sb.reference} · ${partnerName ?? partnerEmail}`;
+      const htmlBody = buildSelfBillSideConvHtml(sb, dueYmd, partnerEmail, partnerName);
 
       if (sideConvId) {
         const reply = await replyToSideConversation({

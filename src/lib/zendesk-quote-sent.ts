@@ -1,5 +1,6 @@
 import { moneyIncVatLabel } from "@/lib/money-display-label";
 import { dataLonga, emailFixfy, gbp, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
+import { passosAte, PASSOS_COTACAO } from "@/lib/emails/faixas-do-email";
 
 /**
  * O e-mail "a cotação está pronta" (copy 20 e 21, docs/copy/fixfy-client-copy.json).
@@ -136,6 +137,11 @@ export function emailDaCotacao(d: DadosDaCotacao): { assunto: string; preheader:
     estado: { texto: "Quote ready", cor: "orange" },
     titulo: "Your quote is ready",
     destaque: { linha1: servico ? `Quote for ${servico}` : "Quote total", linha2: total },
+    metricas: [
+      { rotulo: "Total", valor: gbp(d.total), sub: agente ? null : "inc VAT" },
+      { rotulo: "Valid until", valor: dataLonga(d.validoAte) ?? "" },
+    ],
+    passos: passosAte(PASSOS_COTACAO, 1),
     saudacao: saudacao(d.publico),
     paragrafos,
     linhas: [

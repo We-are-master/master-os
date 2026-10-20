@@ -1,5 +1,6 @@
 import { dataLonga, emailFixfy, gbp, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
 import { dadosBancariosVerificados, referenciaDeCobranca } from "@/lib/emails/billing-email-common";
+import { passosAte, PASSOS_FATURA } from "@/lib/emails/faixas-do-email";
 
 /**
  * Lembrete de fatura vencida (dono, 09/10/2026).
@@ -138,6 +139,11 @@ export function buildOverdueReminderEmail(d: OverdueReminderEmailInput): { subje
     estado: { texto: c.estado, cor: c.final ? "orange" : "navy" },
     titulo: c.heading,
     destaque: { linha1: `${valor} outstanding`, linha2: due ? `due on ${due}` : null },
+    metricas: [
+      { rotulo: "Amount due", valor },
+      { rotulo: "Was due", valor: due ?? "" },
+    ],
+    passos: passosAte(PASSOS_FATURA, 2),
     saudacao: saudacao(d.publico),
     paragrafos: c.body,
     linhas: [

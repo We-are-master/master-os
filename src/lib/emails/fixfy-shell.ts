@@ -210,12 +210,21 @@ export type Transferencia = {
   booking?: boolean;
 };
 
+/** Uma métrica da faixa de métricas (como a do OS): rótulo pequeno, valor grande, linha embaixo. */
+export type Metrica = { rotulo: string; valor: string; sub?: string | null };
+/** Um passo da faixa de progresso do job. */
+export type Passo = { nome: string; estado: "feito" | "atual" | "futuro" };
+
 export type EmailFixfy = {
   preheader: string;
   estado?: Estado | null;
   titulo: string;
   /** Destaque grande: data e janela, ou valor e vencimento. */
   destaque?: { linha1: string; linha2?: string | null; riscado?: string | null } | null;
+  /** Faixa de métricas (data, janela, valor, vencimento). Sem ela, o destaque vira uma métrica. */
+  metricas?: Metrica[] | null;
+  /** Faixa de progresso do job; o passo "atual" leva a régua coral. */
+  passos?: Passo[] | null;
   saudacao: string;
   /** Parágrafos em texto puro (escapados aqui). */
   paragrafos: string[];
@@ -236,110 +245,182 @@ export type EmailFixfy = {
   zendesk?: boolean;
 };
 
-const corDoEstado = (c: Estado["cor"]) =>
-  c === "orange" ? FX.orange : c === "green" ? FX.green : c === "muted" ? FX.muted : FX.navy;
+const SANS = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** Cores de estado do DS Fixfy OS UNO (fundo e texto do chip). */
+const UNO = {
+  nav: "#0A0A28",
+  ink: "#0A0A1F",
+  ink2: "#3A3A55",
+  ink3: "#6B6B85",
+  panel2: "#F7F7FB",
+  line: "#E4E4EC",
+  accent: "#ED4B00",
+} as const;
+
+const iconeDoEstado = (c: Estado["cor"]) =>
+  c === "green" ? "&#10003;" : c === "orange" ? "&#8635;" : c === "muted" ? "&#8226;" : "&#8599;";
 
 function blocoTransferenciaHtml(t: Transferencia, zendesk: boolean): string {
   const linhas = t.dadosBancarios.filter(([, v]) => String(v ?? "").trim());
   if (!linhas.length) return "";
   const frase = `Prefer a bank transfer? Use the details below and quote ${esc(t.referencia)}. Once you’ve made the transfer, reply with the payment date and reference so we can check receipt.${t.booking ? " We’ll confirm your booking once payment has been received and checked." : ""}`;
   const corpo = linhas
-    .map(([r, v]) => `<p style="margin:0 0 4px 0;font-size:14px;line-height:20px;color:${FX.text};"><span style="color:${FX.muted};">${esc(r)}:</span> <strong>${esc(v)}</strong></p>`)
+    .map(([r, v]) => `<p style="margin:0 0 4px 0;font-size:14px;line-height:20px;color:${UNO.ink};"><span style="color:${UNO.ink3};">${esc(r)}:</span> <strong style="font-weight:600;">${esc(v)}</strong></p>`)
     .join("");
-  const caixa = `<p style="margin:0 0 10px 0;font-size:14px;line-height:21px;color:${FX.text};">${frase}</p>${corpo}<p style="margin:4px 0 0 0;font-size:14px;line-height:20px;color:${FX.text};"><span style="color:${FX.muted};">Reference:</span> <strong>${esc(t.referencia)}</strong></p>`;
+  const caixa = `<p style="margin:0 0 10px 0;font-size:14px;line-height:21px;color:${UNO.ink2};">${frase}</p>${corpo}<p style="margin:4px 0 0 0;font-size:14px;line-height:20px;color:${UNO.ink};"><span style="color:${UNO.ink3};">Reference:</span> <strong style="font-weight:600;">${esc(t.referencia)}</strong></p>`;
   return zendesk
-    ? `<div style="margin:16px 0 0 0;padding:16px;background:${FX.soft};border-radius:10px;">${caixa}</div>`
-    : `<tr><td style="padding:8px 32px 0 32px;"><div style="padding:16px;background:${FX.soft};border-radius:10px;">${caixa}</div></td></tr>`;
+    ? `<div style="margin:16px 0 0 0;padding:16px;background:${UNO.panel2};border-radius:12px;">${caixa}</div>`
+    : `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;"><div style="padding:16px;background:${UNO.panel2};border-radius:12px;">${caixa}</div></td></tr>`;
 }
 
-function linhasHtml(linhas: Array<[string, string]>, zendesk: boolean): string {
-  if (!linhas.length) return "";
-  if (zendesk) {
-    return `<div style="margin:20px 0 4px 0;">${linhas
-      .map(
-        ([r, v]) =>
-          `<p style="margin:0;padding:12px 0;border-top:1px solid ${FX.line};font-size:15px;line-height:22px;color:${FX.navy};font-weight:600;"><span style="display:inline-block;min-width:92px;font-size:13px;font-weight:400;color:${FX.muted};">${esc(r)}</span>${esc(v)}</p>`,
-      )
-      .join("")}</div>`;
-  }
-  return `<tr><td style="padding:12px 32px 4px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${linhas
-    .map(
-      ([r, v]) =>
-        `<tr><td style="padding:12px 12px 12px 0;border-top:1px solid ${FX.line};font-size:13px;line-height:20px;color:${FX.muted};width:110px;vertical-align:top;">${esc(r)}</td><td style="padding:12px 0;border-top:1px solid ${FX.line};font-size:15px;line-height:22px;color:${FX.navy};font-weight:600;">${esc(v)}</td></tr>`,
-    )
-    .join("")}</table></td></tr>`;
-}
-
-/** HTML e texto do mesmo conteúdo (handoff: "Generate HTML and plain text from the same copy"). */
+/**
+ * HTML e texto do mesmo conteúdo (handoff: "Generate HTML and plain text from the same copy").
+ *
+ * Desenho "Painel de status" (dono escolheu a Ideia B em 20/10/2026), no DS Fixfy
+ * OS UNO: topo navy com o wordmark branco, o estado num chip e o título em
+ * branco; a faixa de progresso do job (o passo atual na régua coral, o único
+ * coral do e-mail, como o DS manda); a linha de métricas igual à do OS; o
+ * texto; os detalhes em duas colunas; UM botão navy (o DS não tem botão
+ * laranja); transferência, nota, letra pequena e o rodapé navy.
+ */
 export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const z = Boolean(e.zendesk);
   const linhas = (e.linhas ?? []).filter((l): l is [string, string] => Boolean(l[1] && String(l[1]).trim()));
   const cta = e.cta && urlSegura(e.cta.url) ? { label: e.cta.label, url: urlSegura(e.cta.url)! } : null;
   const secundarios = (e.linksSecundarios ?? []).filter((l) => urlSegura(l.url));
   const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
-  const pad = z ? "" : "padding:0 32px;";
 
-  const estado = e.estado
-    ? `<p style="margin:0 0 6px 0;font-size:13px;font-weight:700;letter-spacing:1px;color:${corDoEstado(e.estado.cor)};text-transform:uppercase;">${esc(e.estado.texto)}</p>`
+  // Métricas: as do e-mail; sem elas, o destaque vira uma métrica só.
+  const metricas: Metrica[] = (e.metricas ?? []).filter((m) => m.valor?.trim()).length
+    ? (e.metricas ?? []).filter((m) => m.valor?.trim())
+    : e.destaque?.linha1
+      ? [{ rotulo: "", valor: e.destaque.linha1, sub: e.destaque.linha2 ?? null }]
+      : [];
+  const riscado = e.destaque?.riscado?.trim() || null;
+  const passos = (e.passos ?? []).filter((p) => p.nome.trim());
+
+  // ─── topo navy ───
+  const chipEstado = e.estado
+    ? `<span style="display:inline-block;background:rgba(255,255,255,0.12);color:#FFFFFF;font-size:12px;font-weight:600;line-height:16px;padding:4px 10px;border-radius:6px;">${iconeDoEstado(e.estado.cor)}&nbsp; ${esc(e.estado.texto)}</span>`
     : "";
-  const destaque = e.destaque
-    ? `<p style="margin:10px 0 0 0;font-size:17px;line-height:24px;color:${FX.text};">${esc(e.destaque.linha1)}${e.destaque.linha2 ? `<br><strong style="color:${FX.navy};">${esc(e.destaque.linha2)}</strong>` : ""}</p>${e.destaque.riscado ? `<p style="margin:6px 0 0 0;font-size:14px;line-height:20px;color:${FX.faint};">Previously <span style="text-decoration:line-through;">${esc(e.destaque.riscado)}</span></p>` : ""}`
+  const titulo = `<h1 style="margin:${chipEstado ? "12px" : "0"} 0 0 0;font-family:${SANS};font-size:26px;line-height:32px;font-weight:600;letter-spacing:-0.03em;color:#FFFFFF;">${esc(e.titulo)}</h1>`;
+  const logo = `<img src="${LOGO}" alt="Fixfy" width="68" style="display:block;width:68px;height:auto;border:0;margin:0 0 22px 0;">`;
+  const topoInner = `${logo}${chipEstado}${titulo}`;
+
+  // ─── progresso ───
+  const corPasso = (p: Passo) => (p.estado === "atual" ? UNO.accent : p.estado === "feito" ? FX.navy : UNO.line);
+  const corTextoPasso = (p: Passo) => (p.estado === "atual" ? UNO.ink : p.estado === "feito" ? UNO.ink2 : UNO.ink3);
+  const passoHtml = (p: Passo) =>
+    `<div style="height:4px;border-radius:2px;background:${corPasso(p)};font-size:0;line-height:0;">&nbsp;</div><p style="margin:8px 0 0 0;font-family:${SANS};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" ? 600 : 500};color:${corTextoPasso(p)};">${esc(p.nome)}</p>`;
+  const largura = passos.length ? Math.floor(100 / passos.length) : 0;
+  const progresso = !passos.length
+    ? ""
+    : z
+      ? `<div style="padding:18px 28px 4px 28px;font-size:0;">${passos.map((p) => `<div style="display:inline-block;vertical-align:top;width:${largura}%;box-sizing:border-box;padding:0 3px;">${passoHtml(p)}</div>`).join("")}</div>`
+      : `<tr><td class="fx-pad" style="padding:18px 29px 4px 29px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${passos.map((p) => `<td valign="top" width="${largura}%" style="padding:0 3px;">${passoHtml(p)}</td>`).join("")}</tr></table></td></tr>`;
+
+  // ─── métricas ───
+  const metricaHtml = (m: Metrica) =>
+    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:11px;line-height:14px;font-weight:500;color:${UNO.ink3};">${esc(m.rotulo)}</p>` : ""}<p style="margin:0;font-family:${SANS};font-size:20px;line-height:26px;font-weight:600;letter-spacing:-0.02em;color:${UNO.ink};">${esc(m.valor)}</p>${m.sub ? `<p style="margin:2px 0 0 0;font-family:${SANS};font-size:13px;line-height:18px;color:${UNO.ink2};">${esc(m.sub)}</p>` : ""}`;
+  const riscadoHtml = riscado
+    ? `<p style="margin:10px 0 0 0;font-family:${SANS};font-size:13px;line-height:18px;color:${UNO.ink3};">Previously <span style="text-decoration:line-through;">${esc(riscado)}</span></p>`
     : "";
-  const topo = `${estado}<h1 style="margin:0;font-size:26px;line-height:32px;font-weight:800;color:${FX.navy};">${esc(e.titulo)}</h1>${destaque}`;
-  const corpo =
-    `<p style="margin:22px 0 12px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(e.saudacao)}</p>` +
-    e.paragrafos.map((p) => `<p style="margin:0 0 12px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(p)}</p>`).join("");
+  const faixa = !metricas.length
+    ? ""
+    : z
+      ? `<div style="margin:16px 28px 0 28px;background:${UNO.panel2};border-radius:12px;font-size:0;">${metricas.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / metricas.length)}%;box-sizing:border-box;padding:14px 18px;${i ? `border-left:1px solid ${UNO.line};` : ""}">${metricaHtml(m)}</div>`).join("")}</div>${riscado ? `<div style="padding:0 28px;">${riscadoHtml}</div>` : ""}`
+      : `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${UNO.panel2};border-radius:12px;"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:14px 18px;${i ? `border-left:1px solid ${UNO.line};` : ""}">${metricaHtml(m)}</td>`).join("")}</tr></table>${riscadoHtml}</td></tr>`;
+
+  // ─── texto ───
+  const corpoTexto =
+    `<p style="margin:0 0 12px 0;font-family:${SANS};font-size:15px;line-height:24px;color:${UNO.ink};">${esc(e.saudacao)}</p>` +
+    e.paragrafos.map((p) => `<p style="margin:0 0 12px 0;font-family:${SANS};font-size:15px;line-height:24px;color:${UNO.ink2};">${esc(p)}</p>`).join("");
+
+  // ─── detalhes em duas colunas ───
+  const par = ([r, v]: [string, string]) =>
+    `<p style="margin:0 0 2px 0;font-family:${SANS};font-size:12px;line-height:16px;color:${UNO.ink3};">${esc(r)}</p><p style="margin:0;font-family:${SANS};font-size:14px;line-height:20px;font-weight:500;color:${UNO.ink};">${esc(v)}</p>`;
+  let detalhes = "";
+  if (linhas.length) {
+    if (z) {
+      detalhes = `<div style="margin:8px 28px 0 28px;border-top:1px solid ${UNO.line};border-bottom:1px solid ${UNO.line};font-size:0;">${linhas.map((l) => `<div style="display:inline-block;vertical-align:top;width:50%;box-sizing:border-box;padding:10px 8px 10px 0;">${par(l)}</div>`).join("")}</div>`;
+    } else {
+      const linhasGrade: string[] = [];
+      for (let i = 0; i < linhas.length; i += 2) {
+        linhasGrade.push(`<tr><td class="fx-col" width="50%" valign="top" style="padding:10px 12px 10px 0;">${par(linhas[i]!)}</td><td class="fx-col" width="50%" valign="top" style="padding:10px 0;">${linhas[i + 1] ? par(linhas[i + 1]!) : "&nbsp;"}</td></tr>`);
+      }
+      detalhes = `<tr><td class="fx-pad" style="padding:4px 32px 0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${UNO.line};border-bottom:1px solid ${UNO.line};">${linhasGrade.join("")}</table></td></tr>`;
+    }
+  }
+
+  // ─── botão, links, nota, assinatura ───
   const botao = cta
-    ? `<a href="${esc(cta.url)}" style="display:block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:700;line-height:20px;padding:14px 0;min-height:44px;box-sizing:border-box;border-radius:10px;text-align:center;">${esc(cta.label)}</a>`
+    ? `<a href="${esc(cta.url)}" style="display:block;background:${FX.navy};color:#FFFFFF;text-decoration:none;font-family:${SANS};font-size:15px;font-weight:600;line-height:20px;padding:12px 0;min-height:44px;box-sizing:border-box;border-radius:8px;text-align:center;">${esc(cta.label)}</a>`
     : "";
   const links = secundarios.length
-    ? `<p style="margin:12px 0 0 0;font-size:14px;line-height:20px;text-align:center;color:${FX.muted};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
+    ? `<p style="margin:12px 0 0 0;font-family:${SANS};font-size:13px;line-height:20px;text-align:center;color:${UNO.ink3};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
     : "";
   const nota = e.nota
-    ? `<p style="margin:0;padding:14px 16px;background:${FX.soft};border-radius:10px;font-size:14px;line-height:21px;color:${FX.text};">${esc(e.nota)}</p>`
+    ? `<p style="margin:0;padding:14px 16px;background:${UNO.panel2};border-radius:12px;font-family:${SANS};font-size:14px;line-height:21px;color:${UNO.ink2};">${esc(e.nota)}</p>`
     : "";
-  const assina = assinatura ? `<p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(assinatura)}</p>` : "";
+  const assina = assinatura ? `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:15px;line-height:24px;color:${UNO.ink};">${esc(assinatura)}</p>` : "";
   const fino = (e.letraPequena ?? []).filter(Boolean);
   const finoHtml = fino.length
-    ? fino.map((t) => `<p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:${FX.muted};">${esc(t)}</p>`).join("")
+    ? fino.map((t) => `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:12px;line-height:18px;color:${UNO.ink3};">${esc(t)}</p>`).join("")
     : "";
   const marketing = e.marketing && urlSegura(e.marketing.descadastroUrl)
     ? `<br>${esc(e.marketing.motivo)} <a href="${esc(urlSegura(e.marketing.descadastroUrl)!)}" style="color:#FFFFFF;">Unsubscribe</a>`
     : "";
   // Rodapé navy com letra branca em todos (dono, 20/10/2026).
-  const rodape = `<p style="margin:0 0 8px 0;font-size:13px;line-height:19px;color:#FFFFFF;">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:#FFFFFF;font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.</p><p style="margin:0;font-size:12px;line-height:18px;color:#FFFFFF;">${esc(FIXFY_CONTACT.legal)}${marketing}</p>`;
+  const rodape = `<img src="${LOGO}" alt="Fixfy" width="60" style="display:block;margin:0 auto 12px auto;width:60px;height:auto;border:0;"><p style="margin:0 0 6px 0;font-family:${SANS};font-size:13px;line-height:19px;color:#FFFFFF;">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:#FFFFFF;font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.</p><p style="margin:0;font-family:${SANS};font-size:12px;line-height:18px;color:#FFFFFF;">${esc(FIXFY_CONTACT.legal)}${marketing}</p>`;
 
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${FX.canvas};">${esc(e.preheader)}</div>` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:${FX.canvas};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"><tr><td align="center" style="border:0;padding:24px 12px;">` +
-      `<div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:16px;overflow:hidden;text-align:left;">` +
-      `<div style="background:${FX.navy};padding:18px 28px;"><img src="${LOGO}" alt="Fixfy" width="72" height="31" style="display:block;width:72px;height:31px;border:0;"></div>` +
-      `<div style="padding:28px 28px 8px 28px;">${topo}${corpo}${linhasHtml(linhas, true)}${botao ? `<div style="margin:16px 0 0 0;">${botao}</div>` : ""}${links}${e.transferencia ? blocoTransferenciaHtml(e.transferencia, true) : ""}${nota ? `<div style="margin:16px 0 0 0;">${nota}</div>` : ""}${assina}</div>` +
-      (finoHtml ? `<div style="padding:16px 28px 8px 28px;background:#FAFAFB;border-top:1px solid ${FX.line};">${finoHtml}</div>` : "") +
-      `<div style="background:${FX.navy};padding:20px 28px 24px 28px;text-align:center;">${rodape}</div>` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:#EEF0F5;font-family:${SANS};"><tr><td align="center" style="border:0;padding:24px 12px;">` +
+      `<div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:14px;overflow:hidden;text-align:left;">` +
+      `<div style="background:${UNO.nav};padding:22px 28px 26px 28px;">${topoInner}</div>` +
+      progresso +
+      faixa +
+      `<div style="padding:22px 28px 0 28px;">${corpoTexto}</div>` +
+      detalhes +
+      `<div style="padding:22px 28px 0 28px;">${botao}${links}</div>` +
+      (e.transferencia ? `<div style="padding:0 28px;">${blocoTransferenciaHtml(e.transferencia, true)}</div>` : "") +
+      (nota ? `<div style="padding:16px 28px 0 28px;">${nota}</div>` : "") +
+      (assina ? `<div style="padding:0 28px;">${assina}</div>` : "") +
+      `<div style="height:28px;font-size:0;line-height:0;">&nbsp;</div>` +
+      (finoHtml ? `<div style="padding:16px 28px 8px 28px;background:#FAFAFB;border-top:1px solid ${UNO.line};">${finoHtml}</div>` : "") +
+      `<div style="background:${FX.navy};padding:24px 28px 26px 28px;text-align:center;">${rodape}</div>` +
       `</div></td></tr></table>`
     : `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="color-scheme" content="light only"><title>&#8203;</title>
-<style>@media screen and (max-width:600px){.fx-card{width:100% !important;border-radius:0 !important}.fx-pad{padding-left:20px !important;padding-right:20px !important}}</style></head>
-<body style="margin:0;padding:0;background:${FX.canvas};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:${FX.canvas};">${esc(e.preheader)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${FX.canvas};"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" class="fx-card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:16px;overflow:hidden;">
-<tr><td class="fx-pad" bgcolor="${FX.navy}" style="background:${FX.navy};padding:18px 32px;"><img src="${LOGO}" alt="Fixfy" width="72" style="display:block;width:72px;height:auto;border:0;"></td></tr>
-<tr><td class="fx-pad" style="padding:28px 32px 4px 32px;">${topo}${corpo}</td></tr>
-${linhasHtml(linhas, false)}
-${botao ? `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;">${botao}${links}</td></tr>` : links ? `<tr><td class="fx-pad" style="padding:8px 32px 0 32px;">${links}</td></tr>` : ""}
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>@media screen and (max-width:600px){.fx-card{width:100% !important;border-radius:0 !important}.fx-pad{padding-left:20px !important;padding-right:20px !important}.fx-col{display:block !important;width:100% !important;border-left:0 !important}}</style></head>
+<body style="margin:0;padding:0;background:#EEF0F5;font-family:${SANS};">
+<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#EEF0F5;">${esc(e.preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EEF0F5;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" class="fx-card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:14px;overflow:hidden;">
+<tr><td class="fx-pad" bgcolor="${UNO.nav}" style="background:${UNO.nav};padding:22px 32px 26px 32px;">${topoInner}</td></tr>
+${progresso}
+${faixa}
+<tr><td class="fx-pad" style="padding:22px 32px 0 32px;">${corpoTexto}</td></tr>
+${detalhes}
+${botao || links ? `<tr><td class="fx-pad" style="padding:22px 32px 0 32px;">${botao}${links}</td></tr>` : ""}
 ${e.transferencia ? blocoTransferenciaHtml(e.transferencia, false) : ""}
 ${nota ? `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;">${nota}</td></tr>` : ""}
-${assina ? `<tr><td class="fx-pad" style="padding:4px 32px 24px 32px;">${assina}</td></tr>` : `<tr><td style="padding:12px 0 0 0;font-size:1px;line-height:1px;">&nbsp;</td></tr>`}
-${finoHtml ? `<tr><td class="fx-pad" style="${pad}padding-top:18px;padding-bottom:10px;background:#FAFAFB;border-top:1px solid ${FX.line};">${finoHtml}</td></tr>` : ""}
-<tr><td class="fx-pad" bgcolor="${FX.navy}" style="background:${FX.navy};padding:20px 32px 24px 32px;text-align:center;">${rodape}</td></tr>
+${assina ? `<tr><td class="fx-pad" style="padding:0 32px;">${assina}</td></tr>` : ""}
+<tr><td style="padding:28px 0 0 0;font-size:0;line-height:0;">&nbsp;</td></tr>
+${finoHtml ? `<tr><td class="fx-pad" style="padding:18px 32px 10px 32px;background:#FAFAFB;border-top:1px solid ${UNO.line};">${finoHtml}</td></tr>` : ""}
+<tr><td class="fx-pad" bgcolor="${FX.navy}" style="background:${FX.navy};padding:24px 32px 26px 32px;text-align:center;">${rodape}</td></tr>
 </table></td></tr></table></body></html>`;
 
   const text = [
     e.estado ? e.estado.texto.toUpperCase() : "",
     e.titulo,
-    e.destaque ? [e.destaque.linha1, e.destaque.linha2].filter(Boolean).join(", ") : "",
+    (e.metricas ?? []).filter((m) => m.valor?.trim()).length
+      ? (e.metricas ?? []).filter((m) => m.valor?.trim()).map((m) => `${m.rotulo ? `${m.rotulo}: ` : ""}${m.valor}${m.sub ? `, ${m.sub}` : ""}`).join("\n")
+      : e.destaque
+        ? [e.destaque.linha1, e.destaque.linha2].filter(Boolean).join(", ")
+        : "",
     e.destaque?.riscado ? `Previously: ${e.destaque.riscado}` : "",
     "",
     e.saudacao,
@@ -384,12 +465,13 @@ export function emailPessoal(e: { preheader: string; saudacao: string; paragrafo
   const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
   const ps = [e.saudacao, ...e.paragrafos].map((p) => `<p style="margin:0 0 14px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(p)}</p>`).join("");
   const botao = cta
-    ? `<p style="margin:6px 0 14px 0;"><a href="${esc(cta.url)}" style="display:inline-block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;">${esc(cta.label)}</a></p>`
+    ? `<p style="margin:6px 0 14px 0;"><a href="${esc(cta.url)}" style="display:inline-block;background:${FX.navy};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:600;padding:12px 22px;border-radius:8px;">${esc(cta.label)}</a></p>`
     : "";
   const links = sec.length ? `<p style="margin:0 0 14px 0;font-size:14px;line-height:20px;">${sec.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>` : "";
   const assina = assinatura ? `<p style="margin:0;font-size:16px;line-height:24px;color:${FX.text};">${esc(assinatura)}</p>` : "";
   const rodape = `<p style="margin:0;font-size:12px;line-height:18px;color:#FFFFFF;">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:#FFFFFF;font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.<br>${esc(FIXFY_CONTACT.legal)}</p>`;
-  const miolo = `<div style="max-width:560px;margin:0 auto;padding:24px 20px;text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${ps}${botao}${links}${assina}<div style="margin:24px 0 0 0;padding:16px 18px;background:${FX.navy};border-radius:10px;text-align:center;">${rodape}</div></div>`;
+  // Mesma família da Ideia B, mas leve: faixa navy fina com o logo, texto corrido, rodapé navy.
+  const miolo = `<div style="max-width:560px;margin:0 auto;padding:24px 20px;text-align:left;font-family:${SANS};"><div style="background:#0A0A28;border-radius:10px;padding:14px 18px;margin:0 0 20px 0;"><img src="${LOGO}" alt="Fixfy" width="60" style="display:block;width:60px;height:auto;border:0;"></div>${ps}${botao}${links}${assina}<div style="margin:24px 0 0 0;padding:16px 18px;background:${FX.navy};border-radius:10px;text-align:center;">${rodape}</div></div>`;
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;">${esc(e.preheader)}</div>${miolo}`
     : `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><title>&#8203;</title></head><body style="margin:0;padding:0;background:#FFFFFF;"><div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;">${esc(e.preheader)}</div>${miolo}</body></html>`;

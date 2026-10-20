@@ -179,7 +179,8 @@ for (const p of parceiros ?? []) {
 
   const total = lista.reduce((s, j) => s + Number(j.partner_cost ?? 0), 0);
   const montado = buildPartnerMissingReportsEmail({
-    partnerFirstName: ((p.contact_name as string | null)?.trim() || nome).split(" ")[0]!,
+    // Empresa antes do contato, como em partnerEmailGreetingName.
+    partnerFirstName: nome === "Partner" ? "there" : nome,
     onHoldDisplay: total > 0 ? libras(total) : null,
     portalUrl,
     /**
@@ -199,6 +200,7 @@ for (const p of parceiros ?? []) {
       address: String(j.property_address ?? ""),
       clientFirstName: String(j.client_name ?? "").trim().split(" ")[0] || null,
       dateLabel: rotuloDeData(j.scheduled_date as string | null),
+      dateYmd: j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : null,
       daysWaiting: diasDesde(j.scheduled_date as string | null),
       payDisplay: Number(j.partner_cost ?? 0) > 0 ? libras(Number(j.partner_cost)) : null,
       reportUrl: await buildPartnerJobReportUrl(String(j.id), String(j.partner_id)),

@@ -1,4 +1,5 @@
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
+import { buildPartnerReportRequestEmail, partnerReportRequestSubject } from "@/lib/emails/partner-report-request-email";
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
@@ -92,7 +93,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   // Sempre o link curto por job (15/10/2026): o longo quebrava quando saía de outro ambiente.
   const reportUrl = await buildPartnerJobReportUrl(String(job.id), String(job.partner_id));
 
-  const subject = `Submit work report — ${String(job.reference ?? "")}`;
+  const subject = partnerReportRequestSubject(String(job.reference ?? ""));
   const { html, text } = buildPartnerReportRequestEmail({
     partnerName,
     jobReference: String(job.reference ?? ""),
@@ -237,44 +238,4 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     // why we fell back to direct email instead of the ticket side conv.
     zendeskFailure: failureChain.length > 0 ? failureChain.join(" · ") : null,
   });
-}
-
-function buildPartnerReportRequestEmail(args: {
-  partnerName:     string;
-  jobReference:    string;
-  jobTitle:        string;
-  propertyAddress: string;
-  reportUrl:       string;
-}): { html: string; text: string } {
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  const safe = {
-    name: esc(args.partnerName),
-    ref: esc(args.jobReference),
-    title: esc(args.jobTitle),
-    address: esc(args.propertyAddress),
-    url: esc(args.reportUrl),
-  };
-  const html = `
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0A0A1F;max-width:600px;">
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">Hi ${safe.name},</p>
-  <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#3A3A55;">
-    Please submit the work report for <strong>${safe.ref}</strong> — ${safe.title}.
-  </p>
-  <p style="margin:0 0 14px;font-size:13px;color:#6B6B70;">📍 ${safe.address}</p>
-  <p style="margin:22px 0;">
-    <a href="${safe.url}" style="display:inline-block;background:#020040;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600;font-size:14px;">Open report form</a>
-  </p>
-  <p style="margin:14px 0 0;font-size:12px;color:#6B6B70;">
-    No app needed — the form runs in your browser. Photos are resized automatically before upload.
-  </p>
-</div>
-  `.replace(/>\s+</g, "><").trim();
-  const text =
-    `Hi ${args.partnerName},\n\n` +
-    `Please submit the work report for ${args.jobReference} — ${args.jobTitle}.\n` +
-    `${args.propertyAddress}\n\n` +
-    `Open report form: ${args.reportUrl}\n\n` +
-    `No app needed — runs in the browser.`;
-  return { html, text };
 }

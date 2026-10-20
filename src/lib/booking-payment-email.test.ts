@@ -33,7 +33,7 @@ test("#3 sinal: assunto, um botão com o valor, saldo calculado, transferência 
   assert.match(m.text, /Work included: Fix kitchen door; Replace hinge/);
   assert.match(m.text, /We’ll confirm your booking once payment has been received and checked\./);
   assert.match(m.text, new RegExp(FIXFY_CLIENT_BANK_DETAILS.accountNumber));
-  assert.equal((m.html.match(/background:#ED4B00;color:#FFFFFF/g) ?? []).length, 1);
+  assert.equal((m.html.match(/background:#020040;color:#FFFFFF/g) ?? []).length, 1);
   SEM(m.subject);
   SEM(m.text);
 });

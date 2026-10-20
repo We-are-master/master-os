@@ -7,6 +7,7 @@
  */
 import { emailFixfy, FIXFY_CONTACT, saudacao, type Publico } from "./fixfy-shell";
 import { semTravessao } from "./billing-email-common";
+import { passosAte, PASSOS_VISITA } from "./faixas-do-email";
 
 export type FinalReportEmailInput = {
   publico: Publico;
@@ -39,6 +40,11 @@ export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: stri
     preheader,
     estado: { texto: "Work complete", cor: "green" },
     titulo: anexado ? "Your job report is ready" : "Your job is complete",
+    metricas: [
+      { rotulo: "Service", valor: service ?? "" },
+      { rotulo: "Booking", valor: ref },
+    ],
+    passos: passosAte(PASSOS_VISITA, 3),
     saudacao: saudacao(d.publico),
     paragrafos: [
       p1,

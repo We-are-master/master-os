@@ -13,7 +13,7 @@
 
 import { ofertaDaPeca } from "@/lib/email-sequences/render";
 import { ASSINATURA_DO_VICTOR, renderCampanha, type Bloco, type OfertaNoEmail } from "@/lib/emails/campanha-layout";
-import { FIXFY_SIGNATURE, dataLonga, emailFixfy, preencherOuNada, saudacao, urlSegura, type Estado } from "@/lib/emails/fixfy-shell";
+import { FIXFY_SIGNATURE, dataLonga, emailFixfy, preencherOuNada, saudacao, urlSegura, type Estado, type Metrica } from "@/lib/emails/fixfy-shell";
 import { acharCupom } from "@/lib/marketing/cupons";
 import { pecaDoClube, type PecaDoClube } from "./clube-servicos";
 import { CLUBE, SITE, diaEmLondres, quandoSaiAEdicao, type EdicaoDoClube } from "./calendario";
@@ -114,12 +114,15 @@ export function emailDeMarketing(e: {
   linksSecundarios?: Array<{ label: string; url: string | null | undefined }>;
   descadastroUrl: string;
   motivo?: string;
+  /** Só com oferta de verdade: código e validade. */
+  metricas?: Metrica[] | null;
 }): { html: string; text: string } {
   const real = urlSegura(e.descadastroUrl);
   const { html, text } = emailFixfy({
     preheader: e.preheader,
     estado: e.estado ?? null,
     titulo: e.titulo,
+    metricas: e.metricas ?? null,
     saudacao: saudacao({ tipo: "b2c", primeiroNome: e.primeiroNome }),
     paragrafos: e.paragrafos,
     cta: e.cta,
@@ -155,6 +158,12 @@ export function edicaoNova(
     primeiroNome: opcoes?.primeiroNome === undefined ? NOME_DO_CONTATO : opcoes.primeiroNome,
     paragrafos,
     cta: { label: peca.cta, url: linkDaEdicao(peca, Boolean(oferta)) },
+    metricas: oferta
+      ? [
+          { rotulo: "Code", valor: oferta.codigo, sub: `${oferta.desconto} off` },
+          { rotulo: "Valid until", valor: oferta.validade },
+        ]
+      : null,
     descadastroUrl: opcoes?.descadastroUrl ?? LINK_DE_SAIDA,
   });
   return { assunto: peca.assunto, html, texto: text, oferta };

@@ -235,10 +235,12 @@ for (const [partnerId, lista] of porParceiro) {
   const email = buildPartnerTomorrowEmail({
     dayWord,
     correctionNote: MODO_CORRECAO
-      ? `Correction: our earlier email showed the wrong date in the heading. These jobs are for ${dayWord.toUpperCase()}, ${dateLabel} — times and details below are unchanged. Sorry for the confusion.`
+      ? `Correction: our earlier email showed the wrong date in the heading. These jobs are for ${dayWord.toUpperCase()}, ${dateLabel}. Times and details below are unchanged. Sorry for the confusion.`
       : null,
-    partnerFirstName: (p.contact_name?.trim() || p.company_name?.trim() || "there").split(/\s+/)[0]!,
+    // Empresa antes do contato, como em partnerEmailGreetingName.
+    partnerFirstName: p.company_name?.trim() || p.contact_name?.trim() || "there",
     dateLabel,
+    dateYmd: ymd,
     stops,
     showRoute: false,
     totalDriveSec: null,

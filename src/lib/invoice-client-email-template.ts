@@ -11,6 +11,7 @@ import {
   type AgentReceiptView,
 } from "@/lib/agent-model/receipt-view";
 import { dataLonga, emailFixfy, gbp, saudacao, type EmailFixfy } from "@/lib/emails/fixfy-shell";
+import { passosAte, PASSOS_FATURA } from "@/lib/emails/faixas-do-email";
 import {
   dadosBancariosVerificados,
   nomeDoDocumento,
@@ -276,6 +277,16 @@ export function buildInvoiceClientEmail(
       estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
       titulo: "Your work is complete",
       destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      metricas: paid
+        ? [
+            { rotulo: "Amount paid", valor: gbp(paidAmt || invAmt) },
+            { rotulo: "Paid on", valor: dataDoPagamento(invoice) ?? "" },
+          ]
+        : [
+            { rotulo: "Amount due", valor: gbp(amountDueNow) },
+            { rotulo: "Due by", valor: due ?? "" },
+          ],
+      passos: passosAte(PASSOS_FATURA, paid ? 3 : 2),
       saudacao: greeting,
       paragrafos: [custom ?? p1, ...(pMissing ? [pMissing] : []), p2, p3],
       linhas: [
@@ -307,6 +318,14 @@ export function buildInvoiceClientEmail(
       estado: { texto: "Payment received", cor: "green" },
       titulo: "Thank you for your payment",
       destaque: { linha1: `${gbp(recebido)} received`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null },
+      metricas: [
+        { rotulo: "Amount received", valor: gbp(recebido), sub: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null },
+        restante > 0.02
+          ? { rotulo: "Balance", valor: gbp(restante), sub: "due on completion" }
+          : { rotulo: "Balance", valor: gbp(0) },
+      ],
+      // Recibo de sinal: a reserva está feita, o trabalho ainda não. Recibo do resto: pago.
+      passos: passosAte(PASSOS_FATURA, ehEntrada ? 0 : 3),
       saudacao: greeting,
       paragrafos: [
         custom ?? `We’ve received ${gbp(recebido)} for ${service}.${attached ? " Your receipt is attached for your records." : ""}`,
@@ -332,6 +351,15 @@ export function buildInvoiceClientEmail(
       estado: { texto: "Payment due", cor: "navy" },
       titulo: `Your ${docName} is ready`,
       destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      metricas: [
+        { rotulo: "Amount due", valor: gbp(amountDueNow) },
+        { rotulo: "Due by", valor: due ?? "" },
+      ],
+      // Fatura de sinal sai antes do trabalho: a reserva é o passo atual.
+      passos: passosAte(
+        PASSOS_FATURA,
+        String((invoice as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit" ? 0 : 2,
+      ),
       saudacao: greeting,
       paragrafos: [
         custom ?? `Your ${docName} for ${service} is ready. You’ll find the amount due and payment details below.`,
