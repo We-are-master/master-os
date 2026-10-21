@@ -209,8 +209,9 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
-import { invoiceIdsToCheckForOverdue, jobPaymentState } from "@/lib/job-payment-badge";
-import { overdueInvoiceIds } from "@/services/job-payment-state";
+import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, type JobInvoiceSummary } from "@/lib/job-payment-badge";
+import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
+import { invoicesForPaymentColumn } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 import { ZendeskTicketBadge } from "@/components/shared/zendesk-ticket-badge";
 import { ZendeskTicketField, isZendeskTicketFieldValid, type ZendeskTicketFieldValue } from "@/components/shared/zendesk-ticket-field";
@@ -1328,20 +1329,28 @@ function JobsPageContent() {
 
   // Coluna Payment: quais faturas dos jobs da lista estão vencidas, pela regra da aba Overdue do Finance.
   const [overdueInvoiceIdSet, setOverdueInvoiceIdSet] = useState<ReadonlySet<string>>(() => new Set());
+  /** Referência e vencimento das faturas, para o hover da etiqueta. */
+  const [invoiceSummaryById, setInvoiceSummaryById] = useState<ReadonlyMap<string, JobInvoiceSummary>>(() => new Map());
 
   useEffect(() => {
     const ids = invoiceIdsToCheckForOverdue(data);
     if (ids.length === 0) {
       setOverdueInvoiceIdSet(new Set());
+      setInvoiceSummaryById(new Map());
       return;
     }
     let cancelled = false;
-    void overdueInvoiceIds(ids).then(
-      (set) => {
-        if (!cancelled) setOverdueInvoiceIdSet(set);
+    void invoicesForPaymentColumn(ids).then(
+      (r) => {
+        if (cancelled) return;
+        setOverdueInvoiceIdSet(r.overdue);
+        setInvoiceSummaryById(r.byId);
       },
       () => {
-        if (!cancelled) setOverdueInvoiceIdSet(new Set());
+        if (!cancelled) {
+          setOverdueInvoiceIdSet(new Set());
+          setInvoiceSummaryById(new Map());
+        }
       },
     );
     return () => {
@@ -3182,7 +3191,16 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
-      render: (item) => <JobPaymentBadge state={jobPaymentState(item, overdueInvoiceIdSet)} className={LIST_CHIP_CLASS} />,
+      render: (item) => {
+        const state = jobPaymentState(item, overdueInvoiceIdSet);
+        const detail = jobPaymentDetail(state, item, {
+          billable: jobCustomerBillableRevenueForCollections(item),
+          paid: customerPaidByJobId[item.id] ?? 0,
+          invoice: item.invoice_id ? invoiceSummaryById.get(item.invoice_id) ?? null : null,
+          todayYmd: invoiceFinanceListTodayYmd(),
+        });
+        return <JobPaymentBadge state={state} detail={detail} className={LIST_CHIP_CLASS} />;
+      },
     },
     // A seta de avançar fase saiu da lista (dono, 15/10/2026); a coluna fica só no
     // Final checks, com a bolinha do report.
