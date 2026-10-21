@@ -162,7 +162,10 @@ export async function queryList<T>(
 
   if (table === "jobs" && closedTab) {
     query = query.or(
-      "and(status.in.(awaiting_payment,completed,cancelled),deleted_at.is.null)," +
+      // Closed é terminal (pago, perdido, arquivado), igual à contagem da aba em
+      // `jobMatchesJobsManagementTab`. `awaiting_payment` ficou aqui por engano e
+      // misturava quem ainda deve com os fechados (dono, 21/10/2026).
+      "and(status.in.(completed,cancelled),deleted_at.is.null)," +
         "and(status.eq.deleted,deleted_at.not.is.null)",
     );
   } else if (table === "jobs" && actionTab) {

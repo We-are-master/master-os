@@ -992,6 +992,11 @@ function JobsPageContent() {
     if (merged.status === "closed" && closedJobsFilterRef.current !== "all") {
       merged.jobsClosedBucket = closedJobsFilterRef.current as JobsManagementClosedBucket;
     }
+    /**
+     * Dívida não tem semana (dono, 21/10/2026): com "This week" a aba escondia quem
+     * deve desde maio (JOB-9011, Homyze). Awaiting payment mostra sempre tudo em aberto.
+     */
+    if (merged.status === "awaiting_payment") delete merged.scheduleRange;
     return listJobs(merged);
   }, []);
 
@@ -1657,6 +1662,15 @@ function JobsPageContent() {
               countOpts?.scheduleRange != null
                 ? await getArchivedDeletedJobsOverlappingScheduleCount(countOpts.scheduleRange)
                 : 0;
+            // Mesma regra da lista: Awaiting payment conta tudo em aberto, sem a janela de data.
+            if (countOpts?.scheduleRange) {
+              const { count: emAberto, error: abertoErr } = await supabase
+                .from("jobs")
+                .select("*", { count: "exact", head: true })
+                .eq("status", "awaiting_payment")
+                .is("deleted_at", null);
+              if (!abertoErr) counts.awaiting_payment = emAberto ?? 0;
+            }
             const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
             setTabCounts({
               ...counts,
@@ -1769,7 +1783,7 @@ function JobsPageContent() {
     { id: "scheduled", label: "Scheduled", hint: "Jobs in the scheduled queue under the current filters.", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In progress", hint: "Jobs currently being carried out.", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
     { id: "final_check", label: "Final review", hint: "Jobs awaiting review of completion details and reports.", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting payment", hint: "Jobs awaiting customer payment under the current workflow.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "awaiting_payment", label: "Awaiting payment", hint: "Every job still waiting for customer payment. The date filter does not apply here.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "closed", label: "Closed", hint: "Closed jobs. Use the outcome filter to distinguish completed, cancelled and lost work.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
@@ -3192,6 +3206,10 @@ function JobsPageContent() {
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
       render: (item) => {
+        // Perdido sem nada a cobrar não tem estado de pagamento: "Unpaid" ali era ruído.
+        if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
+          return <span className="text-xs text-text-tertiary">—</span>;
+        }
         const state = jobPaymentState(item, overdueInvoiceIdSet);
         const detail = jobPaymentDetail(state, item, {
           billable: jobCustomerBillableRevenueForCollections(item),
