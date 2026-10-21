@@ -109,9 +109,24 @@ export async function notifyVisitPartner(
     clientPhone = (client?.phone as string | null) ?? null;
   }
 
+  /**
+   * O serviço é o DA VISITA (21/10/2026, JOB-9705): a limpeza da F&V saiu como
+   * "General Maintenance" porque o título vinha do job, que é a obra da visita 1.
+   */
+  let serviceName: string | null = null;
+  if (visit.catalog_service_id) {
+    const { data: service } = await supabase
+      .from("service_catalog")
+      .select("name")
+      .eq("id", visit.catalog_service_id)
+      .maybeSingle();
+    serviceName = (service?.name as string | null)?.trim() || null;
+  }
+  const visitTitle = serviceName || job.title || "Maintenance job";
+
   const partnerNotes = await loadPartnerJobEmailNotes(supabase, {
     catalogServiceId: visit.catalog_service_id,
-    jobTitle: job.title,
+    jobTitle: visitTitle,
     jobType: "fixed",
   });
 
@@ -120,7 +135,7 @@ export async function notifyVisitPartner(
     // A referência carrega a visita: o parceiro da visita 3 precisa saber que
     // não é o mesmo trabalho do parceiro da visita 1 no mesmo endereço.
     jobReference: `${job.reference} · Visit ${visit.visit_index}`,
-    jobTitle: job.title || "Maintenance job",
+    jobTitle: visitTitle,
     clientName: job.client_name || "—",
     clientPhone,
     propertyAddress: job.property_address || "—",
