@@ -144,7 +144,11 @@ export function Modal({
             exit="exit"
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              "relative w-full min-h-0 flex flex-col max-h-[min(88dvh,100dvh-2rem)] bg-card rounded-2xl shadow-modal border border-[var(--line-soft)] overflow-hidden my-auto",
+              // `overflow-clip`, não `hidden` (21/10/2026): `hidden` ainda deixa o navegador
+              // rolar o painel quando um campo ganha foco (o input de fotos do report o rolou
+              // 237px). O título sumia em cima e sobrava uma faixa branca embaixo, ou o
+              // modal inteiro branco. `clip` corta igual e não rola nunca.
+              "relative w-full min-h-0 flex flex-col max-h-[min(88dvh,100dvh-2rem)] bg-card rounded-2xl shadow-modal border border-[var(--line-soft)] overflow-clip my-auto",
               effectiveScrollBody ? "h-fit" : "h-[min(90dvh,100dvh-2rem)] min-h-0",
               sizeStyles[size],
               className,
