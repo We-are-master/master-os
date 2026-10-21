@@ -658,6 +658,11 @@ interface FormState {
   client_price: string;
   partner_cost: string;
   scope: string;
+  /**
+   * O cliente paga esta visita? (dono, 21/10/2026, JOB-9705). "" = ainda não respondido:
+   * a limpeza já estava na fatura e o resolver preenchia o preço sozinho, cobrando duas vezes.
+   */
+  billing: "" | "included" | "extra";
 }
 
 const EMPTY_FORM: FormState = {
@@ -670,6 +675,7 @@ const EMPTY_FORM: FormState = {
   client_price: "",
   partner_cost: "",
   scope: "",
+  billing: "",
 };
 
 function VisitEditModal({
@@ -705,6 +711,7 @@ function VisitEditModal({
         client_price: v.client_price?.toString() ?? "",
         partner_cost: v.partner_cost?.toString() ?? "",
         scope: v.scope ?? "",
+        billing: Number(v.client_price) > 0 ? "extra" : "included",
       };
     }
     // Visita nova herda o serviço do job: quase sempre é o mesmo trabalho, e
@@ -792,6 +799,14 @@ function VisitEditModal({
       toast.error("Set a scheduled date for the visit");
       return;
     }
+    if (!form.billing) {
+      toast.error("Choose whether the client pays extra for this visit");
+      return;
+    }
+    if (form.billing === "extra" && !(Number(form.client_price) > 0)) {
+      toast.error("Set how much the client pays for this visit");
+      return;
+    }
     setSaving(true);
     try {
       // Hora de parede de Londres, não string crua: `scheduled_start_at` é
@@ -814,7 +829,7 @@ function VisitEditModal({
         scheduled_start_at: startIso,
         scheduled_end_at: endIso,
         expected_finish_at: endIso,
-        client_price: Number(form.client_price) || 0,
+        client_price: form.billing === "extra" ? Number(form.client_price) || 0 : 0,
         partner_cost: Number(form.partner_cost) || 0,
         // Materiais não são campo da visita: entram como extra no job, onde o
         // ledger já sabe alocá-los.
@@ -847,6 +862,7 @@ function VisitEditModal({
     ? pricing.pricing_mode === "hourly" ? pricing.partner.hourly_partner_rate_source : pricing.partner.fixed_partner_cost_source
     : null;
   const margem = (() => {
+    if (form.billing !== "extra") return null;
     const c = Number(form.client_price) || 0;
     const p = Number(form.partner_cost) || 0;
     if (!c && !p) return null;
@@ -860,12 +876,12 @@ function VisitEditModal({
       title={target.mode === "edit" ? `Edit visit ${target.visit.visit_index}` : `Book visit ${nextIndex}`}
       size="md"
     >
-      <form onSubmit={handleSubmit} className="space-y-4 p-2">
-        <section className="space-y-2">
+      <form onSubmit={handleSubmit} className="space-y-3 p-1">
+        <section className={BLOCO}>
           <p className={SECAO}>When</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[10rem_1fr]">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-text-secondary">Date *</label>
+              <label className={ROTULO}>Date *</label>
               <Input type="date" value={form.scheduled_date} onChange={(e) => setForm((p) => ({ ...p, scheduled_date: e.target.value }))} />
             </div>
             <ArrivalSlotPicker
@@ -877,12 +893,12 @@ function VisitEditModal({
           </div>
         </section>
 
-        <section className="space-y-2">
+        <section className={BLOCO}>
           <p className={SECAO}>Who and what</p>
           <div>
-            <label className="mb-1 block text-xs font-semibold text-text-secondary">Partner</label>
+            <label className={ROTULO}>Partner</label>
             <select
-              className="h-10 w-full rounded-lg border border-border-light bg-surface px-3 text-sm"
+              className={CAMPO}
               value={form.partner_id}
               onChange={(e) => pickPartner(e.target.value)}
             >
@@ -903,40 +919,67 @@ function VisitEditModal({
             compactOptionLabels
           />
           <div>
-            <label className="mb-1 block text-xs font-semibold text-text-secondary">Scope (optional)</label>
+            <label className={ROTULO}>Scope for the partner (in English)</label>
             <textarea
               value={form.scope}
               onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
-              rows={2}
-              className="w-full rounded-lg border border-border-light bg-surface px-3 py-2 text-sm"
+              rows={3}
+              className={cn(CAMPO, "h-auto resize-y py-2 leading-snug")}
               placeholder="What the partner does on this visit. They see this."
             />
           </div>
         </section>
 
-        <section className="space-y-2">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className={SECAO}>Price</p>
-            {margem ? (
-              <span className={cn("text-[11px] tabular-nums", margem.valor < 0 ? "text-red-600" : "text-text-tertiary")}>
-                Margin {formatCurrency(margem.valor)}
-                {margem.pct != null ? ` · ${margem.pct}%` : ""}
-              </span>
-            ) : null}
+        <section className={BLOCO}>
+          <p className={SECAO}>Does the client pay for this visit?</p>
+          <div role="radiogroup" aria-label="Client billing for this visit" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {([
+              { v: "included", titulo: "Already included", texto: "Part of the job price. Nothing new on the invoice." },
+              { v: "extra", titulo: "Charge extra", texto: "Adds to the client's invoice for this job." },
+            ] as const).map((o) => {
+              const ativo = form.billing === o.v;
+              return (
+                <button
+                  key={o.v}
+                  type="button"
+                  role="radio"
+                  aria-checked={ativo}
+                  onClick={() => setForm((p) => ({ ...p, billing: o.v }))}
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                    ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                  )}
+                >
+                  <span className={cn(
+                    "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                    ativo ? "border-primary bg-primary" : "border-border",
+                  )}>
+                    {ativo ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                    <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
-                Client pays (£)
-                {pricing && fonteDoCliente === "custom" ? <PricingSourceChip source="custom" /> : null}
-              </label>
-              <Input type="number" step="0.01" min={0} value={form.client_price}
-                onChange={(e) => setForm((p) => ({ ...p, client_price: e.target.value }))}
-                placeholder="0.00"
-              />
-            </div>
-            <div>
-              <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-text-secondary">
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {form.billing === "extra" ? (
+              <div>
+                <label className={ROTULO}>
+                  Client pays (£)
+                  {pricing && fonteDoCliente === "custom" ? <PricingSourceChip source="custom" /> : null}
+                </label>
+                <Input type="number" step="0.01" min={0} value={form.client_price}
+                  onChange={(e) => setForm((p) => ({ ...p, client_price: e.target.value }))}
+                  placeholder="0.00"
+                />
+              </div>
+            ) : null}
+            <div className={form.billing === "extra" ? "" : "sm:col-span-2"}>
+              <label className={ROTULO}>
                 Partner gets (£)
                 {pricing && fonteDoParceiro === "custom" ? <PricingSourceChip source="custom" /> : null}
               </label>
@@ -946,20 +989,28 @@ function VisitEditModal({
               />
             </div>
           </div>
-          {(Number(form.client_price) || 0) === 0 && (Number(form.partner_cost) || 0) === 0 ? (
-            <p className="m-0 text-[11px] text-amber-700">Both at £0: this visit adds nothing to the invoice or the self-bill.</p>
+
+          {form.billing === "included" ? (
+            <p className="m-0 text-[11px] text-text-tertiary">
+              The client is not charged again. The partner&apos;s {formatCurrency(Number(form.partner_cost) || 0)} comes out of the job&apos;s margin.
+            </p>
+          ) : margem ? (
+            <p className={cn("m-0 text-[11px] tabular-nums", margem.valor < 0 ? "text-red-600" : "text-text-tertiary")}>
+              Margin on this visit {formatCurrency(margem.valor)}
+              {margem.pct != null ? ` · ${margem.pct}%` : ""}
+            </p>
           ) : null}
         </section>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-light pt-3">
-          <p className="m-0 max-w-[16rem] text-[11px] leading-snug text-text-tertiary">
-            {target.mode === "create" ? "The client and the partner get a confirmation on the job's ticket." : ""}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <p className="m-0 max-w-[18rem] text-[11px] leading-snug text-text-tertiary">
+            {target.mode === "create" ? "The partner gets the job by email on the job's ticket. The client gets a confirmation there too." : ""}
           </p>
           <div className="flex gap-2">
             <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving}>
+            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.billing}>
               {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
             </Button>
           </div>
@@ -970,6 +1021,11 @@ function VisitEditModal({
 }
 
 const SECAO = "m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary";
+/** Cada parte do modal num bloco, para ler de cima a baixo: quando, quem, quanto. */
+const BLOCO = "space-y-3 rounded-xl border border-border-light bg-surface-secondary/40 p-3";
+const ROTULO = "mb-1 flex items-center gap-1.5 text-xs font-semibold text-text-secondary";
+/** Mesmo campo do `Input` (VOS UNO): o select e o textarea destoavam do resto. */
+const CAMPO = "w-full h-[var(--field-h,38px)] rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-[11px] text-[13px] text-text-primary placeholder:text-text-tertiary transition-colors hover:border-text-tertiary focus:outline-none focus:border-text-tertiary focus:ring-[3px] focus:ring-text-primary/10";
 
 function nomeDoParceiro(p: Partner): string {
   return (p.company_name?.trim() || p.contact_name || "Partner").trim();
