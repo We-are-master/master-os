@@ -158,3 +158,20 @@ export function jobPaymentDetail(
   }
   return { headline: JOB_PAYMENT_TOOLTIP[state], rows };
 }
+
+/**
+ * Coluna "Due" da aba Awaiting payment (dono, 21/10/2026): a data de vencimento
+ * da fatura e quanto falta ou quanto passou, para ver de relance o que está pegando.
+ */
+export function vencimentoDaFatura(
+  dueDate: string | null | undefined,
+  todayYmd: string,
+): { date: string; note: string; late: boolean } | null {
+  if (!dueDate) return null;
+  const date = diaCurtoDeLondres(dueDate);
+  if (!date) return null;
+  const d = diasDesde(dueDate, todayYmd);
+  if (d > 0) return { date, note: `${d} ${d === 1 ? "day" : "days"} late`, late: true };
+  if (d === 0) return { date, note: "Due today", late: false };
+  return { date, note: `In ${-d} ${d === -1 ? "day" : "days"}`, late: false };
+}

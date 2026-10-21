@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState } from "@/lib/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura } from "@/lib/job-payment-badge";
 
 /**
  * A coluna Payment do Jobs Management. Reserva do site nasce paga, conta B2B
@@ -100,5 +100,14 @@ describe("invoiceIdsToCheckForOverdue", () => {
       { payment_status: "unpaid", invoice_id: "c" },
     ]);
     assert.deepEqual(ids, ["b", "c"]);
+  });
+});
+
+describe("vencimentoDaFatura", () => {
+  it("diz quantos dias passou, se vence hoje, ou quantos faltam", () => {
+    assert.deepEqual(vencimentoDaFatura("2026-10-13", "2026-10-21"), { date: "Tue 13 Oct", note: "8 days late", late: true });
+    assert.deepEqual(vencimentoDaFatura("2026-10-21", "2026-10-21"), { date: "Wed 21 Oct", note: "Due today", late: false });
+    assert.deepEqual(vencimentoDaFatura("2026-10-23", "2026-10-21"), { date: "Fri 23 Oct", note: "In 2 days", late: false });
+    assert.equal(vencimentoDaFatura(null, "2026-10-21"), null);
   });
 });

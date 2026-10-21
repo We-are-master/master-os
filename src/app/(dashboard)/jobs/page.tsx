@@ -209,7 +209,7 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
-import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, type JobInvoiceSummary } from "@/lib/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, type JobInvoiceSummary } from "@/lib/job-payment-badge";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { invoicesForPaymentColumn } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
@@ -992,6 +992,11 @@ function JobsPageContent() {
     if (merged.status === "closed" && closedJobsFilterRef.current !== "all") {
       merged.jobsClosedBucket = closedJobsFilterRef.current as JobsManagementClosedBucket;
     }
+    /**
+     * Dívida não tem semana (dono, 21/10/2026): com "This week" a aba escondia quem
+     * deve desde maio (JOB-9011, Homyze). Awaiting payment mostra sempre tudo em aberto.
+     */
+    if (merged.status === "awaiting_payment") delete merged.scheduleRange;
     return listJobs(merged);
   }, []);
 
@@ -1657,6 +1662,15 @@ function JobsPageContent() {
               countOpts?.scheduleRange != null
                 ? await getArchivedDeletedJobsOverlappingScheduleCount(countOpts.scheduleRange)
                 : 0;
+            // Mesma regra da lista: Awaiting payment conta tudo em aberto, sem a janela de data.
+            if (countOpts?.scheduleRange) {
+              const { count: emAberto, error: abertoErr } = await supabase
+                .from("jobs")
+                .select("*", { count: "exact", head: true })
+                .eq("status", "awaiting_payment")
+                .is("deleted_at", null);
+              if (!abertoErr) counts.awaiting_payment = emAberto ?? 0;
+            }
             const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
             setTabCounts({
               ...counts,
@@ -1769,7 +1783,7 @@ function JobsPageContent() {
     { id: "scheduled", label: "Scheduled", hint: "Jobs in the scheduled queue under the current filters.", count: scheduledTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.scheduled },
     { id: "in_progress", label: "In progress", hint: "Jobs currently being carried out.", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
     { id: "final_check", label: "Final review", hint: "Jobs awaiting review of completion details and reports.", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
-    { id: "awaiting_payment", label: "Awaiting payment", hint: "Jobs awaiting customer payment under the current workflow.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
+    { id: "awaiting_payment", label: "Awaiting payment", hint: "Every job still waiting for customer payment. The date filter does not apply here.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
     { id: "closed", label: "Closed", hint: "Closed jobs. Use the outcome filter to distinguish completed, cancelled and lost work.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
@@ -3192,6 +3206,10 @@ function JobsPageContent() {
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
       render: (item) => {
+        // Perdido sem nada a cobrar não tem estado de pagamento: "Unpaid" ali era ruído.
+        if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
+          return <span className="text-xs text-text-tertiary">—</span>;
+        }
         const state = jobPaymentState(item, overdueInvoiceIdSet);
         const detail = jobPaymentDetail(state, item, {
           billable: jobCustomerBillableRevenueForCollections(item),
@@ -3287,11 +3305,43 @@ function JobsPageContent() {
     [zendeskTicketColumn],
   );
 
+  /**
+   * Awaiting payment é a aba da cobrança (dono, 21/10/2026): todo job ali tem o mesmo
+   * Status e a agenda já passou, então as duas colunas saem. Fica o que diz o que está
+   * pegando: quanto falta (Amount due), quando vence (Due) e a etiqueta de Payment.
+   */
+  const dueColumn: Column<Job> = useMemo(
+    () => ({
+      key: "invoice_due",
+      label: "Due",
+      minWidth: "112px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
+      render: (item: Job) => {
+        const fatura = item.invoice_id ? invoiceSummaryById.get(item.invoice_id) : null;
+        const v = vencimentoDaFatura(fatura?.dueDate, invoiceFinanceListTodayYmd());
+        if (!v) return <span className="text-xs text-text-tertiary">{item.invoice_id ? "—" : "No invoice"}</span>;
+        return (
+          <span className="flex flex-col leading-tight">
+            <span className="text-sm font-medium text-text-primary tabular-nums">{v.date}</span>
+            <span className={cn("text-[11px] tabular-nums", v.late ? "font-semibold text-red-600" : "text-text-tertiary")}>{v.note}</span>
+          </span>
+        );
+      },
+    }),
+    [invoiceSummaryById],
+  );
+
   /** Closed keeps Amount Due + Payment. Other tabs: partner Cost instead of Amount Due, then Payment and Ticket (margin only in footer). */
   const tableColumns = useMemo(() => {
     if (status === "closed") return columns;
+    if (status === "awaiting_payment") {
+      return addTicketAfterPayment(columns)
+        .filter((c) => c.key !== "schedule" && c.key !== "status")
+        .flatMap((c) => (c.key === "finance_status" ? [dueColumn, c] : [c]));
+    }
     return addTicketAfterPayment(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
-  }, [columns, status, addTicketAfterPayment, partnerCostColumn]);
+  }, [columns, status, addTicketAfterPayment, partnerCostColumn, dueColumn]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
