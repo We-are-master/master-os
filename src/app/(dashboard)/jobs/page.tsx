@@ -869,6 +869,15 @@ const JOB_PAYMENT_FILTER_OPTIONS = (
   ["overdue", "card_failed", "bank_check", "card_declined", "unpaid", "partial", "paid"] as const
 ).map((v) => ({ value: v, label: JOB_PAYMENT_LABEL[v] }));
 
+/**
+ * Quanto o cliente ainda deve neste job. Job pago é zero (21/10/2026): os da Housekeep,
+ * pagos pela plataforma, não têm lançamento em job_payments e apareciam devendo tudo.
+ */
+function valorEmAberto(j: Job, pagoNoJob: number): number {
+  if ((j.finance_status ?? j.payment_status) === "paid") return 0;
+  return Math.max(0, jobCustomerBillableRevenueForCollections(j) - pagoNoJob);
+}
+
 const JOB_SORT_FINANCE: ColumnSortOption[] = [
   { label: "Unpaid → paid", sortKey: "finance_status", direction: "asc" },
   { label: "Paid → unpaid", sortKey: "finance_status", direction: "desc" },
@@ -1000,8 +1009,10 @@ function JobsPageContent() {
     /**
      * Dívida não tem semana (dono, 21/10/2026): com "This week" a aba escondia quem
      * deve desde maio (JOB-9011, Homyze). Awaiting payment mostra sempre tudo em aberto.
+     * Closed é o histórico inteiro (dono, mesmo dia: "todo nosso histórico, sem perder
+     * nada"): com a janela da semana ele mostrava 9 de 680.
      */
-    if (merged.status === "awaiting_payment") delete merged.scheduleRange;
+    if (merged.status === "awaiting_payment" || merged.status === "closed") delete merged.scheduleRange;
     return listJobs(merged);
   }, []);
 
@@ -1301,6 +1312,14 @@ function JobsPageContent() {
       return [...onHold, ...rest];
     }
 
+    // Closed é histórico: o mais recente em cima (dono, 21/10/2026).
+    if (status === "closed" && filterSort === "schedule_nearest") {
+      clone.sort((a, b) => {
+        const dayCmp = (jobScheduleStartYmdUk(b) ?? "").localeCompare(jobScheduleStartYmdUk(a) ?? "");
+        return dayCmp !== 0 ? dayCmp : createdAt(b) - createdAt(a);
+      });
+      return clone;
+    }
     clone.sort(compareSchedule);
     return clone;
   }, [filteredData, filterSort, status]);
@@ -1375,9 +1394,7 @@ function JobsPageContent() {
     const jobAmount = (j: Job) => j.client_price + Number(j.extras_amount ?? 0);
     const amountDue = (j: Job) => {
       if (!customerPaidSumsReady) return 0;
-      const billable = jobCustomerBillableRevenueForCollections(j);
-      const paid = customerPaidByJobId[j.id] ?? 0;
-      return Math.max(0, billable - paid);
+      return valorEmAberto(j, customerPaidByJobId[j.id] ?? 0);
     };
     const accountLabel = (j: Job) => (j.client_id ? clientAccountMap[j.client_id] ?? "" : "");
     clone.sort((a, b) => {
@@ -1589,7 +1606,7 @@ function JobsPageContent() {
     if (!customerPaidSumsReady) return null;
     let total = 0;
     for (const j of sortedDataForTable) {
-      total += Math.max(0, jobCustomerBillableRevenueForCollections(j) - (customerPaidByJobId[j.id] ?? 0));
+      total += valorEmAberto(j, customerPaidByJobId[j.id] ?? 0);
     }
     return Math.round(total * 100) / 100;
   }, [sortedDataForTable, customerPaidByJobId, customerPaidSumsReady]);
@@ -1698,6 +1715,12 @@ function JobsPageContent() {
                 .eq("status", "awaiting_payment")
                 .is("deleted_at", null);
               if (!abertoErr) counts.awaiting_payment = emAberto ?? 0;
+              // Closed também é sem janela: pagos + perdidos + arquivados, de sempre.
+              const { count: fechados, error: fechadosErr } = await supabase
+                .from("jobs")
+                .select("*", { count: "exact", head: true })
+                .or("and(status.in.(completed,cancelled),deleted_at.is.null),and(status.eq.deleted,deleted_at.not.is.null)");
+              if (!fechadosErr) counts.closed_all_time = fechados ?? 0;
             }
             const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
             setTabCounts({
@@ -1790,9 +1813,11 @@ function JobsPageContent() {
   /** Closed é terminal: pago ou cancelado. `awaiting_payment` saiu daqui e tem
    *  aba própria, porque job esperando dinheiro é trabalho vivo. */
   const closedTabCount =
-    (tabCounts.completed ?? 0) +
-    (tabCounts.cancelled ?? 0) +
-    (scheduleRange ? (tabCounts.archived_overlap_window ?? 0) : (tabCounts.deleted ?? 0));
+    scheduleRange && tabCounts.closed_all_time != null
+      ? tabCounts.closed_all_time
+      : (tabCounts.completed ?? 0) +
+        (tabCounts.cancelled ?? 0) +
+        (scheduleRange ? (tabCounts.archived_overlap_window ?? 0) : (tabCounts.deleted ?? 0));
 
   /** Jobs in Action Required → Final Checks (same scope as tab badges below). */
   const kpiActiveJobsCount =
@@ -1812,7 +1837,7 @@ function JobsPageContent() {
     { id: "in_progress", label: "In progress", hint: "Jobs currently being carried out.", count: inProgressTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.in_progress },
     { id: "final_check", label: "Final review", hint: "Jobs awaiting review of completion details and reports.", count: finalChecksTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.final_check },
     { id: "awaiting_payment", label: "Awaiting payment", hint: "Every job still waiting for customer payment. The date filter does not apply here.", count: awaitingPaymentTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.awaiting_payment },
-    { id: "closed", label: "Closed", hint: "Closed jobs. Use the outcome filter to distinguish completed, cancelled and lost work.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
+    { id: "closed", label: "Closed", hint: "Our full history: every paid, lost and archived job. The date filter does not apply here.", count: closedTabCount, accent: JOBS_MANAGEMENT_TAB_ACCENTS.closed },
   ];
 
   useEffect(() => {
@@ -3218,9 +3243,7 @@ function JobsPageContent() {
         if (!customerPaidSumsReady) {
           return <span className="text-sm text-text-tertiary">…</span>;
         }
-        const billable = jobCustomerBillableRevenueForCollections(item);
-        const paid = customerPaidByJobId[item.id] ?? 0;
-        const due = Math.max(0, billable - paid);
+        const due = valorEmAberto(item, customerPaidByJobId[item.id] ?? 0);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
       footer: amountDueFooter,
@@ -3242,7 +3265,8 @@ function JobsPageContent() {
         if (!state) return <span className="text-xs text-text-tertiary">—</span>;
         const detail = jobPaymentDetail(state, item, {
           billable: jobCustomerBillableRevenueForCollections(item),
-          paid: customerPaidByJobId[item.id] ?? 0,
+          // Pago pela plataforma (Housekeep) não tem lançamento: o hover não pode dizer "£0 of".
+          paid: state === "paid" ? jobCustomerBillableRevenueForCollections(item) : customerPaidByJobId[item.id] ?? 0,
           invoice: item.invoice_id ? invoiceSummaryById.get(item.invoice_id) ?? null : null,
           todayYmd: invoiceFinanceListTodayYmd(),
         });
