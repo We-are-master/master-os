@@ -209,7 +209,7 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
-import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, type JobInvoiceSummary } from "@/lib/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, JOB_PAYMENT_LABEL, type JobInvoiceSummary, type JobPaymentState } from "@/lib/job-payment-badge";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { invoicesForPaymentColumn } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
@@ -864,6 +864,11 @@ const JOB_SORT_AMOUNT_DUE: ColumnSortOption[] = [
   ...JOB_SORT_CREATED,
 ];
 
+/** "Show" no menu da coluna Payment, na ordem de quem precisa de ação primeiro. */
+const JOB_PAYMENT_FILTER_OPTIONS = (
+  ["overdue", "card_failed", "bank_check", "card_declined", "unpaid", "partial", "paid"] as const
+).map((v) => ({ value: v, label: JOB_PAYMENT_LABEL[v] }));
+
 const JOB_SORT_FINANCE: ColumnSortOption[] = [
   { label: "Unpaid → paid", sortKey: "finance_status", direction: "asc" },
   { label: "Paid → unpaid", sortKey: "finance_status", direction: "desc" },
@@ -1363,7 +1368,7 @@ function JobsPageContent() {
     };
   }, [data]);
 
-  const sortedDataForTable = useMemo(() => {
+  const sortedDataAll = useMemo(() => {
     if (!jobsListSortKey) return scheduleSortedData;
     const mul = jobsListSortDir === "asc" ? 1 : -1;
     const clone = [...scheduleSortedData];
@@ -1435,6 +1440,7 @@ function JobsPageContent() {
     });
     return clone;
   }, [
+
     scheduleSortedData,
     jobsListSortKey,
     jobsListSortDir,
@@ -1443,6 +1449,28 @@ function JobsPageContent() {
     customerPaidSumsReady,
     clientAccountMap,
   ]);
+
+  /** Etiqueta de Payment de cada linha; null = sem estado (perdido sem nada a cobrar). */
+  const estadoDoPagamento = useCallback(
+    (item: Job): JobPaymentState | null => {
+      if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
+        return null;
+      }
+      return jobPaymentState(item, overdueInvoiceIdSet);
+    },
+    [overdueInvoiceIdSet],
+  );
+
+  /** Filtro do menu da coluna Payment (Overdue, Unpaid…). Volta para "All" ao trocar de aba. */
+  const [paymentFilter, setPaymentFilter] = useState<JobPaymentState | null>(null);
+  useEffect(() => {
+    setPaymentFilter(null);
+  }, [status]);
+
+  const sortedDataForTable = useMemo(
+    () => (paymentFilter ? sortedDataAll.filter((j) => estadoDoPagamento(j) === paymentFilter) : sortedDataAll),
+    [sortedDataAll, paymentFilter, estadoDoPagamento],
+  );
 
   /** Page totals — Job Amount, Cost, and Ticket margin footer. */
   const jobsListFinancialTotals = useMemo(() => sumJobsMoney(sortedDataForTable), [sortedDataForTable]);
@@ -3205,12 +3233,13 @@ function JobsPageContent() {
       headerClassName: "whitespace-nowrap normal-case",
       sortable: true,
       sortOptions: JOB_SORT_FINANCE,
+      filterOptions: JOB_PAYMENT_FILTER_OPTIONS,
+      filterValue: paymentFilter,
+      onFilterChange: (v) => setPaymentFilter(v as JobPaymentState | null),
       render: (item) => {
         // Perdido sem nada a cobrar não tem estado de pagamento: "Unpaid" ali era ruído.
-        if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
-          return <span className="text-xs text-text-tertiary">—</span>;
-        }
-        const state = jobPaymentState(item, overdueInvoiceIdSet);
+        const state = estadoDoPagamento(item);
+        if (!state) return <span className="text-xs text-text-tertiary">—</span>;
         const detail = jobPaymentDetail(state, item, {
           billable: jobCustomerBillableRevenueForCollections(item),
           paid: customerPaidByJobId[item.id] ?? 0,
@@ -3706,8 +3735,9 @@ function JobsPageContent() {
                 )
               }
               page={page}
-              totalPages={totalPages}
-              totalItems={totalItems}
+              // Com o filtro de Payment o rodapé conta o que está na tela, não a página inteira.
+              totalPages={paymentFilter ? 1 : totalPages}
+              totalItems={paymentFilter ? sortedDataForTable.length : totalItems}
               pageSize={jobsPageSize}
               onPageChange={setPage}
               fillHeight
