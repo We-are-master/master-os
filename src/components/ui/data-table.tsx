@@ -25,6 +25,13 @@ export interface Column<T> {
    * If omitted but `sortable` is true, falls back to asc → desc → clear.
    */
   sortOptions?: ColumnSortOption[];
+  /**
+   * Filtro no mesmo menu do cabeçalho (dono, 21/10/2026: "filtrar por Overdue etc.,
+   * não em chip"). Só aparece em coluna com `sortOptions`. `null` = mostrar tudo.
+   */
+  filterOptions?: { label: string; value: string }[];
+  filterValue?: string | null;
+  onFilterChange?: (value: string | null) => void;
   align?: "left" | "center" | "right";
   headerClassName?: string;
   cellClassName?: string;
@@ -459,7 +466,15 @@ export function DataTable<T>({
                             )}
                             title="Sort options"
                           >
-                            <span className="shrink-0 whitespace-nowrap">{col.label}</span>
+                            <span className="shrink-0 whitespace-nowrap">
+                              {col.label}
+                              {col.filterValue ? (
+                                <span className="normal-case tracking-normal text-primary">
+                                  {" · "}
+                                  {col.filterOptions?.find((o) => o.value === col.filterValue)?.label ?? col.filterValue}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="inline-flex shrink-0 gap-0.5 text-text-tertiary group-hover:text-text-secondary">
                               {active ? (
                                 sortDirection === "asc" ? (
@@ -505,6 +520,41 @@ export function DataTable<T>({
                                   </li>
                                 );
                               })}
+                              {col.filterOptions?.length && col.onFilterChange ? (
+                                <>
+                                  <li role="none" className="mt-1 border-t border-border-light px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                                    Show
+                                  </li>
+                                  {[{ label: "All", value: "" }, ...col.filterOptions].map((opt) => {
+                                    const selected = (col.filterValue ?? "") === opt.value;
+                                    return (
+                                      <li key={`${col.key}-filter-${opt.value || "all"}`} role="none">
+                                        <button
+                                          type="button"
+                                          role="option"
+                                          aria-selected={selected}
+                                          className={cn(
+                                            "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs font-medium transition-colors hover:bg-surface-hover",
+                                            selected ? "text-primary" : "text-text-secondary",
+                                          )}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            col.onFilterChange?.(opt.value || null);
+                                            setOpenSortMenuColKey(null);
+                                          }}
+                                        >
+                                          <span className="min-w-0 flex-1 leading-snug">{opt.label}</span>
+                                          {selected ? (
+                                            <span className="shrink-0 text-[10px] font-semibold text-primary" aria-hidden>
+                                              ✓
+                                            </span>
+                                          ) : null}
+                                        </button>
+                                      </li>
+                                    );
+                                  })}
+                                </>
+                              ) : null}
                             </ul>
                           ) : null}
                         </div>
