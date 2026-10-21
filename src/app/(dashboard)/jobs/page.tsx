@@ -209,7 +209,7 @@ import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-si
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
-import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, type JobInvoiceSummary } from "@/lib/job-payment-badge";
+import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, type JobInvoiceSummary } from "@/lib/job-payment-badge";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
 import { invoicesForPaymentColumn } from "@/services/job-payment-state";
 import { JobScheduleTimingChip, getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
@@ -3287,11 +3287,43 @@ function JobsPageContent() {
     [zendeskTicketColumn],
   );
 
+  /**
+   * Awaiting payment é a aba da cobrança (dono, 21/10/2026): todo job ali tem o mesmo
+   * Status e a agenda já passou, então as duas colunas saem. Fica o que diz o que está
+   * pegando: quanto falta (Amount due), quando vence (Due) e a etiqueta de Payment.
+   */
+  const dueColumn: Column<Job> = useMemo(
+    () => ({
+      key: "invoice_due",
+      label: "Due",
+      minWidth: "112px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
+      render: (item: Job) => {
+        const fatura = item.invoice_id ? invoiceSummaryById.get(item.invoice_id) : null;
+        const v = vencimentoDaFatura(fatura?.dueDate, invoiceFinanceListTodayYmd());
+        if (!v) return <span className="text-xs text-text-tertiary">{item.invoice_id ? "—" : "No invoice"}</span>;
+        return (
+          <span className="flex flex-col leading-tight">
+            <span className="text-sm font-medium text-text-primary tabular-nums">{v.date}</span>
+            <span className={cn("text-[11px] tabular-nums", v.late ? "font-semibold text-red-600" : "text-text-tertiary")}>{v.note}</span>
+          </span>
+        );
+      },
+    }),
+    [invoiceSummaryById],
+  );
+
   /** Closed keeps Amount Due + Payment. Other tabs: partner Cost instead of Amount Due, then Payment and Ticket (margin only in footer). */
   const tableColumns = useMemo(() => {
     if (status === "closed") return columns;
+    if (status === "awaiting_payment") {
+      return addTicketAfterPayment(columns)
+        .filter((c) => c.key !== "schedule" && c.key !== "status")
+        .flatMap((c) => (c.key === "finance_status" ? [dueColumn, c] : [c]));
+    }
     return addTicketAfterPayment(columns).map((c) => (c.key === "amount_due" ? partnerCostColumn : c));
-  }, [columns, status, addTicketAfterPayment, partnerCostColumn]);
+  }, [columns, status, addTicketAfterPayment, partnerCostColumn, dueColumn]);
 
   const selectedJobRows = useMemo(() => data.filter((j) => selectedIds.has(j.id)), [data, selectedIds]);
   const hasArchivedSelected = selectedJobRows.some((j) => j.status === "deleted");
