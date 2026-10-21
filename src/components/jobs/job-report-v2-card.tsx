@@ -196,19 +196,30 @@ export function JobReportV2Card({
 
   const openImage = useCallback(
     async (rawUrl: string, key: string) => {
+      /**
+       * PDF (certificado anexado ao report) abre em aba nova (21/10/2026, JOB-9754): o
+       * Lightbox é um <img>, e PDF nele vira tela vazia sem nada para clicar.
+       */
+      const ehPdf = /\.pdf(\?|$)/i.test(rawUrl);
+      // Aba aberta já no clique: depois do await o navegador bloqueia como popup.
+      const aba = ehPdf ? window.open("about:blank", "_blank") : null;
       const jaTem = assinadas[rawUrl];
       if (jaTem) {
-        setAmpliada(jaTem);
+        if (aba) aba.location.href = jaTem;
+        else setAmpliada(jaTem);
         return;
       }
       setOpeningImageKey(key);
       try {
         const signed = await createSignedJobReportAssetUrl(rawUrl, 60 * 60);
         if (!signed) {
-          toast.error("Could not sign image URL.");
+          aba?.close();
+          toast.error(ehPdf ? "Could not open the PDF." : "Could not sign image URL.");
           return;
         }
-        setAmpliada(signed);
+        if (aba) aba.location.href = signed;
+        else if (ehPdf) window.location.assign(signed);
+        else setAmpliada(signed);
       } finally {
         setOpeningImageKey(null);
       }
@@ -661,7 +672,7 @@ function ImageButton({
       disabled={opening}
       className="inline-flex items-center gap-1 rounded-[6px] px-[8px] py-[5px] text-[11px] font-medium cursor-pointer disabled:opacity-40"
       style={{ background: "#FAFAFB", color: "#020040", border: "0.5px solid #D8D8DD" }}
-      aria-label="Open image"
+      aria-label={ehPdf ? "Open PDF" : "Open image"}
     >
       {opening ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImageIcon className="h-3 w-3" />}
       {opening ? "Opening" : ehPdf ? "PDF" : "Image"}
