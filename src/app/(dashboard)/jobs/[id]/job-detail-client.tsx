@@ -4450,6 +4450,19 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         throwOnGate?: boolean;
       },
     ): Promise<Job | null> => {
+    /**
+     * Job pago não volta para Awaiting payment (dono, 21/10/2026, JOB-9747): o cartão
+     * cobrou, o job fechou sozinho e, 7 s depois, o Finish work de uma aba aberta antes
+     * do pagamento o devolveu para Awaiting payment. Confere o banco antes de escrever.
+     */
+    if (newStatus === "awaiting_payment") {
+      const atual = await getJob(j.id).catch(() => null);
+      if (atual && (atual.status === "completed" || (atual.finance_status ?? atual.payment_status) === "paid")) {
+        setJob(atual);
+        toast.info(`${j.reference} is already paid in full, so it stays closed.`);
+        return null;
+      }
+    }
     const forceCloseFromAwaitingPayment = j.status === "awaiting_payment" && newStatus === "completed";
     if (!forceCloseFromAwaitingPayment && !opts?.forced) {
       const check = canAdvanceJob(j, newStatus, {
