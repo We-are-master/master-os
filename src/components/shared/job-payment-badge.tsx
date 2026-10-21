@@ -46,9 +46,9 @@ export function JobPaymentBadge({
 function JobPaymentCard({ state, detail }: { state: JobPaymentState; detail: JobPaymentDetail }) {
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center gap-2">
+      <div className="space-y-1.5">
         <Badge variant={VARIANT[state]} size="sm">{JOB_PAYMENT_LABEL[state]}</Badge>
-        <span className="text-[12px] font-medium text-text-primary">{detail.headline}</span>
+        <p className="m-0 text-[12px] font-medium leading-snug text-text-primary">{detail.headline}</p>
       </div>
       {detail.rows.length ? (
         <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[12px]">
@@ -59,9 +59,6 @@ function JobPaymentCard({ state, detail }: { state: JobPaymentState; detail: Job
             </div>
           ))}
         </dl>
-      ) : null}
-      {detail.next ? (
-        <p className="m-0 border-t border-border-light pt-2 text-[12px] text-text-secondary">{detail.next}</p>
       ) : null}
     </div>
   );

@@ -7,13 +7,13 @@ import type { JobFinanceStatus } from "@/types/database";
  * ESTADO do dinheiro, nunca a ação; o detalhe (quanto, vencimento, motivo da
  * recusa, tentativa) fica no cartão do hover.
  *
- *  - Paid           tudo pago
- *  - Part paid      pagou uma parte, resto no prazo
- *  - Unpaid         nada pago, no prazo (ou sem fatura ainda)
- *  - Overdue        a fatura venceu (regra da aba Overdue do Finance)
- *  - Card declined  restante recusado no cartão, ainda vai tentar de novo
- *  - Card failed    recusado sem nova tentativa: alguém tem que cobrar
- *  - Bank check     o banco pediu para o cliente confirmar o pagamento
+ *  - Paid              valor integral recebido
+ *  - Part paid         parte recebida; saldo dentro do prazo
+ *  - Unpaid            nada recebido; dentro do prazo (ou sem fatura ainda)
+ *  - Overdue           existe saldo vencido, mesmo com pagamento parcial
+ *  - Retry scheduled   tentativa no cartão falhou e há nova tentativa agendada
+ *  - Payment failed    tentativa falhou e precisa de intervenção
+ *  - Action required   o cliente precisa autenticar o pagamento com o banco
  *
  * O cartão ganha de Overdue e de Part paid: é o motivo mais específico de o
  * dinheiro não ter entrado. Overdue ganha de Part paid: pagou uma parte e o
@@ -33,9 +33,9 @@ export const JOB_PAYMENT_LABEL: Record<JobPaymentState, string> = {
   partial: "Part paid",
   unpaid: "Unpaid",
   overdue: "Overdue",
-  card_declined: "Card declined",
-  card_failed: "Card failed",
-  bank_check: "Bank check",
+  card_declined: "Retry scheduled",
+  card_failed: "Payment failed",
+  bank_check: "Action required",
 };
 
 export type JobPaymentInput = {
@@ -77,12 +77,21 @@ export type JobPaymentDetailInput = JobPaymentInput & {
 export const CARD_ATTEMPTS_TOTAL = 4;
 
 export type JobPaymentDetail = {
-  /** Frase de cima do cartão: o estado dito por inteiro. */
+  /** Frase de cima do cartão: o estado dito por inteiro (texto do dono, 21/10/2026). */
   headline: string;
   /** Linhas "rótulo · valor" do cartão. */
   rows: { label: string; value: string }[];
-  /** O que fazer agora, quando há algo a fazer. */
-  next?: string;
+};
+
+/** O texto do hover de cada etiqueta, palavra por palavra como o dono definiu. */
+export const JOB_PAYMENT_TOOLTIP: Record<JobPaymentState, string> = {
+  paid: "Payment received in full.",
+  partial: "Part payment received. The remaining balance is not yet overdue.",
+  unpaid: "No payment received. Payment is not yet overdue.",
+  overdue: "An outstanding balance is past its due date.",
+  card_declined: "Payment was unsuccessful. Another attempt is scheduled.",
+  card_failed: "Payment was unsuccessful. Follow up to arrange payment.",
+  bank_check: "The customer needs to authorise the payment with their bank.",
 };
 
 const gbp = (n: number) =>
@@ -124,34 +133,28 @@ export function jobPaymentDetail(
   const motivo = job.card_refused_reason?.trim() || null;
 
   switch (state) {
-    case "paid":
-      return { headline: "Paid in full", rows };
     case "partial":
-      if (due) rows.push({ label: "Due", value: due });
-      return { headline: "Part paid, the rest is not due yet", rows };
     case "unpaid":
       if (due) rows.push({ label: "Due", value: due });
-      return {
-        headline: ctx.invoice?.reference ? "Nothing paid yet, within terms" : "Nothing paid yet, no invoice yet",
-        rows,
-      };
+      break;
     case "overdue":
       if (due) rows.push({ label: "Due", value: atraso && atraso > 0 ? `${due} · ${atraso} ${atraso === 1 ? "day" : "days"} late` : due });
-      return { headline: "Invoice past its due date", rows, next: "Chase the client." };
+      break;
     case "card_declined": {
       if (motivo) rows.push({ label: "Reason", value: motivo });
       rows.push({ label: "Attempt", value: `${tentativa} of ${CARD_ATTEMPTS_TOTAL}` });
       const proxima = diaCurtoDeLondres(job.card_retry_at);
-      if (proxima) rows.push({ label: "Next try", value: proxima });
-      return { headline: "Card declined, we try again automatically", rows };
+      if (proxima) rows.push({ label: "Next attempt", value: proxima });
+      break;
     }
     case "card_failed":
       if (motivo) rows.push({ label: "Reason", value: motivo });
       // Sem "of 4": recusa que a bandeira não deixa repetir para já na 1ª.
       rows.push({ label: "Attempts", value: String(tentativa) });
-      return { headline: "Card declined, no more automatic tries", rows, next: "Chase the client for another payment method." };
+      break;
     case "bank_check":
       if (motivo) rows.push({ label: "Reason", value: motivo });
-      return { headline: "The bank asked the client to confirm", rows, next: "The client confirms through the payment link." };
+      break;
   }
+  return { headline: JOB_PAYMENT_TOOLTIP[state], rows };
 }

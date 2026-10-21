@@ -37,18 +37,18 @@ describe("jobPaymentState", () => {
     assert.equal(jobPaymentState({}, none), "unpaid");
   });
 
-  it("cartão recusado com nova tentativa marcada é Card declined, mesmo vencido", () => {
+  it("cartão recusado com nova tentativa marcada é Retry scheduled, mesmo vencido", () => {
     assert.equal(
       jobPaymentState({ finance_status: "partial", invoice_id: "inv-late", card_charge_status: "refused", card_retry_at: "2026-10-24T09:00:00Z" }, overdue),
       "card_declined",
     );
   });
 
-  it("cartão recusado sem nova tentativa é Card failed", () => {
+  it("cartão recusado sem nova tentativa é Payment failed", () => {
     assert.equal(jobPaymentState({ finance_status: "partial", card_charge_status: "refused", card_retry_at: null }, none), "card_failed");
   });
 
-  it("banco pedindo confirmação é Bank check", () => {
+  it("banco pedindo confirmação é Action required", () => {
     assert.equal(jobPaymentState({ finance_status: "partial", card_charge_status: "requires_action" }, none), "bank_check");
   });
 
@@ -73,10 +73,10 @@ describe("jobPaymentDetail", () => {
   it("Overdue conta os dias de atraso e diz o que fazer", () => {
     const d = jobPaymentDetail("overdue", {}, { billable: 100, paid: 0, invoice: { reference: "INV-1", dueDate: "2026-10-16" }, todayYmd: hoje });
     assert.equal(d.rows.at(-1)?.value, "Fri 16 Oct · 5 days late");
-    assert.equal(d.next, "Chase the client.");
+    assert.equal(d.headline, "An outstanding balance is past its due date.");
   });
 
-  it("Card declined mostra motivo, tentativa e a próxima", () => {
+  it("Retry scheduled mostra motivo, tentativa e a próxima", () => {
     const d = jobPaymentDetail(
       "card_declined",
       { card_retry_count: 1, card_refused_reason: "Insufficient funds", card_retry_at: "2026-10-24T09:00:00Z" },
@@ -85,7 +85,7 @@ describe("jobPaymentDetail", () => {
     assert.deepEqual(d.rows.slice(2), [
       { label: "Reason", value: "Insufficient funds" },
       { label: "Attempt", value: "2 of 4" },
-      { label: "Next try", value: "Sat 24 Oct" },
+      { label: "Next attempt", value: "Sat 24 Oct" },
     ]);
   });
 });
