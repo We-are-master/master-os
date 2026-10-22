@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, JobVisit, SelfBill, SelfBillStatus } from "@/types/database";
-import { visitCountsForPartnerPayout } from "@/lib/job-visit-rollup";
+import { plannedVisitLines, visitCountsForPartnerPayout, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
 import {
   officeCancellationPartnerClawbackGbp,
   officeCancellationPartnerPayoutGbp,
@@ -422,6 +422,37 @@ export async function listVisitPayoutLinesBySelfBillId(
     for (const v of await loadVisitPayoutLinesForSelfBills(supabase, chunk)) {
       const { selfBillId, ...linha } = v;
       (out[selfBillId] ??= []).push(linha);
+    }
+  }
+  return out;
+}
+
+/**
+ * Linhas planejadas por documento (visitas ligadas ainda sem Done), com a
+ * referência do job. Só exibição: o valor a pagar não lê daqui.
+ */
+export async function listPlannedVisitLinesBySelfBillId(
+  selfBillIds: string[],
+  client?: SupabaseClient,
+): Promise<Record<string, (PlannedVisitLine & { jobReference: string | null })[]>> {
+  const ids = [...new Set(selfBillIds.filter((x) => Boolean(x && String(x).trim())))];
+  const out: Record<string, (PlannedVisitLine & { jobReference: string | null })[]> = {};
+  if (ids.length === 0) return out;
+  const supabase = client ?? getSupabase();
+  const { data, error } = await supabase
+    .from("job_visits")
+    .select("id, job_id, self_bill_id, visit_index, scheduled_date, partner_cost, materials_cost, status, deleted_at, report_submitted_at, job:job_id ( reference, status, deleted_at )")
+    .in("self_bill_id", ids)
+    .is("deleted_at", null);
+  if (error) {
+    if (isSupabaseMissingColumnError(error) || (error as { code?: string }).code === "42P01") return out;
+    throw error;
+  }
+  type Row = JobVisit & { self_bill_id: string; job: { reference: string | null; status: string; deleted_at: string | null } | null };
+  for (const r of (data ?? []) as unknown as Row[]) {
+    if (!r.job || r.job.deleted_at || r.job.status === "cancelled" || r.job.status === "deleted") continue;
+    for (const linha of plannedVisitLines([r])) {
+      (out[r.self_bill_id] ??= []).push({ ...linha, jobReference: r.job.reference ?? null });
     }
   }
   return out;
@@ -1668,20 +1699,8 @@ export async function ensureWeeklySelfBillForVisit(
   const partnerId = visit.partner_id?.trim();
   if (!partnerId) return null;
   // Visita que escorregou da data agendada cai no período em que foi feita.
-  /**
-   * Dia de Londres, não UTC: visita fechada 00:30 no BST gravaria o dia
-   * anterior, e num domingo de corte cairia na quinzena já paga. É o mesmo
-   * erro do "Checkatrade: data um dia atrás".
-   */
-  const completedYmd = visit.completed_at
-    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
-        .format(new Date(visit.completed_at))
-    : null;
-  const anchorYmd = (completedYmd || visit.scheduled_date?.slice(0, 10) || "").trim();
-  // Data suja vira `Invalid Date`, que é truthy: passaria o guard e estouraria
-  // em `toISOString()` dentro de um try/catch que engole o erro.
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorYmd)) return null;
-  if (Number.isNaN(new Date(`${anchorYmd}T12:00:00`).getTime())) return null;
+  const anchorYmd = visitSelfBillAnchorYmd(visit);
+  if (!anchorYmd) return null;
   return ensureWeeklySelfBillForJob(job, {
     ...options,
     visit: { id: visit.id, partnerId, partnerName: visit.partner_name ?? null, anchorYmd },

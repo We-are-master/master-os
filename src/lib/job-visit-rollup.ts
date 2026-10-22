@@ -277,3 +277,54 @@ export function jobShareOfVisitSelfBill(
     visitIndexes: noDocumento.map((v) => v.visit_index).sort((a, b) => a - b),
   };
 }
+
+/**
+ * O dia que decide em qual quinzena do parceiro a linha da visita mora: o dia em
+ * que foi feita (Londres) quando já tem Done, senão o dia marcado. Remarcar para
+ * outra quinzena move a linha; o Done no mesmo período atualiza a mesma linha.
+ * `null` quando não há data válida.
+ */
+export function visitSelfBillAnchorYmd(visit: { scheduled_date?: string | null; completed_at?: string | null }): string | null {
+  /**
+   * Dia de Londres, não UTC: visita fechada 00:30 no BST gravaria o dia anterior,
+   * e num domingo de corte cairia na quinzena já paga.
+   */
+  const feita = visit.completed_at
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
+        .format(new Date(visit.completed_at))
+    : null;
+  const ymd = (feita || visit.scheduled_date?.slice(0, 10) || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  if (Number.isNaN(new Date(`${ymd}T12:00:00`).getTime())) return null;
+  return ymd;
+}
+
+export type PlannedVisitLine = {
+  visitId: string;
+  jobId: string;
+  visitIndex: number;
+  scheduledDate: string | null;
+  amount: number;
+};
+
+/**
+ * Linhas PLANEJADAS de um self-bill (dono, 22/10/2026): a visita entra no
+ * documento do parceiro assim que nasce, com o custo combinado, mas só vira valor
+ * a pagar no Done. Estas são as que ainda esperam o Done; as confirmadas saem de
+ * `loadSelfBillPayoutLines` (que é o dinheiro).
+ */
+export function plannedVisitLines(
+  visits: readonly (Pick<JobVisit, "id" | "job_id" | "visit_index" | "scheduled_date" | "partner_cost" | "materials_cost" | "status" | "deleted_at"> & {
+    report_submitted_at?: string | null;
+  })[],
+): PlannedVisitLine[] {
+  return visits
+    .filter((v) => visitCountsForMoney(v) && !visitCountsForPartnerPayout(v))
+    .map((v) => ({
+      visitId: v.id,
+      jobId: v.job_id,
+      visitIndex: v.visit_index,
+      scheduledDate: v.scheduled_date ?? null,
+      amount: round2(money(v.partner_cost) + money(v.materials_cost)),
+    }));
+}

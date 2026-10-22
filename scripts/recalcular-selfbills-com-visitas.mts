@@ -1,6 +1,10 @@
 /**
- * Self-bills abertos com visita, pela regra de 22/10/2026: visita só paga o
- * parceiro depois do Done. Documento que somava visita ainda marcada cai.
+ * Self-bills com visita, pelas regras de 22/10/2026:
+ *  - toda visita com parceiro tem a linha dela no self-bill do parceiro desde que
+ *    nasce (planejada, com o custo combinado); visita que ficou sem linha (criada
+ *    fora do Add visit, como a V3 do JOB-9705) é ligada aqui;
+ *  - a linha só vira valor a pagar no Done: documento que somava visita ainda
+ *    marcada é recalculado.
  *
  *   npx tsx scripts/recalcular-selfbills-com-visitas.mts            # ensaio: lista, não grava
  *   npx tsx scripts/recalcular-selfbills-com-visitas.mts --aplicar  # recalcula os que mudam
@@ -13,12 +17,36 @@ import { loadEnvLocal } from "./load-env-local.mjs";
 loadEnvLocal();
 const APLICAR = process.argv.includes("--aplicar");
 
-const [{ createServiceClient }, { loadSelfBillPayoutLines, refreshSelfBillPayoutState }] = await Promise.all([
+const [{ createServiceClient }, { loadSelfBillPayoutLines, refreshSelfBillPayoutState, ensureWeeklySelfBillForVisit }] = await Promise.all([
   import("../src/lib/supabase/service"),
   import("../src/services/self-bills"),
 ]);
 const supabase = createServiceClient();
 
+// 1. Visitas abertas com parceiro e sem linha no self-bill.
+const { data: semLinha, error: semLinhaErr } = await supabase
+  .from("job_visits")
+  .select("*, job:job_id ( * )")
+  .is("self_bill_id", null)
+  .is("deleted_at", null)
+  .not("partner_id", "is", null)
+  .in("status", ["scheduled", "in_progress", "completed"]);
+if (semLinhaErr) throw new Error(semLinhaErr.message);
+let ligadas = 0;
+for (const v of (semLinha ?? []) as Array<Record<string, unknown> & { id: string; visit_index: number; partner_name: string | null; partner_cost: number; scheduled_date: string | null; job: (Record<string, unknown> & { reference: string; status: string; deleted_at: string | null }) | null }>) {
+  if (!v.job || v.job.deleted_at || v.job.status === "cancelled" || v.job.status === "deleted") continue;
+  ligadas++;
+  const rotulo = `${v.job.reference} · V${v.visit_index} · ${v.partner_name ?? "partner"} · £${Number(v.partner_cost ?? 0).toFixed(2)} · ${v.scheduled_date ?? "no date"}`;
+  if (!APLICAR) {
+    console.log(`· sem linha: ${rotulo}`);
+    continue;
+  }
+  const sb = await ensureWeeklySelfBillForVisit(v.job as never, v as never, { client: supabase });
+  console.log(`${sb ? "✓" : "✗"} ligada: ${rotulo}${sb ? ` → ${sb}` : ""}`);
+}
+console.log(`${ligadas} visita(s) ${APLICAR ? "ligadas" : "sem linha no self-bill"}\n`);
+
+// 2. Documentos com visita: valor a pagar só com as visitas feitas.
 const { data: visitas, error } = await supabase
   .from("job_visits")
   .select("self_bill_id")

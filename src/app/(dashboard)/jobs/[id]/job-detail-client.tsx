@@ -756,7 +756,7 @@ function JobDetailSelfBillPanel({
                 </p>
                 {visitPending > 0.005 ? (
                   <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 mt-0.5">
-                    +{formatCurrency(visitPending)} after the visit is Done
+                    Planned {formatCurrency(visitPending)} · confirmed when the visit is Done
                   </p>
                 ) : null}
               </div>
@@ -787,7 +787,7 @@ function JobDetailSelfBillPanel({
               ) : null}
               {visitPending > 0.005 ? (
                 <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                  {formatCurrency(visitPending)} more when the visit is marked Done
+                  Planned {formatCurrency(visitPending)}: on this self-bill, paid once the visit is marked Done
                 </p>
               ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
