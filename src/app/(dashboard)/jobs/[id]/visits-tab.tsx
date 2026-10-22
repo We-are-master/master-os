@@ -24,8 +24,8 @@ import {
 } from "@/services/job-visits";
 import {
   apiCreateJobVisit,
-  apiDeleteJobVisit,
   apiUpdateJobVisit,
+  confirmAndRemoveJobVisit,
   type JobFollowedVisit,
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
@@ -325,12 +325,13 @@ export function VisitsTab({
   }
 
   async function handleDelete(visit: JobVisit) {
-    if (!confirm(`Remove visit ${visit.visit_index}? It comes off the partner self-bill too.`)) return;
     try {
-      await apiDeleteJobVisit(job.id, visit.id);
+      // Pergunta sempre; tira do self-bill, do total do job e da fatura na hora.
+      if (!(await confirmAndRemoveJobVisit(job.id, visit))) return;
       setVisits((rows) => rows.filter((r) => r.id !== visit.id));
-      toast.success("Visit removed");
+      toast.success(`Visit ${visit.visit_index} removed · self-bill and invoice updated`);
       onVisitsChanged?.();
+      onJobChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to remove visit");
     }

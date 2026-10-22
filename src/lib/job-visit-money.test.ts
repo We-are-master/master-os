@@ -9,7 +9,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { jobShareOfVisitSelfBill, rollUpJobVisits, rollupFromStoredColumns } from "@/lib/job-visit-rollup";
+import { jobShareOfVisitSelfBill, rollUpJobVisits, rollupFromStoredColumns, visitCountsForPartnerPayout } from "@/lib/job-visit-rollup";
+import { confirmAndRemoveJobVisit } from "@/services/job-visits-api";
 import { summariseVisits } from "@/services/job-visits";
 import { jobListClientAmount, jobListMargin, jobListPartnerCost, sumJobsMoney } from "@/lib/job-financials";
 import { uniqueRowPerJob, visitAsJobRow, type VisitWithParent } from "@/lib/job-visit-day-rows";
@@ -176,22 +177,76 @@ describe("self-bill da visita no card do job: só a parte deste job", () => {
   // SB-14535 (F&V Cleaning, quinzena 12-25/10) somava £1,309.66: 9 jobs dela + a V2 do JOB-9705.
   const SB_FV = "83919054-c56d-4ffa-b20c-c30b7433a90e";
 
-  it("JOB-9705 mostra £140 (a V2) no documento da F&V, não os £1,309.66 da quinzena", () => {
+  it("JOB-9705: a V2 ainda marcada fica pendente (£140 depois do Done), não os £1,309.66 da quinzena", () => {
     const parte = jobShareOfVisitSelfBill([{ ...V2, self_bill_id: SB_FV }, { ...V3, self_bill_id: null }], SB_FV);
-    assert.deepEqual(parte, { labour: 140, materials: 0, gross: 140, visitIndexes: [2] });
+    assert.deepEqual(parte, { labour: 0, materials: 0, gross: 0, pending: 140, visitIndexes: [2] });
   });
 
-  it("duas visitas do mesmo job no mesmo documento somam; cancelada ou apagada não", () => {
+  it("depois do Done a V2 conta £140", () => {
+    const parte = jobShareOfVisitSelfBill([{ ...V2, self_bill_id: SB_FV, status: "completed" }], SB_FV);
+    assert.deepEqual(parte, { labour: 140, materials: 0, gross: 140, pending: 0, visitIndexes: [2] });
+  });
+
+  it("mesmo parceiro em duas visitas do job: o mesmo documento soma as duas; cancelada ou apagada não", () => {
     const visitas = [
-      { ...V2, self_bill_id: SB_FV },
-      { ...V3, self_bill_id: SB_FV, materials_cost: 12.5 },
+      { ...V2, self_bill_id: SB_FV, status: "completed" as const },
+      { ...V3, self_bill_id: SB_FV, status: "completed" as const, materials_cost: 12.5 },
       { ...V3, id: "x", visit_index: 4, self_bill_id: SB_FV, status: "cancelled" as const },
       { ...V3, id: "y", visit_index: 5, self_bill_id: SB_FV, deleted_at: "2026-10-22T00:00:00Z" },
     ];
-    assert.deepEqual(jobShareOfVisitSelfBill(visitas, SB_FV), { labour: 175, materials: 12.5, gross: 187.5, visitIndexes: [2, 3] });
+    assert.deepEqual(jobShareOfVisitSelfBill(visitas, SB_FV), { labour: 175, materials: 12.5, gross: 187.5, pending: 0, visitIndexes: [2, 3] });
   });
 
   it("visita de outro documento não entra", () => {
-    assert.equal(jobShareOfVisitSelfBill([{ ...V2, self_bill_id: "outro" }], SB_FV).gross, 0);
+    assert.equal(jobShareOfVisitSelfBill([{ ...V2, self_bill_id: "outro", status: "completed" }], SB_FV).gross, 0);
+  });
+});
+
+describe("visita só paga o parceiro depois do Done", () => {
+  it("marcada ou em andamento não paga; feita paga; relatório enviado conta como feita", () => {
+    assert.equal(visitCountsForPartnerPayout({ status: "scheduled", deleted_at: null }), false);
+    assert.equal(visitCountsForPartnerPayout({ status: "in_progress", deleted_at: null }), false);
+    assert.equal(visitCountsForPartnerPayout({ status: "completed", deleted_at: null }), true);
+    assert.equal(visitCountsForPartnerPayout({ status: "in_progress", deleted_at: null, report_submitted_at: "2026-10-22T10:00:00Z" }), true);
+  });
+
+  it("cancelada ou apagada nunca paga, mesmo feita", () => {
+    assert.equal(visitCountsForPartnerPayout({ status: "cancelled", deleted_at: null, report_submitted_at: "x" }), false);
+    assert.equal(visitCountsForPartnerPayout({ status: "completed", deleted_at: "2026-10-22T00:00:00Z" }), false);
+  });
+
+  it("o total do job (cliente e margem) continua contando a visita marcada", () => {
+    assert.equal(rollUpJobVisits(JOB_9705, [V2, V3]).partnerCostTotal, 655);
+  });
+});
+
+describe("remover visita: sempre pergunta", () => {
+  it("diz o que sai do self-bill e da fatura, em inglês e sem travessão; desistir não remove nada", async () => {
+    const perguntas: string[] = [];
+    const fetchAntes = globalThis.fetch;
+    let chamadas = 0;
+    globalThis.fetch = (async () => { chamadas++; return new Response("{}"); }) as typeof fetch;
+    try {
+      const removida = await confirmAndRemoveJobVisit(
+        JOB_9705.id,
+        { id: V3.id, visit_index: 3, partner_name: "TM Handyman", partner_cost: 35, client_price: 0 },
+        { confirm: (m) => { perguntas.push(m); return false; } },
+      );
+      assert.equal(removida, false);
+      assert.equal(chamadas, 0);
+    } finally {
+      globalThis.fetch = fetchAntes;
+    }
+    assert.equal(perguntas.length, 1);
+    assert.match(perguntas[0]!, /Remove visit 3 \(TM Handyman\)\?/);
+    assert.match(perguntas[0]!, /TM Handyman's self-bill now \(£35\.00\)/);
+    assert.match(perguntas[0]!, /client invoice does not change/);
+    assert.doesNotMatch(perguntas[0]!, /—/);
+  });
+
+  it("com cobrança do cliente, avisa que a fatura cai", async () => {
+    let msg = "";
+    await confirmAndRemoveJobVisit(JOB_9705.id, { id: "v", visit_index: 2, client_price: 90 }, { confirm: (m) => { msg = m; return false; } });
+    assert.match(msg, /client invoice go down by £90\.00/);
   });
 });

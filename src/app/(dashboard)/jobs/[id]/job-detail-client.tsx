@@ -679,6 +679,7 @@ function JobDetailSelfBillPanel({
   job,
   jobLineGross,
   visitScope,
+  sameDocVisits,
 }: {
   sb: SelfBill;
   job: Job;
@@ -687,8 +688,11 @@ function JobDetailSelfBillPanel({
   /**
    * Documento de uma VISITA: as linhas e a nota vêm da visita, não do job.
    * Sem isto o painel do eletricista mostrava a mão de obra do handyman.
+   * `pending` é o valor das visitas ainda sem Done (não entra no pagamento).
    */
-  visitScope?: { label: string; labour: number; materials: number };
+  visitScope?: { label: string; labour: number; materials: number; pending?: number };
+  /** Visitas deste job do MESMO parceiro da V1: caem no mesmo documento da quinzena (22/10/2026). */
+  sameDocVisits?: { labour: number; materials: number; gross: number; pending: number; visitIndexes: number[] } | null;
 }) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
@@ -703,11 +707,15 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : weekLine;
-  const jobLabourOnBill = Math.round((visitScope ? visitScope.labour : partnerPaymentCap(job)) * 100) / 100;
+  const extra = sameDocVisits ?? { labour: 0, materials: 0, gross: 0, pending: 0, visitIndexes: [] };
+  const jobLabourOnBill =
+    Math.round(((visitScope ? visitScope.labour : partnerPaymentCap(job)) + (visitScope ? 0 : extra.labour)) * 100) / 100;
   const jobMaterialsOnBill = Math.round(
-    (visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) * 100,
+    ((visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) + (visitScope ? 0 : extra.materials)) * 100,
   ) / 100;
-  const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
+  const jobGrossOnBill = Math.round((jobLineGross + (visitScope ? 0 : extra.gross)) * 100) / 100;
+  /** Valor de visita ainda sem Done: está no documento, mas só paga depois do Done. */
+  const visitPending = visitScope ? Number(visitScope.pending ?? 0) : extra.pending;
   /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
   const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
@@ -731,6 +739,11 @@ function JobDetailSelfBillPanel({
                   <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
                   <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
                 </p>
+                {visitPending > 0.005 ? (
+                  <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 mt-0.5">
+                    +{formatCurrency(visitPending)} after the visit is Done
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
@@ -756,6 +769,11 @@ function JobDetailSelfBillPanel({
               <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
               {payoutHoldNote ? (
                 <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
+              ) : null}
+              {visitPending > 0.005 ? (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                  {formatCurrency(visitPending)} more when the visit is marked Done
+                </p>
               ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
               <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
@@ -10445,7 +10463,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
                         {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
                       </p>
-                      <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                      <JobDetailSelfBillPanel
+                        sb={jobSelfBill}
+                        job={job}
+                        jobLineGross={partnerCashOutJobLine}
+                        sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
+                      />
                     </div>
                   ) : null}
                   {visitSelfBills.map((sb) => {
@@ -10465,6 +10488,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             label: sb.partner_name?.trim() || "Visit partner",
                             labour: parte.labour,
                             materials: parte.materials,
+                            pending: parte.pending,
                           }}
                         />
                       </div>
@@ -10474,7 +10498,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                <JobDetailSelfBillPanel
+                  sb={jobSelfBill}
+                  job={job}
+                  jobLineGross={partnerCashOutJobLine}
+                  sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
+                />
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
@@ -10611,6 +10640,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onIncludeReportInEmailChange={setIncludeReportInEmail}
         accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
+        onVisitRemoved={() => {
+          setVisitsRefreshKey((k) => k + 1);
+          void refreshJobFinance();
+        }}
         onApprove={(o) => {
           void handleValidateAndComplete(o?.forced ?? false);
         }}

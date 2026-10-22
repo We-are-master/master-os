@@ -179,5 +179,7 @@ export type FinalReviewModalProps = {
 
   /** Wired to existing mutation handler. `forced`: fechando sem o relatório ter saído (Force approve). */
   onApprove: (opts?: { forced?: boolean }) => void;
+  /** Uma visita foi removida aqui (22/10/2026): o card recarrega job, self-bills e fatura. */
+  onVisitRemoved?: () => void;
   submitting?: boolean;
 };

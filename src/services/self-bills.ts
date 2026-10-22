@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
-import type { Job, SelfBill, SelfBillStatus } from "@/types/database";
+import type { Job, JobVisit, SelfBill, SelfBillStatus } from "@/types/database";
+import { visitCountsForPartnerPayout } from "@/lib/job-visit-rollup";
 import {
   officeCancellationPartnerClawbackGbp,
   officeCancellationPartnerPayoutGbp,
@@ -302,7 +303,7 @@ async function loadVisitPayoutLinesForSelfBills(
 
   const { data: visitRows, error: visitErr } = await supabase
     .from("job_visits")
-    .select("id, job_id, self_bill_id, visit_index, partner_cost, materials_cost, status, deleted_at")
+    .select("id, job_id, self_bill_id, visit_index, partner_cost, materials_cost, status, deleted_at, report_submitted_at")
     .in("self_bill_id", selfBillIds)
     .is("deleted_at", null);
   // Ambiente sem a mig 161/276 não tem tabela nem coluna: o self-bill segue
@@ -312,10 +313,17 @@ async function loadVisitPayoutLinesForSelfBills(
     throw visitErr;
   }
 
+  /**
+   * Visita só paga depois do Done (dono, 22/10/2026), como o job só paga aprovado.
+   * Antes contava qualquer visita não cancelada: a V2 do JOB-9705, ainda marcada,
+   * já somava £140 no SB-14535 da F&V. Ela continua no documento e entra no total
+   * quando der Done (ou o relatório dela chegar).
+   */
   const vivas = ((visitRows ?? []) as {
     id: string; job_id: string; self_bill_id: string; visit_index: number;
-    partner_cost: number | null; materials_cost: number | null; status: string;
-  }[]).filter((row) => row.status !== "cancelled");
+    partner_cost: number | null; materials_cost: number | null; status: JobVisit["status"];
+    deleted_at: string | null; report_submitted_at: string | null;
+  }[]).filter((row) => visitCountsForPartnerPayout(row));
   if (vivas.length === 0) return [];
 
   /**

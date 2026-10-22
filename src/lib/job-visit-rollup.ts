@@ -228,24 +228,52 @@ export function nextVisitLine(
 }
 
 /**
- * A parte DESTE job num self-bill de visita (22/10/2026).
+ * A visita entra no PAGAMENTO do parceiro só depois do Done (dono, 22/10/2026),
+ * igual ao job, que só entra aprovado. Relatório enviado também é visita feita
+ * (o envio fecha a visita). Marcada, em andamento ou cancelada não paga.
  *
- * O self-bill do parceiro da visita é o documento da quinzena dele, com todos os
- * jobs que ele fez no período (SB-14535 da F&V tinha 9 jobs + a V2 do JOB-9705 =
- * £1,309.66). O card do job mostra só o que este job põe no documento: as visitas
- * dele ligadas àquele documento. O total da quinzena fica em Billing.
+ * Não confundir com `visitCountsForMoney`, que é o total do JOB (cliente e margem):
+ * ali a visita marcada já soma, porque é trabalho combinado.
+ */
+export function visitCountsForPartnerPayout(
+  visit: Pick<JobVisit, "deleted_at" | "status"> & { report_submitted_at?: string | null },
+): boolean {
+  if (visit.deleted_at || visit.status === "cancelled") return false;
+  return visit.status === "completed" || Boolean(visit.report_submitted_at);
+}
+
+type VisitOnBill = Pick<JobVisit, "self_bill_id" | "partner_cost" | "materials_cost" | "status" | "deleted_at" | "visit_index"> & {
+  report_submitted_at?: string | null;
+};
+
+/**
+ * A parte DESTE job num self-bill (22/10/2026).
+ *
+ * O self-bill é o documento da quinzena do parceiro, com todos os jobs dele no
+ * período (SB-14535 da F&V tinha 9 jobs + a V2 do JOB-9705 = £1,309.66). Cada
+ * visita cai no documento do parceiro DELA: mesmo parceiro, mesmo documento (o
+ * mesmo número até a quinzena fechar); parceiro diferente, outro documento. O
+ * card do job mostra só o que este job põe em cada um; o total fica em Billing.
+ *
+ * `gross` é o que já conta no pagamento (visitas feitas); `pending` é o das
+ * visitas ainda por fazer, que entra quando derem Done.
  */
 export function jobShareOfVisitSelfBill(
-  visits: readonly Pick<JobVisit, "self_bill_id" | "partner_cost" | "materials_cost" | "status" | "deleted_at" | "visit_index">[],
+  visits: readonly VisitOnBill[],
   selfBillId: string,
-): { labour: number; materials: number; gross: number; visitIndexes: number[] } {
-  const doDocumento = visits.filter((v) => v.self_bill_id === selfBillId && visitCountsForMoney(v));
-  const labour = round2(doDocumento.reduce((s, v) => s + money(v.partner_cost), 0));
-  const materials = round2(doDocumento.reduce((s, v) => s + money(v.materials_cost), 0));
+): { labour: number; materials: number; gross: number; pending: number; visitIndexes: number[] } {
+  const noDocumento = visits.filter((v) => v.self_bill_id === selfBillId && visitCountsForMoney(v));
+  const feitas = noDocumento.filter(visitCountsForPartnerPayout);
+  const labour = round2(feitas.reduce((s, v) => s + money(v.partner_cost), 0));
+  const materials = round2(feitas.reduce((s, v) => s + money(v.materials_cost), 0));
+  const pending = round2(
+    noDocumento.filter((v) => !visitCountsForPartnerPayout(v)).reduce((s, v) => s + money(v.partner_cost) + money(v.materials_cost), 0),
+  );
   return {
     labour,
     materials,
     gross: round2(labour + materials),
-    visitIndexes: doDocumento.map((v) => v.visit_index).sort((a, b) => a - b),
+    pending,
+    visitIndexes: noDocumento.map((v) => v.visit_index).sort((a, b) => a - b),
   };
 }

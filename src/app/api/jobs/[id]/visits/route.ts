@@ -430,8 +430,31 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const visitId = new URL(req.url).searchParams.get("visitId")?.trim();
   if (!jobId || !visitId) return NextResponse.json({ error: "visitId required" }, { status: 400 });
 
-  const { job } = await loadJobAndVisits(supabase, jobId);
+  const { job, visits } = await loadJobAndVisits(supabase, jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  if (!visits.some((v) => v.id === visitId)) return NextResponse.json({ error: "Visit not found on this job" }, { status: 404 });
+
+  /**
+   * Primeiro sai do self-bill, depois a visita some (22/10/2026). Ao contrário
+   * apagava a visita mesmo com o documento já pago: o parceiro ficava pago por
+   * uma visita que não existe mais, sem ninguém ver. Documento pago ou fechado
+   * trava a remoção; o acerto vira ajuste manual no Billing.
+   */
+  try {
+    const solta = await detachVisitFromSelfBill(visitId, supabase, { cancelIfEmpty: true });
+    if (!solta.detached) {
+      return NextResponse.json(
+        {
+          error:
+            "This visit is on a partner self-bill that was already paid or closed, so it was not removed. Settle it as a manual adjustment in Billing.",
+        },
+        { status: 409 },
+      );
+    }
+  } catch (e) {
+    console.error("detachVisitFromSelfBill on delete failed", e);
+    return NextResponse.json({ error: "Could not take the visit off the partner self-bill. Nothing was removed." }, { status: 500 });
+  }
 
   const { data, error } = await supabase
     .from("job_visits")
@@ -444,16 +467,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const removed = data as JobVisit;
-  /**
-   * Excluir sem soltar do documento deixava o parceiro recebendo por trabalho
-   * que não existe mais: o `net_payout` continuava com o valor, aprovável e
-   * pagável.
-   */
-  try {
-    await detachVisitFromSelfBill(removed.id, supabase, { cancelIfEmpty: true });
-  } catch (e) {
-    console.error("detachVisitFromSelfBill on delete failed", e);
-  }
   await auditVisit({ supabase, job, action: "deleted", visit: removed, userId, userName });
-  return NextResponse.json({ ok: true });
+  // Se o job seguia esta visita, ele vai para a próxima aberta (sem nenhuma, fica onde está).
+  const followed = await followActiveVisit(supabase, jobId, { userId, userName, reason: "visit_removed" }).catch(() => null);
+  return NextResponse.json({ ok: true, removed: { visit_index: removed.visit_index, partner_cost: removed.partner_cost, client_price: removed.client_price }, followed });
 }
