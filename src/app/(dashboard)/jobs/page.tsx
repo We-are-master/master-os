@@ -60,8 +60,10 @@ import {
   jobRowMatchesJobsManagementTab,
   jobsManagementClosedBucket,
   jobsManagementClosedBucketLabel,
+  countActionRequiredJobsByOpenReason,
   type JobsManagementClosedBucket,
 } from "@/services/jobs";
+import { chipsPorJob, lerMotivosAbertos, type ChipDeMotivo } from "@/lib/pendencias/chips";
 import {
   ZENDESK_JOB_TICKET_FORM_ID,
   ZENDESK_FIELD_JOB_DATE,
@@ -1062,6 +1064,8 @@ function JobsPageContent() {
   const [bulkCancelDetail, setBulkCancelDetail] = useState("");
   const [bulkMarkPaidConfirm, setBulkMarkPaidConfirm] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+  /** Jobs em Action Required só por motivo aberto (job_attention_reasons); 0 com a tabela vazia. */
+  const [actionRequiredByReasonCount, setActionRequiredByReasonCount] = useState(0);
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
   const [kpiAvgWorkTimeLabel, setKpiAvgWorkTimeLabel] = useState("—");
   const [avgTicket, setAvgTicket] = useState(0);
@@ -1356,6 +1360,23 @@ function JobsPageContent() {
     };
   }, [data]);
 
+  // Motivos abertos (job_attention_reasons) dos jobs da lista: chips na aba Action Required. Só leitura.
+  const [motivosPorJob, setMotivosPorJob] = useState<ReadonlyMap<string, ChipDeMotivo[]>>(() => new Map());
+  useEffect(() => {
+    const ids = data.map((j) => j.id);
+    if (ids.length === 0) {
+      setMotivosPorJob(new Map());
+      return;
+    }
+    let cancelled = false;
+    void lerMotivosAbertos(getSupabase(), ids).then((linhas) => {
+      if (!cancelled) setMotivosPorJob(chipsPorJob(linhas));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
   // Coluna Payment: quais faturas dos jobs da lista estão vencidas, pela regra da aba Overdue do Finance.
   const [overdueInvoiceIdSet, setOverdueInvoiceIdSet] = useState<ReadonlySet<string>>(() => new Set());
   /** Referência e vencimento das faturas, para o hover da etiqueta. */
@@ -1627,7 +1648,7 @@ function JobsPageContent() {
         id: "action_required",
         title: "Action required",
         color: "bg-red-500",
-        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "action_required")),
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "action_required", { temMotivoAberto: motivosPorJob.has(j.id) })),
       },
       {
         id: "scheduled",
@@ -1665,7 +1686,7 @@ function JobsPageContent() {
       },
     ] as const;
     return defs.map((c) => ({ ...c }));
-  }, [scheduleSortedData]);
+  }, [scheduleSortedData, motivosPorJob]);
 
   const openJobDetail = useCallback(
     (job: Job) => {
@@ -1692,6 +1713,9 @@ function JobsPageContent() {
        * doesn't affect the other, same as before.
        */
       await Promise.all([
+        (async () => {
+          setActionRequiredByReasonCount(await countActionRequiredJobsByOpenReason(scheduleRange).catch(() => 0));
+        })(),
         (async () => {
           try {
             const [counts, deletedHead] = await Promise.all([
@@ -1806,7 +1830,7 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  const actionRequiredTabCount = unassignedTabCount + onHoldTabCount;
+  const actionRequiredTabCount = unassignedTabCount + onHoldTabCount + actionRequiredByReasonCount;
 
   const awaitingPaymentTabCount = tabCounts.awaiting_payment ?? 0;
 
@@ -3178,6 +3202,7 @@ function JobsPageContent() {
                 {st !== "late" ? <JobOverdueBadge job={item} /> : null}
                 <JobCardRefusedBadge job={item} />
               </div>
+              <MotivoChips chips={motivosPorJob.get(item.id)} />
             </div>
           );
         }
@@ -3846,6 +3871,7 @@ function JobsPageContent() {
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
                             ) : null}
+                            {status === "action_required" ? <MotivoChips chips={motivosPorJob.get(j.id)} /> : null}
                           </div>
                           {sched ? (
                             <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
@@ -5752,4 +5778,21 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
+}
+
+/** Os motivos abertos do job (job_attention_reasons), um chip por motivo. Sem motivo, nada. */
+function MotivoChips({ chips }: { chips: ChipDeMotivo[] | undefined }) {
+  if (!chips?.length) return null;
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1" aria-label="Action required reasons">
+      {chips.map((c) => (
+        <span
+          key={c.motivo}
+          className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+        >
+          {c.rotulo}
+        </span>
+      ))}
+    </div>
+  );
 }

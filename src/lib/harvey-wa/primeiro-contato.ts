@@ -140,6 +140,15 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
     );
     // O ticket nasce agora, com o template dentro (como no respond.io); a resposta do cliente junta tudo nele.
     const ticket = await abrirTicketDoLead(sb, p, destino).catch((e) => (console.error("[harvey-wa] ticket do lead", e), null));
+    // E-mail de boas-vindas no ticket do lead (só conta v2 direct; processo/boas-vindas-lead.ts).
+    if (ticket) {
+      await import("@/lib/processo/boas-vindas-lead")
+        .then(({ mandarBoasVindasDoLead, dependenciasDasBoasVindas }) =>
+          mandarBoasVindasDoLead({ ticketId: ticket, clienteId: p.clienteId, telefone: destino, leadExterno: p.leadExterno ?? null, servico: p.servico, nome: p.nome }, dependenciasDasBoasVindas(sb)),
+        )
+        .then((bv) => bv.enviado && console.log(`[harvey-wa] boas-vindas #${ticket}: ${bv.motivo}`))
+        .catch((e) => console.error("[harvey-wa] boas-vindas", e));
+    }
     return { kind: "enviado", notificacao, ticket };
   } catch (e) {
     if (reservaAberta) await falhouEnvio(sb, reservaAberta, e).catch(() => undefined);
