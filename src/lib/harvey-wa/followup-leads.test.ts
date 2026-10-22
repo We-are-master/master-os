@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { assuntoInterno, destinoDoLead, ehDaReguaAntiga, ehLeadParado, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, servicoDoTicketDeLead, type PedidoDoOs } from "./followup-leads";
+import { acaoDoPasso, proximaNota, assuntoInterno, destinoDoLead, ehDaReguaAntiga, ehLeadParado, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, servicoDoTicketDeLead, type PedidoDoOs } from "./followup-leads";
 import { montarEmail } from "./email-do-leo";
 
 // Horários em BST (UTC+1): "2026-10-14T09:00:00Z" é 10h em Londres.
@@ -133,4 +133,23 @@ describe("ehLeadParado (lead que respondeu e sumiu)", () => {
   it("não fecha quando o cliente escreveu por último", () => assert.equal(ehLeadParado({ ...base, custom_fields: [{ id: 5698641403423, value: "reply_awaiting" }] }, agora), false));
   it("não fecha fora do status Lead", () => assert.equal(ehLeadParado({ ...base, custom_status_id: 5679178035743 }, agora), false));
   it("não fecha lead com job", () => assert.equal(ehLeadParado({ ...base, tags: [...base.tags, "lead_has_order"] }, agora), false));
+});
+
+describe("pelo canal do lead (dono, 22/10/2026)", () => {
+  const ambos = { temEmail: true, temTelefone: true };
+  it("lead de WhatsApp: check-in, um e-mail, WhatsApp final", () => {
+    assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "whatsapp", ambos)), ["whatsapp", "email", "pular", "pular", "whatsapp"]);
+  });
+  it("lead de WhatsApp sem e-mail: só os dois WhatsApps", () => {
+    assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "whatsapp", { temEmail: false, temTelefone: true })), ["whatsapp", "pular", "pular", "pular", "whatsapp"]);
+  });
+  it("lead de e-mail: e-mail no dia 2 e no dia 3, fecha sem WhatsApp", () => {
+    assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "email", ambos)), ["pular", "email", "pular", "email", "pular"]);
+  });
+  it("a nota interna diz o próximo passo do canal", () => {
+    assert.equal(proximaNota(1, "whatsapp", ambos), "Next: email tomorrow at 10am.");
+    assert.equal(proximaNota(2, "whatsapp", ambos), "Next: last WhatsApp at 6pm on day 3, then solved as no response.");
+    assert.equal(proximaNota(2, "email", ambos), "Next: email tomorrow at 10am.");
+    assert.equal(proximaNota(4, "email", ambos), "Next: solved as no response at 6pm on day 3.");
+  });
 });

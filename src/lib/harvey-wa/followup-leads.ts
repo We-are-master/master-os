@@ -12,6 +12,13 @@
  *   Passo 5  dia 3, 18h   WhatsApp final e solved como no response; dali vai
  *                         para a nutrição.
  *
+ * Pelo canal da conversa (dono, 22/10/2026): cada lead só leva os passos do canal
+ * por onde ele chegou (`acaoDoPasso`). Lead de WhatsApp: check-in no dia 1, um
+ * e-mail no dia 2 (só se tiver e-mail) e o WhatsApp final no dia 3; nada de três
+ * e-mails para quem nunca falou por e-mail. Lead de e-mail: e-mail no dia 2 e o
+ * último no dia 3, e fecha sem WhatsApp. Os passos que não são do canal só ganham
+ * a marca, sem mensagem, e a régua anda no mesmo horário.
+ *
  * Os e-mails saem como comentário público do ticket do lead, então a resposta
  * cai no mesmo ticket. Lead sem e-mail (o requester é a equipe) só leva os
  * WhatsApps; lead que veio só com e-mail (tag lead_email_sent, o primeiro
@@ -58,8 +65,6 @@ import { ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_BIDDING, ZD_STATUS_LEAD, ZD_STAT
 const H = 3_600_000;
 const TEMPLATE_CHECKIN = process.env.HARVEY_WA_LEAD_CHECKIN_TEMPLATE?.trim() || "quote_request_checkin";
 const TEMPLATE_FINAL = process.env.HARVEY_WA_LEAD_FINAL_TEMPLATE?.trim() || TEMPLATE_CHECKIN;
-/** Passos que são WhatsApp; os outros são e-mail. */
-const PASSOS_DE_WHATSAPP = new Set([1, 5]);
 const RESOLUCAO = 5872761703199; // campo Resolution
 /** Estágio 🎯 Lead (categoria pending). Só `status: pending` cairia no On Hold padrão, que é a Needs Attention. */
 const ESTAGIO_LEAD = 6417913706527;
@@ -84,6 +89,23 @@ function emLondres(d: Date): Relogio {
 
 function diasEntre(de: string, ate: string): number {
   return Math.round((Date.parse(`${ate}T12:00:00Z`) - Date.parse(`${de}T12:00:00Z`)) / (24 * H));
+}
+
+export type CanalDoLead = "whatsapp" | "email";
+export type AcaoDoPasso = "whatsapp" | "email" | "pular";
+
+/**
+ * O que o passo faz para este lead, pelo canal em que ele chegou (dono, 22/10/2026).
+ * O passo 5 fecha o lead em qualquer canal; só manda o WhatsApp final no de WhatsApp.
+ */
+export function acaoDoPasso(passo: number, canal: CanalDoLead, contato: { temEmail: boolean; temTelefone: boolean }): AcaoDoPasso {
+  if (canal === "whatsapp") {
+    if (passo === 1 || passo === 5) return contato.temTelefone ? "whatsapp" : "pular";
+    if (passo === 2) return contato.temEmail ? "email" : "pular";
+    return "pular";
+  }
+  if (passo === 2 || passo === 4) return contato.temEmail ? "email" : "pular";
+  return "pular";
 }
 
 /** Quantos passos já foram feitos, pelas tags do ticket. */
@@ -334,12 +356,17 @@ async function tirarDaRegua(t: Ticket, d: Exclude<DestinoDoLead, { acao: "seguir
   await addTicketTags(t.id, [TAG_TEM_PEDIDO]);
 }
 
-const PROXIMO: Record<number, string> = {
-  1: "Next: email tomorrow at 10am.",
-  2: "Next: email at 4pm.",
-  3: "Next: last email tomorrow at 10am.",
-  4: "Next: last WhatsApp at 6pm, then solved as no response.",
-};
+const QUANDO: Record<number, string> = { 2: "tomorrow at 10am", 3: "at 4pm", 4: "tomorrow at 10am", 5: "at 6pm on day 3" };
+
+/** Nota interna do que vem depois, já no canal do lead. */
+export function proximaNota(passo: number, canal: CanalDoLead, contato: { temEmail: boolean; temTelefone: boolean }): string {
+  for (let p = passo + 1; p <= 5; p++) {
+    const a = acaoDoPasso(p, canal, contato);
+    if (p === 5) return a === "whatsapp" ? `Next: last WhatsApp ${QUANDO[5]}, then solved as no response.` : `Next: solved as no response ${QUANDO[5]}.`;
+    if (a !== "pular") return `Next: ${a === "email" ? "email" : "WhatsApp"} ${QUANDO[p]}.`;
+  }
+  return "";
+}
 
 type Lead = { ticket: Ticket; telefone: string | null; nome: string; servico: string; leadExterno: string | null; primeiro: Date; soPorEmail: boolean; clienteId: string | null };
 
@@ -388,9 +415,15 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
 
   try {
     const cliente = await emailDoCliente(t).catch(() => null);
+    const acao = acaoDoPasso(passo, l.soPorEmail ? "email" : "whatsapp", { temEmail: Boolean(cliente), temTelefone: Boolean(l.telefone && l.leadExterno) });
+    // Passo que não é do canal deste lead: só a marca, sem mensagem e sem nota (o passo 5 ainda fecha).
+    if (acao === "pular" && passo !== 5) {
+      await addTicketTags(t.id, [`lead_fu_${passo}`]);
+      return;
+    }
     const feito: string[] = [];
     const corpoDoTicket: Record<string, unknown> = {};
-    if (PASSOS_DE_WHATSAPP.has(passo)) {
+    if (acao === "whatsapp") {
       // A marca do passo entra ANTES do WhatsApp (22/10/2026): se o resto falhar, a
       // próxima varredura vê o passo feito e não manda de novo. Até aqui o passo 5
       // mandava o template e depois falhava ao fechar (o Zendesk exige Assignee), e
@@ -401,7 +434,7 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
         await mandarTemplateNoWhatsApp(tpl, l.telefone, l.nome, l.servico, l.leadExterno);
         feito.push(`WhatsApp ${passo === 1 ? "check-in" : "last message"} (${tpl})`);
       }
-    } else if (cliente) {
+    } else if (acao === "email" && cliente) {
       // Sai de quem assina os e-mails (papel autor_emails), com a assinatura que o Zendesk acrescenta (dono, 15/10/2026).
       const email = emailDoPasso(passo, l.nome, l.servico);
       corpoDoTicket.comment = comentarioDoEmail(email, (await autorDosEmails()).zendesk_user_id);
@@ -411,7 +444,7 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
     }
     if (!corpoDoTicket.comment) {
       corpoDoTicket.comment = {
-        body: `Lead follow-up step ${passo}: ${feito.length ? feito.join(", ") : `nothing to send (no ${PASSOS_DE_WHATSAPP.has(passo) ? "phone" : "email"} on this lead)`}. ${passo === 5 ? "Solved as no response." : PROXIMO[passo] ?? ""}`.trim(),
+        body: `Lead follow-up step ${passo}: ${feito.length ? feito.join(", ") : "nothing to send on this lead's channel"}. ${passo === 5 ? "Solved as no response." : proximaNota(passo, l.soPorEmail ? "email" : "whatsapp", { temEmail: Boolean(cliente), temTelefone: Boolean(l.telefone && l.leadExterno) })}`.trim(),
         public: false,
       };
     }
