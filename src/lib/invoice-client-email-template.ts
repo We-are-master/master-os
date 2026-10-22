@@ -1,4 +1,5 @@
 import "server-only";
+import { FRASE_CERTIFICADO_RETIDO } from "@/lib/emails/final-report-email";
 import type { Invoice } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
@@ -73,6 +74,11 @@ export type InvoiceEmailOptions = {
   documentAttached?: boolean;
   /** E-mail final do job (copy 12): o trabalho está concluído. */
   final?: boolean;
+  /**
+   * Certificado só com o job pago (dono, 22/10/2026): "retido" avisa que ele sai com o
+   * pagamento; "liberado" é o e-mail do pagamento recebido com o certificado anexado.
+   */
+  certificado?: "retido" | "liberado";
   /** Comentário público do Zendesk: sem tabelas internas. */
   zendesk?: boolean;
   /** Linhas da conta para transferência; padrão = a conta verificada da configuração (a do PDF). */
@@ -265,6 +271,8 @@ export function buildInvoiceClientEmail(
         ? "Please have a look through the report. If anything needs our attention, just reply and let us know."
         : "If anything needs our attention, just reply and let us know.";
     subject = reportCount > 0 ? `Your job report and ${docName} · ${jobRef ?? ref}` : `Your ${docName} · ${jobRef ?? ref}`;
+    const liberado = paid && options?.certificado === "liberado";
+    if (liberado) subject = `Payment received · your certificate · ${jobRef ?? ref}`;
     shell = {
       preheader: paid
         ? reportCount > 0
@@ -274,10 +282,22 @@ export function buildInvoiceClientEmail(
           ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
           : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
       estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
-      titulo: "Your work is complete",
+      titulo: liberado ? "Your certificate is ready" : "Your work is complete",
       destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       saudacao: greeting,
-      paragrafos: [custom ?? p1, ...(pMissing ? [pMissing] : []), p2, p3],
+      paragrafos: liberado
+        ? [
+            custom ?? "Thank you, we’ve received your payment in full. Your certificate is attached, together with your final report.",
+            ...(attached ? ["Your payment receipt is also attached for your records."] : []),
+            "If you have any questions about the certificate, just reply and let us know.",
+          ]
+        : [
+            custom ?? p1,
+            ...(pMissing ? [pMissing] : []),
+            p2,
+            ...(!paid && options?.certificado === "retido" ? [FRASE_CERTIFICADO_RETIDO] : []),
+            p3,
+          ],
       linhas: [
         ["Service", service],
         ["Property", property],

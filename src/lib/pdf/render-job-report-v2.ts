@@ -8,6 +8,7 @@ import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
 import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
 import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
 import { materialDoJobInteiro } from "@/lib/report-material-extra";
+import { certificateAttachmentUrls } from "@/lib/certificate-expiry";
 
 const REPORT_BUCKET = "job-reports";
 const SIGN_TTL_SECONDS = 60 * 60;
@@ -56,6 +57,15 @@ export async function renderJobReportV2PdfBuffer(
           .join(" · ");
       }
     }
+  }
+
+  /**
+   * O certificado não entra no relatório visual (dono, 22/10/2026): ele é documento próprio,
+   * anexado à parte, e para cliente da Fixfy só sai com o job pago (`certificado/regra.ts`).
+   */
+  if (finalNorm) {
+    const doCertificado = new Set(certificateAttachmentUrls(job.final_report));
+    finalNorm.photosFlat = finalNorm.photosFlat.filter((p) => !doCertificado.has(p.url));
   }
 
   const start = startNorm

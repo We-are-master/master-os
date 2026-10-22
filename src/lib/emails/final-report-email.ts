@@ -17,8 +17,13 @@ export type FinalReportEmailInput = {
   reportAttachmentCount: number;
   /** O relatório foi pedido (sem arquivo = avisa que não foi anexado). */
   reportRequested: boolean;
+  /** Certificado retido até o pagamento, ou liberado agora (`certificado/regra.ts`). */
+  certificado?: "retido" | "liberado";
   zendesk?: boolean;
 };
+
+/** Frase do certificado retido, a mesma no e-mail com e sem fatura. */
+export const FRASE_CERTIFICADO_RETIDO = "Your certificate will be emailed to you as soon as the payment is received.";
 
 export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: string; preheader: string; html: string; text: string } {
   const service = semTravessao(d.service) || null;
@@ -34,14 +39,18 @@ export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: stri
   const preheader = anexado
     ? `The final report${service ? ` for ${service}` : ""} is attached.`
     : `${onde}.`;
-  const subject = anexado ? `Your job report is ready · ${ref}` : `Your job is complete · ${ref}`;
+  const liberado = d.certificado === "liberado";
+  const subject = liberado
+    ? `Your certificate · ${ref}`
+    : anexado ? `Your job report is ready · ${ref}` : `Your job is complete · ${ref}`;
   const { html, text } = emailFixfy({
     preheader,
     estado: { texto: "Work complete", cor: "green" },
-    titulo: anexado ? "Your job report is ready" : "Your job is complete",
+    titulo: liberado ? "Your certificate is ready" : anexado ? "Your job report is ready" : "Your job is complete",
     saudacao: saudacao(d.publico),
     paragrafos: [
-      p1,
+      liberado ? "Thank you for your payment. Your certificate and final report are attached." : p1,
+      ...(d.certificado === "retido" ? [FRASE_CERTIFICADO_RETIDO] : []),
       `Thank you for choosing Fixfy. If you have any questions about the work${anexado ? " or the report" : ""}, just reply or call us on ${FIXFY_CONTACT.phone}.`,
       "We’re happy to help.",
     ],

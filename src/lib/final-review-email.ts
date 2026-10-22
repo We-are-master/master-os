@@ -28,6 +28,10 @@ import type { Account, Invoice } from "@/types/database";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
+import { contaDoJob } from "@/lib/processo/conta";
+import { finalidadeRetido, reterCertificado } from "@/lib/certificado/regra";
+import { certificateAttachmentUrls } from "@/lib/certificate-expiry";
+import { chaveDeEnvio, confirmarEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 type ReportRow = {
   id: string;
@@ -73,6 +77,8 @@ export type FinalReviewEmailResult =
       to: string;
       includeInvoice: boolean;
       includeReport: boolean;
+      certificadoRetido: boolean;
+      certificadoAnexado: boolean;
     }
   | { ok: false; status: number; error: string; detail?: string };
 
@@ -87,14 +93,21 @@ function falha(status: number, error: string, detail?: string): FinalReviewEmail
 export async function sendFinalReviewEmail(
   admin: SupabaseClient,
   jobId: string,
-  opts: { includeInvoice: boolean; includeReport: boolean; jobClient?: SupabaseClient; source?: string },
+  opts: {
+    includeInvoice: boolean;
+    includeReport: boolean;
+    jobClient?: SupabaseClient;
+    source?: string;
+    /** E-mail do pagamento recebido (`certificado/liberar.ts`): anexa o certificado retido. */
+    liberarCertificado?: boolean;
+  },
 ): Promise<FinalReviewEmailResult> {
   const { includeInvoice, includeReport } = opts;
   const jobClient = opts.jobClient ?? admin;
   const { data: job, error: jobErr } = await jobClient
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
+      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report, finance_status, payment_status, account_id",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -165,6 +178,21 @@ export async function sendFinalReviewEmail(
    * linha em `job_reports`, então o cliente recebia fotos soltas. Sem PDF legado, vai o
    * PDF montado do start_report + final_report (as fotos já estão dentro dele).
    */
+  /**
+   * Certificado só com o job pago (dono, 22/10/2026): cliente da Fixfy com saldo recebe o
+   * report sem o certificado; ele sai sozinho quando o pagamento entra (`certificado/liberar.ts`).
+   */
+  const contaId = await contaDoJob(admin, { account_id: (j.account_id as string | null) ?? null, client_id: clientId });
+  const certificadoRetido =
+    includeReport &&
+    reterCertificado(
+      { title: j.title as string | null, status: j.status as string | null, finance_status: j.finance_status as string | null, payment_status: j.payment_status as string | null, final_report: j.final_report },
+      contaId,
+      { forcarAnexo: opts.liberarCertificado },
+    );
+  let certificadoAnexado = false;
+  const urlsDoCertificado = new Set(certificateAttachmentUrls(j.final_report));
+
   let pdfV2Anexado = false;
   if (includeReport && attachments.length === 0) {
     try {
@@ -219,7 +247,11 @@ export async function sendFinalReviewEmail(
       totalBytes += buf.length;
       const ehPdf = /\.pdf(\?|$)/i.test(u);
       // Com o PDF do report anexado, foto solta seria repetida: só seguem os PDFs (certificados).
-      if (pdfV2Anexado && !ehPdf) continue;
+      // Certificado = PDF do relatório ou arquivo do slot "certificate" (pode ser foto do papel).
+      const ehCertificado = ehPdf || urlsDoCertificado.has(u);
+      if (ehCertificado && certificadoRetido) continue;
+      if (pdfV2Anexado && !ehCertificado) continue;
+      if (ehCertificado) certificadoAnexado = true;
       attachments.push({
         filename: ehPdf
           ? `${safe}-certificate${++nPdf > 1 ? `-${nPdf}` : ""}.pdf`
@@ -370,6 +402,7 @@ export async function sendFinalReviewEmail(
         {
           final: true,
           reportAttachmentCount,
+          certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
           missingReportNote: missingReportNote || undefined,
           documentAttached: invoicePdfAttached,
           // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
@@ -387,6 +420,7 @@ export async function sendFinalReviewEmail(
       propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
       reportAttachmentCount,
       reportRequested: includeReport,
+      certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
       zendesk,
     });
   };
@@ -496,6 +530,13 @@ export async function sendFinalReviewEmail(
     console.error("final-review-email job update:", upErr);
   }
 
+  // Marca o certificado retido: a varredura do pagamento só manda para quem ficou esperando.
+  if (certificadoRetido) {
+    const chave = chaveDeEnvio("certificado-retido", jobId);
+    const r = await reservarEnvio(admin, { chave, finalidade: finalidadeRetido, canal: "email", jobId, destinatario: emailTo, motivo: "certificate held until the job is paid" });
+    if (r.reservado) await confirmarEnvio(admin, chave);
+  }
+
   return {
     ok: true,
     channel: channel as "zendesk" | "resend",
@@ -505,5 +546,7 @@ export async function sendFinalReviewEmail(
     to: emailTo,
     includeInvoice,
     includeReport,
+    certificadoRetido,
+    certificadoAnexado,
   };
 }
