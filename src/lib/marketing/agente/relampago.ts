@@ -13,8 +13,9 @@
  *      teto, pelo número do Zendesk: a resposta do cliente cai na conversa que
  *      o Harvey e a equipe já atendem.
  *
- * O template do WhatsApp é um só para todo relâmpago (`fixfy_flash_offer`): o
- * nome, a oferta, o código e o prazo são variáveis. Template novo a cada
+ * O template do WhatsApp é um só para toda oferta (`fixfy_offer_v1`, submetido
+ * em 22/10/2026): o nome, a frase da oferta, o código, o percentual e o prazo
+ * são variáveis. Template novo a cada
  * promoção seria uma aprovação da Meta a cada promoção.
  */
 
@@ -33,7 +34,7 @@ import { agendarBroadcast, broadcasts, criarBroadcast } from "./resend";
 export const campanhaDoRelampago = (r: Relampago) => `flash:${r.slug}`;
 export const nomeDoBroadcastRelampago = (r: Relampago) => `Fixfy Flash · ${r.dia} · ${r.codigo}`;
 
-const templateDoWhatsApp = () => process.env.MARKETING_FLASH_WA_TEMPLATE?.trim() || "fixfy_flash_offer";
+const templateDoWhatsApp = () => process.env.MARKETING_FLASH_WA_TEMPLATE?.trim() || TEMPLATE_DO_WHATSAPP.nome;
 
 /** Quantos WhatsApp por relâmpago. Marketing na Meta custa por mensagem (~4p): 150 são ~£6. */
 export function tetoDoWhatsApp(): number {
@@ -41,17 +42,26 @@ export function tetoDoWhatsApp(): number {
   return Number.isFinite(n) && n >= 0 ? n : 150;
 }
 
-/** O texto submetido à Meta. Mudar aqui não muda o template aprovado. */
+/** O texto submetido à Meta (22/10/2026, id 2216421695635323). Mudar aqui não muda o template aprovado. */
 export const TEMPLATE_DO_WHATSAPP = {
-  nome: "fixfy_flash_offer",
+  nome: "fixfy_offer_v1",
   idioma: "en_GB",
   categoria: "MARKETING",
-  corpo: "Hi {{1}}, it's the Fixfy team. For the next 36 hours only: {{2}}.\n\nUse code {{3}} at getfixfy.com before {{4}}. Fixed prices, vetted and insured pros.\n\nReply here with any question.",
+  corpo: "Hi {{1}}, it's Fixfy. {{2}}\n\nUse code {{3}} at checkout for {{4}} off any booking, valid until {{5}}.\n\nCleaning, repairs, painting and certificates across London, with a photo report after every job.",
   botoes: [
-    { tipo: "URL", texto: "Book online", url: `${SITE}/?promo={{1}}` },
+    { tipo: "URL", texto: "Book now", url: `${SITE}/{{1}}` },
     { tipo: "QUICK_REPLY", texto: "Stop promotions" },
   ],
 } as const;
+
+/** As 5 variáveis do corpo e o fim do link do botão, para um relâmpago. */
+export function parametrosDoWhatsApp(r: Relampago, primeiroNome: string | null | undefined): { corpo: string[]; botao: string } {
+  const q = new URLSearchParams({ promo: r.codigo, utm_source: "whatsapp", utm_medium: "offer", utm_campaign: `flash_${r.codigo.toLowerCase()}` });
+  return {
+    corpo: [primeiroNome?.trim() || "there", "For the next 36 hours we have a thank you for our customers.", r.codigo, `${r.percentual}%`, prazoDoRelampago(r).curto],
+    botao: `?${q.toString()}`,
+  };
+}
 
 /* ═══════════════════ O código ═══════════════════ */
 
@@ -100,13 +110,6 @@ export async function garantirCodigo(r: Relampago, aplicar: boolean): Promise<{ 
 
 /* ═══════════════════ E-mail ═══════════════════ */
 
-/**
- * O parâmetro {{4}} do template `fixfy_flash_offer`. Intocado de propósito na
- * copy de 20/10/2026: o template não existe na Meta e o envio do WhatsApp não
- * muda junto com o e-mail. Quando o template novo for aprovado, trocar por
- * `prazoDoRelampago(r).curto`.
- */
-const prazoPorExtenso = "Thursday at midnight";
 
 /**
  * O prazo de verdade, do `fechaEm` (quinta 23:59:59 de Londres): "11:59pm on
@@ -267,8 +270,8 @@ export async function voltaDoWhatsApp(r: Relampago | null, opcoes: { aplicar: bo
         to: linha.phone,
         name: templateDoWhatsApp(),
         language: TEMPLATE_DO_WHATSAPP.idioma,
-        bodyParams: [linha.primeiro_nome || "there", r.linha, r.codigo, prazoPorExtenso],
-        buttonUrlParam: r.codigo,
+        bodyParams: parametrosDoWhatsApp(r, linha.primeiro_nome).corpo,
+        buttonUrlParam: parametrosDoWhatsApp(r, linha.primeiro_nome).botao,
       });
       const agora = new Date().toISOString();
       await sb.from("marketing_queue").update({ status: "enviado", enviado_em: agora, provider_id: envio.messageId || null, custo_estimado: custoPorMensagem("whatsapp") }).eq("id", linha.id);
