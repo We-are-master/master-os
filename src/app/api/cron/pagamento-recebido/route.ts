@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
-import { varrerCertificadosPagos } from "@/lib/certificado/liberar";
+import { varrerPagamentosRecebidos } from "@/lib/certificado/liberar";
 
 /**
- * Certificado liberado com o pagamento (dono, 22/10/2026): job de certificado da Fixfy
- * que fechou com saldo recebe, quando o pagamento entra, um e-mail sozinho com o
- * certificado e o report. Pega todos os jeitos de pagar (Stripe, link, cartão, baixa manual)
+ * Pagamento recebido depois do e-mail final (dono, 22/10/2026): o job que fechou com
+ * saldo recebe, quando o pagamento entra, "Payment received" com a fatura final paga;
+ * o job de certificado da Fixfy recebe o certificado junto. Pega todos os jeitos de pagar (Stripe, link, cartão, baixa manual)
  * porque olha o estado do job, não o evento.
  *
- *   GET /api/cron/certificado-pago              manda (CLIENT_MESSAGING_ENABLED=1)
- *   GET /api/cron/certificado-pago?dry-run=1    só diz o que faria
+ *   GET /api/cron/pagamento-recebido              manda (CLIENT_MESSAGING_ENABLED=1)
+ *   GET /api/cron/pagamento-recebido?dry-run=1    só diz o que faria
  *
  * Auth: `Authorization: Bearer CRON_SECRET` (Vercel) ou `x-internal-secret: INTERNAL_SYNC_SECRET`.
  */
@@ -35,6 +35,6 @@ export async function GET(req: NextRequest) {
   if (!ok) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const ensaio = req.nextUrl.searchParams.get("dry-run") === "1";
-  const r = await varrerCertificadosPagos(createServiceClient(), { aplicar: !ensaio });
+  const r = await varrerPagamentosRecebidos(createServiceClient(), { aplicar: !ensaio });
   return NextResponse.json({ ok: true, ...r });
 }

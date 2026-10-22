@@ -38,7 +38,7 @@
       "schedule": "30 17 * * *"
     },
     {
-      "path": "/api/cron/certificado-pago",
+      "path": "/api/cron/pagamento-recebido",
       "schedule": "0 18 * * *"
     }
   ]

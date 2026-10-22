@@ -30,7 +30,7 @@ import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 import { contaDoJob } from "@/lib/processo/conta";
-import { finalidadeRetido, reterCertificado } from "@/lib/certificado/regra";
+import { finalidadePendente, finalidadeRetido, reterCertificado } from "@/lib/certificado/regra";
 import { certificateAttachmentUrls } from "@/lib/certificate-expiry";
 import { chaveDeEnvio, confirmarEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
@@ -541,6 +541,13 @@ export async function sendFinalReviewEmail(
     .eq("id", jobId);
   if (upErr) {
     console.error("final-review-email job update:", upErr);
+  }
+
+  // Saiu com saldo: quando o pagamento entrar, a varredura manda o recibo com a fatura final paga.
+  if (includeInvoice && invoiceRow && invoiceRow.status !== "paid" && !opts.liberarCertificado) {
+    const chave = chaveDeEnvio("recibo-pendente", jobId);
+    const r = await reservarEnvio(admin, { chave, finalidade: finalidadePendente, canal: "email", jobId, destinatario: emailTo, motivo: invoiceRow.id });
+    if (r.reservado) await confirmarEnvio(admin, chave);
   }
 
   // Marca o certificado retido: a varredura do pagamento só manda para quem ficou esperando.

@@ -20,7 +20,7 @@
  *   clube-lista               (sem janela; antes das 8h do cron) 07:30
  *   pendencias                (sem janela; só grava motivos)   a cada 10 min
  *   cobranca-cartao           (só conta direct v2)             10h
- *   certificado-pago          (certificado retido, job pago)   a cada 15 min
+ *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -141,12 +141,12 @@ export const ROTINAS: Rotina[] = [
     limiteMinutos: 20,
   },
   {
-    // Certificado só com o job pago (dono, 22/10/2026): job de certificado da Fixfy que
-    // fechou com saldo recebe o certificado num e-mail sozinho quando o pagamento entra.
-    nome: "certificado-pago",
-    rotulo: "com.fixfy.certificado-pago",
+    // Pagamento recebido (dono, 22/10/2026): job que fechou com saldo recebe o recibo com a
+    // fatura final paga (e o certificado, se ficou retido) quando o pagamento entra.
+    nome: "pagamento-recebido",
+    rotulo: "com.fixfy.pagamento-recebido",
     agenda: { tipo: "intervalo", minutos: 15 },
-    script: "scripts/certificado-pago.mts",
+    script: "scripts/pagamento-recebido.mts",
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 6,

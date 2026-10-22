@@ -20,6 +20,10 @@ export const fixfyAccountId = () => process.env.FIXFY_ACCOUNT_ID?.trim() || FIXF
 export const finalidadeRetido = "certificate_withheld";
 /** Chave em `outbound_messages`: o e-mail do pagamento com o certificado já saiu. */
 export const finalidadeLiberado = "certificate_after_payment";
+/** O e-mail final saiu com saldo; `reason` guarda o id da fatura (recibo automático, 22/10/2026). */
+export const finalidadePendente = "final_payment_pending";
+/** O recibo do pagamento final já saiu. */
+export const finalidadeRecibo = "final_payment_received";
 
 export type JobParaCertificado = {
   title?: string | null;
