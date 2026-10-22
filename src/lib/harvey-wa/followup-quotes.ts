@@ -35,6 +35,10 @@ import { zendeskApi, addTicketTags } from "@/lib/zendesk";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { historico, scApi, scNotificacao } from "./sunshine";
 import { idDaIntegracaoWhatsApp } from "./primeiro-contato";
+import { processosV2Ligado } from "@/lib/processo/conta";
+import { processoDaQuoteV2 } from "@/lib/processo/quote";
+import { canalAtivo, canaisParaEnviar, registrarCanalAtivo, type CanalAtivo } from "@/lib/processo/canal-ativo";
+import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 const STATUS_APPROVAL = Number(process.env.ZENDESK_STATUS_APPROVAL?.trim() || "5688280626847");
 const VIEW_QUOTING = Number(process.env.ZENDESK_VIEW_QUOTING?.trim() || "5685293799071");
@@ -45,7 +49,7 @@ const H = 3_600_000;
 export type ResultadoQuotes = { ensaio: boolean; olhados: number; enviados: string[]; fechados: string[]; pulados: string[] };
 
 type Ticket = { id: number; subject: string; tags: string[]; custom_status_id?: number; requester_id: number; via?: { channel?: string } };
-type Comentario = { public: boolean; author_id: number; created_at: string; body?: string };
+type Comentario = { public: boolean; author_id: number; created_at: string; body?: string; via?: { channel?: string } };
 type Passo = 1 | 2 | 3 | "fechar";
 
 function horaDeLondres(d: Date): number {
@@ -64,6 +68,116 @@ export function proximoPasso(tags: string[], horasDesdeNossa: number, b2b = fals
   if (tags.includes("quote_chase_2")) return horasDesdeNossa >= 48 ? 3 : null;
   if (tags.includes("quote_chase_1")) return horasDesdeNossa >= 48 ? 2 : null;
   return horasDesdeNossa >= 24 ? 1 : null;
+}
+
+/* ===================== régua v2 (etapa 3, contas diretas com regras.v2) ===================== */
+
+/**
+ * A régua da v2: três lembretes e o fechamento, em horas desde a quote.
+ * QUOTE_CHASE_HORAS="24,72,120" (os três lembretes) e, opcional, um 4º valor
+ * para o fechamento (padrão 168, o 7º dia). Valor torto: o padrão.
+ */
+export type ReguaDaCobranca = { lembretes: [number, number, number]; fecha: number };
+export const REGUA_PADRAO: ReguaDaCobranca = { lembretes: [24, 72, 120], fecha: 168 };
+
+export function reguaDaCobranca(env: string | null | undefined = process.env.QUOTE_CHASE_HORAS): ReguaDaCobranca {
+  const ns = String(env ?? "").split(",").map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  if (ns.length < 3) return REGUA_PADRAO;
+  const [a, b, c] = ns as [number, number, number];
+  const fecha = ns[3] ?? Math.max(REGUA_PADRAO.fecha, c + 24);
+  if (!(a < b && b < c && c < fecha)) return REGUA_PADRAO;
+  return { lembretes: [a, b, c], fecha };
+}
+
+/** Quantos lembretes já saíram, pelas tags e pelos envios confirmados (o maior dos dois). */
+export function lembretesFeitos(tags: readonly string[], enviados: readonly number[] = []): 0 | 1 | 2 | 3 {
+  const pelasTags = tags.includes("quote_chase_3") ? 3 : tags.includes("quote_chase_2") ? 2 : tags.includes("quote_chase_1") ? 1 : 0;
+  return Math.min(3, Math.max(pelasTags, ...enviados, 0)) as 0 | 1 | 2 | 3;
+}
+
+/**
+ * O próximo passo da v2, contado da última mensagem nossa: o intervalo entre
+ * um marco e o seguinte da régua. Exatamente três lembretes, depois fecha.
+ */
+export function proximoPassoV2(tags: readonly string[], feitos: 0 | 1 | 2 | 3, horasDesdeNossa: number, regua: ReguaDaCobranca = reguaDaCobranca()): Passo | null {
+  if (tags.includes("quote_closed_no_reply") || tags.includes("quote_closed_by_customer")) return null;
+  const marcos = [0, ...regua.lembretes, regua.fecha];
+  const intervalo = marcos[feitos + 1]! - marcos[feitos]!;
+  if (horasDesdeNossa < intervalo) return null;
+  return feitos === 3 ? "fechar" : ((feitos + 1) as 1 | 2 | 3);
+}
+
+export type QuoteDaCobranca = {
+  id: string;
+  status: string | null;
+  customer_accepted?: boolean | null;
+  customer_deposit_paid?: boolean | null;
+  conversation_channel?: string | null;
+};
+
+/** Antes de cada lembrete (e do fechamento): a quote ainda espera o cliente? Devolve o motivo para parar. */
+export function motivoParaPararCobranca(q: QuoteDaCobranca | null): string | null {
+  if (!q) return "quote not found";
+  const st = String(q.status ?? "");
+  if (st === "converted_to_job") return "quote already converted to a job";
+  if (st === "awaiting_payment") return "quote accepted, waiting for payment";
+  if (st === "rejected") return "quote rejected";
+  if (q.customer_accepted) return "customer already accepted";
+  if (q.customer_deposit_paid) return "deposit already paid";
+  return null;
+}
+
+/** Canais de conversa por mensagem (o lembrete do WhatsApp aparece no ticket por aqui). */
+const CANAIS_DE_MENSAGEM = new Set(["whatsapp", "native_messaging", "sunshine_conversations_api", "sunshine_conversations_facebook_messenger", "chat"]);
+
+/**
+ * A equipe entrou depois do último lembrete: um comentário público de quem não
+ * é o cliente, criado depois do lembrete (com 2 min de folga para o próprio
+ * lembrete). Os comentários de conversa (WhatsApp) ficam de fora: lá a marca
+ * é a conversa ter passado para a equipe.
+ */
+export function intervencaoManual(comentarios: readonly Comentario[], desde: string | null | undefined, requesterId: number): boolean {
+  const t0 = Date.parse(String(desde ?? ""));
+  if (!Number.isFinite(t0)) return false;
+  return comentarios.some((c) => c.public && c.author_id !== requesterId && Date.parse(c.created_at) > t0 + 120_000 && !CANAIS_DE_MENSAGEM.has(String(c.via?.channel ?? "")));
+}
+
+/** A resposta do cliente veio por e-mail (para gravar o canal ativo). */
+export function respostaPorEmail(c: Pick<Comentario, "public" | "author_id" | "via"> | undefined, requesterId: number): boolean {
+  return !!c && c.public && c.author_id === requesterId && c.via?.channel === "email";
+}
+
+export const chaveDaCobranca = (quoteId: string, n: 1 | 2 | 3) => chaveDeEnvio("quote-chase", quoteId, n);
+
+type ContextoV2 = { quote: QuoteDaCobranca; enviados: number[]; ultimoEnvioEm: string | null };
+
+/** A quote do ticket na v2 (conta direta com regras.v2). Fora disso: null, e a régua é a de sempre. */
+async function contextoV2(sb: SupabaseClient, ticketId: number): Promise<ContextoV2 | null> {
+  if (!processosV2Ligado()) return null;
+  const { data } = await sb
+    .from("quotes")
+    .select("id, status, customer_accepted, customer_deposit_paid, conversation_channel, source_account_id, client_id")
+    .eq("external_source", "zendesk")
+    .eq("external_ref", String(ticketId))
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const q = (data?.[0] ?? null) as (QuoteDaCobranca & { source_account_id: string | null; client_id: string | null }) | null;
+  if (!q) return null;
+  const regras = await processoDaQuoteV2(sb, q);
+  if (!regras || regras.tipo !== "direct") return null;
+  const chaves = ([1, 2, 3] as const).map((n) => chaveDaCobranca(q.id, n));
+  const { data: env } = await sb.from("outbound_messages").select("dedupe_key, sent_at").in("dedupe_key", chaves).eq("status", "sent");
+  const linhas = (env ?? []) as Array<{ dedupe_key: string; sent_at: string | null }>;
+  const enviados = linhas.map((l) => Number(l.dedupe_key.split(":").at(-1))).filter((n) => n >= 1 && n <= 3);
+  const ultimoEnvioEm = linhas.map((l) => l.sent_at).filter((x): x is string => !!x).sort().at(-1) ?? null;
+  return { quote: q, enviados, ultimoEnvioEm };
+}
+
+/** A quote fresca, logo antes de mandar. */
+async function quoteFresca(sb: SupabaseClient, id: string): Promise<QuoteDaCobranca | null> {
+  const { data } = await sb.from("quotes").select("id, status, customer_accepted, customer_deposit_paid, conversation_channel").eq("id", id).maybeSingle();
+  return (data as QuoteDaCobranca | null) ?? null;
 }
 
 /** Mantido para quem ainda importa o nome antigo. */
@@ -194,8 +308,8 @@ export function whatsappDaCobranca(passo: 1 | 2 | 3, d: DadosDaCobranca): string
  * O dia em que a régua fecha depois do último lembrete: 48h, dentro do horário
  * da varredura (8h às 20h de Londres; depois das 20h vira a manhã seguinte).
  */
-export function diaDoFechamento(agora: Date): string | null {
-  const d = new Date(agora.getTime() + 48 * H);
+export function diaDoFechamento(agora: Date, horas = 48): string | null {
+  const d = new Date(agora.getTime() + horas * H);
   return dataLonga(horaDeLondres(d) >= 20 ? new Date(d.getTime() + 12 * H) : d);
 }
 
@@ -303,6 +417,10 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     const { comments } = await zendeskApi<{ comments: Comentario[] }>(`tickets/${t.id}/comments.json?sort_order=desc&per_page=20`);
     const ultimaPublica = (comments ?? []).filter((c) => c.public)[0];
     if (!ultimaPublica) continue;
+    // Etapa 3: conta direta com regras.v2 (sem PROCESSOS_V2=on nem lê o banco; B2B fica na régua de sempre).
+    const v2 = b2b ? null : await contextoV2(sb, t.id).catch(() => null);
+    // O cliente respondeu o ticket por e-mail: o canal ativo vira e-mail (gated por v2 lá dentro).
+    if (aplicar && respostaPorEmail(ultimaPublica, t.requester_id)) await registrarCanalAtivo(sb, { ticketId: t.id }, "email").catch(() => null);
     const { user } = await zendeskApi<{ user: { name?: string; phone?: string | null; email?: string | null } }>(`users/${t.requester_id}.json`);
     const nome = firstName(user?.name ?? null) ?? "there";
     // A copy precisa da quote do ticket; só busca quando há algo a mandar.
@@ -321,10 +439,12 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     let conversa: string | null = null;
     let janelaAberta = false;
     let voz: string | null = null;
+    let equipeNaConversa = false;
     if (ehWhatsApp) {
       const tel = user?.phone ?? null;
-      const { data: c } = tel ? await sb.from("harvey_wa_conversas").select("conversation_id").eq("phone", tel).maybeSingle() : { data: null };
+      const { data: c } = tel ? await sb.from("harvey_wa_conversas").select("conversation_id, estado").eq("phone", tel).maybeSingle() : { data: null };
       conversa = (c as { conversation_id?: string } | null)?.conversation_id ?? null;
+      equipeNaConversa = (c as { estado?: string } | null)?.estado === "equipe";
       if (!conversa) { out.pulados.push(`${quem}: no conversation`); continue; }
       const msgs = await historico(conversa, 30);
       const ultimaMsg = msgs.at(-1);
@@ -350,6 +470,19 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       const motivo = motivoDeDesistencia(respostaDoCliente);
       if (!motivo) continue;
       if (!aplicar) { out.fechados.push(`${quem}: would close (${motivo})`); continue; }
+      // v2: a resposta de fechamento também sai uma vez só.
+      const chaveFim = v2 ? chaveDeEnvio("quote-closed-reply", v2.quote.id) : null;
+      if (chaveFim) {
+        const rf = await reservarEnvio(sb, { chave: chaveFim, finalidade: "quote-closed-reply", canal: ehWhatsApp ? "whatsapp" : "email", quoteId: v2!.quote.id, ticketId: t.id, motivo });
+        if (!rf.reservado) {
+          // A resposta já saiu numa rodada anterior e o fechamento é que falhou: só fecha.
+          if (rf.motivo === "already sent") {
+            await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`).catch(() => null);
+            out.fechados.push(`${quem}: closed (${motivo}, reply already sent)`);
+          } else out.pulados.push(`${quem}: closing reply ${rf.motivo ?? "already reserved"}`);
+          continue;
+        }
+      }
       try {
         const resposta = respostaDeFechamento(await dados());
         if (ehWhatsApp && conversa) {
@@ -357,16 +490,32 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
         } else {
           await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta.email, (await autorDosEmails()).zendesk_user_id) } } });
         }
+        if (chaveFim) await confirmarEnvio(sb, chaveFim);
         await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`);
         out.fechados.push(`${quem}: closed (${motivo})`);
       } catch (e) {
+        if (chaveFim) await falhouEnvio(sb, chaveFim, e).catch(() => null);
         out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 100) : "failed"}`);
       }
       continue;
     }
 
-    const passo = proximoPasso(t.tags, horasDesdeNossa, b2b);
+    // v2: a equipe entrou depois do último lembrete (comentário público ou conversa com a equipe): para e deixa com ela.
+    if (v2 && (equipeNaConversa || intervencaoManual(comments ?? [], v2.ultimoEnvioEm, t.requester_id))) {
+      out.pulados.push(`${quem}: the team stepped in after the last chase, left with them`);
+      continue;
+    }
+
+    const passo = v2 ? proximoPassoV2(t.tags, lembretesFeitos(t.tags, v2.enviados), horasDesdeNossa) : proximoPasso(t.tags, horasDesdeNossa, b2b);
     if (!passo) continue;
+
+    // v2: antes de mandar ou fechar, a quote ainda espera o cliente? (aceita, paga, virou job: para)
+    let fresca: QuoteDaCobranca | null = null;
+    if (v2) {
+      fresca = await quoteFresca(sb, v2.quote.id).catch(() => null);
+      const parar = motivoParaPararCobranca(fresca);
+      if (parar) { out.pulados.push(`${quem}: chase stopped (${parar})`); continue; }
+    }
 
     if (passo === "fechar") {
       if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, ${b2b ? "day 5" : "day 7"})`); continue; }
@@ -380,16 +529,36 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     }
 
     const emailDoWhatsApp = b2b ? null : ehWhatsApp ? await emailDoCliente(sb, user?.phone) : null;
-    const canais = b2b ? "email" : ehWhatsApp ? `WhatsApp${janelaAberta ? "" : " template"}${emailDoWhatsApp ? " + email" : ""}` : `email${user?.phone ? " + WhatsApp template" : ""}`;
+    // Os canais de sempre; na v2, só o canal ativo da quote (sem canal gravado: os de sempre).
+    const disponiveis: CanalAtivo[] = ehWhatsApp ? ["whatsapp", ...(emailDoWhatsApp ? (["email"] as const) : [])] : [...(!b2b && user?.phone ? (["whatsapp"] as const) : []), "email"];
+    const usar = v2 ? canaisParaEnviar(canalAtivo(fresca), disponiveis) : disponiveis;
+    const mandaWhats = usar.includes("whatsapp");
+    const mandaEmail = usar.includes("email");
+    if (!mandaWhats && !mandaEmail) { out.pulados.push(`${quem}: no way to reach the customer on the active channel (${canalAtivo(fresca)})`); continue; }
+    const canais = v2
+      ? [mandaWhats ? `WhatsApp${ehWhatsApp && janelaAberta ? "" : " template"}` : null, mandaEmail ? "email" : null].filter(Boolean).join(" + ")
+      : b2b ? "email" : ehWhatsApp ? `WhatsApp${janelaAberta ? "" : " template"}${emailDoWhatsApp ? " + email" : ""}` : `email${user?.phone ? " + WhatsApp template" : ""}`;
     if (!aplicar) { out.enviados.push(`${quem}: would send chase ${passo} (${canais})`); continue; }
+
+    // v2: reserva ANTES de mandar (a tag depois do envio repetia o lembrete quando falhava).
+    const chave = v2 ? chaveDaCobranca(v2.quote.id, passo) : null;
+    if (chave) {
+      const rv = await reservarEnvio(sb, { chave, finalidade: `quote-chase-${passo}`, canal: mandaWhats ? "whatsapp" : "email", quoteId: v2!.quote.id, ticketId: t.id, destinatario: mandaWhats ? user?.phone ?? null : user?.email ?? emailDoWhatsApp });
+      if (!rv.reservado) {
+        // Já saiu (a tag é que faltou): só põe a tag, sem mandar de novo.
+        if (rv.motivo === "already sent") await addTicketTags(t.id, [`quote_chase_${passo}`]).catch(() => null);
+        out.pulados.push(`${quem}: chase ${passo} ${rv.motivo ?? "not reserved"}`);
+        continue;
+      }
+    }
 
     try {
       const ultimo = passo === (b2b ? 2 : 3);
-      const d = await dados(ultimo ? diaDoFechamento(agora) : null);
+      const d = await dados(ultimo ? diaDoFechamento(agora, v2 ? reguaDaCobranca().fecha - reguaDaCobranca().lembretes[2] : 48) : null);
       const email = emailDaCobranca(passo, b2b, d);
-      if (ehWhatsApp && janelaAberta && conversa) {
+      if (mandaWhats && ehWhatsApp && janelaAberta && conversa) {
         await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: whatsappDaCobranca(passo, d) }, metadata: { origem: "quote_chase" } } });
-      } else if (ehWhatsApp || (!b2b && user?.phone)) {
+      } else if (mandaWhats && (ehWhatsApp || (!b2b && user?.phone))) {
         await scNotificacao({
           destination: { integrationId: await idDaIntegracaoWhatsApp(), destinationId: user?.phone },
           author: { role: "appMaker" },
@@ -406,19 +575,25 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
           metadata: { origem: "quote_chase", ticket: String(t.id) },
         });
       }
-      if (!ehWhatsApp) {
+      if (mandaEmail && !ehWhatsApp) {
         // Ticket de e-mail (B2B ou B2C): o lembrete vai no próprio ticket, e a resposta cai nele.
         await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(email, (await autorDosEmails()).zendesk_user_id) } } });
-      } else if (emailDoWhatsApp) {
+      } else if (mandaEmail && emailDoWhatsApp) {
         await emailDoResend(emailDoWhatsApp, email);
       }
+      if (chave) await confirmarEnvio(sb, chave);
       await zendeskApi(`tickets/${t.id}.json`, {
         method: "PUT",
-        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of ${b2b ? 2 : 3} sent automatically (${canais}).${passo === (b2b ? 2 : 3) ? " If there is no reply in 48h the ticket closes as no reply." : ""}` } } },
+        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of ${b2b ? 2 : 3} sent automatically (${canais}).${passo === (b2b ? 2 : 3) ? ` If there is no reply in ${v2 ? reguaDaCobranca().fecha - reguaDaCobranca().lembretes[2] : 48}h the ticket closes as no reply.` : ""}` } } },
       });
       await addTicketTags(t.id, [`quote_chase_${passo}`]);
       out.enviados.push(`${quem}: chase ${passo} (${canais})`);
     } catch (e) {
+      // Falhou antes de confirmar: libera a chave para a próxima rodada. Depois de confirmar, a chave fica (já saiu).
+      if (chave) {
+        const { data: st } = await sb.from("outbound_messages").select("status").eq("dedupe_key", chave).maybeSingle();
+        if ((st as { status?: string } | null)?.status !== "sent") await falhouEnvio(sb, chave, e).catch(() => null);
+      }
       out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 100) : "failed"}`);
     }
   }

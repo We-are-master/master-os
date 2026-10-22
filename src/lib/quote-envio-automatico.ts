@@ -58,6 +58,11 @@ export type EntradaDoEnvio = {
   temCanal: boolean;
   /** Gente da equipe está com a conversa do WhatsApp. */
   equipeNaConversa: boolean;
+  /**
+   * Alguém da equipe já mandou a quote à mão (etapa 3, 22/10/2026): ver
+   * `quoteJaEnviadaAMao`. Opcional: quem não passa fica como antes.
+   */
+  envioManualDetectado?: boolean;
 };
 
 export type DecisaoDoEnvio = { enviar: boolean; motivos: string[] };
@@ -74,5 +79,51 @@ export function podeMandarSozinho(e: EntradaDoEnvio): DecisaoDoEnvio {
   else if (!e.contaDireta && !e.contaB2B) motivos.push("not a direct customer account");
   if (!e.temCanal) motivos.push("no way to reach the customer (WhatsApp window closed and no email)");
   if (e.equipeNaConversa) motivos.push("the team is talking to the customer");
+  if (e.envioManualDetectado) motivos.push("a quote was already sent by the team");
   return { enviar: motivos.length === 0, motivos };
+}
+
+/** Comentário do ticket como o Zendesk devolve em tickets/{id}/comments.json. */
+export type ComentarioDoTicket = {
+  public: boolean;
+  author_id: number;
+  created_at: string;
+  body?: string | null;
+  attachments?: Array<{ file_name?: string | null; content_type?: string | null }> | null;
+};
+
+/**
+ * Alguém já mandou a quote ao cliente à mão? (etapa 3, 22/10/2026)
+ *
+ * Um comentário PÚBLICO de alguém que não é o cliente, depois que a quote foi
+ * criada, com um preço (£ e número), a referência da quote, ou um PDF da quote
+ * anexado. Na dúvida diz que sim: o pior caso é a quote ficar para gente, nunca
+ * o cliente receber duas.
+ *
+ * `ignorarAutores`: ids de quem escreve automaticamente no ticket com £ sem ser
+ * a quote (o Harvey, por exemplo), para não travar o envio por engano.
+ */
+export function quoteJaEnviadaAMao(
+  comentarios: readonly ComentarioDoTicket[],
+  desde: string | Date,
+  opcoes: { requesterId?: number | null; referencia?: string | null; ignorarAutores?: readonly number[] } = {},
+): boolean {
+  const inicio = typeof desde === "string" ? Date.parse(desde) : desde.getTime();
+  if (!Number.isFinite(inicio)) return false;
+  const ref = String(opcoes.referencia ?? "").trim().toLowerCase();
+  const ignorar = new Set(opcoes.ignorarAutores ?? []);
+  return comentarios.some((c) => {
+    if (!c.public) return false;
+    if (opcoes.requesterId != null && c.author_id === opcoes.requesterId) return false;
+    if (ignorar.has(c.author_id)) return false;
+    if (!(Date.parse(c.created_at) > inicio)) return false;
+    const corpo = String(c.body ?? "").toLowerCase();
+    if (/£\s?\d/.test(corpo)) return true;
+    if (ref && corpo.includes(ref)) return true;
+    return (c.attachments ?? []).some((a) => {
+      const nome = String(a.file_name ?? "").toLowerCase();
+      const pdf = nome.endsWith(".pdf") || String(a.content_type ?? "").toLowerCase() === "application/pdf";
+      return pdf && (/quote|quotation|estimate/.test(nome) || (!!ref && nome.includes(ref)));
+    });
+  });
 }
