@@ -140,6 +140,9 @@ jobs = juntos.jobs as unknown as JobRow[];
 for (const v of juntos.visits) {
   if (!visitPartnerId(v)) continue;
   const linha = visitAsJobRow(v) as unknown as JobRow;
+  // O parceiro da visita recebe o que ELA paga, não o total do job (self-bill é por visita).
+  linha.partner_cost = Number(v.partner_cost ?? 0);
+  linha.billed_hours = null;
   // Pagamento da visita é valor combinado; hourly só quando a visita não tem valor e o job é por hora.
   if (Number(v.partner_cost) > 0) linha.job_type = "fixed";
   linha.title = `${linha.title?.trim() || v.parent?.reference || "Job"} · Visit ${v.visit_index}`;

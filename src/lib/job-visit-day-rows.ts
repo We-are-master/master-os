@@ -18,7 +18,20 @@ export type VisitJobRow = Job & {
   __visit_parent_id: string;
   __visit_id: string;
   __visit_index: number;
+  /** O extra desta visita (hover da lista, pagamento do parceiro dela). */
+  __visit_money: VisitOwnMoney;
 };
+
+export type VisitOwnMoney = { client_price: number; partner_cost: number; materials_cost: number };
+
+/** O dinheiro que a visita soma ao job: o que o parceiro dela recebe e o que o cliente paga a mais. */
+export function visitOwnMoney(v: Pick<JobVisit, "client_price" | "partner_cost" | "materials_cost">): VisitOwnMoney {
+  return {
+    client_price: Number(v.client_price ?? 0),
+    partner_cost: Number(v.partner_cost ?? 0),
+    materials_cost: Number(v.materials_cost ?? 0),
+  };
+}
 
 /** Visita que ainda vai acontecer ou está acontecendo. */
 export const OPEN_VISIT_STATUSES = ["scheduled", "in_progress"] as const;
@@ -153,9 +166,11 @@ export function visitReference(parentReference: string, visitIndex: number): str
 }
 
 /**
- * A visita como linha de job: endereço, cliente e ticket do job; data, janela,
- * parceiro, status e dinheiro da visita. Os totais da aba somam só o que a visita
- * vale, então extras, promoção e fatura do job ficam de fora da linha.
+ * A visita como linha de job: endereço, cliente, ticket e DINHEIRO do job; dia,
+ * janela, parceiro e status da visita (22/10/2026, dono: "Payment é do job, nunca
+ * vazio numa visita"; Job amount e Cost são os totais do job, iguais aos da linha
+ * do job). O extra da própria visita vai em `__visit_money`: hover da lista, e o
+ * pagamento do parceiro no e-mail e na rota.
  */
 export function visitAsJobRow(v: VisitWithParent): VisitJobRow {
   const parent = v.parent as Job;
@@ -172,19 +187,12 @@ export function visitAsJobRow(v: VisitWithParent): VisitJobRow {
     partner_id: visitPartnerId(v) ?? undefined,
     partner_name: visitPartnerName(v) ?? undefined,
     partner_ids: undefined,
-    client_price: Number(v.client_price ?? 0),
-    partner_cost: Number(v.partner_cost ?? 0),
-    materials_cost: Number(v.materials_cost ?? 0),
-    extras_amount: 0,
-    partner_extras_amount: 0,
-    promotion_amount: 0,
-    invoice_id: undefined,
-    self_bill_id: v.self_bill_id ?? undefined,
     route_seq: null,
     primary_visit_done: null,
     __visit_parent_id: parent.id,
     __visit_id: v.id,
     __visit_index: v.visit_index,
+    __visit_money: visitOwnMoney(v),
   } as VisitJobRow;
   return row;
 }
@@ -203,4 +211,20 @@ export function jobRowHref(job: Job): string {
   return isVisitJobRow(job)
     ? `/jobs/${job.__visit_parent_id}?visit=${encodeURIComponent(job.__visit_id)}`
     : `/jobs/${job.id}`;
+}
+
+/**
+ * Uma linha por job, para somas (rodapé da aba): a linha do job e as das visitas
+ * dele mostram o mesmo total, então o job só pode entrar uma vez.
+ */
+export function uniqueRowPerJob<T extends Job>(rows: readonly T[]): T[] {
+  const vistos = new Set<string>();
+  const out: T[] = [];
+  for (const r of rows) {
+    const id = jobIdOfRow(r);
+    if (vistos.has(id)) continue;
+    vistos.add(id);
+    out.push(r);
+  }
+  return out;
 }

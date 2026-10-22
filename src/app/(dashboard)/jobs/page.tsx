@@ -97,7 +97,7 @@ import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation
 import { patchOfficeCancelZeroJobEconomics, patchOfficeCancelLostSnapshot } from "@/lib/job-cancel-economics";
 import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
 import { cancelOpenVisitsForJobCancellation, countOpenVisitRowsByJobsTab } from "@/services/job-visits";
-import { isVisitJobRow, jobIdOfRow, jobRowHref } from "@/lib/job-visit-day-rows";
+import { isVisitJobRow, jobIdOfRow, jobRowHref, uniqueRowPerJob as umaLinhaPorJob } from "@/lib/job-visit-day-rows";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
@@ -168,6 +168,9 @@ import {
   jobMarginPercent,
   jobProfit,
   sumJobsMoney,
+  jobListClientAmount,
+  jobListMargin,
+  jobListPartnerCost,
   SUGGESTED_PARTNER_MARGIN_HINT_PCT,
 } from "@/lib/job-financials";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
@@ -654,16 +657,11 @@ function JobsPartnerFinder({
   );
 }
 
-function jobBillableAmount(j: Job) {
-  return Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
-}
-
-/** Mini financial strip: amount (incl. extras), partner cost, margin £, margin %. */
+/** Mini financial strip: o job inteiro (V1 + visitas, incl. extras), custo de parceiro, margem £ e %. */
 function JobCardFinanceRow({ job }: { job: Job }) {
-  const amount = jobBillableAmount(job);
-  const pc = Number(job.partner_cost ?? 0);
-  const profit = jobProfit(job);
-  const marginPct = jobMarginPercent(job);
+  const amount = jobListClientAmount(job);
+  const pc = jobListPartnerCost(job);
+  const { profit, marginPct } = jobListMargin(job);
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 pt-2.5 border-t border-border-light">
       <div className="min-w-0">
@@ -1334,7 +1332,8 @@ function JobsPageContent() {
 
   useEffect(() => {
     // Same job set as the list table rows (`data`), not kanban-only `filteredData`.
-    const ids = data.map((j) => j.id);
+    // Linha de visita lê o pagamento do job dela: o id que importa é o do job.
+    const ids = [...new Set(data.map(jobIdOfRow))];
     if (ids.length === 0) {
       setCustomerPaidByJobId({});
       setCustomerPaidSumsReady(true);
@@ -1413,10 +1412,10 @@ function JobsPageContent() {
     if (!jobsListSortKey) return scheduleSortedData;
     const mul = jobsListSortDir === "asc" ? 1 : -1;
     const clone = [...scheduleSortedData];
-    const jobAmount = (j: Job) => j.client_price + Number(j.extras_amount ?? 0);
+    const jobAmount = (j: Job) => jobListClientAmount(j);
     const amountDue = (j: Job) => {
       if (!customerPaidSumsReady) return 0;
-      return valorEmAberto(j, customerPaidByJobId[j.id] ?? 0);
+      return valorEmAberto(j, customerPaidByJobId[jobIdOfRow(j)] ?? 0);
     };
     const accountLabel = (j: Job) => (j.client_id ? clientAccountMap[j.client_id] ?? "" : "");
     clone.sort((a, b) => {
@@ -1460,7 +1459,7 @@ function JobsPageContent() {
           cmp = jobAmount(a) - jobAmount(b);
           break;
         case "partner_cost":
-          cmp = Number(a.partner_cost ?? 0) - Number(b.partner_cost ?? 0);
+          cmp = jobListPartnerCost(a) - jobListPartnerCost(b);
           break;
         case "amount_due":
           cmp = amountDue(a) - amountDue(b);
@@ -1492,8 +1491,6 @@ function JobsPageContent() {
   /** Etiqueta de Payment de cada linha; null = sem estado (perdido sem nada a cobrar). */
   const estadoDoPagamento = useCallback(
     (item: Job): JobPaymentState | null => {
-      // Linha de visita não tem cobrança própria: o pagamento é do job.
-      if (isVisitJobRow(item)) return null;
       if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
         return null;
       }
@@ -1514,7 +1511,7 @@ function JobsPageContent() {
   );
 
   /** Page totals — Job Amount, Cost, and Ticket margin footer. */
-  const jobsListFinancialTotals = useMemo(() => sumJobsMoney(sortedDataForTable), [sortedDataForTable]);
+  const jobsListFinancialTotals = useMemo(() => sumJobsMoney(umaLinhaPorJob(sortedDataForTable)), [sortedDataForTable]);
 
   /**
    * O dinheiro dos jobs MARCADOS, na barra de seleção (dono, 27/08).
@@ -1629,8 +1626,9 @@ function JobsPageContent() {
   const amountDueTotal = useMemo(() => {
     if (!customerPaidSumsReady) return null;
     let total = 0;
-    for (const j of sortedDataForTable) {
-      total += valorEmAberto(j, customerPaidByJobId[j.id] ?? 0);
+    // Um job conta uma vez, mesmo com a linha dele e as das visitas na tela.
+    for (const j of umaLinhaPorJob(sortedDataForTable)) {
+      total += valorEmAberto(j, customerPaidByJobId[jobIdOfRow(j)] ?? 0);
     }
     return Math.round(total * 100) / 100;
   }, [sortedDataForTable, customerPaidByJobId, customerPaidSumsReady]);
@@ -3271,9 +3269,17 @@ function JobsPageContent() {
       sortable: true,
       sortOptions: JOB_SORT_AMOUNT,
       footer: jobAmountFooter,
+      // Job inteiro (V1 + visitas). Na linha de visita, o extra dela fica no hover.
       render: (item) => (
-        <span className="text-sm font-semibold text-text-primary tabular-nums">
-          {formatCurrency(jobBillableAmount(item))}
+        <span
+          className="text-sm font-semibold text-text-primary tabular-nums"
+          title={
+            isVisitJobRow(item)
+              ? `Job total. Visit ${item.__visit_index} adds client ${formatCurrency(item.__visit_money.client_price)} · partner ${formatCurrency(item.__visit_money.partner_cost)}`
+              : undefined
+          }
+        >
+          {formatCurrency(jobListClientAmount(item))}
         </span>
       ),
     },
@@ -3289,8 +3295,8 @@ function JobsPageContent() {
         if (!customerPaidSumsReady) {
           return <span className="text-sm text-text-tertiary">…</span>;
         }
-        if (isVisitJobRow(item)) return <span className="text-xs text-text-tertiary">—</span>;
-        const due = valorEmAberto(item, customerPaidByJobId[item.id] ?? 0);
+        // Linha de visita mostra o que falta do JOB (o pagamento é do job, nunca da visita).
+        const due = valorEmAberto(item, customerPaidByJobId[jobIdOfRow(item)] ?? 0);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
       footer: amountDueFooter,
@@ -3313,7 +3319,7 @@ function JobsPageContent() {
         const detail = jobPaymentDetail(state, item, {
           billable: jobCustomerBillableRevenueForCollections(item),
           // Pago pela plataforma (Housekeep) não tem lançamento: o hover não pode dizer "£0 of".
-          paid: state === "paid" ? jobCustomerBillableRevenueForCollections(item) : customerPaidByJobId[item.id] ?? 0,
+          paid: state === "paid" ? jobCustomerBillableRevenueForCollections(item) : customerPaidByJobId[jobIdOfRow(item)] ?? 0,
           invoice: item.invoice_id ? invoiceSummaryById.get(item.invoice_id) ?? null : null,
           todayYmd: invoiceFinanceListTodayYmd(),
         });
@@ -3375,7 +3381,7 @@ function JobsPageContent() {
       footer: jobCostFooter,
       render: (item: Job) => (
         <span className="text-sm font-semibold text-text-secondary tabular-nums">
-          {formatCurrency(Number(item.partner_cost ?? 0))}
+          {formatCurrency(jobListPartnerCost(item))}
         </span>
       ),
     }),

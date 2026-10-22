@@ -160,7 +160,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const doDia = juntos.jobs as unknown as Row[];
   const visitas = juntos.visits
     .filter((v) => visitPartnerId(v) === p.id)
-    .map((v) => ({ ...(visitAsJobRow(v) as unknown as Row), job_id: v.job_id, visit_index: v.visit_index }));
+    // Parada da visita: o que o parceiro DELA ganha nela, não o total do job.
+    .map((v) => ({
+      ...(visitAsJobRow(v) as unknown as Row),
+      client_price: Number(v.client_price ?? 0),
+      partner_cost: Number(v.partner_cost ?? 0),
+      job_id: v.job_id,
+      visit_index: v.visit_index,
+    }));
   const stops = await completar(
     visitas.length
       ? [...doDia, ...visitas].sort((a, b) => {

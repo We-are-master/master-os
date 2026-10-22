@@ -175,12 +175,12 @@ describe("visitAsJobRow: a linha com cara de job", () => {
     assert.equal(visitAsJobRow(visit({ status: "in_progress" })).status, "in_progress");
   });
 
-  it("dinheiro é só o da visita: nada de extras nem fatura do job", () => {
-    assert.equal(row.client_price, 216);
-    assert.equal(row.partner_cost, 140);
-    assert.equal(row.materials_cost, 0);
-    assert.equal(row.extras_amount, 0);
-    assert.equal(row.invoice_id, undefined);
+  it("dinheiro e fatura são do job (Payment nunca vazio); o extra da visita fica à parte", () => {
+    assert.equal(row.client_price, 900);
+    assert.equal(row.partner_cost, 500);
+    assert.equal(row.extras_amount, 120);
+    assert.equal(row.invoice_id, "inv-1");
+    assert.deepEqual(row.__visit_money, { client_price: 216, partner_cost: 140, materials_cost: 0 });
   });
 
   it("visita sem parceiro herda o do job", () => {

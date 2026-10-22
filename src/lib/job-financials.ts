@@ -40,6 +40,43 @@ export function precoDasVisitasExtras(j: Partial<Pick<Job, "client_price" | "tot
   return total > v1 ? Math.round((total - v1) * 100) / 100 : 0;
 }
 
+/**
+ * O custo de parceiro das visitas 2+ (mig 274: `total_partner_cost` = V1 + visitas,
+ * mantido pelo gatilho a cada visita criada, editada, apagada ou cancelada).
+ * Só exibição e margem: payout continua lendo cada visita (self-bill por parceiro).
+ */
+export function custoDasVisitasExtras(j: Partial<Pick<Job, "partner_cost" | "total_partner_cost">>): number {
+  const total = Number(j.total_partner_cost ?? 0);
+  const v1 = Number(j.partner_cost ?? 0);
+  return total > v1 ? Math.round((total - v1) * 100) / 100 : 0;
+}
+
+/**
+ * Valor do job na lista (22/10/2026): o job inteiro, visita 1 + o extra de cada
+ * visita. A linha do job e as linhas das visitas dele mostram o mesmo número.
+ */
+export function jobListClientAmount(
+  j: Pick<Job, "client_price" | "extras_amount"> & Partial<Pick<Job, "total_client_price">>,
+): number {
+  return Math.round((jobBillableRevenue(j) + precoDasVisitasExtras(j)) * 100) / 100;
+}
+
+/** Custo de parceiro do job na lista: visita 1 + o de cada visita extra. */
+export function jobListPartnerCost(j: Pick<Job, "partner_cost"> & Partial<Pick<Job, "total_partner_cost">>): number {
+  return Math.round((Number(j.partner_cost ?? 0) + custoDasVisitasExtras(j)) * 100) / 100;
+}
+
+/** Margem do job inteiro (V1 + visitas): receita e custo dos totais acima, material de todas as visitas. */
+export function jobListMargin(
+  j: Pick<Job, "client_price" | "extras_amount" | "partner_cost" | "materials_cost"> &
+    Partial<Pick<Job, "total_client_price" | "total_partner_cost" | "total_materials_cost">>,
+): { profit: number; marginPct: number } {
+  const revenue = jobListClientAmount(j);
+  const materiais = Math.max(Number(j.materials_cost ?? 0), Number(j.total_materials_cost ?? 0));
+  const profit = Math.round((revenue - jobListPartnerCost(j) - materiais) * 100) / 100;
+  return { profit, marginPct: revenue > 0 ? Math.round((profit / revenue) * 1000) / 10 : 0 };
+}
+
 export function jobDirectCost(j: Pick<Job, "partner_cost" | "materials_cost">): number {
   return Number(j.partner_cost ?? 0) + Number(j.materials_cost ?? 0);
 }
@@ -234,13 +271,15 @@ export function customerCollectionsSatisfyBillable(job: Job, customerPayments: J
  * "Cost" (custo do parceiro, sem material — material tem coluna própria).
  */
 export function sumJobsMoney(
-  jobs: readonly Pick<Job, "client_price" | "extras_amount" | "partner_cost">[],
+  jobs: readonly (Pick<Job, "client_price" | "extras_amount" | "partner_cost"> &
+    Partial<Pick<Job, "total_client_price" | "total_partner_cost">>)[],
 ): { revenue: number; cost: number; profit: number; marginPct: number } {
   let revenue = 0;
   let cost = 0;
+  // Job inteiro (V1 + visitas extras): o mesmo número que a linha mostra.
   for (const j of jobs) {
-    revenue += Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
-    cost += Number(j.partner_cost ?? 0);
+    revenue += jobListClientAmount(j);
+    cost += jobListPartnerCost(j);
   }
   const r = Math.round(revenue * 100) / 100;
   const c = Math.round(cost * 100) / 100;
