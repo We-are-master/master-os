@@ -87,7 +87,7 @@ if (arg("plano")) {
   const r = cal.RELAMPAGOS.find((x) => x.slug === (valor("relampago") ?? cal.RELAMPAGOS[0].slug));
   if (!r) throw new Error("relâmpago desconhecido");
   const { enviarTemplatePeloZendesk } = await import("../src/lib/harvey-wa/template-zendesk");
-  console.log(await enviarTemplatePeloZendesk({ to: valor("teste-wa") ?? "", name: relampago.TEMPLATE_DO_WHATSAPP.nome, language: relampago.TEMPLATE_DO_WHATSAPP.idioma, bodyParams: ["there", r.linha, r.codigo, "Thursday at midnight"], buttonUrlParam: r.codigo }));
+  console.log(await enviarTemplatePeloZendesk({ to: valor("teste-wa") ?? "", name: relampago.TEMPLATE_DO_WHATSAPP.nome, language: relampago.TEMPLATE_DO_WHATSAPP.idioma, bodyParams: relampago.parametrosDoWhatsApp(r, null).corpo, buttonUrlParam: relampago.parametrosDoWhatsApp(r, null).botao }));
 } else if (arg("template")) {
   console.log(JSON.stringify(relampago.TEMPLATE_DO_WHATSAPP, null, 2));
 } else {

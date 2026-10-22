@@ -68,7 +68,7 @@ test("a lista cresce 1.000 por dia até 5 mil", () => {
 });
 
 test("o template do WhatsApp tem as quatro variáveis que o envio preenche", () => {
-  assert.deepEqual(TEMPLATE_DO_WHATSAPP.corpo.match(/\{\{\d\}\}/g), ["{{1}}", "{{2}}", "{{3}}", "{{4}}"]);
+  assert.deepEqual(TEMPLATE_DO_WHATSAPP.corpo.match(/\{\{\d\}\}/g), ["{{1}}", "{{2}}", "{{3}}", "{{4}}", "{{5}}"]);
 });
 
 import { SEQUENCIA_B2B, escolherOnda, htmlDoB2B, quandoSai } from "./b2b";

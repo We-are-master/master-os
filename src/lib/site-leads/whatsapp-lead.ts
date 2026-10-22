@@ -23,6 +23,12 @@ import { buscarTemplate, saudeDoNumero, toWhatsAppNumber, whatsappConfigured, Wh
 
 export const CAMPANHA_WHATSAPP = "reserva-abandonada:whatsapp4";
 const TEMPLATE_PADRAO = "fixfy_booking_recovery_v1";
+/**
+ * A v2 (submetida em 22/10/2026, id 1125816229845197) tem o percentual como
+ * variável: "Your {{3}} code {{4}} is ready to use." Liga com
+ * RESERVA_ABANDONADA_WA_TEMPLATE=fixfy_booking_recovery_v2 depois de aprovada.
+ */
+const TEMPLATES_COM_PERCENTUAL = new Set(["fixfy_booking_recovery_v2"]);
 const IDIOMA_PADRAO = "en_GB";
 
 /** WhatsApp atrasado mais que isto não sai: a sequência fecha sem ele. */
@@ -98,8 +104,14 @@ export function sufixoDoBotao(l: LeadDoLink, codigo: string): string {
  * escreveu ("2 bed deep clean"), {{3}} o código. A Meta recusa parâmetro com
  * quebra de linha ou espaço em excesso.
  */
-export function parametrosDoCorpo(l: { full_name?: string | null; service_label?: string | null }, codigo: string): string[] {
+export function parametrosDoCorpo(
+  l: { full_name?: string | null; service_label?: string | null },
+  codigo: string,
+  opcoes?: { template?: string; percentual?: number },
+): string[] {
   const servico = String(l.service_label ?? "").replace(/\s+/g, " ").trim().slice(0, 80) || "booking";
+  const template = opcoes?.template ?? templateDaRetomada().nome;
+  if (TEMPLATES_COM_PERCENTUAL.has(template)) return [primeiroNome(l.full_name), servico, `${opcoes?.percentual ?? 10}% off`, codigo];
   return [primeiroNome(l.full_name), servico, codigo];
 }
 

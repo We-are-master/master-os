@@ -50,6 +50,10 @@ test("corpo do template: primeiro nome, serviço numa linha só, código", () =>
   assert.deepEqual(parametrosDoCorpo({ full_name: "alex smith", service_label: "2 bed deep clean" }, "BACK-7K2Q"), ["Alex", "2 bed deep clean", "BACK-7K2Q"]);
   assert.deepEqual(parametrosDoCorpo({ full_name: "", service_label: "2 bed\n  deep   clean" }, "X"), ["there", "2 bed deep clean", "X"]);
   assert.deepEqual(parametrosDoCorpo({}, "X"), ["there", "booking", "X"]);
+  assert.deepEqual(
+    parametrosDoCorpo({ full_name: "kate m", service_label: "2 bed end of tenancy clean" }, "BACK-7K2Q", { template: "fixfy_booking_recovery_v2", percentual: 10 }),
+    ["Kate", "2 bed end of tenancy clean", "10% off", "BACK-7K2Q"],
+  );
 });
 
 test("erros da Meta: template espera, ritmo espera, número fecha, o resto é erro", () => {

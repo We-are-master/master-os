@@ -546,7 +546,7 @@ async function tocarWhatsApp(ctx: Contexto, l: Lead, botaoUrl: number): Promise<
       to: fone,
       name: template,
       language: idioma,
-      bodyParams: parametrosDoCorpo(l, codigo),
+      bodyParams: parametrosDoCorpo(l, codigo, { template, percentual: DESCONTO }),
       urlButtons: [{ index: botaoUrl, suffix: sufixoDoBotao(l, codigo) }],
     }));
   } catch (err) {
