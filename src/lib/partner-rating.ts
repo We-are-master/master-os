@@ -74,6 +74,10 @@ export type PartnerRatingBreakdown = {
   pointsGained: number;
 };
 
+function roundPoints(points: number): number {
+  return Math.round(points * 100) / 100;
+}
+
 export function partnerRatingBreakdown(events: readonly PartnerFeedbackEvent[]): PartnerRatingBreakdown {
   let pointsLost = 0;
   let pointsGained = 0;
@@ -96,9 +100,11 @@ export function partnerRatingBreakdown(events: readonly PartnerFeedbackEvent[]):
       PARTNER_RATING_MAX + pointsGained - pointsLost,
     ),
     complaintCount,
-    pointsLost: Math.round(pointsLost * 10) / 10,
+    // Pontos andam de 0,25 em 0,25: arredondar para 0,1 mostrava 0,3 perdido por
+    // uma reclamação. Duas casas só limpam o ruído de ponto flutuante.
+    pointsLost: roundPoints(pointsLost),
     praiseCount,
-    pointsGained: Math.round(pointsGained * 10) / 10,
+    pointsGained: roundPoints(pointsGained),
   };
 }
 

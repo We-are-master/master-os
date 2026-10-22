@@ -121,7 +121,7 @@ test("todo link sai etiquetado, e com o cupom na URL quando há oferta", () => {
 test("o e-mail sai com logo oficial, saída em um clique e a caixa do cupom", () => {
   const comCupom = AGENDA.find((p) => p.cupom)!;
   const html = renderPeca(comCupom, "client_season", CTX);
-  assert.match(html, /logos\/fixfy-email-header\.png/, "logo oficial");
+  assert.match(html, /logos\/fixfy-wordmark-white-trim\.png/, "logo oficial (PNG branco na faixa navy)");
   assert.match(html, /Unsubscribe/, "saída em um clique");
   assert.ok(html.includes(comCupom.cupom!), "o código tem que aparecer na caixa");
   assert.ok(html.includes(comoSeLe(acharCupom(comCupom.cupom!)!)), "o valor do desconto");
