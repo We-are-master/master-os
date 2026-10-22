@@ -63,6 +63,8 @@ export type EntradaDoEnvio = {
    * `quoteJaEnviadaAMao`. Opcional: quem não passa fica como antes.
    */
   envioManualDetectado?: boolean;
+  /** Conta B2B só com gente (process_rules v2): a quote para em Quote Ready para revisão. */
+  contaSoHumana?: boolean;
 };
 
 export type DecisaoDoEnvio = { enviar: boolean; motivos: string[] };
@@ -80,6 +82,7 @@ export function podeMandarSozinho(e: EntradaDoEnvio): DecisaoDoEnvio {
   if (!e.temCanal) motivos.push("no way to reach the customer (WhatsApp window closed and no email)");
   if (e.equipeNaConversa) motivos.push("the team is talking to the customer");
   if (e.envioManualDetectado) motivos.push("a quote was already sent by the team");
+  if (e.contaSoHumana) motivos.push("B2B account is human-only: stops at Quote Ready for review");
   return { enviar: motivos.length === 0, motivos };
 }
 
