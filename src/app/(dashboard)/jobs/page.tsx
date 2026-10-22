@@ -213,6 +213,7 @@ import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
 import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
+import { isJobOverdue } from "@/lib/job-overdue";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
 import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, JOB_PAYMENT_LABEL, type JobInvoiceSummary, type JobPaymentState } from "@/lib/job-payment-badge";
@@ -3213,15 +3214,23 @@ function JobsPageContent() {
           const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
           const st = effectiveJobStatusForDisplay(item);
           const c = onHoldBadge ?? (jobDataAConfirmar(item) ? DATE_TBC_BADGE : null) ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
+          const unico = rotuloUnicoDoStatus(item, st, onHoldBadge != null, motivosPorJob.get(item.id));
+          const resto = [c.label, ...(motivosPorJob.get(item.id) ?? []).map((m) => m.rotulo)].filter((l, i, a) => a.indexOf(l) === i);
           return (
-            <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
-              <div className="inline-flex flex-wrap items-center gap-1.5">
-                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
-                {/* Late e Overdue dizem o mesmo (data passou): fica só o Late (dono, 19/10/2026). */}
-                {st !== "late" ? <JobOverdueBadge job={item} /> : null}
+            <div
+              className="inline-flex items-center"
+              title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : resto.length > 1 ? resto.join(" · ") : undefined}
+            >
+              {/* Um rótulo só por job (dono, 22/10/2026): o mais urgente ganha, o resto vai no hover. */}
+              {unico.tipo === "cartao" ? (
                 <JobCardRefusedBadge job={item} />
-              </div>
-              <MotivoChips chips={motivosPorJob.get(item.id)} />
+              ) : unico.tipo === "motivo" ? (
+                <MotivoChips chips={[unico.chip]} />
+              ) : unico.tipo === "atrasado" ? (
+                <JobOverdueBadge job={item} />
+              ) : (
+                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
+              )}
             </div>
           );
         }
@@ -3895,15 +3904,34 @@ function JobsPageContent() {
                           </div>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <div className="mt-1 flex flex-col items-start gap-0.5 min-w-0">
-                            <div className="flex flex-wrap items-center gap-1 min-w-0">
-                              <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
-                              <JobOverdueBadge job={j} />
-                              <JobCardRefusedBadge job={j} />
-                            </div>
+                            {(() => {
+                              // Um rótulo só por job (dono, 22/10/2026), igual à coluna Status da lista.
+                              const unico =
+                                status === "action_required"
+                                  ? rotuloUnicoDoStatus(j, disp, onHoldKanbanBadge != null, motivosPorJob.get(j.id))
+                                  : (j as { card_charge_status?: string | null }).card_charge_status === "refused" ||
+                                      (j as { card_charge_status?: string | null }).card_charge_status === "requires_action"
+                                    ? ({ tipo: "cartao" } as const)
+                                    : disp !== "late" && isJobOverdue(j)
+                                      ? ({ tipo: "atrasado" } as const)
+                                      : ({ tipo: "status" } as const);
+                              return (
+                                <div className="flex flex-wrap items-center gap-1 min-w-0">
+                                  {unico.tipo === "cartao" ? (
+                                    <JobCardRefusedBadge job={j} />
+                                  ) : unico.tipo === "motivo" ? (
+                                    <MotivoChips chips={[unico.chip]} />
+                                  ) : unico.tipo === "atrasado" ? (
+                                    <JobOverdueBadge job={j} />
+                                  ) : (
+                                    <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
                             ) : null}
-                            {status === "action_required" ? <MotivoChips chips={motivosPorJob.get(j.id)} /> : null}
                           </div>
                           {sched ? (
                             <p className="text-[10px] text-text-secondary mt-1 line-clamp-2 leading-snug" title={schedDetail ?? undefined}>
@@ -5812,6 +5840,31 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
     default: "text-text-primary bg-surface-hover hover:bg-surface-tertiary border-border",
   };
   return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
+}
+
+type RotuloUnico =
+  | { tipo: "status" }
+  | { tipo: "cartao" }
+  | { tipo: "motivo"; chip: ChipDeMotivo }
+  | { tipo: "atrasado" };
+
+/**
+ * Qual rótulo a coluna Status mostra na Action Required: um só (dono, 22/10/2026).
+ * On hold / Complaint ganha de tudo; depois cartão recusado; depois o primeiro motivo
+ * aberto (já vem na ordem de MOTIVOS); depois Overdue (Late já diz isso); senão o status.
+ */
+function rotuloUnicoDoStatus(
+  job: Job,
+  statusEfetivo: string,
+  temOnHold: boolean,
+  motivos: ChipDeMotivo[] | undefined,
+): RotuloUnico {
+  if (temOnHold) return { tipo: "status" };
+  const cartao = (job as { card_charge_status?: string | null }).card_charge_status;
+  if (cartao === "refused" || cartao === "requires_action") return { tipo: "cartao" };
+  if (motivos?.length) return { tipo: "motivo", chip: motivos[0] };
+  if (statusEfetivo !== "late" && isJobOverdue(job)) return { tipo: "atrasado" };
+  return { tipo: "status" };
 }
 
 /** Os motivos abertos do job (job_attention_reasons), um chip por motivo. Sem motivo, nada. */
