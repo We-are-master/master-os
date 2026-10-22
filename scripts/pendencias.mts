@@ -22,7 +22,7 @@ const { motivosDoJob, sincronizarPendencias, ROTULO_DO_MOTIVO } = await import("
 const { regrasDoProcesso, tipoDaConta } = await import("../src/lib/processo/conta");
 
 const aplicar = process.argv.includes("--aplicar");
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
+const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, (process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)!, { auth: { persistSession: false } });
 
 const { data: contas } = await sb.from("accounts").select("id, process_type, process_rules");
 const regraDaConta = new Map((contas ?? []).map((c) => [c.id as string, tipoDaConta(c) ? regrasDoProcesso(tipoDaConta(c)!, c.process_rules) : null]));

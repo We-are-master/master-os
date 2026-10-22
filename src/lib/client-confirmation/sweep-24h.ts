@@ -19,7 +19,15 @@ import type { EnvioWhatsApp } from "./send";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { getZendeskTicketId, isZendeskConfigured, updateTicket } from "@/lib/zendesk";
 import { dataPorExtenso, janelaDeChegada } from "./send";
-import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
+import { confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
+import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib/processo/conta";
+import { canalDoLembrete, chaveDoLembrete, emailDoLembrete } from "./lembrete-canal";
+import { emailDoCliente } from "@/lib/um-ticket/escolha";
+import type { AvisoNoTicket } from "@/lib/um-ticket/aviso-do-job";
+
+/** Quem entrega o e-mail no ticket do job. Injeção para teste; no ar é o avisarNoTicketDoJob. */
+export type AvisoPorEmail = (a: AvisoNoTicket) => Promise<unknown>;
+const avisarDeVerdade: AvisoPorEmail = async (a) => (await import("@/lib/um-ticket/aviso-do-job")).avisarNoTicketDoJob(a);
 
 /**
  * Lidos na hora da chamada, não no import.
@@ -97,7 +105,8 @@ export function amanhaEmLondres(agora: Date): string {
 const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
   "partner_id, partner_name, client_id, client_name, property_address, " +
-  "client_reminder_sent_at, client_confirmation_sent_at, external_source, external_ref";
+  "client_reminder_sent_at, client_confirmation_sent_at, external_source, external_ref, " +
+  "account_id, conversation_channel";
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
@@ -108,6 +117,8 @@ export async function varrerLembretesDeVespera(
     enviar?: EnvioWhatsApp;
     /** Para envio manual fora da janela. O agendador nunca passa isto. */
     ignorarJanela?: boolean;
+    /** Injeção para teste: o e-mail no ticket (contas v2 com canal e-mail). */
+    avisarPorEmail?: AvisoPorEmail;
   },
 ): Promise<{ dia: string; linhas: LinhaDaVarredura[]; foraDaJanela: boolean }> {
   const agora = opcoes?.agora ?? new Date();
@@ -140,6 +151,10 @@ export async function varrerLembretesDeVespera(
 
   const linhas: LinhaDaVarredura[] = [];
   const manda: EnvioWhatsApp = opcoes?.enviar ?? enviarAoCliente;
+  const avisar: AvisoPorEmail = opcoes?.avisarPorEmail ?? avisarDeVerdade;
+  // Regras por conta só com a chave geral ligada: desligada, nada aqui muda (nem lê).
+  const v2 = processosV2Ligado();
+  const regrasPorConta = new Map<string, RegrasDoProcesso | null>();
 
   for (const raw of jobs ?? []) {
     const j = raw as unknown as Record<string, unknown>;
@@ -162,10 +177,29 @@ export async function varrerLembretesDeVespera(
 
     const { data: cliente } = await supabase
       .from("clients")
-      .select("full_name, phone, source_account_id")
+      .select("full_name, phone, email, source_account_id")
       .eq("id", String(j.client_id ?? ""))
       .maybeSingle();
     const c = (cliente ?? {}) as Record<string, unknown>;
+
+    // Fluxos novos (regras.v2): o lembrete vai pelo canal ativo da conversa.
+    if (v2) {
+      const contaId = (typeof j.account_id === "string" && j.account_id) || (typeof c.source_account_id === "string" ? c.source_account_id : "");
+      if (contaId && !regrasPorConta.has(contaId)) regrasPorConta.set(contaId, await processoDaConta(supabase, contaId));
+      const regras = contaId ? regrasPorConta.get(contaId) ?? null : null;
+      if (regras?.v2) {
+        const canal = canalDoLembrete({
+          conversationChannel: j.conversation_channel as string | null,
+          telefone: c.phone as string | null,
+          canaisDaConta: regras.canais,
+        });
+        if (canal === "email") {
+          const r = await lembretePorEmail(supabase, j, c, regras, { enviar, foraDaJanela, agora, avisar });
+          anota(r.resultado, r.detalhe);
+          continue;
+        }
+      }
+    }
 
     let politica: boolean | null | undefined;
     let nomeDaConta: string | null = null;
@@ -236,8 +270,8 @@ export async function varrerLembretesDeVespera(
     // Reserva antes de mandar (22/10/2026): duas rodadas ao mesmo tempo, ou o carimbo
     // falhando depois da entrega, mandavam de novo. A chave leva o horário marcado: remarcar
     // para outro horário gera lembrete novo; voltar ao mesmo horário não repete.
-    const chaveDoLembrete = chaveDeEnvio("lembrete-24h", String(j.id), String(j.scheduled_start_at ?? j.scheduled_date ?? ""));
-    const reserva = await reservarEnvio(supabase, { chave: chaveDoLembrete, finalidade: "lembrete-24h", canal: "whatsapp", jobId: String(j.id), destinatario: decisao.telefone, template: template(), motivo: "job scheduled for tomorrow" });
+    const chaveDoLembreteWa = chaveDoLembrete(String(j.id), j.scheduled_start_at as string | null, j.scheduled_date as string | null);
+    const reserva = await reservarEnvio(supabase, { chave: chaveDoLembreteWa, finalidade: "lembrete-24h", canal: "whatsapp", jobId: String(j.id), destinatario: decisao.telefone, template: template(), motivo: "job scheduled for tomorrow" });
     if (!reserva.reservado) {
       anota("pulado", `reminder already handled (${reserva.motivo ?? "reserved"})`);
       continue;
@@ -264,7 +298,7 @@ export async function varrerLembretesDeVespera(
         await mandarCom(parametros.slice(0, 3));
         semEndereco = true;
       }
-      await confirmarEnvio(supabase, chaveDoLembrete);
+      await confirmarEnvio(supabase, chaveDoLembreteWa);
       await supabase
         .from("jobs")
         .update({ client_reminder_sent_at: new Date().toISOString() })
@@ -284,10 +318,59 @@ export async function varrerLembretesDeVespera(
         `${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,
       );
     } catch (err) {
-      await falhouEnvio(supabase, chaveDoLembrete, err).catch(() => undefined);
+      await falhouEnvio(supabase, chaveDoLembreteWa, err).catch(() => undefined);
       anota("falhou", err instanceof Error ? err.message.slice(0, 140) : "unknown error");
     }
   }
 
   return { dia, linhas, foraDaJanela };
+}
+
+/**
+ * O lembrete por e-mail, dentro do ticket do job (contas v2 com canal e-mail ou
+ * cliente sem mobile). Mesma chave de reserva do WhatsApp: um lembrete por job e
+ * horário, qualquer que seja o canal.
+ */
+async function lembretePorEmail(
+  supabase: SupabaseClient,
+  j: Record<string, unknown>,
+  c: Record<string, unknown>,
+  regras: RegrasDoProcesso,
+  o: { enviar: boolean; foraDaJanela: boolean; agora: Date; avisar: AvisoPorEmail },
+): Promise<{ resultado: LinhaDaVarredura["resultado"]; detalhe: string }> {
+  if (!regras.mensagensAoCliente) return { resultado: "pulado", detalhe: "this account does not send client messages" };
+  if (!regras.canais.includes("email")) return { resultado: "pulado", detalhe: "no channel allowed for this account" };
+  const email = emailDoCliente(c.email as string | null);
+  if (!email) return { resultado: "pulado", detalhe: "email channel but no customer email on file" };
+  const ticketId = getZendeskTicketId(j as never);
+  if (!ticketId) return { resultado: "pulado", detalhe: "email channel but the job has no Zendesk ticket" };
+
+  const janela = janelaDeChegada(j.scheduled_start_at as string, j.scheduled_end_at as string);
+  const data = dataPorExtenso(j.scheduled_date as string);
+  if (!data || !janela) return { resultado: "pulado", detalhe: "no arrival window on the job" };
+  const endereco = String(j.property_address ?? "").replace(/\s+/g, " ").trim() || null;
+  const primeiroNome = String(c.full_name ?? j.client_name ?? "").trim().split(/\s+/)[0] || "there";
+  const { assunto, html } = emailDoLembrete({ primeiroNome, data, janela, endereco, referencia: String(j.reference ?? "") || null });
+
+  if (!o.enviar) {
+    const motivo = o.foraDaJanela
+      ? `fora da janela (${LEMBRETE_HORA_INICIO}h-${LEMBRETE_HORA_FIM}h de Londres, agora são ${horaEmLondres(o.agora)}h)`
+      : "dry run";
+    return { resultado: "pulado", detalhe: `${motivo}: email in ticket #${ticketId} → ${email}` };
+  }
+  if (!mensagensAoClienteLigadas()) return { resultado: "pulado", detalhe: "client messaging is off (CLIENT_MESSAGING_ENABLED)" };
+  if (!isZendeskConfigured()) return { resultado: "pulado", detalhe: "Zendesk not configured" };
+
+  const chave = chaveDoLembrete(String(j.id), j.scheduled_start_at as string | null, j.scheduled_date as string | null);
+  const reserva = await reservarEnvio(supabase, { chave, finalidade: "lembrete-24h", canal: "email", jobId: String(j.id), ticketId: Number(ticketId) || null, destinatario: email, motivo: "job scheduled for tomorrow" });
+  if (!reserva.reservado) return { resultado: "pulado", detalhe: `reminder already handled (${reserva.motivo ?? "reserved"})` };
+  try {
+    await o.avisar({ ticketId: Number(ticketId), para: { email, nome: (c.full_name as string | null) ?? null }, assunto, html });
+    await confirmarEnvio(supabase, chave);
+    await supabase.from("jobs").update({ client_reminder_sent_at: new Date().toISOString() }).eq("id", String(j.id));
+    return { resultado: "enviado", detalhe: `email in ticket #${ticketId} → ${email} · ${janela}` };
+  } catch (err) {
+    await falhouEnvio(supabase, chave, err).catch(() => undefined);
+    return { resultado: "falhou", detalhe: err instanceof Error ? err.message.slice(0, 140) : "unknown error" };
+  }
 }
