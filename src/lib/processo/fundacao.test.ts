@@ -13,7 +13,8 @@ describe("tipo de processo da conta", () => {
   });
   it("conta desconhecida sem coluna não vira nada (não supõe)", () => assert.equal(tipoDaConta({ id: "abc" }), null));
   it("padrões por tipo", () => {
-    assert.equal(regrasDoProcesso("direct").agendarSoComSinal, true);
+    assert.equal(regrasDoProcesso("direct").agendarSoComSinal, false, "entrada não trava o agendamento (dono, 22/10/2026)");
+    assert.equal(regrasDoProcesso("direct", { schedule_requires_deposit: true }).agendarSoComSinal, true);
     assert.equal(regrasDoProcesso("platform").cobraDoCliente, false);
     assert.equal(regrasDoProcesso("platform").feedback, "depois_do_pagamento_da_plataforma");
     assert.equal(regrasDoProcesso("b2b").conducaoDaQuote, "humana");

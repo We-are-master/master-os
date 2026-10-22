@@ -90,7 +90,8 @@ export function motivosDoJob(
 
   if (ANTES_DA_EXECUCAO.has(job.status) && !job.scheduled_date && !job.scheduled_start_at) motivos.push("date_tbc");
   if (SEM_PARCEIRO.has(job.status) || (AGENDADOS.has(job.status) && !job.partner_id)) motivos.push("partner_required");
-  if (processo?.agendarSoComSinal && processo.cobraDoCliente && num(job.customer_deposit) > 0 && !job.customer_deposit_paid && !pago) motivos.push("deposit_pending");
+  // Pendência mesmo sem a trava (dono, 22/10/2026): agenda sem a entrada, mas fica à vista.
+  if (processo?.cobraDoCliente && num(job.customer_deposit) > 0 && !job.customer_deposit_paid && !pago) motivos.push("deposit_pending");
 
   const recusado = job.card_charge_status === "refused" || job.card_charge_status === "requires_action";
   if (recusado && !pago) {
