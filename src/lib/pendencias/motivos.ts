@@ -8,7 +8,7 @@
  *
  * Regras:
  *   date_tbc               sem data confirmada antes da execução, com ou sem parceiro
- *   partner_required       sem parceiro (Unassigned, Auto-assigning ou agendado sem parceiro)
+ *   partner_required       sem parceiro (Auto-assigning ou agendado sem parceiro; Unassigned já diz no status)
  *   deposit_pending        fluxo com sinal e o sinal ainda não entrou
  *   card_declined          cartão recusado ou pedindo confirmação do banco
  *   payment_unsuccessful   cartão recusado há 7 dias ou mais sem resolver
@@ -69,7 +69,8 @@ export type JobParaPendencias = {
 };
 
 const ENCERRADOS = new Set(["completed", "cancelled", "deleted"]);
-const SEM_PARCEIRO = new Set(["unassigned", "auto_assigning"]);
+// Unassigned já diz "sem parceiro" no próprio status: o chip Partner Required repetia (dono, 22/10/2026).
+const SEM_PARCEIRO = new Set(["auto_assigning"]);
 const AGENDADOS = new Set(["scheduled", "late", "in_progress"]);
 /** Antes da execução: depois do trabalho feito, data a confirmar não é mais pendência. */
 const ANTES_DA_EXECUCAO = new Set(["unassigned", "auto_assigning", "scheduled", "late", "on_hold"]);
