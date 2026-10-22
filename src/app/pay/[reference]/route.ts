@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type Stripe from "stripe";
 import { billingReferenceCandidates } from "@/lib/billing-reference";
 import { requireStripe } from "@/lib/stripe";
 import { accountPaysByCard, CARD_ON_FILE_ON } from "@/lib/stripe-card-charge";
@@ -197,7 +198,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     // Metadata stays on the session only (not payment_intent_data): the webhook's
     // legacy payment_intent.succeeded branch marks invoices FULLY paid, which
     // would be wrong for a deposit charge.
-    const session = await stripe.checkout.sessions.create({
+    // Mesma fatura, mesmo valor e mesmo estado de pagamento = a MESMA sessão (22/10/2026).
+    // Antes cada clique criava uma sessão nova e o cliente podia pagar duas vezes em duas
+    // abas. A chave muda sozinha quando um pagamento entra (amount_paid), então o próximo
+    // clique depois de pagar abre uma sessão nova com o saldo certo. A Stripe guarda a
+    // chave por 24 h, o mesmo prazo de vida da sessão.
+    const chaveDaSessao = ["paylink", inv.id, Math.round(amount * 100), pct, Math.round(Number(inv.amount_paid ?? 0) * 100), savedCustomerId ?? "novo"].join(":");
+    const parametros: Stripe.Checkout.SessionCreateParams = {
       mode: "payment",
       line_items: [
         {
@@ -226,7 +233,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
         : {}),
       ...(!savedCustomerId && inv.stripe_customer_email?.trim() ? { customer_email: inv.stripe_customer_email.trim() } : {}),
       success_url: `${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`,
-    });
+    };
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.create(parametros, { idempotencyKey: chaveDaSessao });
+    } catch (e) {
+      // Chave já usada com parâmetros diferentes (por exemplo o texto do cartão mudou): segue sem a chave.
+      if ((e as { type?: string }).type !== "StripeIdempotencyError") throw e;
+      session = await stripe.checkout.sessions.create(parametros);
+    }
+    // Sessão já paga ou vencida (o cliente voltou ao link depois de pagar): manda para o recibo.
+    if (session.status === "complete") return NextResponse.redirect(`${appUrl}/payment-success?ref=${encodeURIComponent(reference)}`, 303);
+    if (session.status === "expired") session = await stripe.checkout.sessions.create(parametros);
 
     if (!session.url) {
       return htmlMessage("Something went wrong", "We could not start the payment. Please try again or contact Fixfy.", 500);

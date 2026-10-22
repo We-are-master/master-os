@@ -112,6 +112,23 @@ export async function chargeJobBalanceOnSavedCard(
   const amountPence = Math.round(amountGbp * 100);
   if (amountPence < 30) return { status: "skipped", reason: "Below Stripe minimum" };
 
+  // Trava contra cobrança dupla (22/10/2026): a chave abaixo leva o valor, então um saldo
+  // que mudou (extra aprovado, pagamento lançado depois) gera chave nova. Se uma cobrança
+  // anterior passou na Stripe e não está nos pagamentos do job, ou ainda está em andamento,
+  // não sai outra: alguém concilia primeiro.
+  const { data: anteriores } = await admin
+    .from("stripe_charge_attempts")
+    .select("status, payment_intent_id, created_at")
+    .eq("job_id", job.id)
+    .eq("kind", "balance")
+    .in("status", ["pending", "succeeded"]);
+  for (const a of (anteriores ?? []) as Array<{ status: string; payment_intent_id: string | null; created_at: string }>) {
+    if (a.status === "pending") return { status: "skipped", reason: "Another charge on this card is still in progress" };
+    if (!a.payment_intent_id) continue;
+    const { count } = await admin.from("job_payments").select("id", { count: "exact", head: true }).eq("job_id", job.id).ilike("note", `%${a.payment_intent_id}%`);
+    if (!count) return { status: "skipped", reason: `Charge ${a.payment_intent_id} went through on the card but is not on the job: reconcile it before charging again` };
+  }
+
   const idempotencyKey = `balance:${job.id}:${amountPence}:${opts.isRetry ? `r${(job.card_retry_count ?? 0) + 1}` : "r0"}`;
   const { data: attempt, error: insErr } = await admin
     .from("stripe_charge_attempts")

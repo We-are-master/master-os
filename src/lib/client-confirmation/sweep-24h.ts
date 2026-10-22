@@ -19,6 +19,7 @@ import type { EnvioWhatsApp } from "./send";
 import { decidirEnvio, mensagensAoClienteLigadas } from "./policy";
 import { getZendeskTicketId, isZendeskConfigured, updateTicket } from "@/lib/zendesk";
 import { dataPorExtenso, janelaDeChegada } from "./send";
+import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 /**
  * Lidos na hora da chamada, não no import.
@@ -232,6 +233,16 @@ export async function varrerLembretesDeVespera(
       continue;
     }
 
+    // Reserva antes de mandar (22/10/2026): duas rodadas ao mesmo tempo, ou o carimbo
+    // falhando depois da entrega, mandavam de novo. A chave leva o horário marcado: remarcar
+    // para outro horário gera lembrete novo; voltar ao mesmo horário não repete.
+    const chaveDoLembrete = chaveDeEnvio("lembrete-24h", String(j.id), String(j.scheduled_start_at ?? j.scheduled_date ?? ""));
+    const reserva = await reservarEnvio(supabase, { chave: chaveDoLembrete, finalidade: "lembrete-24h", canal: "whatsapp", jobId: String(j.id), destinatario: decisao.telefone, template: template(), motivo: "job scheduled for tomorrow" });
+    if (!reserva.reservado) {
+      anota("pulado", `reminder already handled (${reserva.motivo ?? "reserved"})`);
+      continue;
+    }
+
     try {
       const mandarCom = (params: string[]) =>
         manda({ to: decisao.telefone, name: template(), language: idioma(), bodyParams: params });
@@ -253,6 +264,7 @@ export async function varrerLembretesDeVespera(
         await mandarCom(parametros.slice(0, 3));
         semEndereco = true;
       }
+      await confirmarEnvio(supabase, chaveDoLembrete);
       await supabase
         .from("jobs")
         .update({ client_reminder_sent_at: new Date().toISOString() })
@@ -272,6 +284,7 @@ export async function varrerLembretesDeVespera(
         `${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,
       );
     } catch (err) {
+      await falhouEnvio(supabase, chaveDoLembrete, err).catch(() => undefined);
       anota("falhou", err instanceof Error ? err.message.slice(0, 140) : "unknown error");
     }
   }

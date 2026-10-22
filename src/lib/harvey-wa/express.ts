@@ -16,6 +16,7 @@ import { zendeskApi } from "@/lib/zendesk";
 import { chaveDoTelefone } from "./identidade";
 import { telefoneE164 } from "./primeiro-contato";
 import { scApi, scNotificacao } from "./sunshine";
+import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 export const TEMPLATE_DO_EXPRESS = () => process.env.HARVEY_WA_EXPRESS_TEMPLATE?.trim() || "checkatrade_express_booking";
 /** A conta Checkatrade no OS: job dela criado pelo Ruben é Express. */
@@ -72,7 +73,12 @@ export async function mandarTemplateDoExpress(sb: SupabaseClient, j: JobDoExpres
       return { kind: "fora_da_janela" };
     }
     const vars = variaveisDoExpress(j);
-    await scNotificacao({
+    // Reserva antes de mandar (22/10/2026): a criação do job e o express-pendentes podiam mandar juntos.
+    const chaveDoEnvio = chaveDeEnvio("express-boas-vindas", j.jobId);
+    const reserva = await reservarEnvio(sb, { chave: chaveDoEnvio, finalidade: "express-boas-vindas", canal: "whatsapp", jobId: j.jobId, ticketId: j.ticketId ?? null, destinatario: destino, template: TEMPLATE_DO_EXPRESS(), motivo: "Express booking accepted" });
+    if (!reserva.reservado) return { kind: "ja_falamos" };
+    try {
+      await scNotificacao({
       destination: { integrationId: await integracaoWhatsApp(), destinationId: destino },
       author: { role: "appMaker" },
       messageSchema: "whatsapp",
@@ -86,7 +92,12 @@ export async function mandarTemplateDoExpress(sb: SupabaseClient, j: JobDoExpres
         },
       },
       metadata: { origem: "checkatrade_express", jobId: j.jobId },
-    });
+      });
+    } catch (e) {
+      await falhouEnvio(sb, chaveDoEnvio, e).catch(() => undefined);
+      throw e;
+    }
+    await confirmarEnvio(sb, chaveDoEnvio);
     await sb.from("harvey_wa_leads").upsert(
       { chave, telefone: destino, servico: vars[1], enviado_em: new Date().toISOString(), job_id: j.jobId, ticket_id: j.ticketId, origem: "express", lead_externo: null },
       { onConflict: "chave" },

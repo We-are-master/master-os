@@ -38,6 +38,41 @@ function withServerTiming(body: unknown, status: number, marks: Array<[string, n
  * On accept with deposit_required > 0: creates job and deposit invoice; returns the invoice /pay link as paymentLinkUrl.
  * Body: { token: string, action: "accept" | "reject", rejectionReason?: string }
  */
+/** Estados em que a quote já foi aceita: um segundo aceite devolve o primeiro, nunca cria outro job. */
+const ESTADOS_ACEITOS = new Set(["awaiting_payment", "converted_to_job"]);
+
+type ClienteSupabase = import("@supabase/supabase-js").SupabaseClient;
+
+/**
+ * O aceite que já aconteceu (22/10/2026). Antes um clique duplo, ou o cliente
+ * voltando ao link, criava outro job e outro sinal quando a quote não tinha
+ * ticket. Devolve a mesma resposta do primeiro aceite: o job e, com sinal, o
+ * link da fatura do sinal.
+ */
+async function aceiteJaFeito(supabase: ClienteSupabase, quoteId: string, referencia: string | null): Promise<Record<string, unknown> | null> {
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("id, reference, invoice_id")
+    .eq("quote_id", quoteId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: string; reference: string; invoice_id: string | null }>();
+  if (!job) return null;
+  let paymentLinkUrl: string | null = null;
+  if (job.invoice_id) {
+    const { data: inv } = await supabase
+      .from("invoices")
+      .select("reference, invoice_kind, status, stripe_payment_link_url")
+      .eq("id", job.invoice_id)
+      .maybeSingle<{ reference: string; invoice_kind: string | null; status: string | null; stripe_payment_link_url: string | null }>();
+    if (inv?.invoice_kind === "deposit" && inv.status !== "paid") paymentLinkUrl = inv.stripe_payment_link_url ?? invoicePayLinkUrl(inv.reference);
+  }
+  return paymentLinkUrl
+    ? { success: true, action: "accept", reference: referencia, message: "Quote accepted. Complete your deposit payment to confirm.", paymentLinkUrl, alreadyAccepted: true }
+    : { success: true, action: "accept", reference: referencia, message: "Quote accepted. Your job is booked.", jobReference: job.reference, alreadyAccepted: true };
+}
+
 export async function POST(req: NextRequest) {
   // Per-IP rate limit defeats brute force against quote response tokens.
   // Tokens are signed JWTs so brute force is already infeasible, but the
@@ -96,17 +131,33 @@ export async function POST(req: NextRequest) {
         ...(typeof rejectionReason === "string" && rejectionReason.trim() ? { rejection_reason: rejectionReason.trim() } : {}),
       };
 
+      // Recusa não desfaz um aceite (22/10/2026): só troca o estado de uma quote ainda aberta.
+      if (ESTADOS_ACEITOS.has(String(quote.status))) {
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "This quote was already accepted. Please contact us if you need to change it." }, 409, marks);
+      }
+      if (quote.status === "rejected") {
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ success: true, action: "reject", reference: quote.reference, message: "Quote declined. Thank you for letting us know." }, 200, marks);
+      }
       const tUpdate = performance.now();
-      const { error: updateError } = await supabase
+      const { data: trocou, error: updateError } = await supabase
         .from("quotes")
         .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq("id", quoteId);
+        .eq("id", quoteId)
+        .eq("status", quote.status)
+        .select("id");
       marks.push(["quote_update", performance.now() - tUpdate]);
 
       if (updateError) {
         console.error("Quote respond update error:", updateError);
         marks.push(["total", performance.now() - startedAt]);
         return withServerTiming({ error: "Failed to update quote" }, 500, marks);
+      }
+      if (!trocou?.length) {
+        // Outro clique mudou a quote no meio do caminho (aceite ou recusa): não sobrescreve.
+        marks.push(["total", performance.now() - startedAt]);
+        return withServerTiming({ error: "This quote was just updated. Please refresh the page." }, 409, marks);
       }
 
       /** Audit log is downstream: customer doesn't wait for it. */
@@ -152,6 +203,14 @@ export async function POST(req: NextRequest) {
     if (fetchError || !quote) {
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({ error: "Quote not found" }, 404, marks);
+    }
+
+    // Segundo aceite (clique duplo, link aberto de novo): devolve o primeiro.
+    if (ESTADOS_ACEITOS.has(String(quote.status)) || quote.status === "rejected") {
+      const feito = quote.status === "rejected" ? null : await aceiteJaFeito(supabase, quoteId, quote.reference);
+      marks.push(["total", performance.now() - startedAt]);
+      if (feito) return withServerTiming(feito, 200, marks);
+      return withServerTiming({ error: quote.status === "rejected" ? "This quote was declined. Please contact us for a new one." : "This quote was already accepted. Please contact us." }, 409, marks);
     }
 
     // Job do aceite já com o nome do parceiro e a data proposta no lance (15/10/2026).
@@ -290,6 +349,11 @@ export async function POST(req: NextRequest) {
       }
       marks.push(["job_insert", performance.now() - tJob]);
 
+      if (jobError?.code === "23505") {
+        // Dois aceites ao mesmo tempo: o índice único de jobs.quote_id (migration 346) segurou o segundo.
+        const feito = await aceiteJaFeito(supabase, quoteId, quote.reference);
+        if (feito) { marks.push(["total", performance.now() - startedAt]); return withServerTiming(feito, 200, marks); }
+      }
       if (jobError || !job) {
         console.error("Quote accept: job creation failed", jobError);
         marks.push(["total", performance.now() - startedAt]);
@@ -518,6 +582,10 @@ export async function POST(req: NextRequest) {
     }
     marks.push(["job_insert", performance.now() - tJobNoDep]);
 
+    if (jobErrorNoDep?.code === "23505") {
+      const feito = await aceiteJaFeito(supabase, quoteId, quote.reference);
+      if (feito) { marks.push(["total", performance.now() - startedAt]); return withServerTiming(feito, 200, marks); }
+    }
     if (jobErrorNoDep || !jobNoDep) {
       console.error("Quote accept (no deposit): job creation failed", jobErrorNoDep);
       marks.push(["total", performance.now() - startedAt]);

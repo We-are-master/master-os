@@ -30,6 +30,7 @@ import { scApi, scNotificacao } from "./sunshine";
 import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 import { emailPessoal, saudacao } from "@/lib/emails/fixfy-shell";
 import { servicoCurto } from "@/lib/zendesk-quote-sent";
+import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 let integracaoWhatsApp: string | null = null;
 
@@ -98,8 +99,16 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
   if (!nomeDoTemplate) return { kind: "falhou", motivo: "HARVEY_WA_LEAD_TEMPLATE não configurado" };
   const destino = telefoneE164(p.telefone);
   if (!destino) return { kind: "falhou", motivo: `telefone inválido: ${p.telefone}` };
+  // Só libera a reserva se o template não saiu; depois de sair, erro no ticket não reenvia.
+  let reservaAberta: string | null = null;
   try {
     if (await jaFalamosComEle(sb, destino)) return { kind: "ja_falamos" };
+    // Reserva antes de mandar (22/10/2026): a entrada do Ruben e a rodada das 08:02 podiam
+    // passar as duas pelo jaFalamosComEle e mandar o template duas vezes.
+    const chaveDoEnvio = chaveDeEnvio("primeiro-contato", chaveDoTelefone(destino), p.leadExterno ?? p.servico);
+    const reserva = await reservarEnvio(sb, { chave: chaveDoEnvio, finalidade: "primeiro-contato", canal: "whatsapp", destinatario: destino, template: nomeDoTemplate, motivo: "new lead" });
+    if (!reserva.reservado) return { kind: "ja_falamos" };
+    reservaAberta = chaveDoEnvio;
     // O namespace da conta de WhatsApp (o mesmo do n8n dos leads da Meta).
     const namespace = process.env.HARVEY_WA_TEMPLATE_NAMESPACE?.trim() || "6ce5890e_770a_4be1_91db_7d34bc67e542";
     const r = await scNotificacao<{ notification?: { _id?: string; id?: string } }>({
@@ -123,6 +132,8 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
       metadata: { origem: "checkatrade", clienteId: p.clienteId, ...(p.leadExterno ? { leadExterno: p.leadExterno } : {}) },
     });
     const notificacao = r.notification?._id ?? r.notification?.id ?? null;
+    await confirmarEnvio(sb, chaveDoEnvio, notificacao);
+    reservaAberta = null;
     await sb.from("harvey_wa_leads").upsert(
       { chave: chaveDoTelefone(destino), telefone: destino, cliente_id: p.clienteId, lead_externo: p.leadExterno ?? null, servico: p.servico, notificacao, enviado_em: new Date().toISOString() },
       { onConflict: "chave" },
@@ -131,6 +142,7 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
     const ticket = await abrirTicketDoLead(sb, p, destino).catch((e) => (console.error("[harvey-wa] ticket do lead", e), null));
     return { kind: "enviado", notificacao, ticket };
   } catch (e) {
+    if (reservaAberta) await falhouEnvio(sb, reservaAberta, e).catch(() => undefined);
     return { kind: "falhou", motivo: e instanceof Error ? e.message.slice(0, 240) : "falhou" };
   }
 }
