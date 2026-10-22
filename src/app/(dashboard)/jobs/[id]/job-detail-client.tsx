@@ -731,8 +731,6 @@ function JobDetailSelfBillPanel({
     ((visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) + (visitScope ? 0 : extra.materials)) * 100,
   ) / 100;
   const jobGrossOnBill = Math.round((jobLineGross + (visitScope ? 0 : extra.gross)) * 100) / 100;
-  /** Valor de visita ainda sem Done: está no documento, mas só paga depois do Done. */
-  const visitPending = visitScope ? Number(visitScope.pending ?? 0) : extra.pending;
   /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
   const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
@@ -760,11 +758,6 @@ function JobDetailSelfBillPanel({
                   <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
                   <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
                 </p>
-                {visitPending > 0.005 ? (
-                  <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 mt-0.5">
-                    {formatCurrency(visitPending)} not done yet · Ready when the job is finished
-                  </p>
-                ) : null}
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
@@ -790,11 +783,6 @@ function JobDetailSelfBillPanel({
               <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
               {payoutHoldNote ? (
                 <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
-              ) : null}
-              {visitPending > 0.005 ? (
-                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                  {formatCurrency(visitPending)} of this is a visit not done yet. The self-bill moves to Ready when the job is finished.
-                </p>
               ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
               <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
