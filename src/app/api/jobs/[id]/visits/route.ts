@@ -6,6 +6,8 @@ import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
 import { avisarClienteDaVisita } from "@/lib/notify-visit-client-server";
 import { avancarVisitas } from "@/lib/job-visit-advance-server";
+import { followActiveVisit } from "@/lib/job-visit-lifecycle-server";
+import { isMissingRateColumn, withoutRateColumns } from "@/lib/job-visit-rate-columns";
 import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
@@ -27,7 +29,10 @@ const WRITABLE = [
   "scheduled_date", "scheduled_start_at", "scheduled_end_at", "expected_finish_at",
   "client_price", "partner_cost", "materials_cost",
   "status", "scope", "notes",
+  // Por hora ou fixa (mig 349).
+  "job_type", "hourly_client_rate", "hourly_partner_rate", "billed_hours",
 ] as const;
+
 
 /** No POST o status é do servidor: visita nasce agendada. Nascer `completed`
  *  deixava a linha pagável na hora e com `completed_at` nulo para sempre. */
@@ -193,11 +198,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       .maybeSingle();
     const nextIndex = ((top as { visit_index?: number } | null)?.visit_index ?? 1) + 1 + attempt;
 
-    const { data, error } = await supabase
-      .from("job_visits")
-      .insert({ ...patch, job_id: jobId, visit_index: nextIndex, created_by: userId, updated_by: userId })
-      .select()
-      .single();
+    const linha = { ...patch, job_id: jobId, visit_index: nextIndex, created_by: userId, updated_by: userId };
+    let { data, error } = await supabase.from("job_visits").insert(linha).select().single();
+    if (error && isMissingRateColumn(error)) {
+      ({ data, error } = await supabase.from("job_visits").insert(withoutRateColumns(linha)).select().single());
+    }
 
     if (!error) {
       const created = data as JobVisit;
@@ -276,9 +281,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           console.error("closing the current visit on add failed", e);
         }
       }
+      /**
+       * Visita nova devolve o job ao ciclo (dono, 22/10/2026): job em Final review,
+       * Awaiting payment ou fechado volta para Scheduled no dia da visita. Pagamento
+       * fica como está. Job em campo com a V1 por fazer não muda.
+       */
+      const followed = advanced
+        ? null
+        : await followActiveVisit(supabase, jobId, { userId, userName, reason: "visit_added" }).catch((e) => ({
+            ok: false as const,
+            error: e instanceof Error ? e.message : "follow failed",
+          }));
       return NextResponse.json({
         ok: true, visit: created, notified, clientNotified, selfBillId, payoutError,
-        closedVisitIndex, advanced,
+        closedVisitIndex, advanced, followed,
       });
     }
     if (error.code !== "23505") {
@@ -322,6 +338,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       .single();
 
   let { data, error } = await applyPatch(patch);
+  if (error && isMissingRateColumn(error)) ({ data, error } = await applyPatch(withoutRateColumns(patch)));
   if (error && isSupabaseMissingColumnError(error, "completed_at")) {
     // Ambiente sem a mig 275: fecha a visita do mesmo jeito, sem o carimbo. O
     // gate lê `status`, então continua funcionando; quem perde é o payout, que
@@ -391,7 +408,21 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     visit: updated, userId, userName,
     extra: { fields: Object.keys(patch) },
   });
-  return NextResponse.json({ ok: true, visit: updated, selfBillId, payoutError });
+
+  /**
+   * Remarcou, reabriu ou começou a visita: o job acompanha (22/10/2026). Fechar
+   * (`completed`) segue pelo Done, que chama o /advance como sempre.
+   */
+  const mexeuNoCiclo =
+    (typeof patch.status === "string" && patch.status !== "completed") ||
+    "scheduled_date" in patch || "scheduled_start_at" in patch || "scheduled_end_at" in patch;
+  const followed = mexeuNoCiclo && updated.status !== "completed"
+    ? await followActiveVisit(supabase, jobId, {
+        userId, userName,
+        reason: updated.status === "in_progress" ? "visit_started" : "visit_rescheduled",
+      }).catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : "follow failed" }))
+    : null;
+  return NextResponse.json({ ok: true, visit: updated, selfBillId, payoutError, followed });
 }
 
 /** DELETE — soft delete, para o rollup e o payout pararem de contar a visita. */
@@ -404,8 +435,31 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const visitId = new URL(req.url).searchParams.get("visitId")?.trim();
   if (!jobId || !visitId) return NextResponse.json({ error: "visitId required" }, { status: 400 });
 
-  const { job } = await loadJobAndVisits(supabase, jobId);
+  const { job, visits } = await loadJobAndVisits(supabase, jobId);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  if (!visits.some((v) => v.id === visitId)) return NextResponse.json({ error: "Visit not found on this job" }, { status: 404 });
+
+  /**
+   * Primeiro sai do self-bill, depois a visita some (22/10/2026). Ao contrário
+   * apagava a visita mesmo com o documento já pago: o parceiro ficava pago por
+   * uma visita que não existe mais, sem ninguém ver. Documento pago ou fechado
+   * trava a remoção; o acerto vira ajuste manual no Billing.
+   */
+  try {
+    const solta = await detachVisitFromSelfBill(visitId, supabase, { cancelIfEmpty: true });
+    if (!solta.detached) {
+      return NextResponse.json(
+        {
+          error:
+            "This visit is on a partner self-bill that was already paid or closed, so it was not removed. Settle it as a manual adjustment in Billing.",
+        },
+        { status: 409 },
+      );
+    }
+  } catch (e) {
+    console.error("detachVisitFromSelfBill on delete failed", e);
+    return NextResponse.json({ error: "Could not take the visit off the partner self-bill. Nothing was removed." }, { status: 500 });
+  }
 
   const { data, error } = await supabase
     .from("job_visits")
@@ -418,16 +472,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const removed = data as JobVisit;
-  /**
-   * Excluir sem soltar do documento deixava o parceiro recebendo por trabalho
-   * que não existe mais: o `net_payout` continuava com o valor, aprovável e
-   * pagável.
-   */
-  try {
-    await detachVisitFromSelfBill(removed.id, supabase, { cancelIfEmpty: true });
-  } catch (e) {
-    console.error("detachVisitFromSelfBill on delete failed", e);
-  }
   await auditVisit({ supabase, job, action: "deleted", visit: removed, userId, userName });
-  return NextResponse.json({ ok: true });
+  // Se o job seguia esta visita, ele vai para a próxima aberta (sem nenhuma, fica onde está).
+  const followed = await followActiveVisit(supabase, jobId, { userId, userName, reason: "visit_removed" }).catch(() => null);
+  return NextResponse.json({ ok: true, removed: { visit_index: removed.visit_index, partner_cost: removed.partner_cost, client_price: removed.client_price }, followed });
 }

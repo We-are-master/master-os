@@ -1,10 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { jobStatusRank } from "@/lib/job-phases";
 import { proximoPassoDasVisitas, type ProximoPasso, type VisitaParaAvancar } from "@/lib/job-visit-advance";
-import type { Job, PrimaryVisitDone } from "@/types/database";
-
-/** Estágios em que o job ainda está "em campo": só esses voltam para Scheduled. */
-const EM_CAMPO = new Set(["scheduled", "late", "in_progress"]);
+import { changeJobStatusServer, followActiveVisit } from "@/lib/job-visit-lifecycle-server";
+import type { Job } from "@/types/database";
 
 export type ResultadoDoAvanco = ({ ok: true } & ProximoPasso) | { ok: false; error: string; status: number };
 
@@ -21,7 +19,13 @@ export type ResultadoDoAvanco = ({ ok: true } & ProximoPasso) | { ok: false; err
 export async function avancarVisitas(
   supabase: SupabaseClient,
   jobId: string,
-  args: { primary?: boolean; userId?: string | null; userName?: string | null },
+  args: {
+    primary?: boolean;
+    userId?: string | null;
+    userName?: string | null;
+    /** Injeção para teste; no ar é o sync de sempre. */
+    syncZendesk?: (jobId: string, sb: SupabaseClient) => Promise<unknown>;
+  },
 ): Promise<ResultadoDoAvanco> {
   const [{ data: jobRow }, { data: visitRows }] = await Promise.all([
     supabase.from("jobs").select("*").eq("id", jobId).maybeSingle(),
@@ -41,45 +45,55 @@ export async function avancarVisitas(
      * devolveu para a próxima visita. Final review só sai de In progress (regra do
      * `canAdvanceJob`), então o job volta ao estágio de campo, que é onde ele está.
      */
-    const { error } = await supabase.from("jobs").update({ status: "in_progress" }).eq("id", jobId);
-    if (error) return { ok: false, error: error.message, status: 400 };
+    const r = await changeJobStatusServer(supabase, job, "in_progress", {}, {
+      userId: args.userId,
+      userName: args.userName,
+      reason: "last_visit_done",
+      syncZendesk: args.syncZendesk,
+    });
+    if (!r.ok) return { ok: false, error: r.error, status: 400 };
   }
   if (passo.kind !== "next_visit") return { ok: true, ...passo };
 
+  /**
+   * Ainda tem visita: o job segue a ativa, pelo mesmo caminho que uma visita nova
+   * usa (22/10/2026): status, dia de trabalho, V1 guardada, histórico e Zendesk.
+   */
   const proxima = passo.visit;
-  const patch: Record<string, unknown> = {
-    scheduled_date: proxima.scheduled_date ?? null,
-    scheduled_start_at: proxima.scheduled_start_at ?? null,
-    scheduled_end_at: proxima.scheduled_end_at ?? null,
-    expected_finish_at: proxima.scheduled_end_at ?? null,
-  };
-  if (EM_CAMPO.has(String(job.status))) patch.status = "scheduled";
-  if (!jaFeita) {
-    const v1: PrimaryVisitDone = {
-      scheduled_date: job.scheduled_date ?? null,
-      scheduled_start_at: job.scheduled_start_at ?? null,
-      scheduled_end_at: job.scheduled_end_at ?? null,
-      done_at: new Date().toISOString(),
-    };
-    patch.primary_visit_done = v1;
-  }
-
-  const { error } = await supabase.from("jobs").update(patch).eq("id", jobId);
-  if (error) return { ok: false, error: error.message, status: 400 };
-
-  try {
-    await supabase.from("audit_logs").insert({
-      entity_type: "job",
-      entity_id: job.id,
-      entity_ref: job.reference,
-      action: "visit_advanced",
-      field_name: `visit_${proxima.visit_index}`,
-      user_id: args.userId ?? null,
-      user_name: args.userName ?? null,
-      metadata: { next_visit_id: proxima.id, next_visit_index: proxima.visit_index, scheduled_date: proxima.scheduled_date ?? null },
-    });
-  } catch {
-    console.error("visit advance audit failed");
-  }
+  const seguiu = await followActiveVisit(supabase, jobId, {
+    primaryDone: true,
+    userId: args.userId,
+    userName: args.userName,
+    reason: "visit_done_next_visit",
+    syncZendesk: args.syncZendesk,
+  });
+  if (!seguiu.ok) return { ok: false, error: seguiu.error, status: 400 };
   return { ok: true, kind: "next_visit", visit: proxima };
+}
+
+/**
+ * Relatório de uma visita extra entrou e a visita fechou (22/10/2026): ainda tem
+ * visita pela frente → o job segue para ela; era a última → Final review, pelo
+ * caminho que deixa histórico e o status do ticket em dia. Pagamento não muda.
+ */
+export async function jobAfterVisitReport(
+  supabase: SupabaseClient,
+  jobId: string,
+  visit: { id: string; visit_index: number },
+  deps?: { syncZendesk?: (jobId: string, sb: SupabaseClient) => Promise<unknown> },
+): Promise<ResultadoDoAvanco> {
+  const r = await avancarVisitas(supabase, jobId, { primary: false, userName: "Partner report", syncZendesk: deps?.syncZendesk });
+  if (!r.ok || r.kind !== "finish") return r;
+  const { data: atual } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+  const job = atual as Job | null;
+  if (job && ["scheduled", "late", "in_progress"].includes(String(job.status))) {
+    const moved = await changeJobStatusServer(supabase, job, "final_check", { final_check_at: new Date().toISOString() }, {
+      userName: "Partner report",
+      reason: "last_visit_report",
+      metadata: { visit_id: visit.id, visit_index: visit.visit_index },
+      syncZendesk: deps?.syncZendesk,
+    });
+    if (!moved.ok) return { ok: false, error: moved.error, status: 400 };
+  }
+  return r;
 }

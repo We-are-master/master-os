@@ -26,7 +26,7 @@ const MAX_ENVIOS_POR_RODADA = 30;
 // FIXFY_STATE_DIR no Railway (volume); sem ela, scripts/.tomorrow-sent.json como sempre.
 const SENT_PATH = arquivoDeEstado(".tomorrow-sent.json");
 
-const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }] =
+const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }, { mergeJobAndVisitRows, selectVisitsInRange, visitAsJobRow, visitPartnerId }] =
   await Promise.all([
     import("../src/lib/supabase/service"),
     import("../src/lib/job-pricing-resolver"),
@@ -34,6 +34,7 @@ const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartner
     import("../src/lib/trade-auth"),
     import("../src/lib/mapbox-directions"),
     import("../src/lib/job-geocode-server"),
+    import("../src/lib/job-visit-day-rows"),
   ]);
 
 const supabase = createServiceClient();
@@ -106,6 +107,9 @@ type JobRow = Record<string, unknown> & {
   partner_cost: number | null;
   billed_hours: number | null;
   route_seq?: number | null;
+  /** Linha de visita extra: o id do job pai, para gravar coordenada no lugar certo. */
+  __visit_parent_id?: string;
+  __visit_index?: number;
 };
 
 const { data: jobData } = await supabase
@@ -116,7 +120,40 @@ const { data: jobData } = await supabase
   .is("deleted_at", null)
   .not("status", "in", "(cancelled,deleted)")
   .order("scheduled_start_at", { ascending: true, nullsFirst: false });
-const jobs = (jobData ?? []) as JobRow[];
+let jobs = (jobData ?? []) as JobRow[];
+
+/**
+ * Visitas extras do dia (22/10/2026): a V3 de um job em Final review também é
+ * trabalho de amanhã. Cada visita aberta com data amanhã vira uma parada do
+ * parceiro DELA, com o pagamento DELA. Job seguindo a visita (V1 feita) sai da
+ * lista e fica a parada da visita; visita no horário de uma V1 por fazer não repete.
+ */
+const { data: visitData, error: visitErr } = await supabase
+  .from("job_visits")
+  .select("*, parent:job_id ( * )")
+  .eq("scheduled_date", ymd)
+  .is("deleted_at", null)
+  .in("status", ["scheduled", "in_progress"]);
+if (visitErr) console.warn(`[amanha] visitas extras não lidas: ${visitErr.message}`);
+const juntos = mergeJobAndVisitRows(jobs as never[], selectVisitsInRange((visitData ?? []) as never, { from: ymd, to: ymd }));
+jobs = juntos.jobs as unknown as JobRow[];
+for (const v of juntos.visits) {
+  if (!visitPartnerId(v)) continue;
+  const linha = visitAsJobRow(v) as unknown as JobRow;
+  // O parceiro da visita recebe o que ELA paga, não o total do job (self-bill é por visita).
+  linha.partner_cost = Number(v.partner_cost ?? 0);
+  linha.billed_hours = null;
+  // Pagamento da visita é valor combinado; hourly só quando a visita não tem valor e o job é por hora.
+  if (Number(v.partner_cost) > 0) linha.job_type = "fixed";
+  linha.title = `${linha.title?.trim() || v.parent?.reference || "Job"} · Visit ${v.visit_index}`;
+  jobs.push(linha);
+}
+// Mesma ordem da consulta (janela de chegada, sem horário no fim), agora com as visitas no meio.
+jobs.sort((a, b) => {
+  const ta = a.scheduled_start_at ? Date.parse(a.scheduled_start_at) : Infinity;
+  const tb = b.scheduled_start_at ? Date.parse(b.scheduled_start_at) : Infinity;
+  return ta === tb ? 0 : ta - tb;
+});
 
 const porParceiro = new Map<string, JobRow[]>();
 for (const j of jobs) {
@@ -162,7 +199,7 @@ for (const [partnerId, lista] of porParceiro) {
     const geo = await geocodeUkAddressServer(j.property_address);
     if (!geo) continue;
     j.latitude = geo.latitude; j.longitude = geo.longitude;
-    await supabase.from("jobs").update({ latitude: geo.latitude, longitude: geo.longitude }).eq("id", j.id);
+    await supabase.from("jobs").update({ latitude: geo.latitude, longitude: geo.longitude }).eq("id", j.__visit_parent_id ?? j.id);
   }
   // Ordem decidida À MÃO no drag do Live View (route_seq, mig 282) é lei:
   // um humano olhou o dia e disse a sequência — o otimizador não opina.

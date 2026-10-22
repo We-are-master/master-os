@@ -112,6 +112,7 @@ import {
   listJobsForSelfBill,
   listJobsLinkedToSelfBillIds,
   listVisitPayoutLinesBySelfBillId,
+  listPlannedVisitLinesBySelfBillId,
   selfBillJobPayoutStateLabel,
   type SelfBillPayoutLine,
 } from "@/services/self-bills";
@@ -1582,6 +1583,22 @@ export function SelfBillDetailDrawer({
   onPartnerPaymentsRecorded?: () => void | Promise<void>;
 }) {
   const { profile } = useProfile();
+  /**
+   * Visitas ligadas a este documento ainda sem Done (22/10/2026): estão no
+   * documento com o custo combinado, mas só viram valor a pagar no Done.
+   */
+  const [planejadas, setPlanejadas] = useState<Awaited<ReturnType<typeof listPlannedVisitLinesBySelfBillId>>[string]>([]);
+  useEffect(() => {
+    if (!sb?.id) {
+      setPlanejadas([]);
+      return;
+    }
+    let vivo = true;
+    void listPlannedVisitLinesBySelfBillId([sb.id])
+      .then((m) => { if (vivo) setPlanejadas(m[sb.id] ?? []); })
+      .catch(() => { if (vivo) setPlanejadas([]); });
+    return () => { vivo = false; };
+  }, [sb?.id]);
   const [tab, setTab] = useState<"details" | "jobs" | "invoices" | "payment" | "activity">("details");
   const [dueDateModalOpen, setDueDateModalOpen] = useState(false);
   const [dueDateValue, setDueDateValue] = useState("");
@@ -2182,6 +2199,20 @@ export function SelfBillDetailDrawer({
                 </div>
               </div>
             </div>
+
+            {planejadas.length > 0 ? (
+              <div className="rounded-[10px] border border-amber-200 bg-amber-50/70 px-3 py-2 text-[12px] dark:border-amber-500/30 dark:bg-amber-500/10">
+                <p className="m-0 font-semibold tabular-nums text-amber-900 dark:text-amber-200">
+                  Not done yet {formatCurrency(planejadas.reduce((n, l) => n + l.amount, 0))} · included above, Ready only when the job is finished
+                </p>
+                {planejadas.map((l) => (
+                  <p key={l.visitId} className="m-0 flex justify-between gap-2 tabular-nums text-amber-900/80 dark:text-amber-200/80">
+                    <span>{l.jobReference ?? "Job"} · V{l.visitIndex}{l.scheduledDate ? ` · ${formatDate(l.scheduledDate)}` : ""}</span>
+                    <span>{formatCurrency(l.amount)}</span>
+                  </p>
+                ))}
+              </div>
+            ) : null}
 
             {/* Labour / Materials / Net Payout breakdown */}
             <div>

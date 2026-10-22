@@ -13,6 +13,7 @@ import "server-only";
  * O que pede olho humano fica em Final Checks com uma nota interna no ticket dizendo por
  * quê (`decidirFinalCheck`). Tudo atrás de FINAL_CHECK_AUTO=1; desligado, nada muda.
  */
+import { hasOpenVisit } from "@/lib/job-visit-lifecycle";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountFinalEmailPolicyFromRow } from "@/lib/account-final-email-policy";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
@@ -39,7 +40,7 @@ import { getZendeskTicketId, isZendeskConfigured, zendeskApi } from "@/lib/zende
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { TAGS_NEEDS_ATTENTION, ZD_STATUS_COMPLAINT } from "@/lib/zendesk-statuses";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
-import type { Account, Invoice, Job } from "@/types/database";
+import type { Account, Invoice, Job, JobVisit } from "@/types/database";
 
 export const FINAL_CHECK_AUTO_ON = () => process.env.FINAL_CHECK_AUTO?.trim() === "1";
 
@@ -206,6 +207,12 @@ async function executar(
   if (job.status !== "final_check") return { feito: "ignorado", motivo: `status ${job.status}` };
   if (job.review_sent_at) return { feito: "ignorado", motivo: "final email already sent" };
   if (!job.final_report_submitted) return { feito: "ignorado", motivo: "no final report" };
+  // Visita ainda por fazer: o job tem trabalho de campo, não é hora de aprovar nem de mandar
+  // o e-mail final ao cliente (22/10/2026; JOB-9705 tinha a V3 marcada em Final review).
+  const { data: visitas } = await admin.from("job_visits").select("status, deleted_at").eq("job_id", jobId).is("deleted_at", null);
+  if (hasOpenVisit((visitas ?? []) as { status: JobVisit["status"]; deleted_at: string | null }[])) {
+    return { feito: "ignorado", motivo: "job has a visit still to do" };
+  }
 
   const billing = job.client_id?.trim()
     ? await resolveNominalBillingParty(admin, { clientId: job.client_id.trim(), fallbackName: job.client_name ?? "Client", fallbackEmail: null })

@@ -15,7 +15,8 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
-import { cancelOpenVisitsForJobCancellation } from "./job-visits";
+import { cancelOpenVisitsForJobCancellation, listOpenVisitsForJobsList } from "./job-visits";
+import { mergeJobAndVisitRows, visitAsJobRow, visitPartnerId } from "@/lib/job-visit-day-rows";
 import {
   applyOfficeRescheduleStatus,
   jobPatchApprovesReport,
@@ -390,7 +391,46 @@ export async function markLateJobs(): Promise<void> {
   lastMarkLateAt = Date.now();
 }
 
+/**
+ * A lista de Jobs com as visitas extras no dia delas (22/10/2026): Scheduled,
+ * In progress e All ganham, na primeira página, uma linha por visita aberta
+ * (`JOB-XXXX · V3`). A visita não tem ciclo próprio ainda; a linha só mostra.
+ * Falha ao ler visitas não derruba a lista: volta só com os jobs.
+ */
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
+  const result = await listJobsOnly(params);
+  const tab =
+    params.status === "scheduled" || params.status === "in_progress"
+      ? params.status
+      : !params.status || params.status === "all"
+        ? "all"
+        : null;
+  if (!tab || (params.statusIn && params.statusIn.length > 0)) return result;
+  try {
+    // Sem o filtro de parceiro: o job seguindo a visita de OUTRO parceiro também sai da lista dele.
+    const visits = await listOpenVisitsForJobsList({ tab, scheduleRange: params.scheduleRange, search: params.search });
+    if (visits.length === 0) return result;
+    // Job seguindo uma visita (V1 feita) vira a linha da visita; visita no horário de uma V1 por fazer some.
+    const merged = mergeJobAndVisitRows(result.data, visits);
+    const dropped = result.data.length - merged.jobs.length;
+    // As linhas de visita entram na primeira página; nas outras só sai o job que virou visita.
+    const partner = params.jobsPartnerId;
+    const added =
+      (params.page ?? 1) > 1
+        ? []
+        : merged.visits.filter((v) => !partner || (partner !== "__none__" && visitPartnerId(v) === partner));
+    return {
+      ...result,
+      data: [...merged.jobs, ...added.map(visitAsJobRow)],
+      count: result.count - dropped + added.length,
+    };
+  } catch (err) {
+    console.warn("[jobs] visit rows skipped:", err instanceof Error ? err.message : err);
+    return result;
+  }
+}
+
+async function listJobsOnly(params: ListParams): Promise<ListResult<Job>> {
   const shouldRunMarkLate =
     (params.page ?? 1) <= 1 &&
     !params.search &&

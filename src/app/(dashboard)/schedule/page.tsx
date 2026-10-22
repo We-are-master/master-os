@@ -1026,7 +1026,11 @@ export default function SchedulePage() {
                   loading={liveMapRouteLoading}
                   onClose={clearRoute}
                   onBackToLondon={backToLondon}
-                  onStopClick={(jobId) => window.open(`/jobs/${jobId}`, "_blank")}
+                  onStopClick={(stopId) => {
+                    // Parada de visita abre o job, já na visita.
+                    const parada = dayRoute?.stops.find((s) => s.id === stopId);
+                    window.open(parada?.job_id ? `/jobs/${parada.job_id}?visit=${stopId}` : `/jobs/${stopId}`, "_blank");
+                  }}
                   onReorder={handleDayRouteReorder}
                 />
               ) : null}

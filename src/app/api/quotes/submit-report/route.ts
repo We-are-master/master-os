@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyPartnerReportToken, verifyVisitReportToken } from "@/lib/quote-response-token";
-import { avancarVisitas } from "@/lib/job-visit-advance-server";
+import { jobAfterVisitReport } from "@/lib/job-visit-advance-server";
 import { ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -370,15 +370,8 @@ async function enviarRelatorioDaVisita(form: FormData, visitId: string, tokenPar
       try {
         const { data: fullJob } = await supabase.from("jobs").select("*").eq("id", job.id).maybeSingle();
         if (fullJob && fechada) await ensureWeeklySelfBillForVisit(fullJob as Job, fechada as JobVisit, { client: supabase });
-        const r = await avancarVisitas(supabase, job.id, { primary: false, userName: "Partner report" });
-        if (r.ok && r.kind === "finish") {
-          // Era a última visita: igual ao relatório da V1, o job vai para Final review.
-          await supabase
-            .from("jobs")
-            .update({ status: "final_check", final_check_at: new Date().toISOString() })
-            .eq("id", job.id)
-            .in("status", ["scheduled", "late", "in_progress"]);
-        }
+        // O job segue: próxima visita, ou Final review se era a última (22/10/2026).
+        await jobAfterVisitReport(supabase, job.id, { id: visit.id, visit_index: visit.visit_index });
       } catch (e) {
         console.error("[submit-report] visit close failed", e);
       }

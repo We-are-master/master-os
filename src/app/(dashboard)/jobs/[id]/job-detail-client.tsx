@@ -165,7 +165,8 @@ import type {
   AuditLog,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
-import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { jobShareOfVisitSelfBill, nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { isDeadSelfBill, selfBillHeaderSource, selfBillPanelRows, type SelfBillPanelRow } from "@/lib/job-self-bill-panel";
 import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -674,11 +675,28 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
+/**
+ * Documento rejeitado ou cancelado: mostra o valor deste job, mas avisa que ele
+ * não está num self-bill vivo (o documento anulado não paga e não volta sozinho).
+ */
+function DeadSelfBillLine({ row }: { row: SelfBillPanelRow }) {
+  const motivo = row.status === "rejected" ? "rejected" : "cancelled";
+  return (
+    <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+      <p className="m-0 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+        {row.reference} was {motivo}: this job is not on a live self-bill, so it will not be paid. Press sync to link it to the partner&apos;s current self-bill.
+      </p>
+      <p className="m-0 shrink-0 text-lg font-bold tabular-nums text-amber-900 dark:text-amber-200">{formatCurrency(row.jobValue)}</p>
+    </div>
+  );
+}
+
 function JobDetailSelfBillPanel({
   sb,
   job,
   jobLineGross,
   visitScope,
+  sameDocVisits,
 }: {
   sb: SelfBill;
   job: Job;
@@ -687,8 +705,11 @@ function JobDetailSelfBillPanel({
   /**
    * Documento de uma VISITA: as linhas e a nota vêm da visita, não do job.
    * Sem isto o painel do eletricista mostrava a mão de obra do handyman.
+   * `pending` é o valor das visitas ainda sem Done (não entra no pagamento).
    */
-  visitScope?: { label: string; labour: number; materials: number };
+  visitScope?: { label: string; labour: number; materials: number; pending?: number };
+  /** Visitas deste job do MESMO parceiro da V1: caem no mesmo documento da quinzena (22/10/2026). */
+  sameDocVisits?: { labour: number; materials: number; gross: number; pending: number; visitIndexes: number[] } | null;
 }) {
   const [open, setOpen] = useState(false);
   const st = selfBillStatusConfig[sb.status] ?? { label: sb.status, variant: "default" as const };
@@ -699,38 +720,42 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : sb.week_label ?? sb.period;
-  const compactWeekLine =
-    sb.week_start && sb.week_end
-      ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
-      : weekLine;
-  const jobLabourOnBill = Math.round((visitScope ? visitScope.labour : partnerPaymentCap(job)) * 100) / 100;
+  const extra = sameDocVisits ?? { labour: 0, materials: 0, gross: 0, pending: 0, visitIndexes: [] };
+  const jobLabourOnBill =
+    Math.round(((visitScope ? visitScope.labour : partnerPaymentCap(job)) + (visitScope ? 0 : extra.labour)) * 100) / 100;
   const jobMaterialsOnBill = Math.round(
-    (visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) * 100,
+    ((visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) + (visitScope ? 0 : extra.materials)) * 100,
   ) / 100;
-  const jobGrossOnBill = Math.round(jobLineGross * 100) / 100;
+  const jobGrossOnBill = Math.round((jobLineGross + (visitScope ? 0 : extra.gross)) * 100) / 100;
+  /** Parte deste job que é visita sem Done: está no documento, fora do valor a pagar. */
+  const visitPending = visitScope ? Number(visitScope.pending ?? 0) : extra.pending;
   /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
   const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
-      <div className="flex items-start gap-2">
+      {/* Fechado, tudo numa linha centrada: seta, referência, valor e PDF (dono, 22/10/2026). */}
+      <div className={cn("flex gap-2", open ? "items-start" : "items-center")}>
         <button
           type="button"
           aria-expanded={open}
           aria-label={open ? "Hide self-bill details" : "Show self-bill details"}
           onClick={() => setOpen((v) => !v)}
-          className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
+          className={cn(
+            "shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary",
+            open && "mt-0.5",
+          )}
         >
           <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", open && "rotate-180")} />
         </button>
         <div className="min-w-0 flex-1 space-y-1.5">
           {!open ? (
-            <div className="flex items-start justify-between gap-2 pt-0.5">
-              <div className="min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              {/* Só a referência; a quinzena e o total do documento ficam no hover (dono, 22/10/2026). */}
+              <div
+                className="min-w-0"
+                title={`${sb.reference} · this job ${formatCurrency(jobGrossOnBill)} · fortnight total ${formatCurrency(Number(sb.net_payout ?? 0))}\nWeek ${weekLine}`}
+              >
                 <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
-                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight">
-                  <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
-                  <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
-                </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
@@ -746,45 +771,14 @@ function JobDetailSelfBillPanel({
             </div>
           ) : (
             <>
+              {/* Aberto, enxuto (dono, 22/10/2026): referência e status, valor deste job com o
+                  PDF, um aviso só quando algo ainda não entra no pagamento, e a quinzena. */}
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
                 <Badge variant={st.variant} size="sm">{st.label}</Badge>
               </div>
-              <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
-                Partner → us · {sb.partner_name}
-              </p>
-              <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
-              {payoutHoldNote ? (
-                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
-              ) : null}
-              <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
-              <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
-                <div>
-                  <p className="text-text-tertiary">Labour (this job)</p>
-                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
-                </div>
-                <div>
-                  <p className="text-text-tertiary">Materials (this job)</p>
-                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
-                </div>
-              </div>
-              <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
-                <span className="font-medium text-text-secondary">Week:</span> {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
-                {sb.jobs_count > 1 ? (
-                  <>
-                    {" "}
-                    · Whole bill total {formatCurrency(sb.net_payout)}
-                  </>
-                ) : null}
-                {" "}
-                Payouts on the job reduce amount due only; extra payout on the job increases this line.
-              </p>
-              {paymentDueYmd ? (
-                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
-                  Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
-                </p>
-              ) : null}
-              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
                 <Button
                   size="sm"
                   variant="outline"
@@ -794,6 +788,20 @@ function JobDetailSelfBillPanel({
                   PDF
                 </Button>
               </div>
+              {payoutHoldNote || visitPending > 0.005 ? (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                  {payoutHoldNote ? "Not in payout yet: job not approved" : "Not in payout yet: visit not done"}
+                </p>
+              ) : null}
+              {jobMaterialsOnBill > 0.005 ? (
+                <p className="text-[11px] tabular-nums text-text-secondary">
+                  Labour {formatCurrency(jobLabourOnBill)} · Materials {formatCurrency(jobMaterialsOnBill)}
+                </p>
+              ) : null}
+              <p className="text-[11px] text-text-tertiary" title={`Week ${weekLine} · fortnight total ${formatCurrency(Number(sb.net_payout ?? 0))}`}>
+                {sb.week_start && sb.week_end ? `Fortnight ${formatDate(sb.week_start)} to ${formatDate(sb.week_end)}` : `Week ${weekLine}`}
+                {paymentDueYmd ? ` · payment ${formatDate(paymentDueYmd)}` : ""}
+              </p>
             </>
           )}
         </div>
@@ -2272,10 +2280,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const linked = working.reference?.trim()
         ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
         : [];
-      const primaryId = working.self_bill_id?.trim() || null;
-      const primary = primaryId
+      let primaryId = working.self_bill_id?.trim() || null;
+      let primary = primaryId
         ? linked.find((b) => b.id === primaryId) ?? (await getSelfBill(primaryId))
         : null;
+      /**
+       * Documento do parceiro da V1 anulado (22/10/2026, JOB-9705: SB-14546 rejeitado
+       * junto com um job de teste da mesma quinzena): o job fica fora de self-bill
+       * vivo e não é pago. Religa uma vez ao documento aberto do parceiro na
+       * quinzena, como já se faz quando o job não tem documento.
+       */
+      const chaveReligar = `${working.id}:dead:${primaryId ?? ""}`;
+      if (primary && isDeadSelfBill(primary) && working.partner_id?.trim() && !autoSelfBillEnsureRef.current.has(chaveReligar)) {
+        autoSelfBillEnsureRef.current.add(chaveReligar);
+        try {
+          const novo = await ensureWeeklySelfBillForJob(working);
+          const refreshed = novo ? await getJob(working.id) : null;
+          if (refreshed?.self_bill_id && refreshed.self_bill_id !== primaryId) {
+            setJob(refreshed);
+            working = refreshed;
+            primaryId = refreshed.self_bill_id;
+            primary = await getSelfBill(primaryId);
+            toast.success(`Visit 1 linked to ${primary?.reference ?? "the partner's current self-bill"}`);
+          }
+        } catch {
+          // Fica o aviso no painel: dá para tentar de novo pelo sync.
+        }
+      }
       setJobSelfBill(primary);
       setVisitSelfBills(linked.filter((b) => b.id !== primaryId));
     } catch {
@@ -2360,6 +2391,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const refreshJobFinance = useCallback(async () => {
     if (!id) return;
     setRefreshingJob(true);
+    // O sync é o gesto de "tenta de novo": libera religar o documento anulado da V1.
+    for (const k of [...autoSelfBillEnsureRef.current]) if (k.startsWith(`${id}:dead:`)) autoSelfBillEnsureRef.current.delete(k);
     try {
       let j = await getJob(id);
       if (!j) return;
@@ -7380,13 +7413,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ? financeDocDraftBadge
           : financeDocSentBadge
       : null;
-  const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
-    ? ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
+  /**
+   * Um documento por parceiro, cada um com o que ESTE job põe nele (22/10/2026).
+   * O selo do cabeçalho sai dos documentos vivos: rejeitado ou cancelado só manda
+   * quando não sobra nenhum vivo (SB-14546 rejeitado da Fixfy pintava "Cancelled"
+   * por cima do SB-14535 da F&V, que está aberto).
+   */
+  const selfBillRows = selfBillPanelRows({
+    primary: jobSelfBill,
+    visitDocs: visitSelfBills,
+    visits: jobVisits,
+    primaryJobLine: partnerCashOutJobLine,
+    primaryPartnerName: job.partner_name,
+  });
+  const selfBillHeader = selfBillHeaderSource(selfBillRows);
+  const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = !selfBillHeader
+    ? null
+    : selfBillHeader.kind === "all_dead"
       ? financeDocCancelledBadge
-      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
+      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(selfBillHeader.status)
         ? financeDocDraftBadge
-        : financeDocSentBadge
-    : null;
+        : financeDocSentBadge;
   const flowStep = jobFlowActiveStepIndex(job.status);
   const previousStageStatus = getPreviousJobStatus(job);
   const canReverseStage =
@@ -10438,40 +10485,58 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : null}
               {visitSelfBills.length > 0 ? (
                 /* Um documento por parceiro: cada bloco leva o nome de quem
-                   recebe, senão dois cartões seguidos viram um só na leitura. */
+                   recebe e as visitas deste job que estão nele. */
                 <div className="space-y-3">
-                  {jobSelfBill ? (
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
-                      </p>
-                      <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
-                    </div>
-                  ) : null}
-                  {visitSelfBills.map((sb) => (
-                    <div key={sb.id} className="space-y-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        {sb.partner_name?.trim() || "Visit partner"}
-                      </p>
-                      {/* Linha do documento da visita: o valor dele, não o do job. */}
-                      <JobDetailSelfBillPanel
-                        sb={sb}
-                        job={job}
-                        jobLineGross={Number(sb.net_payout ?? 0)}
-                        visitScope={{
-                          label: sb.partner_name?.trim() || "Visit partner",
-                          // O documento da visita já guarda os próprios totais.
-                          labour: Number(sb.job_value ?? 0),
-                          materials: Number(sb.materials ?? 0),
-                        }}
-                      />
-                    </div>
-                  ))}
+                  {selfBillRows.map((row) => {
+                    const sb = row.selfBillId === jobSelfBill?.id ? jobSelfBill : visitSelfBills.find((x) => x.id === row.selfBillId);
+                    if (!sb) return null;
+                    const ehV1 = sb.id === jobSelfBill?.id;
+                    const parte = jobShareOfVisitSelfBill(jobVisits, sb.id);
+                    return (
+                      <div key={row.selfBillId} className="space-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                          {row.partnerName}
+                          {row.visitsLabel ? ` · ${row.visitsLabel}` : ""}
+                        </p>
+                        {row.dead ? (
+                          <DeadSelfBillLine row={row} />
+                        ) : ehV1 ? (
+                          <JobDetailSelfBillPanel
+                            sb={sb}
+                            job={job}
+                            jobLineGross={partnerCashOutJobLine}
+                            sameDocVisits={parte}
+                          />
+                        ) : (
+                          <JobDetailSelfBillPanel
+                            sb={sb}
+                            job={job}
+                            jobLineGross={parte.gross}
+                            visitScope={{
+                              label: row.partnerName,
+                              labour: parte.labour,
+                              materials: parte.materials,
+                              pending: parte.pending,
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
+                selfBillRows[0]?.dead ? (
+                  <DeadSelfBillLine row={selfBillRows[0]} />
+                ) : (
+                  <JobDetailSelfBillPanel
+                    sb={jobSelfBill}
+                    job={job}
+                    jobLineGross={partnerCashOutJobLine}
+                    sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
+                  />
+                )
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
@@ -10608,6 +10673,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         onIncludeReportInEmailChange={setIncludeReportInEmail}
         accountEmailPolicy={accountEmailPolicy}
         submitting={validatingComplete}
+        onVisitRemoved={() => {
+          setVisitsRefreshKey((k) => k + 1);
+          void refreshJobFinance();
+        }}
         onApprove={(o) => {
           void handleValidateAndComplete(o?.forced ?? false);
         }}

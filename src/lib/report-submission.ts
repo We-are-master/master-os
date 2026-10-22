@@ -569,6 +569,20 @@ export async function persistReportSubmission(
       if (auditErr) console.error("audit_logs (report-submission)", auditErr);
     });
 
+  /**
+   * Relatório da V1 com visita ainda pela frente (22/10/2026): o job não fica em
+   * Final review, segue para a visita ativa (Scheduled no dia dela), com a V1
+   * guardada. Sem visita aberta, nada muda.
+   */
+  if (update.status === "final_check") {
+    try {
+      const { followActiveVisit } = await import("@/lib/job-visit-lifecycle-server");
+      await followActiveVisit(supabase, job.id, { userId: input.filledBy ?? null, userName: "Report", reason: "report_with_visit_ahead" });
+    } catch (e) {
+      console.error("[report-submission] follow active visit failed", e);
+    }
+  }
+
   return { ok: true, photoFailures: failures.count };
 }
 

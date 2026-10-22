@@ -226,3 +226,122 @@ export function nextVisitLine(
 
   return upcoming[0]?.line ?? null;
 }
+
+/**
+ * A visita já está FEITA (Done, ou relatório enviado, que fecha a visita).
+ *
+ * Não decide dinheiro: desde 22/10/2026 a visita entra no self-bill com o valor
+ * dela assim que nasce (`visitCountsForMoney`), e a trava é o documento só sair
+ * de Draft para Ready quando o job fecha. Isto separa a linha "ainda não feita"
+ * da feita, para mostrar.
+ */
+export function visitCountsForPartnerPayout(
+  visit: Pick<JobVisit, "deleted_at" | "status"> & { report_submitted_at?: string | null },
+): boolean {
+  if (visit.deleted_at || visit.status === "cancelled") return false;
+  return visit.status === "completed" || Boolean(visit.report_submitted_at);
+}
+
+type VisitOnBill = Pick<JobVisit, "self_bill_id" | "partner_cost" | "materials_cost" | "status" | "deleted_at" | "visit_index"> & {
+  report_submitted_at?: string | null;
+};
+
+/**
+ * A parte DESTE job num self-bill (22/10/2026).
+ *
+ * O self-bill é o documento da quinzena do parceiro, com todos os jobs dele no
+ * período (SB-14535 da F&V tinha 9 jobs + a V2 do JOB-9705 = £1,309.66). Cada
+ * visita cai no documento do parceiro DELA: mesmo parceiro, mesmo documento (o
+ * mesmo número até a quinzena fechar); parceiro diferente, outro documento. O
+ * card do job mostra só o que este job põe em cada um; o total fica em Billing.
+ *
+ * `gross` é o valor deste job no documento (visitas feitas e ainda não feitas);
+ * `pending` é a parte das que ainda não tiveram Done (já incluída em `gross`).
+ */
+export function jobShareOfVisitSelfBill(
+  visits: readonly VisitOnBill[],
+  selfBillId: string,
+): { labour: number; materials: number; gross: number; pending: number; visitIndexes: number[] } {
+  const noDocumento = visits.filter((v) => v.self_bill_id === selfBillId && visitCountsForMoney(v));
+  // Valor de todas as visitas vivas no documento: feita ou ainda não.
+  const labour = round2(noDocumento.reduce((s, v) => s + money(v.partner_cost), 0));
+  const materials = round2(noDocumento.reduce((s, v) => s + money(v.materials_cost), 0));
+  const pending = round2(
+    noDocumento.filter((v) => !visitCountsForPartnerPayout(v)).reduce((s, v) => s + money(v.partner_cost) + money(v.materials_cost), 0),
+  );
+  return {
+    labour,
+    materials,
+    gross: round2(labour + materials),
+    pending,
+    visitIndexes: noDocumento.map((v) => v.visit_index).sort((a, b) => a - b),
+  };
+}
+
+/**
+ * O dia que decide em qual quinzena do parceiro a linha da visita mora: o dia em
+ * que foi feita (Londres) quando já tem Done, senão o dia marcado. Remarcar para
+ * outra quinzena move a linha; o Done no mesmo período atualiza a mesma linha.
+ * `null` quando não há data válida.
+ */
+export function visitSelfBillAnchorYmd(visit: { scheduled_date?: string | null; completed_at?: string | null }): string | null {
+  /**
+   * Dia de Londres, não UTC: visita fechada 00:30 no BST gravaria o dia anterior,
+   * e num domingo de corte cairia na quinzena já paga.
+   */
+  const feita = visit.completed_at
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" })
+        .format(new Date(visit.completed_at))
+    : null;
+  const ymd = (feita || visit.scheduled_date?.slice(0, 10) || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  if (Number.isNaN(new Date(`${ymd}T12:00:00`).getTime())) return null;
+  return ymd;
+}
+
+export type PlannedVisitLine = {
+  visitId: string;
+  jobId: string;
+  visitIndex: number;
+  scheduledDate: string | null;
+  amount: number;
+};
+
+/**
+ * Linhas PLANEJADAS de um self-bill (dono, 22/10/2026): a visita entra no
+ * documento do parceiro assim que nasce, com o custo combinado, mas só vira valor
+ * a pagar no Done. Estas são as que ainda esperam o Done; as confirmadas saem de
+ * `loadSelfBillPayoutLines` (que é o dinheiro).
+ */
+export function plannedVisitLines(
+  visits: readonly (Pick<JobVisit, "id" | "job_id" | "visit_index" | "scheduled_date" | "partner_cost" | "materials_cost" | "status" | "deleted_at"> & {
+    report_submitted_at?: string | null;
+  })[],
+): PlannedVisitLine[] {
+  return visits
+    .filter((v) => visitCountsForMoney(v) && !visitCountsForPartnerPayout(v))
+    .map((v) => ({
+      visitId: v.id,
+      jobId: v.job_id,
+      visitIndex: v.visit_index,
+      scheduledDate: v.scheduled_date ?? null,
+      amount: round2(money(v.partner_cost) + money(v.materials_cost)),
+    }));
+}
+
+/**
+ * Trabalho aprovado libera o self-bill do parceiro na hora (dono, 22/10/2026):
+ * job aprovado no Final review ou visita feita, com valor, levam o documento para
+ * Ready to pay, mesmo com outro job ou visita ainda em aberto no documento (eles
+ * ficam fora do valor a pagar). A data do pagamento continua a da quinzena. Pago,
+ * anulado ou em revisão não muda por aqui.
+ */
+export function selfBillReleasedForPayout(args: {
+  status: string;
+  /** Valor já aprovado no documento: jobs aprovados + visitas feitas. */
+  approvedValue: number;
+  netPayout: number;
+}): boolean {
+  const liberavel = ["draft", "accumulating", "awaiting_payment", "ready_to_pay"].includes(args.status);
+  return liberavel && args.approvedValue > 0.02 && args.netPayout > 0.02;
+}

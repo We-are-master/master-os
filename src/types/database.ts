@@ -796,6 +796,16 @@ export interface JobVisit {
   self_bill_id?: string | null;
   /** Confirmação ao cliente desta visita, no ticket do job (mig 337). */
   client_confirmation_sent_at?: string | null;
+  /** Como a visita é cobrada (mig 349). Null = visita antiga, fixed. */
+  job_type?: "fixed" | "hourly" | null;
+  hourly_client_rate?: number | null;
+  hourly_partner_rate?: number | null;
+  /** Horas cobradas no Done (1ª hora mínima, depois por meia hora). */
+  billed_hours?: number | null;
+  arrived_at?: string | null;
+  departed_at?: string | null;
+  /** Recibos do material desta visita (mig 349). */
+  materials_receipts?: string[] | null;
   /** Relatório desta visita, pelo link dela (mig 338). A visita 1 usa os campos do job. */
   start_report?: unknown;
   final_report?: unknown;

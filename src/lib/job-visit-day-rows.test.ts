@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  isVisitJobRow,
+  jobFollowsVisit,
+  jobIdOfRow,
+  mergeJobAndVisitRows,
+  jobRowHref,
+  selectVisitsInRange,
+  visitAsJobRow,
+  visitJobsTab,
+  visitIsExtraRow,
+  visitMatchesJobSlot,
+  type VisitWithParent,
+} from "@/lib/job-visit-day-rows";
+import type { Job } from "@/types/database";
+
+function job(over: Partial<Job> = {}): Job {
+  return {
+    id: "job-9705",
+    reference: "JOB-9705",
+    title: "General Maintenance",
+    status: "final_check",
+    client_name: "Kate Allen",
+    property_address: "13 Herne Hill, London SE24",
+    partner_id: "p-primary",
+    partner_name: "Primary Partner",
+    scheduled_date: "2026-10-20",
+    scheduled_start_at: "2026-10-20T07:00:00Z",
+    scheduled_end_at: "2026-10-20T08:00:00Z",
+    client_price: 900,
+    partner_cost: 500,
+    materials_cost: 40,
+    extras_amount: 120,
+    invoice_id: "inv-1",
+    ...over,
+  } as Job;
+}
+
+function visit(over: Partial<VisitWithParent> = {}): VisitWithParent {
+  return {
+    id: "59ada91c-76d2-464c-922d-9cc465bf3d08",
+    job_id: "job-9705",
+    visit_index: 3,
+    partner_id: "p-tm",
+    partner_name: "TM Handyman",
+    scheduled_date: "2026-10-23",
+    scheduled_start_at: "2026-10-23T07:00:00Z",
+    scheduled_end_at: "2026-10-23T08:00:00Z",
+    client_price: 216,
+    partner_cost: 140,
+    materials_cost: 0,
+    status: "scheduled",
+    created_at: "2026-10-19T10:00:00Z",
+    updated_at: "2026-10-19T10:00:00Z",
+    deleted_at: null,
+    parent: job(),
+    ...over,
+  } as VisitWithParent;
+}
+
+describe("selectVisitsInRange: visita no dia dela", () => {
+  it("JOB-9705: a V3 de 23/10 entra no dia 23 mesmo com o job em Final review dia 20", () => {
+    const out = selectVisitsInRange([visit()], { from: "2026-10-23", to: "2026-10-23" });
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.visit_index, 3);
+  });
+
+  it("fora do período não entra; período aberto pega tudo", () => {
+    assert.equal(selectVisitsInRange([visit()], { from: "2026-10-24", to: "2026-10-30" }).length, 0);
+    assert.equal(selectVisitsInRange([visit()], { from: "2026-10-01", to: "2026-10-22" }).length, 0);
+    assert.equal(selectVisitsInRange([visit()], {}).length, 1);
+  });
+
+  it("só visita aberta: feita, cancelada, apagada ou sem data ficam de fora", () => {
+    const rows = [
+      visit({ id: "a", status: "completed" }),
+      visit({ id: "b", status: "cancelled" }),
+      visit({ id: "c", deleted_at: "2026-10-21T00:00:00Z" }),
+      visit({ id: "d", scheduled_date: null }),
+      visit({ id: "e", status: "in_progress" }),
+    ];
+    assert.deepEqual(selectVisitsInRange(rows, {}).map((v) => v.id), ["e"]);
+  });
+
+  it("job pai cancelado, apagado ou ausente: a visita não aparece", () => {
+    const rows = [
+      visit({ id: "a", parent: job({ status: "cancelled" }) }),
+      visit({ id: "b", parent: job({ deleted_at: "2026-10-21T00:00:00Z" }) }),
+      visit({ id: "c", parent: null }),
+    ];
+    assert.equal(selectVisitsInRange(rows, {}).length, 0);
+  });
+
+  it("a mesma visita duas vezes na entrada vira uma linha só", () => {
+    assert.equal(selectVisitsInRange([visit(), visit()], {}).length, 1);
+  });
+});
+
+describe("não duplicar quando a visita é o próprio horário do job", () => {
+  const slot = {
+    scheduled_date: "2026-10-23",
+    scheduled_start_at: "2026-10-23T07:00:00Z",
+    scheduled_end_at: "2026-10-23T08:00:00Z",
+  };
+  // O job segue a visita: V1 guardada em primary_visit_done, dia de trabalho = o da V3.
+  const seguindo = job({
+    status: "scheduled",
+    ...slot,
+    primary_visit_done: { scheduled_date: "2026-10-20", scheduled_start_at: null, scheduled_end_at: null, done_at: "2026-10-21T10:00:00Z" },
+  });
+  // V1 ainda por fazer, marcada no mesmo horário que a visita.
+  const v1PorFazer = job({ status: "scheduled", ...slot, primary_visit_done: null });
+
+  it("job seguindo a visita: fica só a linha da visita, com o parceiro dela", () => {
+    const v = visit({ parent: seguindo });
+    assert.equal(jobFollowsVisit(seguindo, v), true);
+    const r = mergeJobAndVisitRows([seguindo], [v]);
+    assert.deepEqual(r.jobs, []);
+    assert.equal(r.visits.length, 1);
+    assert.equal(visitAsJobRow(r.visits[0]!).partner_name, "TM Handyman");
+  });
+
+  it("visita no horário de uma V1 por fazer: fica só a linha do job", () => {
+    const v = visit({ parent: v1PorFazer });
+    assert.equal(jobFollowsVisit(v1PorFazer, v), false);
+    const r = mergeJobAndVisitRows([v1PorFazer], [v]);
+    assert.equal(r.jobs.length, 1);
+    assert.deepEqual(r.visits, []);
+  });
+
+  it("mesmo instante escrito com fuso diferente ainda é o mesmo horário", () => {
+    assert.equal(visitMatchesJobSlot(seguindo, visit({ scheduled_start_at: "2026-10-23T08:00:00+01:00" })), true);
+  });
+
+  it("mesmo dia, outra janela: são duas paradas, as duas aparecem", () => {
+    const tarde = visit({ parent: v1PorFazer, scheduled_start_at: "2026-10-23T13:00:00Z" });
+    const r = mergeJobAndVisitRows([v1PorFazer], [tarde]);
+    assert.equal(r.jobs.length, 1);
+    assert.equal(r.visits.length, 1);
+  });
+
+  it("job que não está na lista daquele lugar não tira a visita", () => {
+    assert.equal(mergeJobAndVisitRows([], [visit({ parent: v1PorFazer })]).visits.length, 1);
+  });
+
+  it("badge: visita no horário de um job em campo já conta no job", () => {
+    assert.equal(visitIsExtraRow(visit({ parent: seguindo })), false);
+    assert.equal(visitIsExtraRow(visit({ parent: v1PorFazer })), false);
+    assert.equal(visitIsExtraRow(visit()), true); // JOB-9705 em Final review dia 20: a V3 é linha a mais
+  });
+
+  it("sem horário nos dois lados, mesmo dia conta como o mesmo horário", () => {
+    const semHora = job({ status: "scheduled", scheduled_date: "2026-10-23", scheduled_start_at: undefined });
+    assert.equal(visitMatchesJobSlot(semHora, visit({ scheduled_start_at: null })), true);
+    assert.equal(visitMatchesJobSlot(semHora, visit()), false);
+  });
+});
+
+describe("visitAsJobRow: a linha com cara de job", () => {
+  const row = visitAsJobRow(visit());
+
+  it("rótulo JOB-XXXX · V3, endereço e cliente do job", () => {
+    assert.equal(row.reference, "JOB-9705 · V3");
+    assert.equal(row.property_address, "13 Herne Hill, London SE24");
+    assert.equal(row.client_name, "Kate Allen");
+  });
+
+  it("dia, janela, parceiro e status são da visita", () => {
+    assert.equal(row.scheduled_date, "2026-10-23");
+    assert.equal(row.scheduled_start_at, "2026-10-23T07:00:00Z");
+    assert.equal(row.partner_id, "p-tm");
+    assert.equal(row.partner_name, "TM Handyman");
+    assert.equal(row.status, "scheduled");
+    assert.equal(visitAsJobRow(visit({ status: "in_progress" })).status, "in_progress");
+  });
+
+  it("dinheiro e fatura são do job (Payment nunca vazio); o extra da visita fica à parte", () => {
+    assert.equal(row.client_price, 900);
+    assert.equal(row.partner_cost, 500);
+    assert.equal(row.extras_amount, 120);
+    assert.equal(row.invoice_id, "inv-1");
+    assert.deepEqual(row.__visit_money, { client_price: 216, partner_cost: 140, materials_cost: 0 });
+  });
+
+  it("visita sem parceiro herda o do job", () => {
+    const r = visitAsJobRow(visit({ partner_id: null, partner_name: null }));
+    assert.equal(r.partner_id, "p-primary");
+    assert.equal(r.partner_name, "Primary Partner");
+  });
+
+  it("clicar abre o job, na visita", () => {
+    assert.equal(isVisitJobRow(row), true);
+    assert.equal(jobIdOfRow(row), "job-9705");
+    assert.equal(jobRowHref(row), "/jobs/job-9705?visit=59ada91c-76d2-464c-922d-9cc465bf3d08");
+    assert.equal(isVisitJobRow(job()), false);
+    assert.equal(jobRowHref(job()), "/jobs/job-9705");
+  });
+
+  it("aba da visita é a do status dela", () => {
+    assert.equal(visitJobsTab({ status: "scheduled" }), "scheduled");
+    assert.equal(visitJobsTab({ status: "in_progress" }), "in_progress");
+    assert.equal(visitJobsTab({ status: "completed" }), null);
+  });
+});

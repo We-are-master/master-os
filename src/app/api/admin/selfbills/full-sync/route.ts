@@ -331,8 +331,8 @@ export async function POST(req: NextRequest) {
      * quando está `completed`.
      */
     const visits = visitsBySb.get(sb.id) ?? [];
-    // Mesma regra do recompute: valor entra assim que a visita existe viva; o
-    // "done" governa a promoção a ready_to_pay, não o valor.
+    // Mesma regra do recompute: o valor da visita entra desde que ela nasce, e o
+    // "done" de todas governa a promoção a ready_to_pay.
     const payableVisits = visits.filter((v) => v.status !== "cancelled");
     // O dinheiro sai da fonte única, que já descarta visita de job morto.
     const pagaveisDeVisita = linhasDeVisita[sb.id] ?? [];

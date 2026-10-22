@@ -16,6 +16,8 @@ import { StepsTimeline } from "./components/StepsTimeline";
 import type { EstadoEnvioExterno } from "./components/ExternalReportStep";
 import type { FinalReviewModalProps } from "./types";
 import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
+import { confirmAndRemoveJobVisit } from "@/services/job-visits-api";
+import { toast } from "sonner";
 
 type EnvioExterno = EstadoEnvioExterno;
 
@@ -93,6 +95,8 @@ function useEnvioExterno(
   return { envio, recarregar: () => buscarRef.current() };
 }
 
+const formatGbp = (n: number) => `£${(Math.round((Number(n) || 0) * 100) / 100).toFixed(2)}`;
+
 export function FinalReviewModal(props: FinalReviewModalProps) {
   const {
     isOpen,
@@ -120,6 +124,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     confirmed,
     onConfirmedChange,
     onApprove,
+    onVisitRemoved,
     breakdown,
     submitting,
     hourlySlot,
@@ -165,8 +170,21 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
   const { envio: envioExterno, recarregar } = useEnvioExterno(jobUuid, isOpen);
   /** Relatórios das visitas extras (19/10/2026): aparecem no passo 3, junto do da V1. */
   const [relatoriosDasVisitas, setRelatoriosDasVisitas] = useState<
-    { index: number; partner: string; enviado: boolean; aprovado: boolean; final: Record<string, unknown> | null }[]
+    {
+      id: string;
+      index: number;
+      partner: string;
+      enviado: boolean;
+      aprovado: boolean;
+      final: Record<string, unknown> | null;
+      partnerCost: number;
+      clientPrice: number;
+      status: string;
+    }[]
   >([]);
+  /** Recarrega a lista de visitas depois de uma remoção. */
+  const [visitasNonce, setVisitasNonce] = useState(0);
+  const [removendoVisita, setRemovendoVisita] = useState<string | null>(null);
   useEffect(() => {
     if (!isOpen || !jobUuid) return;
     let vivo = true;
@@ -178,8 +196,12 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
           (d.visits ?? [])
             .filter((v) => v.status !== "cancelled")
             .map((v) => ({
+              id: String(v.id),
               index: Number(v.visit_index),
               partner: String(v.partner_name ?? ""),
+              partnerCost: Number(v.partner_cost ?? 0),
+              clientPrice: Number(v.client_price ?? 0),
+              status: String(v.status ?? ""),
               enviado: !!v.report_submitted_at,
               aprovado: !!v.report_approved_at,
               final: (v.final_report as Record<string, unknown> | null) ?? null,
@@ -190,7 +212,29 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
     return () => {
       vivo = false;
     };
-  }, [isOpen, jobUuid]);
+  }, [isOpen, jobUuid, visitasNonce]);
+
+  /** Remover visita que não aconteceu (22/10/2026): pergunta sempre; self-bill e fatura acertam na hora. */
+  const removerVisita = async (v: (typeof relatoriosDasVisitas)[number]) => {
+    setRemovendoVisita(v.id);
+    try {
+      const removida = await confirmAndRemoveJobVisit(jobUuid, {
+        id: v.id,
+        visit_index: v.index,
+        partner_name: v.partner,
+        partner_cost: v.partnerCost,
+        client_price: v.clientPrice,
+      });
+      if (!removida) return;
+      toast.success(`Visit ${v.index} removed · self-bill and invoice updated`);
+      setVisitasNonce((n) => n + 1);
+      onVisitRemoved?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove the visit");
+    } finally {
+      setRemovendoVisita(null);
+    }
+  };
   const faltaRelatorioDeVisita = relatoriosDasVisitas.some((v) => !v.enviado);
   /**
    * Material comprado na casa, de TODAS as visitas (19/10/2026): uma linha por
@@ -522,15 +566,46 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
               {relatoriosDasVisitas.length ? (
                 <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "#F7F7FB", border: "0.5px solid #E4E4E7" }}>
-                  <p className="m-0 mb-1 text-[11px] font-semibold" style={{ color: "#020040" }}>Visit reports</p>
+                  {/* Todas as visitas, quem recebe e quanto (dono, 22/10/2026): é o que o
+                      fechamento paga a cada parceiro e cobra do cliente. */}
+                  <p className="m-0 mb-1 text-[11px] font-semibold" style={{ color: "#020040" }}>Visits and who gets paid</p>
+                  <p className="m-0 flex justify-between gap-2 tabular-nums" style={{ color: "#4A4A55" }}>
+                    <span>Visit 1{partnerName ? ` · ${partnerName}` : ""}</span>
+                    <span>
+                      {breakdown
+                        ? `partner ${formatGbp(breakdown.partnerBase + breakdown.partnerExtras + breakdown.partnerMaterials)} · client ${formatGbp(breakdown.clientBase + breakdown.clientExtras)}`
+                        : ""}
+                    </span>
+                  </p>
                   {relatoriosDasVisitas.map((v) => (
-                    <p key={v.index} className="m-0 flex justify-between gap-2" style={{ color: "#4A4A55" }}>
-                      <span>Visit {v.index}{v.partner ? ` · ${v.partner}` : ""}</span>
-                      <span style={{ color: v.aprovado ? "#047857" : v.enviado ? "#020040" : "#B45309" }}>
-                        {v.aprovado ? "Approved" : v.enviado ? "Sent, not approved" : "Missing"}
+                    <p key={v.id} className="m-0 flex items-center justify-between gap-2 tabular-nums" style={{ color: "#4A4A55" }}>
+                      <span>
+                        Visit {v.index}{v.partner ? ` · ${v.partner}` : ""}
+                        <span style={{ color: v.aprovado ? "#047857" : v.enviado ? "#020040" : "#B45309" }}>
+                          {" · "}{v.status === "completed" ? "done" : "not done"}, report {v.aprovado ? "approved" : v.enviado ? "sent" : "missing"}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span>partner {formatGbp(v.partnerCost)} · client {formatGbp(v.clientPrice)}</span>
+                        <button
+                          type="button"
+                          disabled={removendoVisita === v.id}
+                          onClick={() => void removerVisita(v)}
+                          className="text-[11px] font-medium underline-offset-2 hover:underline disabled:opacity-50"
+                          style={{ color: "#B91C1C" }}
+                          title="Remove this visit: it comes off the partner self-bill and the invoice"
+                        >
+                          {removendoVisita === v.id ? "Removing…" : "Remove"}
+                        </button>
                       </span>
                     </p>
                   ))}
+                  {breakdown ? (
+                    <p className="m-0 mt-1 flex justify-between gap-2 border-t pt-1 font-semibold tabular-nums" style={{ color: "#020040", borderColor: "#E4E4E7" }}>
+                      <span>Total</span>
+                      <span>partner {formatGbp(breakdown.partnerTotal)} · client {formatGbp(breakdown.clientTotal)}</span>
+                    </p>
+                  ) : null}
                   {faltaRelatorioDeVisita ? (
                     <p className="m-0 mt-1 text-[11px]" style={{ color: "#B45309" }}>
                       A visit has no report. Finalising now is a force approve.

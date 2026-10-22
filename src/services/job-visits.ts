@@ -1,6 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, softDeleteById } from "./base";
 import { rollUpJobVisits } from "@/lib/job-visit-rollup";
+import {
+  OPEN_VISIT_STATUSES,
+  selectVisitsInRange,
+  visitAsJobRow,
+  visitIsExtraRow,
+  visitPartnerId,
+  type VisitWithParent,
+} from "@/lib/job-visit-day-rows";
 import type { Job, JobVisit, JobVisitStatus } from "@/types/database";
 
 type ListRow = JobVisit & {
@@ -199,5 +207,60 @@ export function summariseVisits(job: Job, extras: JobVisit[]): {
     count: rollup.visitCount,
     totalClientPrice: rollup.clientPriceTotal,
     totalPartnerCost: rollup.partnerCostTotal,
+  };
+}
+
+/**
+ * Visitas abertas para a lista de Jobs (fase 1, 22/10/2026): cada visita com
+ * data própria aparece na aba do status dela, no dia dela. Partner e busca
+ * filtram aqui mesmo, sobre a linha da visita, com as mesmas colunas da lista.
+ * Volta a visita crua: quem junta com os jobs decide a linha (`mergeJobAndVisitRows`).
+ */
+export async function listOpenVisitsForJobsList(opts: {
+  tab: "scheduled" | "in_progress" | "all";
+  scheduleRange?: { from: string; to: string };
+  partnerId?: string;
+  search?: string;
+}): Promise<VisitWithParent[]> {
+  const statuses = opts.tab === "all" ? [...OPEN_VISIT_STATUSES] : [opts.tab];
+  const supabase = getSupabase();
+  let q = supabase
+    .from("job_visits")
+    .select("*, parent:job_id ( * )")
+    .is("deleted_at", null)
+    .in("status", statuses)
+    .not("scheduled_date", "is", null);
+  if (opts.scheduleRange) q = q.gte("scheduled_date", opts.scheduleRange.from).lte("scheduled_date", opts.scheduleRange.to);
+  const { data, error } = await q.order("scheduled_date", { ascending: true }).limit(500);
+  if (error) throw new Error(error.message);
+
+  const termo = opts.search?.trim().toLowerCase() ?? "";
+  return selectVisitsInRange((data ?? []) as VisitWithParent[], opts.scheduleRange ?? {})
+    // Scheduled e In progress são de quem tem parceiro (a regra da aba); sem parceiro é Action required.
+    .filter((v) => Boolean(visitPartnerId(v)))
+    .filter((v) => {
+      if (!opts.partnerId) return true;
+      if (opts.partnerId === "__none__") return false;
+      return visitPartnerId(v) === opts.partnerId;
+    })
+    .filter((v) => {
+      if (!termo) return true;
+      const row = visitAsJobRow(v);
+      return [row.reference, row.title, row.client_name, row.partner_name, row.property_address]
+        .some((c) => String(c ?? "").toLowerCase().includes(termo));
+    });
+}
+
+/**
+ * Quantas linhas de visita cada aba ganha além das dos jobs (as badges somam isto
+ * ao número dos jobs). Visita no horário de um job em campo já conta no job.
+ */
+export async function countOpenVisitRowsByJobsTab(
+  scheduleRange?: { from: string; to: string },
+): Promise<{ scheduled: number; in_progress: number }> {
+  const rows = (await listOpenVisitsForJobsList({ tab: "all", scheduleRange })).filter(visitIsExtraRow);
+  return {
+    scheduled: rows.filter((r) => r.status === "scheduled").length,
+    in_progress: rows.filter((r) => r.status === "in_progress").length,
   };
 }

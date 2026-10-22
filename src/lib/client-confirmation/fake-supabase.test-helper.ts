@@ -1,6 +1,6 @@
 /**
  * Supabase de mentira, em memória, só com o que os envios ao cliente usam:
- * select/eq/is/in/gte/not/ilike/order/limit/maybeSingle e update com `.select()`.
+ * select/eq/is/in/gte/not/ilike/order/limit/maybeSingle/single/insert e update com `.select()`.
  * Update respeita os filtros, então a trava atômica (`.is(col, null)`) se
  * comporta como no banco: a segunda chamada não reivindica nada.
  */
@@ -43,6 +43,15 @@ export function fakeSupabase(tabelas: Record<string, Row[]>) {
       order() { return b; },
       limit(n: number) { limite = n; return b; },
       maybeSingle: async () => ({ data: linhas()[0] ?? null, error: null }),
+      single: async () => {
+        const r = executar() as { data: Row[] | null };
+        return { data: (r.data ?? [])[0] ?? null, error: null };
+      },
+      insert(linha: Row) {
+        (tabelas[tabela] ??= []).push({ ...linha });
+        escritas.push({ tabela, patch: linha });
+        return Promise.resolve({ error: null });
+      },
       then(ok: (v: unknown) => unknown, erro?: (e: unknown) => unknown) {
         return Promise.resolve(executar()).then(ok, erro);
       },

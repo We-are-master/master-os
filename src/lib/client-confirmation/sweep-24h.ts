@@ -24,6 +24,8 @@ import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib
 import { canalDoLembrete, chaveDoLembrete, emailDoLembrete } from "./lembrete-canal";
 import { emailDoCliente } from "@/lib/um-ticket/escolha";
 import type { AvisoNoTicket } from "@/lib/um-ticket/aviso-do-job";
+import { mergeJobAndVisitRows, selectVisitsInRange, visitPartnerId, visitReference, type VisitWithParent } from "@/lib/job-visit-day-rows";
+import type { Job } from "@/types/database";
 
 /** Quem entrega o e-mail no ticket do job. Injeção para teste; no ar é o avisarNoTicketDoJob. */
 export type AvisoPorEmail = (a: AvisoNoTicket) => Promise<unknown>;
@@ -106,7 +108,68 @@ const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
   "partner_id, partner_name, client_id, client_name, property_address, " +
   "client_reminder_sent_at, client_confirmation_sent_at, external_source, external_ref, " +
-  "account_id, conversation_channel";
+  "account_id, conversation_channel, primary_visit_done";
+
+const VISITA_SELECT =
+  "id, job_id, visit_index, status, scheduled_date, scheduled_start_at, scheduled_end_at, " +
+  `partner_id, partner_name, client_confirmation_sent_at, deleted_at, parent:job_id ( ${SELECT}, deleted_at )`;
+
+/**
+ * As visitas extras de amanhã como "jobs" da varredura (22/10/2026): a V3 de um
+ * job em Final review também é visita amanhã, e o cliente precisa saber. O id
+ * continua o do job (ticket, reserva e cliente são dele); data, janela e parceiro
+ * são da visita, e `__visita_id` diz onde carimbar.
+ *
+ * Visita com `client_confirmation_sent_at` preenchido não recebe lembrete: é o
+ * escritório dizendo que o cliente já sabe (ou que não quer aviso).
+ *
+ * Junto com os jobs de amanhã: job seguindo a visita (V1 feita) sai da lista e o
+ * lembrete é o da visita, com a regra dela; visita no horário de uma V1 por fazer
+ * não gera segundo lembrete.
+ */
+export function visitasComoLembretes(
+  visitas: VisitWithParent[],
+  dia: string,
+  jobsDoDia: Record<string, unknown>[] = [],
+): { jobs: Record<string, unknown>[]; lembretes: Record<string, unknown>[]; jaAvisadas: { reference: string; cliente: string }[] } {
+  const lembretes: Record<string, unknown>[] = [];
+  const jaAvisadas: { reference: string; cliente: string }[] = [];
+  const juntos = mergeJobAndVisitRows(
+    jobsDoDia as unknown as Job[],
+    selectVisitsInRange(visitas, { from: dia, to: dia }).filter((v) => v.status === "scheduled"),
+  );
+  for (const v of juntos.visits) {
+    const pai = v.parent!;
+    const reference = visitReference(pai.reference, v.visit_index);
+    if (v.client_confirmation_sent_at) {
+      jaAvisadas.push({ reference, cliente: String(pai.client_name ?? "") });
+      continue;
+    }
+    lembretes.push({
+      ...pai,
+      reference,
+      scheduled_date: v.scheduled_date ?? null,
+      scheduled_start_at: v.scheduled_start_at ?? null,
+      scheduled_end_at: v.scheduled_end_at ?? null,
+      partner_id: visitPartnerId(v),
+      // Lembrete e confirmação do JOB não valem pela visita: ela é outro dia.
+      client_reminder_sent_at: null,
+      client_confirmation_sent_at: null,
+      __visita_id: v.id,
+    });
+  }
+  return { jobs: juntos.jobs as unknown as Record<string, unknown>[], lembretes, jaAvisadas };
+}
+
+/** Carimba o envio: no job, ou na visita quando o lembrete era dela. */
+async function carimbarLembrete(supabase: SupabaseClient, j: Record<string, unknown>): Promise<void> {
+  const agoraIso = new Date().toISOString();
+  if (typeof j.__visita_id === "string") {
+    await supabase.from("job_visits").update({ client_confirmation_sent_at: agoraIso }).eq("id", j.__visita_id);
+    return;
+  }
+  await supabase.from("jobs").update({ client_reminder_sent_at: agoraIso }).eq("id", String(j.id));
+}
 
 export async function varrerLembretesDeVespera(
   supabase: SupabaseClient,
@@ -150,13 +213,31 @@ export async function varrerLembretesDeVespera(
   }
 
   const linhas: LinhaDaVarredura[] = [];
+
+  // Visitas extras de amanhã. Erro aqui não pode calar os lembretes dos jobs: avisa e segue.
+  const { data: visitasRaw, error: visitasErr } = await supabase
+    .from("job_visits")
+    .select(VISITA_SELECT)
+    .eq("scheduled_date", dia)
+    .eq("status", "scheduled")
+    .is("deleted_at", null);
+  if (visitasErr) console.warn(`[lembrete-24h] visitas extras não lidas: ${visitasErr.message}`);
+  const { jobs: jobsDoDia, lembretes: lembretesDeVisita, jaAvisadas } = visitasComoLembretes(
+    (visitasRaw ?? []) as unknown as VisitWithParent[],
+    dia,
+    (jobs ?? []) as unknown as Record<string, unknown>[],
+  );
+  for (const v of jaAvisadas) {
+    linhas.push({ reference: v.reference, cliente: v.cliente, resultado: "pulado", detalhe: "visit already marked as client notified" });
+  }
+
   const manda: EnvioWhatsApp = opcoes?.enviar ?? enviarAoCliente;
   const avisar: AvisoPorEmail = opcoes?.avisarPorEmail ?? avisarDeVerdade;
   // Regras por conta só com a chave geral ligada: desligada, nada aqui muda (nem lê).
   const v2 = processosV2Ligado();
   const regrasPorConta = new Map<string, RegrasDoProcesso | null>();
 
-  for (const raw of jobs ?? []) {
+  for (const raw of [...jobsDoDia, ...lembretesDeVisita]) {
     const j = raw as unknown as Record<string, unknown>;
     const ref = String(j.reference);
     const nomeCliente = String(j.client_name ?? "");
@@ -299,10 +380,7 @@ export async function varrerLembretesDeVespera(
         semEndereco = true;
       }
       await confirmarEnvio(supabase, chaveDoLembreteWa);
-      await supabase
-        .from("jobs")
-        .update({ client_reminder_sent_at: new Date().toISOString() })
-        .eq("id", String(j.id));
+      await carimbarLembrete(supabase, j);
       // Registro no ticket do job (dono, 14/10/2026: "envia dentro do mesmo
       // ticket"): a mensagem sai pelo WhatsApp, a nota fica no pedido.
       const ticketDoJob = isZendeskConfigured() ? getZendeskTicketId(j as never) : null;
@@ -367,7 +445,7 @@ async function lembretePorEmail(
   try {
     await o.avisar({ ticketId: Number(ticketId), para: { email, nome: (c.full_name as string | null) ?? null }, assunto, html });
     await confirmarEnvio(supabase, chave);
-    await supabase.from("jobs").update({ client_reminder_sent_at: new Date().toISOString() }).eq("id", String(j.id));
+    await carimbarLembrete(supabase, j);
     return { resultado: "enviado", detalhe: `email in ticket #${ticketId} → ${email} · ${janela}` };
   } catch (err) {
     await falhouEnvio(supabase, chave, err).catch(() => undefined);
