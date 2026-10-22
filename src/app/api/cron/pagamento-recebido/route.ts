@@ -12,7 +12,8 @@ import { varrerPagamentosRecebidos } from "@/lib/certificado/liberar";
  *   GET /api/cron/pagamento-recebido              manda (CLIENT_MESSAGING_ENABLED=1)
  *   GET /api/cron/pagamento-recebido?dry-run=1    só diz o que faria
  *
- * Auth: `Authorization: Bearer CRON_SECRET` (Vercel) ou `x-internal-secret: INTERNAL_SYNC_SECRET`.
+ * Auth: `Authorization: Bearer CRON_SECRET` (Vercel) ou `x-internal-secret: INTERNAL_SYNC_SECRET` (n8n)
+ * ou `WORKERS_SECRET` (fixfy-workers no Railway).
  */
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,9 @@ export async function GET(req: NextRequest) {
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : null;
   const ok =
     segredoConfere(bearer, process.env.CRON_SECRET?.trim()) ||
-    segredoConfere(req.headers.get("x-internal-secret"), process.env.INTERNAL_SYNC_SECRET?.trim());
+    segredoConfere(req.headers.get("x-internal-secret"), process.env.INTERNAL_SYNC_SECRET?.trim()) ||
+    // O fixfy-workers (Railway) tem o segredo dele; o INTERNAL_SYNC_SECRET da Vercel é o do n8n.
+    segredoConfere(req.headers.get("x-internal-secret"), process.env.WORKERS_SECRET?.trim());
   if (!ok) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const ensaio = req.nextUrl.searchParams.get("dry-run") === "1";
