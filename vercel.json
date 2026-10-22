@@ -40,6 +40,10 @@
     {
       "path": "/api/cron/pagamento-recebido",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/reclamacao",
+      "schedule": "30 18 * * *"
     }
   ]
 }
