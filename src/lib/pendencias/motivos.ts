@@ -124,11 +124,17 @@ export async function sincronizarPendencias(
   const resolver = [...doSistema].filter((m) => m !== "job_creation_failed" && !agora.includes(m));
   if (!opcoes.aplicar) return { abrir, resolver };
   if (abrir.length) {
-    // O índice parcial (um aberto por job e motivo) segura duas rodadas ao mesmo tempo.
-    await sb.from("job_attention_reasons").upsert(abrir.map((reason) => ({ job_id: jobId, reason })), { onConflict: "job_id,reason", ignoreDuplicates: true });
+    // O índice é parcial (um ABERTO por job e motivo), e ON CONFLICT não casa com índice
+    // parcial: o upsert falhava calado e nada era gravado (22/10/2026). Insert um a um;
+    // 23505 = outra rodada já abriu o mesmo motivo, segue. Outro erro sobe.
+    for (const reason of abrir) {
+      const { error } = await sb.from("job_attention_reasons").insert({ job_id: jobId, reason });
+      if (error && error.code !== "23505") throw new Error(`job_attention_reasons insert: ${error.message}`);
+    }
   }
   if (resolver.length) {
-    await sb.from("job_attention_reasons").update({ resolved_at: new Date().toISOString(), resolved_by: "system" }).eq("job_id", jobId).is("resolved_at", null).in("reason", resolver);
+    const { error } = await sb.from("job_attention_reasons").update({ resolved_at: new Date().toISOString(), resolved_by: "system" }).eq("job_id", jobId).is("resolved_at", null).in("reason", resolver);
+    if (error) throw new Error(`job_attention_reasons resolve: ${error.message}`);
   }
   return { abrir, resolver };
 }
