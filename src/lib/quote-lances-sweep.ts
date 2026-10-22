@@ -36,6 +36,14 @@ import { parseBidProposalFromNotes } from "@/lib/quote-bid-payload";
 import { conferirMensagem, conferirPreco } from "@/lib/harvey/conferente";
 import { pedirAjuda, TAG_OFF } from "@/lib/harvey/pedir-ajuda";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
+import { updateTicket } from "@/lib/zendesk";
+import { processoDaConta, type RegrasDoProcesso } from "@/lib/processo/conta";
+import { ehHousekeep } from "@/lib/processo/plataformas";
+import { idsDaEquipe, respostaManualDepoisDe, type ComentarioDoTicket } from "@/lib/processo/historico";
+import {
+  HK_CHECAGEM_HORAS, HK_MARCA_8H, HK_MARCA_EQUIPE_RESPONDEU, HK_SEM_DISPONIBILIDADE_HORAS,
+  avisarSemDisponibilidade, passoDaQuoteHousekeep, passoDepoisDoHistorico,
+} from "@/lib/processo/housekeep-quotes";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
@@ -115,7 +123,7 @@ export async function varrerLancesParaRascunho(
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase
     .from("quotes")
-    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, partner_id, automation_status")
+    .select("id, reference, title, service_type, scope, status, external_source, external_ref, created_at, partner_id, automation_status, source_account_id, client_id")
     .eq("status", "bidding")
     .eq("external_source", "zendesk")
     .not("external_ref", "is", null)
@@ -128,7 +136,8 @@ export async function varrerLancesParaRascunho(
     return r;
   }
   if ((quotes ?? []).length === 0) return r;
-
+  // Regras por conta, lidas uma vez por rodada (Housekeep v2 troca a janela).
+  const regrasPorConta = new Map<string, RegrasDoProcesso | null>();
 
   for (const bruta of (quotes ?? []) as Array<Record<string, unknown>>) {
     // Pergunta ao parceiro também é escrita para fora: conta no mesmo teto.
@@ -148,7 +157,9 @@ export async function varrerLancesParaRascunho(
       .limit(1);
     const primeiro = (convites ?? [])[0] as { invited_at?: string } | undefined;
     if (!primeiro?.invited_at) continue;
-    if (horasDesde(primeiro.invited_at) < JANELA_HORAS) {
+    // Housekeep v2: sem janela de 2h (lance viável sai na hora), 8h e 36h no lugar das 26h.
+    const hkV2 = await housekeepV2(supabase, bruta, regrasPorConta);
+    if (!hkV2 && horasDesde(primeiro.invited_at) < JANELA_HORAS) {
       r.janelaAberta++;
       continue;
     }
@@ -158,6 +169,10 @@ export async function varrerLancesParaRascunho(
       .select("id, partner_id, partner_name, bid_amount, status, created_at, notes")
       .eq("quote_id", q.id);
     const escolha = escolherMelhorLance((lancesBrutos ?? []) as unknown as Lance[], { margem: MARGEM_PADRAO });
+    if (hkV2) {
+      const seguir = await passoHousekeepV2(supabase, q, bruta.automation_status as string | null, primeiro.invited_at, !!escolha, armado, r, postarNotaInterna);
+      if (!seguir) continue;
+    }
     if (!escolha) {
       r.semLance++;
       /**
@@ -348,6 +363,113 @@ export async function varrerLancesParaRascunho(
   }
 
   return r;
+}
+
+/** A quote é da Housekeep e a conta está no v2? */
+async function housekeepV2(
+  supabase: SupabaseClient,
+  bruta: Record<string, unknown>,
+  cache: Map<string, RegrasDoProcesso | null>,
+): Promise<boolean> {
+  let conta = (bruta.source_account_id as string | null) ?? null;
+  if (!conta && bruta.client_id) {
+    const { data: c } = await supabase.from("clients").select("source_account_id").eq("id", bruta.client_id as string).maybeSingle();
+    conta = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
+  }
+  if (!conta || !ehHousekeep(conta)) return false;
+  if (!cache.has(conta)) cache.set(conta, await processoDaConta(supabase, conta).catch(() => null));
+  return cache.get(conta)?.v2 === true;
+}
+
+/** A equipe respondeu à mão no ticket depois da quote? (com preço, e qualquer resposta) */
+async function historicoDaQuote(ticketId: string, desde: string): Promise<{ respostaManual: boolean; respostaManualComPreco: boolean }> {
+  const [t, c] = await Promise.all([
+    zendeskApi<{ ticket: { requester_id?: number } }>(`tickets/${ticketId}.json`),
+    zendeskApi<{ comments?: ComentarioDoTicket[]; users?: Array<{ id?: number; role?: string }> }>(
+      `tickets/${ticketId}/comments.json?include=users&sort_order=asc&per_page=100`,
+    ),
+  ]);
+  const opcoes = { solicitanteId: t.ticket?.requester_id ?? null, equipeIds: idsDaEquipe(c.users) };
+  const comentarios = c.comments ?? [];
+  return {
+    respostaManual: !!respostaManualDepoisDe(comentarios, desde, opcoes),
+    respostaManualComPreco: !!respostaManualDepoisDe(comentarios, desde, { ...opcoes, soComPreco: true }),
+  };
+}
+
+/**
+ * Housekeep v2 (processo/housekeep-quotes.ts). Devolve true quando a quote
+ * segue para o caminho de sempre do lance (rascunho, escopo, envio).
+ */
+async function passoHousekeepV2(
+  supabase: SupabaseClient,
+  q: { id: string; reference: string; external_ref: string; created_at: string },
+  marca: string | null,
+  primeiroConvite: string,
+  temLanceViavel: boolean,
+  armado: boolean,
+  r: ResultadoDaVarredura,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<boolean> {
+  const horas = horasDesde(primeiroConvite);
+  const passo = passoDaQuoteHousekeep({ horasDesdeConvite: horas, temLanceViavel, marca });
+  if (passo === "nada") return false;
+  if (passo === "esperar") {
+    r.janelaAberta++;
+    return false;
+  }
+  if (passo === "avisar_8h") {
+    r.semLance++;
+    if (!armado) {
+      r.detalhes.push(`[ensaio] ${q.reference} (Housekeep): ${Math.round(horas)}h sem lance viável`);
+      return false;
+    }
+    try {
+      await postarNotaInterna(Number(q.external_ref), [
+        `🤖 HARVEY — ${q.reference}: no viable bid ${HK_CHECAGEM_HORAS}h after the first invite (Housekeep).`,
+        "",
+        `If nothing comes in and nobody replies on this ticket, the no-availability email goes to Housekeep at ${HK_SEM_DISPONIBILIDADE_HORAS}h and the quote closes. Reply on the ticket to keep it with the team.`,
+      ].join("\n"));
+      await supabase.from("quotes").update({ automation_status: HK_MARCA_8H, updated_at: new Date().toISOString() }).eq("id", q.id);
+    } catch (err) {
+      r.detalhes.push(`${q.reference}: aviso das ${HK_CHECAGEM_HORAS}h falhou, tento de novo (${String(err).slice(0, 100)})`);
+    }
+    return false;
+  }
+
+  // processar | fechar_36h: antes de qualquer coisa automática, o ticket.
+  let historico: { respostaManual: boolean; respostaManualComPreco: boolean };
+  try {
+    historico = await historicoDaQuote(q.external_ref, q.created_at);
+  } catch (err) {
+    r.detalhes.push(`${q.reference}: não li o ticket #${q.external_ref}, não faço nada sozinho nesta rodada (${String(err).slice(0, 100)})`);
+    return false;
+  }
+  const depois = passoDepoisDoHistorico(passo, historico);
+  if (depois === "processar") return true;
+  if (depois === "equipe_respondeu") {
+    r.detalhes.push(`${q.reference} (Housekeep): a equipe respondeu à mão no ticket, nada automático`);
+    if (armado) {
+      await supabase.from("quotes").update({ automation_status: HK_MARCA_EQUIPE_RESPONDEU, updated_at: new Date().toISOString() }).eq("id", q.id);
+    }
+    return false;
+  }
+  // sem_disponibilidade
+  r.semLance++;
+  if (!armado) {
+    r.detalhes.push(`[ensaio] ${q.reference} (Housekeep): ${Math.round(horas)}h sem lance, mandaria o "no availability"`);
+    return false;
+  }
+  const aviso = await avisarSemDisponibilidade(supabase, q, {
+    postarPublico: (ticketId, html) => updateTicket({ ticketId, htmlBody: html, publicComment: true }),
+    sincronizarStatus: (quoteId) => syncQuoteZendeskStatus(quoteId, supabase),
+  });
+  r.detalhes.push(`${q.reference} (Housekeep): ${aviso.linha}`);
+  if (aviso.enviado) {
+    r.silenciosas++;
+    await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No viable bid on ${q.reference} after ${Math.round(horas)}h and no manual reply: sent the no-availability email to Housekeep and closed the quote`, regra: `Housekeep v2: ${HK_SEM_DISPONIBILIDADE_HORAS}h without a viable bid`, pendente: "Nothing: the quote is closed" }, supabase).catch(() => undefined);
+  }
+  return false;
 }
 
 /**

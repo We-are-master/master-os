@@ -1522,6 +1522,30 @@ export async function subirJobBooked(
    */
   const tituloDoJob = tituloCanonico(ex.jobNome, ex.serviceSummary, ex.detalhesJob, ticket.subject);
 
+  /**
+   * Housekeep v2 (plano de 22/10/2026): a cotação pode estar noutro ticket. Liga
+   * o job na quote aberta do mesmo endereço (até 30 dias) e, se ela já tem o
+   * parceiro e a data, o job nasce com ele (Scheduled). Fora do v2: nada muda.
+   */
+  let planoV2: import("@/lib/processo/booking-housekeep").PlanoDoJob | null = null;
+  {
+    const { ehHousekeep } = await import("@/lib/processo/plataformas");
+    if (ehHousekeep(conta!.id)) {
+      const { processoDaConta } = await import("@/lib/processo/conta");
+      const regras = await processoDaConta(createServiceClient(), conta!.id).catch(() => null);
+      if (regras?.v2) {
+        const { escolherQuoteDoBooking, planoDoJobDoBooking, quotesAbertasDaHousekeep } = await import("@/lib/processo/booking-housekeep");
+        try {
+          const abertas = await quotesAbertasDaHousekeep(createServiceClient());
+          const quote = escolherQuoteDoBooking(abertas, { postcode: ex.postcode ?? null, endereco: ex.propertyAddress ?? null });
+          planoV2 = planoDoJobDoBooking(quote, { dataDoBooking: ex.date ?? null, janelaDoCard: /\d{1,2}:\d{2}/.test(janelaCrua) });
+        } catch (err) {
+          planoV2 = { quoteId: null, partnerId: null, partnerCost: null, status: "unassigned", notas: [`Could not look for the Housekeep quote (${err instanceof Error ? err.message.slice(0, 120) : String(err)}).`] };
+        }
+      }
+    }
+  }
+
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
@@ -1568,13 +1592,20 @@ export async function subirJobBooked(
       // O ticket JÁ existe: linka por external_source/external_ref e ganha
       // idempotência — repostar o mesmo ticket devolve o job existente.
       ticket_id: String(ticketId),
+      ...(planoV2?.quoteId ? { quote_id: planoV2.quoteId } : {}),
+      ...(planoV2?.status === "scheduled" && planoV2.partnerId
+        ? { partner_id: planoV2.partnerId, partner_cost: planoV2.partnerCost ?? undefined }
+        : {}),
     }),
   });
-  const corpo = (await res.json().catch(() => ({}))) as { reference?: string; error?: string };
+  const corpo = (await res.json().catch(() => ({}))) as { reference?: string; error?: string; action?: string; status?: string };
   if (!res.ok) throw new Error(`OS /api/jobs ${res.status}: ${corpo.error ?? "?"}`);
 
+  const jaExistia = planoV2 !== null && corpo.action === "existing";
   const nota = [
-    `✅ HARVEY — job ${corpo.reference ?? "?"} created in the OS from this booking.`,
+    jaExistia
+      ? `✅ HARVEY: this booking already has job ${corpo.reference ?? "?"} in the OS (same booking card), nothing new created.`
+      : `✅ HARVEY — job ${corpo.reference ?? "?"} created in the OS from this booking.`,
     "",
     `Account: ${conta!.nome}`,
     `Client: ${ex.clientName} · ${ex.propertyAddress}${ex.postcode ? ` · ${ex.postcode}` : ""}`,
@@ -1582,7 +1613,9 @@ export async function subirJobBooked(
     ex.priceGbp != null ? `Value: £${ex.priceGbp.toFixed(2)}` : "Value: not stated in ticket",
     ...(ex.cardUrl ? [`Report link: ${ex.cardUrl}`] : []),
     "",
-    "Unassigned — office picks the partner in the OS.",
+    ...(planoV2
+      ? [...planoV2.notas, corpo.status === "scheduled" ? "The partner was asked to confirm." : "Unassigned: office picks the partner in the OS."]
+      : ["Unassigned — office picks the partner in the OS."]),
   ].join("\n");
   // O job nasceu: este ticket não deve mais nada a ninguém.
   if (postar) await postarNotaInterna(ticketId, nota, { marcarComoRespondido: true });
