@@ -5,7 +5,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { computeVisitDoneAmounts, visitDoneProblems, type VisitDoneInput } from "@/lib/visit-done-billing";
 import { aplicarMaterialDaVisita } from "@/lib/report-material-extra";
 import { isMissingRateColumn, withoutRateColumns } from "@/lib/job-visit-rate-columns";
-import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
+import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit, refreshSelfBillPayoutState } from "@/services/self-bills";
+import { visitSelfBillAnchorYmd } from "@/lib/job-visit-rollup";
 import type { Job, JobVisit } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -119,26 +120,50 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     previousFinalData: anterior,
   });
 
-  // Self-bill do parceiro desta visita, no período do dia em que foi feita.
+  /**
+   * Self-bill do parceiro desta visita, no período do dia em que foi feita. A linha
+   * é a mesma desde que a visita nasceu: Done dentro da quinzena do documento só
+   * recalcula no lugar (e o recálculo leva o documento para Ready, 22/10/2026);
+   * Done em outra quinzena move a linha. Soltar e religar sempre abria um documento
+   * irmão quando o antigo ia para Ready no meio do caminho.
+   */
   let selfBillId: string | null = null;
   let payoutError: string | null = null;
   try {
     const { data: atualizada } = await supabase.from("job_visits").select("*").eq("id", visit.id).maybeSingle();
     const v = (atualizada ?? fechada) as JobVisit;
-    const solta = await detachVisitFromSelfBill(v.id, supabase);
-    if (!solta.detached) {
-      payoutError = "this visit is on a self-bill that was already paid; settle the difference as a manual adjustment";
-    } else if (v.partner_id) {
-      const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
-      if (jobRow) selfBillId = await ensureWeeklySelfBillForVisit(jobRow as Job, v, { client: supabase });
-      if (!selfBillId) payoutError = "self-bill not created for this visit";
+    const diaFeito = visitSelfBillAnchorYmd(v);
+    const { data: docAtual } = v.self_bill_id
+      ? await supabase.from("self_bills").select("id, week_start, week_end, status").eq("id", v.self_bill_id).maybeSingle()
+      : { data: null };
+    const doc = docAtual as { id: string; week_start: string | null; week_end: string | null; status: string } | null;
+    const mesmaQuinzena =
+      !!doc && !!diaFeito && !!doc.week_start && !!doc.week_end && doc.week_start <= diaFeito && diaFeito <= doc.week_end &&
+      !["paid", "rejected", "payout_cancelled", "payout_lost", "payout_archived"].includes(doc.status);
+    if (mesmaQuinzena && doc) {
+      await refreshSelfBillPayoutState(doc.id, supabase);
+      selfBillId = doc.id;
     } else {
-      payoutError = "visit has no partner, so no self-bill";
+      const solta = await detachVisitFromSelfBill(v.id, supabase);
+      if (!solta.detached) {
+        payoutError = "this visit is on a self-bill that was already paid; settle the difference as a manual adjustment";
+      } else if (v.partner_id) {
+        const { data: jobRow } = await supabase.from("jobs").select("*").eq("id", jobId).maybeSingle();
+        if (jobRow) selfBillId = await ensureWeeklySelfBillForVisit(jobRow as Job, v, { client: supabase });
+        if (!selfBillId) payoutError = "self-bill not created for this visit";
+      } else {
+        payoutError = "visit has no partner, so no self-bill";
+      }
     }
   } catch (e) {
     const err = e as { message?: string } | null;
     payoutError = err?.message ?? String(e);
     console.error("[visit-complete] self-bill", e);
+  }
+  let selfBillStatus: string | null = null;
+  if (selfBillId) {
+    const { data: depois } = await supabase.from("self_bills").select("reference, status").eq("id", selfBillId).maybeSingle();
+    selfBillStatus = (depois as { status?: string } | null)?.status ?? null;
   }
 
   try {
@@ -169,6 +194,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     amounts: valores,
     material,
     selfBillId,
+    selfBillStatus,
     payoutError,
     ...(semColunasNovas ? { note: "Migration 349 not applied: hours and receipt saved in the visit notes" } : {}),
   });

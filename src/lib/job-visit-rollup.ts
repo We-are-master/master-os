@@ -328,3 +328,19 @@ export function plannedVisitLines(
       amount: round2(money(v.partner_cost) + money(v.materials_cost)),
     }));
 }
+
+/**
+ * O Done de uma visita com valor libera o self-bill do parceiro dela na hora
+ * (dono, 22/10/2026): o documento vai para Ready to pay mesmo com o job aberto ou
+ * outra visita marcada, que ficam fora do valor a pagar. Pago, anulado ou em
+ * revisão não muda por aqui.
+ */
+export function selfBillReleasedByDoneVisit(args: {
+  status: string;
+  /** Valor das visitas FEITAS ligadas ao documento. */
+  doneVisitValue: number;
+  netPayout: number;
+}): boolean {
+  const liberavel = ["draft", "accumulating", "awaiting_payment", "ready_to_pay"].includes(args.status);
+  return liberavel && args.doneVisitValue > 0.02 && args.netPayout > 0.02;
+}

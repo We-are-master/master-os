@@ -11,6 +11,7 @@ import { workPeriodForJobStartYmd } from "@/lib/partner-payout-schedule";
 import {
   jobShareOfVisitSelfBill,
   plannedVisitLines,
+  selfBillReleasedByDoneVisit,
   visitCountsForPartnerPayout,
   visitSelfBillAnchorYmd,
 } from "@/lib/job-visit-rollup";
@@ -90,5 +91,32 @@ describe("JOB-9705 V3 no self-bill da TM", () => {
   it("sem data válida não tem quinzena (não liga)", () => {
     assert.equal(visitSelfBillAnchorYmd({ scheduled_date: null }), null);
     assert.equal(visitSelfBillAnchorYmd({ scheduled_date: "23/10/2026" }), null);
+  });
+});
+
+describe("Done da visita libera o self-bill do parceiro (dono, 22/10/2026)", () => {
+  it("F&V com a V2 do JOB-9705 feita (£140) vai para Ready mesmo com o job ainda aberto", () => {
+    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 140, netPayout: 1309.66 }), true);
+  });
+
+  it("TM com a V3 ainda marcada: nada feito, o documento continua juntando", () => {
+    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 0, netPayout: 685 }), false);
+  });
+
+  it("visita feita de £0 não libera nada", () => {
+    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 0, netPayout: 0 }), false);
+  });
+
+  it("pago, anulado ou em revisão não muda pelo Done", () => {
+    for (const status of ["paid", "rejected", "payout_cancelled", "needs_attention", "audit_required"]) {
+      assert.equal(selfBillReleasedByDoneVisit({ status, doneVisitValue: 35, netPayout: 35 }), false, status);
+    }
+  });
+
+  it("visita marcada no documento não entra no valor a pagar; o card mostra o valor dela", () => {
+    // Valor a pagar: só linha feita (é o filtro do loadVisitPayoutLinesForSelfBills).
+    assert.equal(visitCountsForPartnerPayout(V3), false);
+    // Card do job: a TM mostra os £35 da V3.
+    assert.equal(jobShareOfVisitSelfBill([V3], SB_TM).gross, 35);
   });
 });

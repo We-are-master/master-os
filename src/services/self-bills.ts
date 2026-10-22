@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, JobVisit, SelfBill, SelfBillStatus } from "@/types/database";
-import { plannedVisitLines, visitCountsForMoney, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
+import { plannedVisitLines, selfBillReleasedByDoneVisit, visitCountsForPartnerPayout, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
 import {
   officeCancellationPartnerClawbackGbp,
   officeCancellationPartnerPayoutGbp,
@@ -314,16 +314,16 @@ async function loadVisitPayoutLinesForSelfBills(
   }
 
   /**
-   * A visita entra no documento com o valor dela desde que nasce (dono,
-   * 22/10/2026): planejada antes do Done, final depois. A trava é o documento,
-   * que só sai de Draft para Ready quando o job fecha (o approve recusa
-   * documento com visita aberta). Cancelada ou apagada sai.
+   * Valor a pagar: só visita FEITA (Done ou relatório enviado), como o job só paga
+   * aprovado (dono, 22/10/2026). O Done libera o documento do parceiro na hora
+   * (`releaseSelfBillAfterVisitDone`); visita ainda marcada no mesmo documento não
+   * entra no pagamento. O card do job continua mostrando o valor dela.
    */
   const vivas = ((visitRows ?? []) as {
     id: string; job_id: string; self_bill_id: string; visit_index: number;
     partner_cost: number | null; materials_cost: number | null; status: JobVisit["status"];
     deleted_at: string | null; report_submitted_at: string | null;
-  }[]).filter((row) => visitCountsForMoney(row));
+  }[]).filter((row) => visitCountsForPartnerPayout(row));
   if (vivas.length === 0) return [];
 
   /**
@@ -714,10 +714,30 @@ async function refreshSelfBillTotalsAndStatus(
       materials,
       commission,
       net_payout: netPayout,
-      ...(payable.length > 0 && !before.approved_at ? { approved_at: new Date().toISOString() } : {}),
+      // Job aprovado ou visita feita já aprovam a linha do parceiro (22/10/2026).
+      ...((payable.length > 0 || visitLines.length > 0) && !before.approved_at ? { approved_at: new Date().toISOString() } : {}),
     })
     .eq("id", selfBillId);
   if (uErr) throw uErr;
+
+  /**
+   * Visita feita com valor libera o documento do parceiro na hora (dono,
+   * 22/10/2026: "o partner não pode ter culpa do job não ter acabado"). O valor a
+   * pagar só tem o que foi feito (visita feita, job aprovado); visita ainda
+   * marcada e job ainda aberto ficam no documento sem entrar no pagamento. A data
+   * do pagamento continua a da quinzena.
+   */
+  const valorDeVisitaFeita = visitLines.reduce((n, l) => n + l.labour + l.materials, 0);
+  if (selfBillReleasedByDoneVisit({ status: before.status, doneVisitValue: valorDeVisitaFeita, netPayout })) {
+    if (before.status !== "ready_to_pay") {
+      const { error: prontoErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, {
+        status: "ready_to_pay",
+        ...(before.approved_at ? {} : { approved_at: new Date().toISOString() }),
+      });
+      if (prontoErr) throw prontoErr;
+    }
+    return;
+  }
 
   /**
    * Documento só de visita (nenhum job ligado) é classificado aqui, antes de
@@ -728,16 +748,20 @@ async function refreshSelfBillTotalsAndStatus(
    * `accumulating` e voltava — então documento de visita jamais chegava a
    * ready_to_pay.
    */
-  if (jobs.length === 0 && visitLines.length > 0) {
-    const { data: openRows } = await supabase
-      .from("job_visits")
-      .select("id")
-      .eq("self_bill_id", selfBillId)
-      .is("deleted_at", null)
-      .not("status", "in", "(completed,cancelled)")
-      .limit(1);
-    const temVisitaAberta = (openRows ?? []).length > 0;
-    const promovivel = ["draft", "accumulating", "awaiting_payment"].includes(before.status);
+  /**
+   * Visitas vivas ligadas, feitas ou não. As feitas com valor já saíram acima (Ready).
+   * Chegando aqui, nenhuma visita feita tem valor: o documento segue juntando
+   * (planejadas não pagam), e quem estava em Ready porque uma visita foi reaberta
+   * ou removida volta a Accumulating.
+   */
+  const { data: visitasVivas } = await supabase
+    .from("job_visits")
+    .select("id")
+    .eq("self_bill_id", selfBillId)
+    .is("deleted_at", null)
+    .neq("status", "cancelled")
+    .limit(1);
+  if (jobs.length === 0 && (visitasVivas ?? []).length > 0) {
     const soVisitaPatch: Record<string, unknown> = {
       jobs_count: jobsCount,
       job_value: jobValue,
@@ -745,11 +769,7 @@ async function refreshSelfBillTotalsAndStatus(
       commission,
       net_payout: netPayout,
     };
-    if (temVisitaAberta) {
-      soVisitaPatch.status = before.status === "draft" ? "draft" : "accumulating";
-    } else if (promovivel) {
-      soVisitaPatch.status = "ready_to_pay";
-    }
+    soVisitaPatch.status = before.status === "draft" ? "draft" : "accumulating";
     const { error: soVisitaErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, soVisitaPatch);
     if (soVisitaErr) throw soVisitaErr;
     return;
@@ -1245,6 +1265,27 @@ export async function ensureWeeklySelfBillForJob(job: Job, options?: EnsureWeekl
    */
   const isTerminal = existingRow ? !SELF_BILL_REUSABLE_STATUSES.has(existingRow.status) : false;
   let sbId = fechadoQueAindaRecebe ?? (existingRow && !isTerminal ? (existingRow.id as string) : undefined);
+
+  /**
+   * Visita nova num parceiro cujo documento da quinzena já foi para Ready pelo Done
+   * de outra visita (22/10/2026): entra no MESMO documento (o número só muda quando
+   * a quinzena fecha). Não paga antes da hora: visita marcada não entra no valor, e
+   * quando levar Done o documento já está liberado.
+   */
+  if (!sbId && visitScope) {
+    const { data: pronto } = await supabase
+      .from("self_bills")
+      .select("id")
+      .eq("partner_id", partnerId)
+      .eq("week_start", weekStart)
+      .is("dedicated_job_id", null)
+      .eq("status", "ready_to_pay")
+      .is("wise_paid_at", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (pronto) sbId = (pronto as { id: string }).id;
+  }
 
   if (!sbId) {
     const ref = await nextSelfBillRef(supabase, weekLabel, job.reference);

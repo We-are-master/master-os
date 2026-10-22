@@ -727,6 +727,8 @@ function JobDetailSelfBillPanel({
     ((visitScope ? visitScope.materials : Math.max(0, Number(job.materials_cost ?? 0))) + (visitScope ? 0 : extra.materials)) * 100,
   ) / 100;
   const jobGrossOnBill = Math.round((jobLineGross + (visitScope ? 0 : extra.gross)) * 100) / 100;
+  /** Parte deste job que é visita sem Done: está no documento, fora do valor a pagar. */
+  const visitPending = visitScope ? Number(visitScope.pending ?? 0) : extra.pending;
   /** A nota de "job não aprovado" fala do job; num documento de visita ela mente. */
   const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
@@ -769,45 +771,14 @@ function JobDetailSelfBillPanel({
             </div>
           ) : (
             <>
+              {/* Aberto, enxuto (dono, 22/10/2026): referência e status, valor deste job com o
+                  PDF, um aviso só quando algo ainda não entra no pagamento, e a quinzena. */}
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-text-primary">{sb.reference}</p>
                 <Badge variant={st.variant} size="sm">{st.label}</Badge>
               </div>
-              <p className="text-[11px] text-text-secondary truncate" title={sb.partner_name}>
-                Partner → us · {sb.partner_name}
-              </p>
-              <p className="text-sm font-bold tabular-nums text-primary">{formatCurrency(jobGrossOnBill)}</p>
-              {payoutHoldNote ? (
-                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{payoutHoldNote} — not included in payout until job is approved</p>
-              ) : null}
-              <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
-              <div className="grid grid-cols-1 gap-2 pt-1 text-xs sm:grid-cols-2">
-                <div>
-                  <p className="text-text-tertiary">Labour (this job)</p>
-                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobLabourOnBill)}</p>
-                </div>
-                <div>
-                  <p className="text-text-tertiary">Materials (this job)</p>
-                  <p className="font-semibold tabular-nums text-text-primary">{formatCurrency(jobMaterialsOnBill)}</p>
-                </div>
-              </div>
-              <p className="text-[11px] text-text-tertiary pt-0.5 leading-snug">
-                <span className="font-medium text-text-secondary">Week:</span> {weekLine} · {sb.jobs_count} job{sb.jobs_count === 1 ? "" : "s"} on this bill
-                {sb.jobs_count > 1 ? (
-                  <>
-                    {" "}
-                    · Whole bill total {formatCurrency(sb.net_payout)}
-                  </>
-                ) : null}
-                {" "}
-                Payouts on the job reduce amount due only; extra payout on the job increases this line.
-              </p>
-              {paymentDueYmd ? (
-                <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium pt-0.5">
-                  Office payment due: {formatDate(paymentDueYmd)} (Friday after the week ends)
-                </p>
-              ) : null}
-              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
                 <Button
                   size="sm"
                   variant="outline"
@@ -817,6 +788,20 @@ function JobDetailSelfBillPanel({
                   PDF
                 </Button>
               </div>
+              {payoutHoldNote || visitPending > 0.005 ? (
+                <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                  {payoutHoldNote ? "Not in payout yet: job not approved" : "Not in payout yet: visit not done"}
+                </p>
+              ) : null}
+              {jobMaterialsOnBill > 0.005 ? (
+                <p className="text-[11px] tabular-nums text-text-secondary">
+                  Labour {formatCurrency(jobLabourOnBill)} · Materials {formatCurrency(jobMaterialsOnBill)}
+                </p>
+              ) : null}
+              <p className="text-[11px] text-text-tertiary" title={`Week ${weekLine} · fortnight total ${formatCurrency(Number(sb.net_payout ?? 0))}`}>
+                {sb.week_start && sb.week_end ? `Fortnight ${formatDate(sb.week_start)} to ${formatDate(sb.week_end)}` : `Week ${weekLine}`}
+                {paymentDueYmd ? ` · payment ${formatDate(paymentDueYmd)}` : ""}
+              </p>
             </>
           )}
         </div>
