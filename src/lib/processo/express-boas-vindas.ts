@@ -13,10 +13,11 @@
  *
  * Reserva `express-welcome-email:<jobId>` ANTES de mandar. Nunca lança.
  */
+import { emailFixfy } from "@/lib/emails/fixfy-shell";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RegrasDoProcesso } from "./conta";
 import { ehExpress, emailNormalizado } from "./plataformas";
-import { EXPRESS_BOAS_VINDAS_ASSUNTO, EXPRESS_BOAS_VINDAS_HTML, TEXTO_A_CONFIRMAR, preencherTexto } from "./textos";
+import { EXPRESS_BOAS_VINDAS_ASSUNTO, TEXTO_A_CONFIRMAR, preencherTexto } from "./textos";
 import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 export type JobDaBoasVindas = {
@@ -62,10 +63,21 @@ export function montarBoasVindasDoExpress(
     janela: rotulos.rotuloDaJanela(j.inicioIso, j.fimIso) ?? TEXTO_A_CONFIRMAR,
     endereco: j.endereco.trim() || TEXTO_A_CONFIRMAR,
   };
-  return {
-    assunto: preencherTexto(EXPRESS_BOAS_VINDAS_ASSUNTO, valores, { html: false }),
-    html: preencherTexto(EXPRESS_BOAS_VINDAS_HTML, valores),
-  };
+  // Na moldura do Welcome (dono, 22/10/2026): o texto continua o de `textos.ts`.
+  const { html } = emailFixfy({
+    preheader: `Your booking ${valores.referencia} is confirmed. Fixfy is now looking after it.`,
+    estado: { texto: "Booking confirmed", cor: "green" },
+    titulo: "Your booking is confirmed",
+    metricas: [{ rotulo: "Date and arrival", valor: valores.data, sub: valores.janela === TEXTO_A_CONFIRMAR ? "Arrival time to be confirmed" : `Arriving ${valores.janela}` }],
+    saudacao: `Hi ${valores.primeiroNome},`,
+    paragrafos: [
+      "Thank you for your booking. Fixfy is now looking after it for you, and this is the email where we will keep you updated.",
+      "We will confirm your professional before the visit. If anything changes or you have a question, just reply to this email.",
+    ],
+    linhas: [["Service", valores.servico], ["Property", valores.endereco], ["Booking", valores.referencia]],
+    zendesk: true,
+  });
+  return { assunto: preencherTexto(EXPRESS_BOAS_VINDAS_ASSUNTO, valores, { html: false }), html };
 }
 
 /** Puro: sai ou não, e por quê. */

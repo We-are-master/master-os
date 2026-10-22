@@ -17,6 +17,7 @@
  * tentativas no cartão continuam na rota /api/internal/payments/card-retry.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { emailFixfy, saudacao } from "@/lib/emails/fixfy-shell";
 import { processosV2Ligado, regrasDoProcesso, tipoDaConta, type RegrasDoProcesso, type ExcecoesDaConta } from "@/lib/processo/conta";
 import { DIAS_ATE_PAGAMENTO_SEM_SUCESSO, motivosDoJob, sincronizarPendencias, type JobParaPendencias } from "@/lib/pendencias/motivos";
 import { confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
@@ -86,26 +87,51 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 /** Os três e-mails. Inglês, sem travessão, sem falar de VAT (é B2C). */
 export function emailDaCobranca(dia: DiaDaCobranca, p: { primeiroNome: string; referencia: string; servico?: string | null; link: string }): { assunto: string; html: string } {
-  const job = p.servico ? `${esc(p.servico)} (${esc(p.referencia)})` : esc(p.referencia);
-  const botao = `<p><a href="${esc(p.link)}">Pay securely here</a><br>${esc(p.link)}</p>`;
-  const ola = `<p>Hi ${esc(p.primeiroNome || "there")},</p>`;
-  const fim = `<p>If you have already paid, please ignore this message.</p><p>Thank you,<br>Fixfy Team<br>hello@getfixfy.com · +44 20 4538 4668</p>`;
+  const job = p.servico ? `${p.servico} (${p.referencia})` : p.referencia;
+  const base = {
+    saudacao: saudacao({ tipo: "b2c", primeiroNome: p.primeiroNome }),
+    cta: { label: "Pay securely", url: p.link },
+    linhas: [["Service", p.servico ?? null], ["Booking", p.referencia]] as Array<[string, string | null]>,
+    letraPequena: ["If you have already paid, please ignore this message."],
+    zendesk: true,
+  };
   if (dia === 1) {
-    return {
-      assunto: `Your Fixfy payment did not go through (${p.referencia})`,
-      html: `${ola}<p>We tried to take the balance for ${job} from your saved card, but the payment did not go through. This can happen when the bank asks for a confirmation or the card has changed.</p><p>You can pay the balance in a minute using the secure link below.</p>${botao}${fim}`,
-    };
+    const { html } = emailFixfy({
+      ...base,
+      preheader: "Your card payment did not go through. You can pay in a minute with the secure link.",
+      estado: { texto: "Payment due", cor: "red" },
+      titulo: "Your payment didn’t go through",
+      paragrafos: [
+        `We tried to take the balance for ${job} from your saved card, but the payment did not go through. This can happen when the bank asks for a confirmation or the card has changed.`,
+        "You can pay the balance in a minute using the secure link below.",
+      ],
+    });
+    return { assunto: `Your Fixfy payment did not go through (${p.referencia})`, html };
   }
   if (dia === 3) {
-    return {
-      assunto: `Reminder: payment still outstanding for ${p.referencia}`,
-      html: `${ola}<p>A quick reminder that the balance for ${job} is still outstanding, as the payment from your saved card did not go through.</p>${botao}<p>If something is not right with the work or the amount, just reply to this email and we will help.</p>${fim}`,
-    };
+    const { html } = emailFixfy({
+      ...base,
+      preheader: `The balance for ${p.referencia} is still outstanding.`,
+      estado: { texto: "Payment overdue", cor: "red" },
+      titulo: "Your payment is still outstanding",
+      paragrafos: [
+        `A quick reminder that the balance for ${job} is still outstanding, as the payment from your saved card did not go through.`,
+        "If something is not right with the work or the amount, just reply to this email and we will help.",
+      ],
+    });
+    return { assunto: `Reminder: payment still outstanding for ${p.referencia}`, html };
   }
-  return {
-    assunto: `Final reminder: payment for ${p.referencia}`,
-    html: `${ola}<p>We have still not been able to take the balance for ${job}. Please pay using the secure link below.</p>${botao}<p>A member of our team will also be in touch. If you would like to talk it through, just reply to this email.</p>${fim}`,
-  };
+  const { html } = emailFixfy({
+    ...base,
+    preheader: `Final reminder: the balance for ${p.referencia} is still outstanding.`,
+    estado: { texto: "Final reminder", cor: "red" },
+    titulo: "Final reminder about your payment",
+    paragrafos: [
+      `We have still not been able to take the balance for ${job}. Please pay using the secure link below.`,
+      "A member of our team will also be in touch. If you would like to talk it through, just reply to this email.",
+    ],
+  });
+  return { assunto: `Final reminder: payment for ${p.referencia}`, html };
 }
 
 export type AvisoDaCobranca = (a: AvisoNoTicket) => Promise<unknown>;

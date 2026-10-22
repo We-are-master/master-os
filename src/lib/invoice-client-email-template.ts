@@ -79,6 +79,8 @@ export type InvoiceEmailOptions = {
    * pagamento; "liberado" é o e-mail do pagamento recebido com o certificado anexado.
    */
   certificado?: "retido" | "liberado";
+  /** Entrada já paga (dono, 22/10/2026): o e-mail final mostra total, entrada e saldo, sem recibo à parte. */
+  deposito?: { pago: number; total: number } | null;
   /** Comentário público do Zendesk: sem tabelas internas. */
   zendesk?: boolean;
   /** Linhas da conta para transferência; padrão = a conta verificada da configuração (a do PDF). */
@@ -281,7 +283,7 @@ export function buildInvoiceClientEmail(
         : reportCount > 0
           ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
           : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
+      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "red" },
       titulo: liberado ? "Your certificate is ready" : "Your work is complete",
       destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       saudacao: greeting,
@@ -303,6 +305,8 @@ export function buildInvoiceClientEmail(
         ["Property", property],
         ["Booking", jobRef],
         ["Billing reference", ref],
+        ["Total", options?.deposito ? gbp(options.deposito.total) : null],
+        ["Deposit paid", options?.deposito ? gbp(options.deposito.pago) : null],
         ["Balance due", paid ? null : gbp(amountDueNow)],
         ["Due date", paid ? null : due],
       ],
@@ -349,7 +353,7 @@ export function buildInvoiceClientEmail(
     subject = `Your ${docName} ${ref} is ready`;
     shell = {
       preheader: `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: { texto: "Payment due", cor: "navy" },
+      estado: { texto: "Payment due", cor: "red" },
       titulo: `Your ${docName} is ready`,
       destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       saudacao: greeting,

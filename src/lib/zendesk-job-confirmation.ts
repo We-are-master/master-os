@@ -16,6 +16,7 @@ import {
   janelaTexto,
   saudacao,
   type Publico,
+  gbp,
 } from "@/lib/emails/fixfy-shell";
 
 export interface JobConfirmationEmailArgs {
@@ -36,6 +37,8 @@ export interface JobConfirmationEmailArgs {
    * o que `resolveCustomerGreetingName` resolveu: nome de organização = B2B.
    */
   publico?: Publico;
+  /** Entrada já paga (dono, 22/10/2026): sai na confirmação em vez de um recibo à parte. */
+  deposito?: { pago: number; restante: number } | null;
 }
 
 function firstName(full: string): string {
@@ -247,6 +250,12 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
     "You’ll find the booking details below. If there’s anything we should know about access or parking, just reply and we’ll make a note.",
     "We look forward to getting everything sorted for you.",
   ];
+  const dep = args.deposito && args.deposito.pago > 0.009 ? args.deposito : null;
+  const linhaDoPagamento = dep
+    ? dep.restante > 0.009
+      ? `Deposit of ${gbp(dep.pago)} received. The remaining ${gbp(dep.restante)} is due when the job is done.`
+      : `${gbp(dep.pago)} received. Nothing left to pay.`
+    : null;
   const preheader = [servico && endereco ? `${servico} at ${endereco}.` : servico ? `${servico}.` : endereco ? `${endereco}.` : "", janela ? `Arrival ${janela}.` : ""]
     .filter(Boolean)
     .join(" ") || "Your booking is confirmed.";
@@ -265,6 +274,7 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
       ["Arrival", janela],
       ["Property", endereco],
       ["Booking", args.jobReference],
+      ["Payment", linhaDoPagamento],
     ],
   });
   return { subject: buildJobConfirmationSubject(args), html, text };

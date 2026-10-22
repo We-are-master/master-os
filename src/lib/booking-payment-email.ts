@@ -91,7 +91,7 @@ export function buildBookingPaymentEmail(i: BookingPaymentEmailInput): { subject
     .map((r) => [r.label, r.value] as [string, string]);
 
   const comuns = {
-    estado: { texto: "Payment due", cor: "orange" as const },
+    estado: { texto: "Payment due", cor: "red" as const },
     destaque: quando ? { linha1: visita!, linha2: janela } : null,
     saudacao: saudacao(publico),
     transferencia: banco.length ? { dadosBancarios: banco, referencia, booking: true } : null,

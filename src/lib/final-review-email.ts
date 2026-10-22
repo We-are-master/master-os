@@ -107,7 +107,7 @@ export async function sendFinalReviewEmail(
   const { data: job, error: jobErr } = await jobClient
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report, finance_status, payment_status, account_id",
+      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report, finance_status, payment_status, account_id, customer_deposit, customer_deposit_paid",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -403,6 +403,10 @@ export async function sendFinalReviewEmail(
           final: true,
           reportAttachmentCount,
           certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
+          deposito:
+            j.customer_deposit_paid && Number(j.customer_deposit) > 0
+              ? { pago: Number(j.customer_deposit), total: Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0) }
+              : null,
           missingReportNote: missingReportNote || undefined,
           documentAttached: invoicePdfAttached,
           // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.

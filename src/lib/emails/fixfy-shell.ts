@@ -51,7 +51,6 @@ export const FIXFY_CONTACT = {
  */
 export const FIXFY_SIGNATURE = "";
 
-const LOGO = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 
 export function esc(s: unknown): string {
   return String(s ?? "")
@@ -200,7 +199,7 @@ export function preencherOuNada(modelo: string, vars: Record<string, string | nu
 
 // ─── Moldura ────────────────────────────────────────────────────────────
 
-export type Estado = { texto: string; cor?: "navy" | "orange" | "green" | "muted" };
+export type Estado = { texto: string; cor?: "navy" | "orange" | "green" | "muted" | "red" };
 
 export type Transferencia = {
   /** Linhas da conta bancária verificada, da configuração (nunca de exemplo). */
@@ -210,12 +209,21 @@ export type Transferencia = {
   booking?: boolean;
 };
 
+/** Uma métrica da faixa de métricas (como a do OS): rótulo pequeno, valor grande, linha embaixo. */
+export type Metrica = { rotulo: string; valor: string; sub?: string | null };
+/** Um passo da faixa de progresso do job. */
+export type Passo = { nome: string; estado: "feito" | "atual" | "futuro" };
+
 export type EmailFixfy = {
   preheader: string;
   estado?: Estado | null;
   titulo: string;
   /** Destaque grande: data e janela, ou valor e vencimento. */
   destaque?: { linha1: string; linha2?: string | null; riscado?: string | null } | null;
+  /** Faixa de métricas (data, janela, valor, vencimento). Sem ela, o destaque vira uma métrica. */
+  metricas?: Metrica[] | null;
+  /** Faixa de progresso do job; o passo "atual" leva a régua coral. */
+  passos?: Passo[] | null;
   saudacao: string;
   /** Parágrafos em texto puro (escapados aqui). */
   paragrafos: string[];
@@ -236,110 +244,178 @@ export type EmailFixfy = {
   zendesk?: boolean;
 };
 
-const corDoEstado = (c: Estado["cor"]) =>
-  c === "orange" ? FX.orange : c === "green" ? FX.green : c === "muted" ? FX.muted : FX.navy;
+const SANS = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
-function blocoTransferenciaHtml(t: Transferencia, zendesk: boolean): string {
+/**
+ * Layout do "Welcome to Fixfy" (dono, 22/10/2026: "deixa tudo no padrão novo, moderno"):
+ * cartão branco sobre #F5F5F7, logo navy no topo, estado em laranja (Inter, sem
+ * manuscrito: o Caveat fica só no marketing), título grande navy, destaque num bloco
+ * navy, detalhes num quadro claro, botão laranja, caixa de ajuda cinza e rodapé claro.
+ */
+// Recortado (sem a margem do PNG do site), servido pelo próprio OS: public/logos.
+const LOGO_NAVY = "https://app.getfixfy.com/logos/fixfy-primary-navy-trim.png";
+const W = {
+  ink: "#303044",
+  ink2: "#505268",
+  ink3: "#7A7C92",
+  line: "#EEEEF2",
+  canvas: "#F5F5F7",
+  onNavy: "#B9BAD6",
+  orangeSoft: "#FF7A3D",
+} as const;
+
+const corDoEstado = (c: Estado["cor"]) => (c === "green" ? FX.green : c === "muted" ? W.ink3 : FX.orange);
+
+function blocoTransferenciaHtml(t: Transferencia): string {
   const linhas = t.dadosBancarios.filter(([, v]) => String(v ?? "").trim());
   if (!linhas.length) return "";
   const frase = `Prefer a bank transfer? Use the details below and quote ${esc(t.referencia)}. Once you’ve made the transfer, reply with the payment date and reference so we can check receipt.${t.booking ? " We’ll confirm your booking once payment has been received and checked." : ""}`;
-  const corpo = linhas
-    .map(([r, v]) => `<p style="margin:0 0 4px 0;font-size:14px;line-height:20px;color:${FX.text};"><span style="color:${FX.muted};">${esc(r)}:</span> <strong>${esc(v)}</strong></p>`)
+  const corpo = [...linhas, ["Reference", t.referencia] as [string, string]]
+    .map(([r, v]) => `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:14px;line-height:20px;color:${FX.navy};"><span style="color:${W.ink3};">${esc(r)}:</span> <strong style="font-weight:700;">${esc(v)}</strong></p>`)
     .join("");
-  const caixa = `<p style="margin:0 0 10px 0;font-size:14px;line-height:21px;color:${FX.text};">${frase}</p>${corpo}<p style="margin:4px 0 0 0;font-size:14px;line-height:20px;color:${FX.text};"><span style="color:${FX.muted};">Reference:</span> <strong>${esc(t.referencia)}</strong></p>`;
-  return zendesk
-    ? `<div style="margin:16px 0 0 0;padding:16px;background:${FX.soft};border-radius:10px;">${caixa}</div>`
-    : `<tr><td style="padding:8px 32px 0 32px;"><div style="padding:16px;background:${FX.soft};border-radius:10px;">${caixa}</div></td></tr>`;
+  return `<div style="padding:18px 20px;background:${W.canvas};border-radius:12px;"><p style="margin:0 0 10px 0;font-family:${SANS};font-size:14px;line-height:21px;color:${W.ink2};">${frase}</p>${corpo}</div>`;
 }
 
-function linhasHtml(linhas: Array<[string, string]>, zendesk: boolean): string {
-  if (!linhas.length) return "";
-  if (zendesk) {
-    return `<div style="margin:20px 0 4px 0;">${linhas
-      .map(
-        ([r, v]) =>
-          `<p style="margin:0;padding:12px 0;border-top:1px solid ${FX.line};font-size:15px;line-height:22px;color:${FX.navy};font-weight:600;"><span style="display:inline-block;min-width:92px;font-size:13px;font-weight:400;color:${FX.muted};">${esc(r)}</span>${esc(v)}</p>`,
-      )
-      .join("")}</div>`;
-  }
-  return `<tr><td style="padding:12px 32px 4px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${linhas
-    .map(
-      ([r, v]) =>
-        `<tr><td style="padding:12px 12px 12px 0;border-top:1px solid ${FX.line};font-size:13px;line-height:20px;color:${FX.muted};width:110px;vertical-align:top;">${esc(r)}</td><td style="padding:12px 0;border-top:1px solid ${FX.line};font-size:15px;line-height:22px;color:${FX.navy};font-weight:600;">${esc(v)}</td></tr>`,
-    )
-    .join("")}</table></td></tr>`;
-}
-
-/** HTML e texto do mesmo conteúdo (handoff: "Generate HTML and plain text from the same copy"). */
+/**
+ * HTML e texto do mesmo conteúdo (handoff: "Generate HTML and plain text from the same copy").
+ * `zendesk: true` monta tudo em `div` (o visualizador do Zendesk desenha borda em toda célula).
+ */
 export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const z = Boolean(e.zendesk);
   const linhas = (e.linhas ?? []).filter((l): l is [string, string] => Boolean(l[1] && String(l[1]).trim()));
   const cta = e.cta && urlSegura(e.cta.url) ? { label: e.cta.label, url: urlSegura(e.cta.url)! } : null;
   const secundarios = (e.linksSecundarios ?? []).filter((l) => urlSegura(l.url));
   const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
-  const pad = z ? "" : "padding:0 32px;";
 
-  const estado = e.estado
-    ? `<p style="margin:0 0 6px 0;font-size:13px;font-weight:700;letter-spacing:1px;color:${corDoEstado(e.estado.cor)};text-transform:uppercase;">${esc(e.estado.texto)}</p>`
+  const metricas: Metrica[] = (e.metricas ?? []).filter((m) => m.valor?.trim()).length
+    ? (e.metricas ?? []).filter((m) => m.valor?.trim())
+    : e.destaque?.linha1
+      ? [{ rotulo: "", valor: e.destaque.linha1, sub: e.destaque.linha2 ?? null }]
+      : [];
+  const riscado = e.destaque?.riscado?.trim() || null;
+  const passos = (e.passos ?? []).filter((p) => p.nome.trim());
+
+  // Cada bloco é um `div` com o recuo lateral; no e-mail completo ele vai dentro de uma linha da tabela.
+  const bloco = (conteudo: string, topo = 0, lado = 32) =>
+    z
+      ? `<div style="padding:${topo}px ${lado - 4}px 0 ${lado - 4}px;">${conteudo}</div>`
+      : `<tr><td class="fx-pad" style="padding:${topo}px ${lado}px 0 ${lado}px;">${conteudo}</td></tr>`;
+
+  // ─── topo: logo navy no branco + divisória ───
+  const topo =
+    bloco(`<img src="${LOGO_NAVY}" alt="Fixfy" width="112" style="display:block;width:112px;height:auto;border:0;">`, 26) +
+    bloco(`<div style="height:1px;line-height:1px;font-size:0;background:${W.line};margin-top:18px;">&nbsp;</div>`, 0);
+
+  // ─── abertura: estado laranja, título grande, saudação e texto ───
+  // Vermelho = dinheiro em aberto (dono, 22/10/2026): vira chip, para saltar aos olhos.
+  const estado = !e.estado
+    ? ""
+    : e.estado.cor === "red"
+      ? `<p style="margin:0 0 10px 0;"><span style="display:inline-block;background:#FDECEC;color:#C62828;border:1px solid #F5C2C2;font-family:${SANS};font-size:13px;line-height:18px;font-weight:700;padding:4px 12px;border-radius:999px;">${esc(e.estado.texto)}</span></p>`
+      : `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;letter-spacing:0.01em;color:${corDoEstado(e.estado.cor)};">${esc(e.estado.texto)}</p>`;
+  const titulo = `<h1 class="fx-h1" style="margin:0 0 18px 0;font-family:${SANS};font-size:36px;line-height:40px;font-weight:800;letter-spacing:-0.02em;color:${FX.navy};">${esc(e.titulo)}</h1>`;
+  const texto =
+    `<p style="margin:0 0 10px 0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(e.saudacao)}</p>` +
+    e.paragrafos.map((p) => `<p style="margin:0 0 12px 0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(p)}</p>`).join("");
+  const abertura = bloco(`${estado}${titulo}${texto}`, 26);
+
+  // ─── destaque navy: métricas (data e janela, valor e vencimento) e progresso ───
+  const metricaHtml = (m: Metrica) =>
+    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.onNavy};">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${SANS};font-size:24px;line-height:30px;font-weight:800;letter-spacing:-0.01em;color:#FFFFFF;">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;color:${W.orangeSoft};">${esc(m.sub)}</p>` : ""}`;
+  const colunasMetricas = z
+    ? metricas.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / metricas.length)}%;box-sizing:border-box;padding:0 ${i < metricas.length - 1 ? 14 : 0}px 0 0;">${metricaHtml(m)}</div>`).join("")
+    : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
+  const corPasso = (p: Passo) => (p.estado === "atual" ? FX.orange : p.estado === "feito" ? "#FFFFFF" : "rgba(255,255,255,0.18)");
+  const passoHtml = (p: Passo) =>
+    `<div style="height:4px;border-radius:2px;background:${corPasso(p)};font-size:0;line-height:0;">&nbsp;</div><p style="margin:7px 0 0 0;font-family:${SANS};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" ? 700 : 500};color:${p.estado === "futuro" ? W.onNavy : "#FFFFFF"};">${esc(p.nome)}</p>`;
+  const largura = passos.length ? Math.floor(100 / passos.length) : 0;
+  const progresso = !passos.length
+    ? ""
+    : z
+      ? `<div style="margin-top:${metricas.length ? 20 : 0}px;font-size:0;">${passos.map((p) => `<div style="display:inline-block;vertical-align:top;width:${largura}%;box-sizing:border-box;padding:0 3px;">${passoHtml(p)}</div>`).join("")}</div>`
+      : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:${metricas.length ? 20 : 0}px;"><tr>${passos.map((p) => `<td valign="top" width="${largura}%" style="padding:0 3px;">${passoHtml(p)}</td>`).join("")}</tr></table>`;
+  const riscadoHtml = riscado
+    ? `<p style="margin:12px 0 0 0;font-family:${SANS};font-size:13px;line-height:18px;color:${W.onNavy};">Previously <span style="text-decoration:line-through;">${esc(riscado)}</span></p>`
     : "";
-  const destaque = e.destaque
-    ? `<p style="margin:10px 0 0 0;font-size:17px;line-height:24px;color:${FX.text};">${esc(e.destaque.linha1)}${e.destaque.linha2 ? `<br><strong style="color:${FX.navy};">${esc(e.destaque.linha2)}</strong>` : ""}</p>${e.destaque.riscado ? `<p style="margin:6px 0 0 0;font-size:14px;line-height:20px;color:${FX.faint};">Previously <span style="text-decoration:line-through;">${esc(e.destaque.riscado)}</span></p>` : ""}`
+  const destaque =
+    metricas.length || passos.length
+      ? bloco(`<div style="background:${FX.navy};border-radius:12px;padding:22px 22px 22px 22px;">${metricas.length ? colunasMetricas : ""}${riscadoHtml}${progresso}</div>`, 18, 24)
+      : "";
+
+  // ─── detalhes: quadro claro, uma linha por item ───
+  const detalhes = linhas.length
+    ? bloco(
+        `<div style="border:1px solid ${W.line};border-radius:12px;">${linhas
+          .map(
+            ([r, v], i) =>
+              `<div style="padding:12px 16px;${i < linhas.length - 1 ? `border-bottom:1px solid ${W.line};` : ""}"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.ink3};">${esc(r)}</p><p style="margin:2px 0 0 0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">${esc(v)}</p></div>`,
+          )
+          .join("")}</div>`,
+        18,
+        24,
+      )
     : "";
-  const topo = `${estado}<h1 style="margin:0;font-size:26px;line-height:32px;font-weight:800;color:${FX.navy};">${esc(e.titulo)}</h1>${destaque}`;
-  const corpo =
-    `<p style="margin:22px 0 12px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(e.saudacao)}</p>` +
-    e.paragrafos.map((p) => `<p style="margin:0 0 12px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(p)}</p>`).join("");
+
+  // ─── botão laranja e links ───
   const botao = cta
-    ? `<a href="${esc(cta.url)}" style="display:block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:700;line-height:20px;padding:14px 0;min-height:44px;box-sizing:border-box;border-radius:10px;text-align:center;">${esc(cta.label)}</a>`
+    ? `<a href="${esc(cta.url)}" style="display:block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-family:${SANS};font-size:17px;font-weight:700;line-height:22px;padding:15px 0;border-radius:10px;text-align:center;">${esc(cta.label)}</a>`
     : "";
   const links = secundarios.length
-    ? `<p style="margin:12px 0 0 0;font-size:14px;line-height:20px;text-align:center;color:${FX.muted};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
+    ? `<p style="margin:12px 0 0 0;font-family:${SANS};font-size:14px;line-height:20px;text-align:center;color:${W.ink3};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:700;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
     : "";
+  const acao = botao || links ? bloco(`${botao}${links}`, 22, 24) : "";
+  const transferencia = e.transferencia ? bloco(blocoTransferenciaHtml(e.transferencia), 14, 24) : "";
   const nota = e.nota
-    ? `<p style="margin:0;padding:14px 16px;background:${FX.soft};border-radius:10px;font-size:14px;line-height:21px;color:${FX.text};">${esc(e.nota)}</p>`
+    ? bloco(`<div style="border-left:3px solid ${FX.orange};background:${W.canvas};border-radius:10px;padding:14px 16px;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">${esc(e.nota)}</div>`, 16, 24)
     : "";
-  const assina = assinatura ? `<p style="margin:16px 0 0 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(assinatura)}</p>` : "";
+  const assina = assinatura ? bloco(`<p style="margin:0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(assinatura)}</p>`, 16) : "";
+
+  // ─── ajuda, letra pequena e rodapé claro ───
+  const ajuda = bloco(
+    `<div style="background:${W.canvas};border-radius:12px;padding:16px 18px;"><p style="margin:0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">Need a hand?</p><p style="margin:3px 0 0 0;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">Reply to this email or message us on WhatsApp at ${FIXFY_CONTACT.phone}. We’re happy to help.</p></div>`,
+    22,
+    24,
+  );
   const fino = (e.letraPequena ?? []).filter(Boolean);
   const finoHtml = fino.length
-    ? fino.map((t) => `<p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:${FX.muted};">${esc(t)}</p>`).join("")
+    ? bloco(fino.map((t) => `<p style="margin:0 0 6px 0;font-family:${SANS};font-size:12px;line-height:18px;color:${W.ink3};">${esc(t)}</p>`).join(""), 18)
     : "";
   const marketing = e.marketing && urlSegura(e.marketing.descadastroUrl)
-    ? `<br>${esc(e.marketing.motivo)} <a href="${esc(urlSegura(e.marketing.descadastroUrl)!)}" style="color:#FFFFFF;">Unsubscribe</a>`
+    ? `<p style="margin:6px 0 0 0;font-family:${SANS};font-size:12px;line-height:18px;color:${FX.faint};">${esc(e.marketing.motivo)} <a href="${esc(urlSegura(e.marketing.descadastroUrl)!)}" style="color:${W.ink3};text-decoration:underline;">Unsubscribe</a></p>`
     : "";
-  // Rodapé navy com letra branca em todos (dono, 20/10/2026).
-  const rodape = `<p style="margin:0 0 8px 0;font-size:13px;line-height:19px;color:#FFFFFF;">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:#FFFFFF;font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.</p><p style="margin:0;font-size:12px;line-height:18px;color:#FFFFFF;">${esc(FIXFY_CONTACT.legal)}${marketing}</p>`;
+  const rodapeInner =
+    `<img src="${LOGO_NAVY}" alt="Fixfy" width="84" style="display:block;margin:0 auto 10px auto;width:84px;height:auto;border:0;">` +
+    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;color:${W.ink3};">Home repairs and maintenance across London</p>` +
+    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;"><a href="https://www.getfixfy.com" style="color:${W.ink2};text-decoration:none;">getfixfy.com</a> <span style="color:#B5B6C4;">&middot;</span> <a href="mailto:${FIXFY_CONTACT.email}" style="color:${W.ink2};text-decoration:none;">${FIXFY_CONTACT.email}</a> <span style="color:#B5B6C4;">&middot;</span> <span style="color:${W.ink2};">${FIXFY_CONTACT.phone}</span></p>` +
+    `<p style="margin:0;font-family:${SANS};font-size:12px;line-height:18px;color:${FX.faint};">${esc(FIXFY_CONTACT.legal)}</p>${marketing}`;
+  const rodape = z
+    ? `<div style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</div>`
+    : `<tr><td align="center" style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</td></tr>`;
+
+  const miolo = topo + abertura + destaque + detalhes + acao + transferencia + nota + assina + ajuda + finoHtml + rodape;
 
   const html = z
-    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${FX.canvas};">${esc(e.preheader)}</div>` +
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:0;background:${FX.canvas};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"><tr><td align="center" style="border:0;padding:24px 12px;">` +
-      `<div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:16px;overflow:hidden;text-align:left;">` +
-      `<div style="background:${FX.navy};padding:18px 28px;"><img src="${LOGO}" alt="Fixfy" width="72" height="31" style="display:block;width:72px;height:31px;border:0;"></div>` +
-      `<div style="padding:28px 28px 8px 28px;">${topo}${corpo}${linhasHtml(linhas, true)}${botao ? `<div style="margin:16px 0 0 0;">${botao}</div>` : ""}${links}${e.transferencia ? blocoTransferenciaHtml(e.transferencia, true) : ""}${nota ? `<div style="margin:16px 0 0 0;">${nota}</div>` : ""}${assina}</div>` +
-      (finoHtml ? `<div style="padding:16px 28px 8px 28px;background:#FAFAFB;border-top:1px solid ${FX.line};">${finoHtml}</div>` : "") +
-      `<div style="background:${FX.navy};padding:20px 28px 24px 28px;text-align:center;">${rodape}</div>` +
-      `</div></td></tr></table>`
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${W.canvas};">${esc(e.preheader)}</div>` +
+      `<div style="background:${W.canvas};padding:24px 12px;font-family:${SANS};"><div style="width:100%;max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:16px;overflow:hidden;text-align:left;">${miolo}</div></div>`
     : `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="color-scheme" content="light only"><title>&#8203;</title>
-<style>@media screen and (max-width:600px){.fx-card{width:100% !important;border-radius:0 !important}.fx-pad{padding-left:20px !important;padding-right:20px !important}}</style></head>
-<body style="margin:0;padding:0;background:${FX.canvas};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:${FX.canvas};">${esc(e.preheader)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${FX.canvas};"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" class="fx-card" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#FFFFFF;border-radius:16px;overflow:hidden;">
-<tr><td class="fx-pad" bgcolor="${FX.navy}" style="background:${FX.navy};padding:18px 32px;"><img src="${LOGO}" alt="Fixfy" width="72" style="display:block;width:72px;height:auto;border:0;"></td></tr>
-<tr><td class="fx-pad" style="padding:28px 32px 4px 32px;">${topo}${corpo}</td></tr>
-${linhasHtml(linhas, false)}
-${botao ? `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;">${botao}${links}</td></tr>` : links ? `<tr><td class="fx-pad" style="padding:8px 32px 0 32px;">${links}</td></tr>` : ""}
-${e.transferencia ? blocoTransferenciaHtml(e.transferencia, false) : ""}
-${nota ? `<tr><td class="fx-pad" style="padding:16px 32px 0 32px;">${nota}</td></tr>` : ""}
-${assina ? `<tr><td class="fx-pad" style="padding:4px 32px 24px 32px;">${assina}</td></tr>` : `<tr><td style="padding:12px 0 0 0;font-size:1px;line-height:1px;">&nbsp;</td></tr>`}
-${finoHtml ? `<tr><td class="fx-pad" style="${pad}padding-top:18px;padding-bottom:10px;background:#FAFAFB;border-top:1px solid ${FX.line};">${finoHtml}</td></tr>` : ""}
-<tr><td class="fx-pad" bgcolor="${FX.navy}" style="background:${FX.navy};padding:20px 32px 24px 32px;text-align:center;">${rodape}</td></tr>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light only"><title>&#8203;</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>:root{color-scheme:light only}@media screen and (max-width:620px){.fx-pad{padding-left:20px !important;padding-right:20px !important}.fx-h1{font-size:30px !important;line-height:34px !important}.fx-big{font-size:21px !important;line-height:27px !important}.fx-col{display:block !important;width:100% !important;padding:0 0 14px 0 !important}}</style></head>
+<body style="margin:0;padding:0;background:${W.canvas};font-family:${SANS};">
+<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:${W.canvas};">${esc(e.preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${W.canvas};"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:#FFFFFF;border-radius:16px;">
+${miolo}
 </table></td></tr></table></body></html>`;
 
   const text = [
     e.estado ? e.estado.texto.toUpperCase() : "",
     e.titulo,
-    e.destaque ? [e.destaque.linha1, e.destaque.linha2].filter(Boolean).join(", ") : "",
+    (e.metricas ?? []).filter((m) => m.valor?.trim()).length
+      ? (e.metricas ?? []).filter((m) => m.valor?.trim()).map((m) => `${m.rotulo ? `${m.rotulo}: ` : ""}${m.valor}${m.sub ? `, ${m.sub}` : ""}`).join("\n")
+      : e.destaque
+        ? [e.destaque.linha1, e.destaque.linha2].filter(Boolean).join(", ")
+        : "",
     e.destaque?.riscado ? `Previously: ${e.destaque.riscado}` : "",
     "",
     e.saudacao,
@@ -384,12 +460,13 @@ export function emailPessoal(e: { preheader: string; saudacao: string; paragrafo
   const assinatura = e.assinatura?.trim() ? e.assinatura.trim() : null;
   const ps = [e.saudacao, ...e.paragrafos].map((p) => `<p style="margin:0 0 14px 0;font-size:16px;line-height:24px;color:${FX.text};">${esc(p)}</p>`).join("");
   const botao = cta
-    ? `<p style="margin:6px 0 14px 0;"><a href="${esc(cta.url)}" style="display:inline-block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;">${esc(cta.label)}</a></p>`
+    ? `<p style="margin:6px 0 14px 0;"><a href="${esc(cta.url)}" style="display:inline-block;background:${FX.orange};color:#FFFFFF;text-decoration:none;font-size:16px;font-weight:700;padding:13px 24px;border-radius:10px;">${esc(cta.label)}</a></p>`
     : "";
   const links = sec.length ? `<p style="margin:0 0 14px 0;font-size:14px;line-height:20px;">${sec.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>` : "";
   const assina = assinatura ? `<p style="margin:0;font-size:16px;line-height:24px;color:${FX.text};">${esc(assinatura)}</p>` : "";
-  const rodape = `<p style="margin:0;font-size:12px;line-height:18px;color:#FFFFFF;">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:#FFFFFF;font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.<br>${esc(FIXFY_CONTACT.legal)}</p>`;
-  const miolo = `<div style="max-width:560px;margin:0 auto;padding:24px 20px;text-align:left;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">${ps}${botao}${links}${assina}<div style="margin:24px 0 0 0;padding:16px 18px;background:${FX.navy};border-radius:10px;text-align:center;">${rodape}</div></div>`;
+  const rodape = `<p style="margin:0;font-size:12px;line-height:18px;color:${FX.faint};">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:${FX.navy};font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.<br>${esc(FIXFY_CONTACT.legal)}</p>`;
+  // Mesma família do Welcome, mas leve (parece e-mail escrito): logo navy, texto corrido, rodapé claro.
+  const miolo = `<div style="max-width:560px;margin:0 auto;padding:24px 20px;text-align:left;font-family:${SANS};"><img src="${LOGO_NAVY}" alt="Fixfy" width="92" style="display:block;width:92px;height:auto;border:0;margin:0 0 18px 0;">${ps}${botao}${links}${assina}<div style="margin:24px 0 0 0;padding:16px 0 0 0;border-top:1px solid ${W.line};text-align:left;">${rodape}</div></div>`;
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;">${esc(e.preheader)}</div>${miolo}`
     : `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><title>&#8203;</title></head><body style="margin:0;padding:0;background:#FFFFFF;"><div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;">${esc(e.preheader)}</div>${miolo}</body></html>`;

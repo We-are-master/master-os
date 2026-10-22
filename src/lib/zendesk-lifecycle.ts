@@ -127,7 +127,7 @@ export async function dispatchJobCreatedZendesk(args: {
       catalog_service_id,
       external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
-      job_creation_notice_sent_at,
+      job_creation_notice_sent_at, client_price, extras_amount, customer_deposit, customer_deposit_paid,
       clients ( full_name )
     `)
     .eq("id", args.jobId)
@@ -208,6 +208,7 @@ export async function dispatchJobCreatedZendesk(args: {
     propertyAddress,
     propertyPostcode,
     typeOfWork,
+    deposito: depositoDoJob(job as Record<string, unknown>),
   });
 
   // Make the booking confirmation reach the CUSTOMER on this ticket. Jobs
@@ -604,4 +605,12 @@ export async function dispatchQuoteRejectedZendesk(
     .eq("id", quoteId);
 
   return { ok: true, posted: true };
+}
+
+/** Entrada paga do job, para a linha "Payment" da confirmação. Sem entrada paga: null. */
+function depositoDoJob(j: Record<string, unknown>): { pago: number; restante: number } | null {
+  const pago = Number(j.customer_deposit ?? 0);
+  if (!j.customer_deposit_paid || !(pago > 0)) return null;
+  const total = Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
+  return { pago, restante: Math.max(0, Math.round((total - pago) * 100) / 100) };
 }

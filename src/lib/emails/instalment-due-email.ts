@@ -33,7 +33,7 @@ export function buildInstalmentDueEmail(d: InstalmentDueEmailInput): { subject: 
   const preheader = `Instalment ${d.instalmentNumber} of ${total} is due on ${due}.`;
   const { html, text } = emailFixfy({
     preheader,
-    estado: { texto: "Payment due", cor: "navy" },
+    estado: { texto: "Payment due", cor: "red" },
     titulo: "Your next instalment",
     destaque: { linha1: `${valor} due`, linha2: `today, ${due}` },
     saudacao: saudacao(d.publico),

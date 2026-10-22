@@ -10,6 +10,7 @@
  * remarcar para outro horário gera lembrete novo, voltar ao mesmo não repete, e
  * trocar de canal no meio não manda dois.
  */
+import { emailFixfy, saudacao } from "@/lib/emails/fixfy-shell";
 import { chaveDeEnvio } from "@/lib/idempotencia/envio";
 import { normalizarMobileUk } from "./policy";
 
@@ -34,12 +35,19 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 /** O e-mail do lembrete. Inglês, sem travessão, sem falar de VAT. */
 export function emailDoLembrete(p: { primeiroNome: string; data: string; janela: string; endereco?: string | null; referencia?: string | null }): { assunto: string; html: string } {
-  const onde = p.endereco ? ` at ${esc(p.endereco)}` : "";
   const assunto = `Reminder: your Fixfy visit is tomorrow${p.referencia ? ` (${p.referencia})` : ""}`;
-  const html =
-    `<p>Hi ${esc(p.primeiroNome || "there")},</p>` +
-    `<p>Just a reminder that your Fixfy visit is booked for tomorrow, ${esc(p.data)}, with an arrival window of ${esc(p.janela)}${onde}.</p>` +
-    `<p>If anything has changed, or someone else will let us in, simply reply to this email and we will sort it out.</p>` +
-    `<p>Thank you,<br>Fixfy Team<br>hello@getfixfy.com · +44 20 4538 4668</p>`;
+  const { html } = emailFixfy({
+    preheader: `Your Fixfy visit is tomorrow, arriving ${p.janela}.`,
+    estado: { texto: "Tomorrow", cor: "orange" },
+    titulo: "See you tomorrow",
+    metricas: [{ rotulo: "Date and arrival", valor: p.data, sub: `Arriving ${p.janela}` }],
+    saudacao: saudacao({ tipo: "b2c", primeiroNome: p.primeiroNome }),
+    paragrafos: [
+      `Just a reminder that your Fixfy visit is booked for tomorrow, ${p.data}, with an arrival window of ${p.janela}${p.endereco ? ` at ${p.endereco}` : ""}.`,
+      "If anything has changed, or someone else will let us in, simply reply to this email and we will sort it out.",
+    ],
+    linhas: [["Property", p.endereco ?? null], ["Booking", p.referencia ?? null]],
+    zendesk: true,
+  });
   return { assunto, html };
 }
