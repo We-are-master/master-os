@@ -18,6 +18,7 @@ import {
   type Publico,
   gbp,
 } from "@/lib/emails/fixfy-shell";
+import { metricasDaVisita, passosAte, PASSOS_VISITA } from "@/lib/emails/faixas-do-email";
 
 export interface JobConfirmationEmailArgs {
   /** Organization name when linked; otherwise client first name. */
@@ -266,6 +267,8 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
     estado: { texto: String(args.eyebrow ?? "").trim() || "Confirmed", cor: "green" },
     titulo: "Your booking is confirmed",
     destaque: data ? { linha1: data, linha2: janela ?? "Arrival time to be confirmed" } : null,
+    metricas: metricasDaVisita(data, janela),
+    passos: passosAte(PASSOS_VISITA, 1),
     saudacao: saudacao(publico),
     paragrafos,
     linhas: [
@@ -322,6 +325,8 @@ export function buildJobRescheduledEmail(args: JobRescheduledEmailArgs): { subje
     destaque: novo.data
       ? { linha1: novo.data, linha2: novo.janela ?? "Arrival time to be confirmed", riscado: juntar(antes.data, antes.janela) || null }
       : null,
+    metricas: metricasDaVisita(novo.data, novo.janela),
+    passos: passosAte(PASSOS_VISITA, 1),
     saudacao: saudacao(publico),
     paragrafos: [
       `We’re writing to confirm a change to ${ondeFrase}. The previous and revised arrangements are below.${args.iniciadoPelaFixfy ? " We’re sorry for the disruption." : ""}`,

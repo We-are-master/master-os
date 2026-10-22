@@ -1,17 +1,22 @@
 /**
  * Partner quote bid invitation email (Zendesk side conversation or Resend).
- * Layout mirrors new_opportunity_1.html — no urgency row; 12-hour bid window callout.
+ *
+ * Moldura única (`emailFixfy`, variante `zendesk: true`): prazo de 12 horas em
+ * métrica, detalhes em duas colunas, miniaturas que abrem a galeria da página
+ * de bid, um botão para dar o preço.
  */
 
-import { escapeHtmlAttr } from "@/lib/email-asset-url";
+import { emailFixfy, dataLonga, horaCurta } from "@/lib/emails/fixfy-shell";
 import {
-  partnerEmailBaseStyles,
-  partnerEmailBodyOpen,
-  partnerEmailHeadBlock,
-  partnerEmailLogoHeaderRow,
-  partnerEmailHeaderBandUrl,
-  partnerEmailPreheaderHtml,
-} from "@/lib/emails/partner-email-layout";
+  MARCA_FOTOS,
+  PASSO_OFERTA,
+  blocoDeFotosHtml,
+  comFotos,
+  paragrafosDoEscopo,
+  passosDoJob,
+  saudacaoDoParceiro,
+  semTravessao,
+} from "@/lib/emails/partner-shell";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 
 export const PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS = 12;
@@ -35,98 +40,33 @@ export interface PartnerQuoteBidInviteEmailData {
   supportPhone?: string;
 }
 
-function escapeHtml(s: string): string {
-  return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function telHref(phone: string): string {
-  return phone.replace(/[^\d+]/g, "");
-}
-
 function formatBidDeadline(invitedAt: Date): string {
   const deadline = new Date(invitedAt.getTime() + PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
-  return deadline.toLocaleString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Europe/London",
-  });
+  return [dataLonga(deadline), horaCurta(deadline)].filter(Boolean).join(", ");
 }
 
-function infoRowDivider(): string {
-  return `<tr class="info-row"><td colspan="2" style="border-top:1px solid #F2F0FA; line-height:0; font-size:0;">&nbsp;</td></tr>`;
-}
-
-function infoRow(label: string, valueHtml: string): string {
-  return `<tr class="info-row">
-  <td width="35%" valign="top" class="info-label" style="padding:12px 0 12px 20px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:12px; font-weight:700; color:#9A9AA8; text-transform:uppercase; letter-spacing:1px;">${label}</td>
-  <td valign="top" style="padding:12px 20px 12px 0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; color:#1A1A1A; line-height:20px;">${valueHtml}</td>
-</tr>`;
-}
-
-function buildPhotoSection(photoUrls: string[], bidUrl: string): string {
-  if (photoUrls.length === 0) {
-    return `<tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-      <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
-      <p style="margin:0; font-size:14px; line-height:22px; color:#4A4A55; font-style:italic;">No site photos were attached to this request.</p>
-    </td></tr>`;
-  }
-  /**
-   * MINIATURA no e-mail, galeria inteira no portal (ordem do dono, 07/09/2026).
-   *
-   * Antes era uma pilha de fotos de 520px: o convite virava uma rolagem longa
-   * antes de o parceiro chegar no botão de dar preço. Agora é a mesma fileira
-   * de miniaturas do e-mail de job — quatro no máximo, 150px — e o clique abre
-   * a galeria da página de bid, que é onde tudo mora.
-   *
-   * Clicar NÃO abre o arquivo cru no storage: isso abria uma foto pelada numa
-   * aba sem próxima nem voltar, que foi a reclamação dos parceiros em 27/08.
-   */
-  const galeria = escapeHtmlAttr(`${bidUrl}#photos`);
+/**
+ * MINIATURA no e-mail, galeria inteira no portal (ordem do dono, 07/09/2026).
+ *
+ * Três miniaturas é o teto: mais que isso e o convite vira rolagem antes de o
+ * parceiro chegar no botão de dar preço. O clique abre a galeria da página de
+ * bid, e não o arquivo cru no storage (reclamação dos parceiros em 27/08).
+ */
+function fotosDoConvite(photoUrls: string[], bidUrl: string): { html: string; text: string } {
+  if (photoUrls.length === 0) return { html: "", text: "" };
+  const galeria = `${bidUrl}#photos`;
   const MOSTRA = 3;
-  const celulas = photoUrls
-    .slice(0, MOSTRA)
-    .map((u, i) => {
-      const href = escapeHtmlAttr(u);
-      return `<td width="150" valign="top" style="padding:0 8px 0 0;"><a href="${galeria}" target="_blank" style="text-decoration:none;"><img src="${href}" alt="Site photo ${i + 1} of ${photoUrls.length} — tap to expand" width="150" style="display:block; width:150px; max-width:150px; height:auto; border-radius:6px; border:1px solid #E8E8EE;" /></a></td>`;
-    })
-    .join("");
-  /**
-   * O "View more" fecha a fileira e leva ao portal.
-   *
-   * Três miniaturas é o teto no e-mail: mais que isso e o convite vira rolagem
-   * antes de o parceiro chegar no botão de dar preço. O resto das fotos não
-   * some — mora na galeria da página de bid, que é onde ele vai dar o lance de
-   * qualquer jeito.
-   */
   const restantes = photoUrls.length - MOSTRA;
-  const rotulo = restantes > 0 ? `View more (+${restantes})` : "View more";
-  const botao = `<td width="150" valign="middle" style="padding:0;"><a href="${galeria}" target="_blank" style="display:block; width:150px; box-sizing:border-box; text-align:center; padding:14px 8px; border:1px solid #E8E8EE; border-radius:6px; background:#F7F7FB; color:#ED4B00; font-size:13px; font-weight:600; text-decoration:none;">${rotulo}</a></td>`;
-  return `<tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-    <p style="margin:0 0 4px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SITE PHOTOS</p>
-    <p style="margin:0 0 10px 0; font-size:12px; color:#6B6B85;">Tap a photo to expand — all ${photoUrls.length} open in the partner portal.</p>
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${celulas}${botao}</tr></table>
-  </td></tr>`;
-}
-
-
-
-function buildStoreBlock(ios?: string | null, android?: string | null): string {
-  const links: string[] = [];
-  if (ios?.trim()) links.push(`<a href="${escapeHtmlAttr(ios.trim())}" style="color:#ED4B00; font-weight:600;">App Store</a>`);
-  if (android?.trim()) links.push(`<a href="${escapeHtmlAttr(android.trim())}" style="color:#ED4B00; font-weight:600;">Google Play</a>`);
-  if (links.length > 0) {
-    return `<p style="margin:12px 0 0 0; font-size:13px; line-height:20px; color:#4A4A55;">${links.join(" &middot; ")}</p>`;
-  }
-  return `<p style="margin:12px 0 0 0; font-size:13px; line-height:20px; color:#4A4A55;">Install <strong>Fixfy</strong> from the App Store or Google Play, sign in, then open <strong>Invites</strong> to view this request and submit your bid.</p>`;
+  const legenda = `Site photos: tap a photo to expand. All ${photoUrls.length} open in the partner portal.`;
+  return {
+    html: blocoDeFotosHtml(photoUrls, {
+      legenda,
+      max: MOSTRA,
+      href: galeria,
+      maisLink: { label: restantes > 0 ? `View more (+${restantes})` : "View more", url: galeria },
+    }),
+    text: `${legenda}\n${photoUrls.map((u, i) => `${i + 1}. ${u}`).join("\n")}`,
+  };
 }
 
 export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmailData): {
@@ -134,180 +74,58 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
   html: string;
   text: string;
 } {
-  const supportEmail = data.supportEmail ?? "support@getfixfy.com";
-  const supportPhone = data.supportPhone ?? "+44 20 4538 4668";
   const invitedAt = data.invitedAt ?? new Date();
   const deadlineDisplay = formatBidDeadline(invitedAt);
   const postcode = extractUkPostcode(data.propertyAddress) ?? "";
-  const addressLine = escapeHtml(data.propertyAddress.trim() || "—");
-  const postcodeLine = postcode ? `<br><span style="color:#4A4A55;">${escapeHtml(postcode)}</span>` : "";
-
   const typeLabel = data.typeOfWork.trim() || "Quote";
-  const subject = `Quote request · ${typeLabel} · ${postcode || "—"}`;
-  const preheader = `New opportunity — ${data.typeOfWork} at ${data.propertyAddress || postcode || "your area"}. Bid within 12 hours.`;
+  const subject = semTravessao(["Quote request", typeLabel, postcode].filter(Boolean).join(" · "));
+  const preheader = semTravessao(`New opportunity: ${data.typeOfWork} at ${data.propertyAddress || postcode || "your area"}. Bid within 12 hours.`);
+  const fotos = fotosDoConvite(data.photoUrls, data.bidUrl);
 
-  const safe = {
-    name: escapeHtml(data.partnerFirstName || "there"),
-    ref: escapeHtml(data.quoteReference),
-    typeOfWork: escapeHtml(data.typeOfWork.trim() || "Quote"),
-    client: escapeHtml(data.clientName.trim() || "—"),
-    scope: escapeHtml(data.scope).replace(/\n/g, "<br/>"),
-    bidUrl: escapeHtml(data.bidUrl),
-    deepUrl: escapeHtml(data.deepLinkUrl),
-    officeUrl: escapeHtml(data.officeQuoteUrl),
-    deadline: escapeHtml(deadlineDisplay),
-    support: escapeHtml(supportEmail),
-    supportTel: escapeHtml(supportPhone),
-    supportTelHref: telHref(supportPhone),
-    headerBand: escapeHtml(partnerEmailHeaderBandUrl()),
-  };
+  const lojas = [
+    data.iosStoreUrl?.trim() ? { label: "App Store", url: data.iosStoreUrl.trim() } : null,
+    data.androidStoreUrl?.trim() ? { label: "Google Play", url: data.androidStoreUrl.trim() } : null,
+  ].filter((l): l is { label: string; url: string } => Boolean(l));
 
-  const scopeBlock = data.scope.trim()
-    ? `<tr><td class="px-mobile" style="padding:0 40px 8px 40px;">
-        <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">SCOPE</p>
-      </td></tr>
-      <tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA; border-radius:8px;">
-          <tr><td style="padding:16px 18px; font-size:14px; line-height:22px; color:#1A1A1A;">${safe.scope}</td></tr>
-        </table>
-      </td></tr>`
-    : "";
-
-  const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" lang="en-GB"><head>
-${partnerEmailHeadBlock()}
-${partnerEmailBaseStyles()}
-</head>
-${partnerEmailBodyOpen()}
-${partnerEmailPreheaderHtml(preheader)}
-
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="email-bg" bgcolor="#F7F7FB" style="background-color:#F7F7FB;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" class="container email-card" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#FFFFFF" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(2,0,64,0.06);">
-
-${partnerEmailLogoHeaderRow("24px 24px 18px 24px")}
-      <tr><td bgcolor="#ED4B00" style="background-color:#ED4B00; line-height:5px; font-size:5px; height:5px;" height="5">&nbsp;</td></tr>
-
-      <tr><td class="px-mobile" style="padding:32px 40px 8px 40px;">
-        <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:3px; color:#ED4B00; text-transform:uppercase;">NEW OPPORTUNITY</p>
-      </td></tr>
-      <tr><td class="px-mobile" style="padding:0 40px 8px 40px;">
-        <h1 class="h1-mobile" style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${safe.name},</h1>
-      </td></tr>
-      <tr><td class="px-mobile" style="padding:0 40px 20px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">You have been invited to bid on this opportunity. Review the details below and submit your quote before the deadline.</p>
-      </td></tr>
-
-      <tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF7ED; border:1px solid #F3D9A4; border-radius:8px;">
-          <tr><td style="padding:14px 18px;">
-            <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#9A6B00; text-transform:uppercase; letter-spacing:0.5px;">Bid deadline</p>
-            <p style="margin:0; font-size:14px; line-height:22px; color:#1A1A1A;"><strong style="color:#020040;">This quote expires in 12 hours.</strong> Submit your bid by <strong>${safe.deadline}</strong> (UK time).</p>
-          </td></tr>
-        </table>
-      </td></tr>
-
-      <tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F0F4FF; border:1px solid #D8DDF5; border-radius:8px;">
-          <tr><td style="padding:14px 18px;">
-            <p style="margin:0 0 8px 0; font-size:12px; font-weight:700; color:#020040; text-transform:uppercase; letter-spacing:0.5px;">Required to submit your bid</p>
-            <ul style="margin:0; padding:0 0 0 18px; font-size:13px; line-height:22px; color:#3A3A55;">
-              <li><strong>Labour</strong> — fixed price or hourly (hours × rate)</li>
-              <li><strong>Materials</strong> — cost (enter £0 if none) and pricing type</li>
-              <li><strong>Two start date options</strong> — when you could begin the job</li>
-            </ul>
-            <p style="margin:10px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Use the button below — incomplete bids cannot be submitted.</p>
-          </td></tr>
-        </table>
-      </td></tr>
-
-      <tr><td class="px-mobile" style="padding:0 40px 8px 40px;">
-        <p style="margin:0 0 12px 0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">OPPORTUNITY DETAILS</p>
-      </td></tr>
-      <tr><td class="px-mobile" style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8E8EE; border-radius:8px;">
-          <tr>
-            <td style="padding:18px 20px 14px 20px; border-bottom:1px solid #E8E8EE;">
-              <p style="margin:0 0 4px 0; font-size:12px; color:#9A9AA8;">${safe.typeOfWork}</p>
-              <p style="margin:0; font-size:18px; font-weight:700; color:#020040; line-height:24px;">${safe.client}</p>
-            </td>
-          </tr>
-          ${infoRowDivider()}
-          ${infoRow("Reference", `<span style="font-weight:600; color:#020040;">${safe.ref}</span>`)}
-          ${infoRowDivider()}
-          ${infoRow("Address", `${addressLine}${postcodeLine}`)}
-          ${infoRowDivider()}
-          ${infoRow("Type of work", safe.typeOfWork)}
-          ${infoRowDivider()}
-          ${infoRow(
-            "Bid window",
-            `<span style="display:inline-block; padding:4px 12px; background:#FBEFD6; color:#9A6B00; border-radius:12px; font-size:12px; font-weight:700; letter-spacing:0.5px;">Expires in 12 hours</span>`,
-          )}
-        </table>
-      </td></tr>
-
-${scopeBlock}
-${buildPhotoSection(data.photoUrls, data.bidUrl)}
-
-      <tr><td align="center" class="px-mobile btn-mobile" style="padding:8px 40px 8px 40px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
-          <tr><td align="center" style="border-radius:10px; background-color:#ED4B00;">
-            <a href="${safe.bidUrl}" target="_blank" style="display:inline-block; padding:16px 36px; font-size:16px; font-weight:700; color:#FFFFFF; text-decoration:none; border-radius:10px;">Submit your bid →</a>
-          </td></tr>
-        </table>
-        <p style="margin:14px 0 0 0; font-size:12px; line-height:18px; color:#6B6B85;">Or open in the Fixfy partner app: <a href="${safe.deepUrl}" style="color:#ED4B00; font-weight:600;">in-app invitation</a></p>
-        ${buildStoreBlock(data.iosStoreUrl, data.androidStoreUrl)}
-        <p style="margin:16px 0 0 0; font-size:12px; line-height:18px; color:#9A9AAE;">Office link (login required): <a href="${safe.officeUrl}" style="color:#ED4B00;">View quote in Fixfy OS</a></p>
-      </td></tr>
-
-      <tr><td class="px-mobile" style="padding:8px 40px 32px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;">
-          <tr><td style="padding:14px 18px;">
-            <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Questions?</p>
-            <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">
-              Reply to this email or message us at
-              <a href="mailto:${safe.support}" style="color:#020040; font-weight:600; text-decoration:none;">${safe.support}</a>
-              &middot; <a href="tel:${safe.supportTelHref}" style="color:#020040; font-weight:600; text-decoration:none;">${safe.supportTel}</a>
-            </p>
-          </td></tr>
-        </table>
-      </td></tr>
-
-      <tr><td bgcolor="#020040" align="center" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:24px 40px; text-align:center;">
-        <img src="${safe.headerBand}" alt="Fixfy" width="200" class="partner-email-header-img" style="display:block; margin:0 auto 10px; width:200px; max-width:100%; height:auto; border:0;" />
-        <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">
-          Getfixfy Ltd &middot; Co. No. 15406523<br>
-          124 City Road, London EC1V 2NX, United Kingdom<br>
-          <a href="https://getfixfy.com" style="color:#AAAAD0; text-decoration:none;">getfixfy.com</a>
-        </p>
-      </td></tr>
-
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-
-  const scopeText = data.scope.trim() ? `\nScope:\n${data.scope}\n` : "";
-  const photosText =
-    data.photoUrls.length > 0
-      ? `\nSite photos:\n${data.photoUrls.map((u, i) => `${i + 1}. ${u}`).join("\n")}\n`
-      : "\n(No site photos attached.)\n";
-
-  const text =
-    `NEW OPPORTUNITY — ${data.quoteReference}\n\n` +
-    `Hi ${data.partnerFirstName || "there"},\n\n` +
-    `You have been invited to bid. This quote expires in 12 hours — submit by ${deadlineDisplay} (UK time).\n\n` +
-    `Required on the bid form: labour (fixed or hourly), materials cost (can be £0), and two different start date options.\n\n` +
-    `Reference: ${data.quoteReference}\n` +
-    `Type of work: ${data.typeOfWork}\n` +
-    `Client: ${data.clientName || "—"}\n` +
-    `Address: ${data.propertyAddress || "—"}${postcode ? ` (${postcode})` : ""}\n` +
-    scopeText +
-    photosText +
-    `\nSubmit your bid: ${data.bidUrl}\n` +
-    `Partner app: ${data.deepLinkUrl}\n` +
-    `Office: ${data.officeQuoteUrl}\n\n` +
-    `Questions? ${supportEmail} · ${supportPhone}\n`;
-
+  const r = emailFixfy({
+    zendesk: true,
+    preheader,
+    estado: { texto: "New opportunity", cor: "navy" },
+    titulo: "You have been invited to bid on this opportunity",
+    passos: passosDoJob(PASSO_OFERTA),
+    metricas: [
+      { rotulo: "Bid deadline", valor: deadlineDisplay, sub: "UK time" },
+      { rotulo: "Bid window", valor: "12 hours" },
+    ],
+    saudacao: saudacaoDoParceiro(data.partnerFirstName),
+    paragrafos: [
+      "Review the details below and submit your quote before the deadline.",
+      `This quote expires in 12 hours. Submit your bid by ${deadlineDisplay} (UK time).`,
+      "Required to submit your bid:",
+      "· Labour: fixed price or hourly (hours × rate)",
+      "· Materials: cost (enter £0 if none) and pricing type",
+      "· Two start date options: when you could begin the job",
+      "Use the button below. Incomplete bids cannot be submitted.",
+      ...paragrafosDoEscopo(data.scope, "Scope"),
+      fotos.html ? MARCA_FOTOS : "No site photos were attached to this request.",
+    ],
+    linhas: [
+      ["Reference", data.quoteReference],
+      ["Type of work", typeLabel],
+      ["Client", data.clientName.trim() || null],
+      ["Postcode", postcode || null],
+      ["Address", data.propertyAddress.trim() || null],
+    ],
+    cta: { label: "Submit your bid", url: data.bidUrl },
+    linksSecundarios: [...lojas, { label: "View quote in Fixfy OS (office, login required)", url: data.officeQuoteUrl }],
+    letraPequena: [
+      `Or open in the Fixfy partner app: ${data.deepLinkUrl}`,
+      ...(lojas.length
+        ? []
+        : ["Install Fixfy from the App Store or Google Play, sign in, then open Invites to view this request and submit your bid."]),
+      "Questions? Reply to this email.",
+    ],
+  });
+  const { html, text } = fotos.html ? comFotos(r, fotos.html, fotos.text) : r;
   return { subject, html, text };
 }

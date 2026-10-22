@@ -13,6 +13,7 @@ import { FIXFY_CLIENT_BANK_DETAIL_ROWS } from "@/lib/fixfy-client-bank-details";
 import { displayBillingReference } from "@/lib/billing-reference";
 import { emailFixfy, gbp, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
 import { janelaDoAviso, lerLinhaDaAgenda } from "@/lib/zendesk-job-confirmation";
+import { janelaCurta, passosAte, PASSOS_PAGAMENTO_RESERVA } from "@/lib/emails/faixas-do-email";
 
 export type BookingPaymentEmailInput = {
   clientName: string;
@@ -93,6 +94,11 @@ export function buildBookingPaymentEmail(i: BookingPaymentEmailInput): { subject
   const comuns = {
     estado: { texto: "Payment due", cor: "red" as const },
     destaque: quando ? { linha1: visita!, linha2: janela } : null,
+    metricas: [
+      { rotulo: v.sinal ? "Deposit now" : "Pay now", valor: gbp(v.agora), sub: v.sinal ? `of ${gbp(v.total)} total` : null },
+      { rotulo: "Visit date", valor: visita ?? "", sub: janelaCurta(janela) },
+    ],
+    passos: passosAte(PASSOS_PAGAMENTO_RESERVA, 1),
     saudacao: saudacao(publico),
     transferencia: banco.length ? { dadosBancarios: banco, referencia, booking: true } : null,
   };

@@ -12,6 +12,7 @@
  */
 import { emailFixfy, saudacao, type Publico } from "./fixfy-shell";
 import { lerLinhaDaAgenda } from "@/lib/zendesk-job-confirmation";
+import { metricasDaVisita, passosAte, PASSOS_VISITA } from "./faixas-do-email";
 
 export type ClientRescheduleData = {
   clientFirstName: string;
@@ -67,6 +68,8 @@ export function buildClientJobRescheduledEmail(data: ClientRescheduleData): {
     destaque: novo.data
       ? { linha1: novo.data, linha2: novo.janela ?? "Arrival time to be confirmed", riscado: juntar(antes.data, antes.janela) || null }
       : null,
+    metricas: metricasDaVisita(novo.data, novo.janela),
+    passos: passosAte(PASSOS_VISITA, 1),
     saudacao: saudacao(publico),
     paragrafos: [
       primeiro,

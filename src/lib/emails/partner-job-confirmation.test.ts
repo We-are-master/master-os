@@ -15,11 +15,11 @@ test("formatPartnerJobEmailScheduleLine includes arrival window when start/end s
     scheduledStartAt: "2026-06-18T10:00:00.000Z",
     scheduledEndAt: "2026-06-18T13:00:00.000Z",
   });
-  assert.match(line, /Jun 2026/);
+  assert.match(line, /Thu 18 Jun 26/);
   assert.match(line, /Arrival time/i);
 });
 
-test("job offer HTML includes Date row with schedule line", () => {
+test("job offer shows Date and Arrival metrics in the email format", () => {
   const { html, text } = buildPartnerJobConfirmationRequestEmail({
     partnerFirstName: "Acme Plumbing",
     jobReference: "JOB-9270",
@@ -35,9 +35,12 @@ test("job offer HTML includes Date row with schedule line", () => {
   });
 
   assert.match(html, />Date<\/p>/);
-  assert.match(html, /Arrival time/i);
-  assert.match(text, /^Date:\s+/m);
-  assert.match(text, /Arrival time/i);
+  assert.match(html, />Thu 18 Jun 26<\/p>/);
+  assert.match(html, />11am to 2pm<\/p>/);
+  assert.match(text, /^Date:\s+Thu 18 Jun 26/m);
+  assert.match(text, /^Arrival:\s+11am to 2pm/m);
+  assert.match(html, /href="https:\/\/example\.com\/accept"/);
+  assert.doesNotMatch(html + text, /[—–]|\{\{/);
 });
 
 test("job offer HTML shows TBC when no schedule", () => {

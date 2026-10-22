@@ -9,15 +9,15 @@ const bill = { reference: 'SB-TEST', net_payout: 125, partner_name: 'A & B', wee
 for (const payoutStatement of [null, { commissionInvoiceRef: 'COM-1', hasClientWork: true }]) {
   test(`statement distinguishes pending, scheduled and sent (${payoutStatement ? 'agent' : 'self-bill'})`, () => {
     const pending = buildSelfBillEmailHtml(bill, null, { payoutStatement });
-    assert.match(pending, /PAYOUT PENDING/);
-    assert.doesNotMatch(pending, /PAYOUT SCHEDULED|PAYOUT SENT/);
+    assert.match(pending, /PAYOUT PENDING/i);
+    assert.doesNotMatch(pending, /PAYOUT SCHEDULED|PAYOUT SENT/i);
     assert.match(pending, /A &amp; B/);
     const scheduled = buildSelfBillEmailHtml(bill, '2026-10-20', { payoutStatement });
-    assert.match(scheduled, /PAYOUT SCHEDULED/);
-    assert.doesNotMatch(scheduled, /PAYOUT SENT/);
+    assert.match(scheduled, /PAYOUT SCHEDULED/i);
+    assert.doesNotMatch(scheduled, /PAYOUT SENT/i);
     const paid = buildSelfBillEmailHtml({ ...bill, paid_at: '2026-10-20' }, '2026-10-20', { payoutStatement });
-    assert.match(paid, /PAYOUT SENT/);
-    assert.doesNotMatch(paid, /PAYOUT PENDING|PAYOUT SCHEDULED/);
+    assert.match(paid, /PAYOUT SENT/i);
+    assert.doesNotMatch(paid, /PAYOUT PENDING|PAYOUT SCHEDULED/i);
     if (payoutStatement) assert.match(paid, /COM-1/);
   });
 }

@@ -205,7 +205,7 @@ async function sendPartnerEmail(
   const subject =
     input.linkKind === "trade_onboarding"
       ? PARTNER_ONBOARDING_EMAIL_SUBJECT
-      : `${branding.companyName} — please update your documents`;
+      : `${branding.companyName}: please update your documents`;
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (!resendKey) {

@@ -25,7 +25,7 @@
  * que cita o e-mail cai no ticket do lead, mesmo enviada para o hello@.
  */
 
-import { dataLonga, emailFixfy, horaCurta, saudacao } from "@/lib/emails/fixfy-shell";
+import { dataLonga, emailFixfy, horaCurta, saudacao, type Metrica } from "@/lib/emails/fixfy-shell";
 
 const MOTIVO = "You are receiving this because you started a booking at getfixfy.com.";
 const ASSINATURA = "Victor Braz, Operations Director at Fixfy";
@@ -105,6 +105,8 @@ function montar(d: ReservaAbandonada, m: {
   paragrafos: string[];
   linhas?: Array<[string, string | null | undefined]>;
   destaque?: { linha1: string; riscado?: string | null } | null;
+  /** Só com oferta: código, preço e validade. */
+  metricas?: Metrica[] | null;
   cta: string;
 }): EmailPronto {
   const e = emailFixfy({
@@ -112,6 +114,7 @@ function montar(d: ReservaAbandonada, m: {
     estado: { texto: m.estado, cor: "orange" },
     titulo: m.titulo,
     destaque: m.destaque ?? null,
+    metricas: m.metricas ?? null,
     saudacao: saudacao({ tipo: "b2c", primeiroNome: primeiroNome(d) }),
     paragrafos: m.paragrafos,
     linhas: m.linhas,
@@ -187,6 +190,15 @@ export function email3(d: ReservaAbandonada): EmailPronto {
     estado: `${pct}% off`,
     titulo: "A little help to get it booked",
     destaque: comDesconto ? { linha1: comDesconto, riscado: original } : null,
+    metricas: [
+      { rotulo: "Code", valor: code, sub: `${pct}% off` },
+      { rotulo: "New price", valor: comDesconto ?? "" },
+      {
+        rotulo: "Valid until",
+        valor: d.promo.expiresAt ? dataLonga(d.promo.expiresAt) ?? "" : "",
+        sub: d.promo.expiresAt && horaCurta(d.promo.expiresAt) ? `${horaCurta(d.promo.expiresAt)} UK time` : null,
+      },
+    ],
     paragrafos: [
       `If you’re still considering your ${servico} booking, you can use ${code} for ${pct}% off your eligible booking.`,
       ...(precoEValidade ? [precoEValidade] : []),

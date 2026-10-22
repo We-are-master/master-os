@@ -1,9 +1,8 @@
 import "server-only";
-import { readFileSync } from "fs";
-import { join } from "path";
 import type { CompanyBranding } from "@/lib/pdf/quote-template";
+import { emailFixfy } from "@/lib/emails/fixfy-shell";
+import { passosDoCadastro, saudacaoDoParceiro, semTravessao } from "@/lib/emails/partner-shell";
 
-const DEFAULT_LOGO_URL = "https://www.getfixfy.com/brand/fixfy-primary-white.png";
 const DEFAULT_SUPPORT_EMAIL = "support@getfixfy.com";
 
 export const PARTNER_ONBOARDING_EMAIL_SUBJECT = "Complete your Fixfy Trade profile";
@@ -17,30 +16,6 @@ export interface PartnerOnboardingEmailOptions {
   customMessage?: string;
 }
 
-let cachedTemplate: string | null = null;
-
-function loadPartnerOnboardingRefreshTemplate(): string {
-  if (cachedTemplate) return cachedTemplate;
-  cachedTemplate = readFileSync(
-    join(process.cwd(), "src/lib/email-templates/partner-onboarding-refresh.html"),
-    "utf8",
-  );
-  return cachedTemplate;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function replaceAll(template: string, key: string, value: string): string {
-  return template.split(`{{${key}}}`).join(value);
-}
-
 export function resolvePartnerTradeLabel(partner: {
   trade?: string | null;
   trades?: string[] | null;
@@ -51,36 +26,46 @@ export function resolvePartnerTradeLabel(partner: {
   return partner.trade?.trim() || "General";
 }
 
+/**
+ * O convite / lembrete de completar o cadastro. O modelo antigo
+ * (email-templates/partner-onboarding-refresh.html) fica no repositório, sem uso:
+ * desde 20/10/2026 o e-mail sai na moldura única.
+ */
+export function buildPartnerOnboardingRefreshEmail(
+  branding: CompanyBranding,
+  options: PartnerOnboardingEmailOptions,
+): { html: string; text: string } {
+  const supportEmail = branding.email?.trim() || DEFAULT_SUPPORT_EMAIL;
+  const custom = options.customMessage?.trim() ? semTravessao(options.customMessage.trim()) : null;
+  return emailFixfy({
+    preheader: "Keep your Fixfy partner profile up to date. Log in to your portal to review your documents and details.",
+    estado: { texto: "Partner account update", cor: "navy" },
+    titulo: "Complete your Fixfy Trade profile",
+    passos: passosDoCadastro(0),
+    saudacao: saudacaoDoParceiro(options.contactName),
+    paragrafos: [
+      "Please review your profile, upload the required documents and check your payment details in Fixfy Trade. Up-to-date information helps us review your account and arrange payments.",
+      ...(custom ? [custom] : []),
+      "What to review:",
+      "· Insurance, ID and trade certifications",
+      "· Your contact details",
+      "· Your payment details (managed securely inside your portal)",
+      "Everything is updated inside your Fixfy portal, behind your secure login. We never ask you to send documents or bank details by email.",
+    ],
+    linhas: [
+      ["Your account", options.contactName.trim() || null],
+      ["Email", options.email.trim() || null],
+    ],
+    cta: { label: "Review your profile", url: options.onboardingUrl },
+    linksSecundarios: [{ label: "Already started? Sign in", url: options.signInUrl?.trim() || options.onboardingUrl }],
+    nota: `Staying safe: Fixfy will never ask for your password, bank details or documents by email or over the phone. If a message does, it isn't from us. Forward it to ${supportEmail}.`,
+    letraPequena: ["You're receiving this because you're a registered Fixfy partner."],
+  });
+}
+
 export function buildPartnerOnboardingRefreshEmailHTML(
   branding: CompanyBranding,
   options: PartnerOnboardingEmailOptions,
 ): string {
-  const companyName = branding.companyName?.trim() || "Getfixfy Ltd";
-  const supportEmail = branding.email?.trim() || DEFAULT_SUPPORT_EMAIL;
-  const logoUrl = branding.logoUrl?.trim() || DEFAULT_LOGO_URL;
-  const contactName = options.contactName.trim() || "there";
-
-  const customMessageBlock =
-    options.customMessage && options.customMessage.trim()
-      ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#333;white-space:pre-wrap;">${escapeHtml(options.customMessage.trim())}</p>`
-      : "";
-
-  let html = loadPartnerOnboardingRefreshTemplate();
-  html = replaceAll(html, "logo_url", escapeHtml(logoUrl));
-  // `contactName` is the company-first greeting name from the portal-link sender.
-  html = replaceAll(html, "partner_first_name", escapeHtml(contactName));
-  html = replaceAll(html, "partner_name", escapeHtml(contactName));
-  html = replaceAll(html, "partner_email", escapeHtml(options.email.trim()));
-  html = replaceAll(html, "onboarding_url", escapeHtml(options.onboardingUrl));
-  html = replaceAll(
-    html,
-    "sign_in_url",
-    escapeHtml(options.signInUrl?.trim() || options.onboardingUrl),
-  );
-  html = replaceAll(html, "support_email", escapeHtml(supportEmail));
-  html = replaceAll(html, "company_name", escapeHtml(companyName));
-  html = replaceAll(html, "company_address", escapeHtml(branding.address?.trim() || "124 City Road, London EC1V 2NX, United Kingdom"));
-  html = replaceAll(html, "custom_message_block", customMessageBlock);
-
-  return html;
+  return buildPartnerOnboardingRefreshEmail(branding, options).html;
 }

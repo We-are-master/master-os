@@ -6,6 +6,7 @@
  */
 import { dataLonga, emailFixfy, gbp, saudacao, type Publico } from "./fixfy-shell";
 import { dadosBancariosVerificados, referenciaDeCobranca, semTravessao } from "./billing-email-common";
+import { passosAte, PASSOS_FATURA } from "./faixas-do-email";
 
 export type InstalmentDueEmailInput = {
   publico: Publico;
@@ -36,6 +37,11 @@ export function buildInstalmentDueEmail(d: InstalmentDueEmailInput): { subject: 
     estado: { texto: "Payment due", cor: "red" },
     titulo: "Your next instalment",
     destaque: { linha1: `${valor} due`, linha2: `today, ${due}` },
+    metricas: [
+      { rotulo: "Amount due", valor, sub: `instalment ${d.instalmentNumber} of ${total}` },
+      { rotulo: "Due by", valor: due, sub: "today" },
+    ],
+    passos: passosAte(PASSOS_FATURA, 2),
     saudacao: saudacao(d.publico),
     paragrafos: [
       `A quick reminder that instalment ${d.instalmentNumber} of ${total} for ${service} is due today, ${due}. The amount to pay is ${valor}.`,

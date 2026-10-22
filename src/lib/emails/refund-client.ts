@@ -57,6 +57,10 @@ export function montarEmailDeReembolso(d: DadosDoReembolso): { subject: string; 
     estado: { texto: "Refund issued", cor: "green" },
     titulo: "Your refund is on its way",
     destaque: { linha1: `${valor} refunded`, linha2: `to ${destino}` },
+    metricas: [
+      { rotulo: "Refund", valor, sub: `to ${destino}` },
+      { rotulo: "Issued", valor: emitido ?? "" },
+    ],
     saudacao: saudacao(publico),
     paragrafos: [
       `We’ve issued a refund of ${valor} for ${servico} to ${destino}.`,
