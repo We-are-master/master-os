@@ -93,8 +93,11 @@ export async function POST(req: NextRequest) {
     }
     // Job em espera (reclamação, disputa) não recebe cobrança automática.
     if (inv.job_reference) {
-      const { data: job } = await admin.from("jobs").select("status").eq("reference", inv.job_reference).maybeSingle();
+      const { data: job } = await admin.from("jobs").select("status, card_charge_status").eq("reference", inv.job_reference).maybeSingle();
       if ((job as { status?: string } | null)?.status === "on_hold") { out.push(`${inv.reference}: skip (job on hold)`); continue; }
+      // Cartão recusado já tem a régua própria (dias 1, 3 e 7, cobranca-cartao no Railway):
+      // o lembrete de fatura vencida em cima dela mandava dois e-mails de cobrança (22/10/2026).
+      if ((job as { card_charge_status?: string | null } | null)?.card_charge_status === "refused") { out.push(`${inv.reference}: skip (card declined: the card dunning handles it)`); continue; }
     }
 
     // Só cobra o que o cliente já recebeu (dono, 13/10/2026): fatura que nunca foi enviada não gera lembrete.
