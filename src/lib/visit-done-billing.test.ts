@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { computeVisitDoneAmounts, jobTotalsAfterVisit, visitBilledHours, visitDoneProblems } from "@/lib/visit-done-billing";
-import { visitCountsForPartnerPayout } from "@/lib/job-visit-rollup";
+import { visitCountsForMoney, visitCountsForPartnerPayout } from "@/lib/job-visit-rollup";
 
 const dia = (hm: string) => `2026-10-23T${hm}:00.000Z`;
 
@@ -109,9 +109,10 @@ describe("totais do job depois da visita", () => {
   });
 });
 
-describe("self-bill só depois do Confirm", () => {
-  it("a visita aberta não paga; o Confirm grava status completed e aí paga", () => {
+describe("self-bill: a linha vale desde que a visita nasce; o Confirm põe o valor final na mesma", () => {
+  it("visita aberta já conta no documento e aparece como não feita; o Confirm marca feita", () => {
     const aberta = { status: "scheduled" as const, deleted_at: null };
+    assert.equal(visitCountsForMoney(aberta), true);
     assert.equal(visitCountsForPartnerPayout(aberta), false);
     // O endpoint /visits/complete grava status completed + completed_at junto com os valores finais.
     assert.equal(visitCountsForPartnerPayout({ ...aberta, status: "completed" }), true);

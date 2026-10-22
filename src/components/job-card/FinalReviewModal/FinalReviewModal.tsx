@@ -95,6 +95,8 @@ function useEnvioExterno(
   return { envio, recarregar: () => buscarRef.current() };
 }
 
+const formatGbp = (n: number) => `£${(Math.round((Number(n) || 0) * 100) / 100).toFixed(2)}`;
+
 export function FinalReviewModal(props: FinalReviewModalProps) {
   const {
     isOpen,
@@ -177,6 +179,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
       final: Record<string, unknown> | null;
       partnerCost: number;
       clientPrice: number;
+      status: string;
     }[]
   >([]);
   /** Recarrega a lista de visitas depois de uma remoção. */
@@ -198,6 +201,7 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
               partner: String(v.partner_name ?? ""),
               partnerCost: Number(v.partner_cost ?? 0),
               clientPrice: Number(v.client_price ?? 0),
+              status: String(v.status ?? ""),
               enviado: !!v.report_submitted_at,
               aprovado: !!v.report_approved_at,
               final: (v.final_report as Record<string, unknown> | null) ?? null,
@@ -562,14 +566,27 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
 
               {relatoriosDasVisitas.length ? (
                 <div className="rounded-xl px-3 py-2.5 text-[12px]" style={{ background: "#F7F7FB", border: "0.5px solid #E4E4E7" }}>
-                  <p className="m-0 mb-1 text-[11px] font-semibold" style={{ color: "#020040" }}>Visit reports</p>
+                  {/* Todas as visitas, quem recebe e quanto (dono, 22/10/2026): é o que o
+                      fechamento paga a cada parceiro e cobra do cliente. */}
+                  <p className="m-0 mb-1 text-[11px] font-semibold" style={{ color: "#020040" }}>Visits and who gets paid</p>
+                  <p className="m-0 flex justify-between gap-2 tabular-nums" style={{ color: "#4A4A55" }}>
+                    <span>Visit 1{partnerName ? ` · ${partnerName}` : ""}</span>
+                    <span>
+                      {breakdown
+                        ? `partner ${formatGbp(breakdown.partnerBase + breakdown.partnerExtras + breakdown.partnerMaterials)} · client ${formatGbp(breakdown.clientBase + breakdown.clientExtras)}`
+                        : ""}
+                    </span>
+                  </p>
                   {relatoriosDasVisitas.map((v) => (
-                    <p key={v.id} className="m-0 flex items-center justify-between gap-2" style={{ color: "#4A4A55" }}>
-                      <span>Visit {v.index}{v.partner ? ` · ${v.partner}` : ""}</span>
-                      <span className="flex items-center gap-2">
+                    <p key={v.id} className="m-0 flex items-center justify-between gap-2 tabular-nums" style={{ color: "#4A4A55" }}>
+                      <span>
+                        Visit {v.index}{v.partner ? ` · ${v.partner}` : ""}
                         <span style={{ color: v.aprovado ? "#047857" : v.enviado ? "#020040" : "#B45309" }}>
-                          {v.aprovado ? "Approved" : v.enviado ? "Sent, not approved" : "Missing"}
+                          {" · "}{v.status === "completed" ? "done" : "not done"}, report {v.aprovado ? "approved" : v.enviado ? "sent" : "missing"}
                         </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span>partner {formatGbp(v.partnerCost)} · client {formatGbp(v.clientPrice)}</span>
                         <button
                           type="button"
                           disabled={removendoVisita === v.id}
@@ -583,6 +600,12 @@ export function FinalReviewModal(props: FinalReviewModalProps) {
                       </span>
                     </p>
                   ))}
+                  {breakdown ? (
+                    <p className="m-0 mt-1 flex justify-between gap-2 border-t pt-1 font-semibold tabular-nums" style={{ color: "#020040", borderColor: "#E4E4E7" }}>
+                      <span>Total</span>
+                      <span>partner {formatGbp(breakdown.partnerTotal)} · client {formatGbp(breakdown.clientTotal)}</span>
+                    </p>
+                  ) : null}
                   {faltaRelatorioDeVisita ? (
                     <p className="m-0 mt-1 text-[11px]" style={{ color: "#B45309" }}>
                       A visit has no report. Finalising now is a force approve.

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, JobVisit, SelfBill, SelfBillStatus } from "@/types/database";
-import { plannedVisitLines, visitCountsForPartnerPayout, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
+import { plannedVisitLines, visitCountsForMoney, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
 import {
   officeCancellationPartnerClawbackGbp,
   officeCancellationPartnerPayoutGbp,
@@ -314,16 +314,16 @@ async function loadVisitPayoutLinesForSelfBills(
   }
 
   /**
-   * Visita só paga depois do Done (dono, 22/10/2026), como o job só paga aprovado.
-   * Antes contava qualquer visita não cancelada: a V2 do JOB-9705, ainda marcada,
-   * já somava £140 no SB-14535 da F&V. Ela continua no documento e entra no total
-   * quando der Done (ou o relatório dela chegar).
+   * A visita entra no documento com o valor dela desde que nasce (dono,
+   * 22/10/2026): planejada antes do Done, final depois. A trava é o documento,
+   * que só sai de Draft para Ready quando o job fecha (o approve recusa
+   * documento com visita aberta). Cancelada ou apagada sai.
    */
   const vivas = ((visitRows ?? []) as {
     id: string; job_id: string; self_bill_id: string; visit_index: number;
     partner_cost: number | null; materials_cost: number | null; status: JobVisit["status"];
     deleted_at: string | null; report_submitted_at: string | null;
-  }[]).filter((row) => visitCountsForPartnerPayout(row));
+  }[]).filter((row) => visitCountsForMoney(row));
   if (vivas.length === 0) return [];
 
   /**

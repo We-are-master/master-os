@@ -40,11 +40,12 @@ const montar = (visits: JobVisit[]) =>
   selfBillPanelRows({ primary: SB_FIXFY, visitDocs: [SB_FV], visits, primaryJobLine: 340, primaryPartnerName: "Fixfy" });
 
 describe("painel Partner self-bill do JOB-9705", () => {
-  it("Fixfy (SB-14546 rejeitado) não aparece com £340: é 'no self-bill'", () => {
+  it("Fixfy (SB-14546 rejeitado): mostra os £340 da V1 com aviso, mas nada entra no documento morto", () => {
     const fixfy = montar([V2, V3])[0]!;
     assert.equal(fixfy.reference, "SB-14546");
     assert.equal(fixfy.dead, true);
     assert.equal(fixfy.thisJob, 0);
+    assert.equal(fixfy.jobValue, 340);
     assert.equal(fixfy.visitsLabel, "V1");
   });
 
@@ -54,8 +55,8 @@ describe("painel Partner self-bill do JOB-9705", () => {
     assert.equal(antes.partnerName, "F&V Cleaning");
     assert.equal(antes.visitsLabel, "V2");
     assert.equal(antes.fortnightTotal, 1309.66);
-    // V2 ainda sem Done: está no documento, entra no pagamento depois do Done.
-    assert.equal(antes.thisJob, 0);
+    // V2 ainda sem Done: já vale £140 no documento (Draft até o job fechar); marcada como não feita.
+    assert.equal(antes.thisJob, 140);
     assert.equal(antes.pending, 140);
 
     const depois = montar([{ ...V2, status: "completed" }, V3])[1]!;

@@ -51,12 +51,12 @@ describe("JOB-9705 V3 no self-bill da TM", () => {
     assert.equal(quinzena(V3), "2026-10-12..2026-10-25");
   });
 
-  it("antes do Done a linha é planejada: £35, fora do valor a pagar", () => {
+  it("antes do Done a linha já vale £35 no documento (Draft até o job fechar) e aparece como não feita", () => {
     assert.deepEqual(plannedVisitLines([V3]), [
       { visitId: V3.id, jobId: V3.job_id, visitIndex: 3, scheduledDate: "2026-10-23", amount: 35 },
     ]);
     assert.equal(visitCountsForPartnerPayout(V3), false);
-    assert.deepEqual(jobShareOfVisitSelfBill([V3], SB_TM), { labour: 0, materials: 0, gross: 0, pending: 35, visitIndexes: [3] });
+    assert.deepEqual(jobShareOfVisitSelfBill([V3], SB_TM), { labour: 35, materials: 0, gross: 35, pending: 35, visitIndexes: [3] });
   });
 
   it("o Done atualiza a MESMA linha com o valor final (Fixed £50), sem criar outra", () => {

@@ -3,8 +3,8 @@
  *  - toda visita com parceiro tem a linha dela no self-bill do parceiro desde que
  *    nasce (planejada, com o custo combinado); visita que ficou sem linha (criada
  *    fora do Add visit, como a V3 do JOB-9705) é ligada aqui;
- *  - a linha só vira valor a pagar no Done: documento que somava visita ainda
- *    marcada é recalculado.
+ *  - a linha vale o custo da visita desde que nasce (o documento só vai de Draft
+ *    para Ready quando o job fecha); documento com valor desatualizado é recalculado.
  *
  *   npx tsx scripts/recalcular-selfbills-com-visitas.mts            # ensaio: lista, não grava
  *   npx tsx scripts/recalcular-selfbills-com-visitas.mts --aplicar  # recalcula os que mudam
@@ -46,7 +46,7 @@ for (const v of (semLinha ?? []) as Array<Record<string, unknown> & { id: string
 }
 console.log(`${ligadas} visita(s) ${APLICAR ? "ligadas" : "sem linha no self-bill"}\n`);
 
-// 2. Documentos com visita: valor a pagar só com as visitas feitas.
+// 2. Documentos com visita: o valor guardado bate com as linhas vivas.
 const { data: visitas, error } = await supabase
   .from("job_visits")
   .select("self_bill_id")

@@ -166,7 +166,7 @@ import type {
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
 import { jobShareOfVisitSelfBill, nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
-import { selfBillHeaderSource, selfBillPanelRows, type SelfBillPanelRow } from "@/lib/job-self-bill-panel";
+import { isDeadSelfBill, selfBillHeaderSource, selfBillPanelRows, type SelfBillPanelRow } from "@/lib/job-self-bill-panel";
 import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -675,12 +675,18 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
-/** Documento rejeitado ou cancelado: não paga nada, então não mostra valor. */
+/**
+ * Documento rejeitado ou cancelado: mostra o valor deste job, mas avisa que ele
+ * não está num self-bill vivo (o documento anulado não paga e não volta sozinho).
+ */
 function DeadSelfBillLine({ row }: { row: SelfBillPanelRow }) {
   const motivo = row.status === "rejected" ? "rejected" : "cancelled";
   return (
-    <div className="rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2 text-[11px] text-text-tertiary">
-      No self-bill for this job · {row.reference} {motivo}, nothing to pay
+    <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+      <p className="m-0 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+        {row.reference} was {motivo}: this job is not on a live self-bill, so it will not be paid. Press sync to link it to the partner&apos;s current self-bill.
+      </p>
+      <p className="m-0 shrink-0 text-lg font-bold tabular-nums text-amber-900 dark:text-amber-200">{formatCurrency(row.jobValue)}</p>
     </div>
   );
 }
@@ -756,7 +762,7 @@ function JobDetailSelfBillPanel({
                 </p>
                 {visitPending > 0.005 ? (
                   <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400 mt-0.5">
-                    Planned {formatCurrency(visitPending)} · confirmed when the visit is Done
+                    {formatCurrency(visitPending)} not done yet · Ready when the job is finished
                   </p>
                 ) : null}
               </div>
@@ -787,7 +793,7 @@ function JobDetailSelfBillPanel({
               ) : null}
               {visitPending > 0.005 ? (
                 <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
-                  Planned {formatCurrency(visitPending)}: on this self-bill, paid once the visit is marked Done
+                  {formatCurrency(visitPending)} of this is a visit not done yet. The self-bill moves to Ready when the job is finished.
                 </p>
               ) : null}
               <p className="text-[10px] text-text-tertiary uppercase tracking-wide">This job on the bill</p>
@@ -2305,10 +2311,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const linked = working.reference?.trim()
         ? await listSelfBillsLinkedToJob(working.reference, working.self_bill_id ?? null).catch(() => [])
         : [];
-      const primaryId = working.self_bill_id?.trim() || null;
-      const primary = primaryId
+      let primaryId = working.self_bill_id?.trim() || null;
+      let primary = primaryId
         ? linked.find((b) => b.id === primaryId) ?? (await getSelfBill(primaryId))
         : null;
+      /**
+       * Documento do parceiro da V1 anulado (22/10/2026, JOB-9705: SB-14546 rejeitado
+       * junto com um job de teste da mesma quinzena): o job fica fora de self-bill
+       * vivo e não é pago. Religa uma vez ao documento aberto do parceiro na
+       * quinzena, como já se faz quando o job não tem documento.
+       */
+      const chaveReligar = `${working.id}:dead:${primaryId ?? ""}`;
+      if (primary && isDeadSelfBill(primary) && working.partner_id?.trim() && !autoSelfBillEnsureRef.current.has(chaveReligar)) {
+        autoSelfBillEnsureRef.current.add(chaveReligar);
+        try {
+          const novo = await ensureWeeklySelfBillForJob(working);
+          const refreshed = novo ? await getJob(working.id) : null;
+          if (refreshed?.self_bill_id && refreshed.self_bill_id !== primaryId) {
+            setJob(refreshed);
+            working = refreshed;
+            primaryId = refreshed.self_bill_id;
+            primary = await getSelfBill(primaryId);
+            toast.success(`Visit 1 linked to ${primary?.reference ?? "the partner's current self-bill"}`);
+          }
+        } catch {
+          // Fica o aviso no painel: dá para tentar de novo pelo sync.
+        }
+      }
       setJobSelfBill(primary);
       setVisitSelfBills(linked.filter((b) => b.id !== primaryId));
     } catch {
@@ -2393,6 +2422,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const refreshJobFinance = useCallback(async () => {
     if (!id) return;
     setRefreshingJob(true);
+    // O sync é o gesto de "tenta de novo": libera religar o documento anulado da V1.
+    for (const k of [...autoSelfBillEnsureRef.current]) if (k.startsWith(`${id}:dead:`)) autoSelfBillEnsureRef.current.delete(k);
     try {
       let j = await getJob(id);
       if (!j) return;

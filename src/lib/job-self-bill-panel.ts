@@ -10,9 +10,10 @@ import { jobShareOfVisitSelfBill } from "@/lib/job-visit-rollup";
  * ("SB-14535 · this job £140.00 · fortnight total £1,309.66"). Billing mostra o
  * documento inteiro.
  *
- * Documento rejeitado ou cancelado não paga nada: aparece como "no self-bill",
- * sem valor (a Fixfy, time da casa, tinha SB-14546 rejeitado e o card mostrava
- * £340), e não decide o selo do cabeçalho quando outro parceiro tem documento vivo.
+ * Documento rejeitado ou cancelado não paga nada: o card mostra o valor do job
+ * com o aviso de que ele ficou fora de um self-bill vivo (a V1 da Fixfy, £340,
+ * estava no SB-14546 rejeitado), e o documento morto não decide o selo do
+ * cabeçalho quando outro parceiro tem documento vivo.
  */
 
 /** Documento que não paga mais: rejeitado ou anulado pelo ciclo do job. */
@@ -28,9 +29,11 @@ export type SelfBillPanelRow = {
   partnerName: string;
   /** "V1", "V2, V3"… quais visitas deste job estão no documento. */
   visitsLabel: string;
-  /** O que este job já põe no pagamento (feito/aprovado). */
+  /** O que este job põe no documento (0 quando o documento foi anulado). */
   thisJob: number;
-  /** O que ainda espera o Done de uma visita. */
+  /** O valor deste job, mesmo com o documento anulado (para avisar o que ficou de fora). */
+  jobValue: number;
+  /** Parte de `thisJob` que é visita ainda sem Done. */
   pending: number;
   /** Total do documento da quinzena (texto secundário). */
   fortnightTotal: number;
@@ -60,12 +63,14 @@ export function selfBillPanelRows(args: {
     const parte = jobShareOfVisitSelfBill(args.visits, sb.id);
     const dead = isDeadSelfBill(sb);
     const indices = [...(comV1 ? [1] : []), ...parte.visitIndexes];
+    const valor = round2(base + parte.gross);
     return {
       selfBillId: sb.id,
       reference: sb.reference,
       partnerName: sb.partner_name?.trim() || nome?.trim() || "Partner",
       visitsLabel: indices.map((i) => `V${i}`).join(", "),
-      thisJob: dead ? 0 : round2(base + parte.gross),
+      thisJob: dead ? 0 : valor,
+      jobValue: valor,
       pending: dead ? 0 : parte.pending,
       fortnightTotal: round2(Number(sb.net_payout ?? 0)),
       dead,

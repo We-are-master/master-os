@@ -2203,7 +2203,7 @@ export function SelfBillDetailDrawer({
             {planejadas.length > 0 ? (
               <div className="rounded-[10px] border border-amber-200 bg-amber-50/70 px-3 py-2 text-[12px] dark:border-amber-500/30 dark:bg-amber-500/10">
                 <p className="m-0 font-semibold tabular-nums text-amber-900 dark:text-amber-200">
-                  Planned {formatCurrency(planejadas.reduce((n, l) => n + l.amount, 0))} · not in the payout until the visit is Done
+                  Not done yet {formatCurrency(planejadas.reduce((n, l) => n + l.amount, 0))} · included above, Ready only when the job is finished
                 </p>
                 {planejadas.map((l) => (
                   <p key={l.visitId} className="m-0 flex justify-between gap-2 tabular-nums text-amber-900/80 dark:text-amber-200/80">

@@ -177,9 +177,9 @@ describe("self-bill da visita no card do job: só a parte deste job", () => {
   // SB-14535 (F&V Cleaning, quinzena 12-25/10) somava £1,309.66: 9 jobs dela + a V2 do JOB-9705.
   const SB_FV = "83919054-c56d-4ffa-b20c-c30b7433a90e";
 
-  it("JOB-9705: a V2 ainda marcada fica pendente (£140 depois do Done), não os £1,309.66 da quinzena", () => {
+  it("JOB-9705: a V2 ainda marcada já vale £140 no documento (não os £1,309.66 da quinzena), marcada como não feita", () => {
     const parte = jobShareOfVisitSelfBill([{ ...V2, self_bill_id: SB_FV }, { ...V3, self_bill_id: null }], SB_FV);
-    assert.deepEqual(parte, { labour: 0, materials: 0, gross: 0, pending: 140, visitIndexes: [2] });
+    assert.deepEqual(parte, { labour: 140, materials: 0, gross: 140, pending: 140, visitIndexes: [2] });
   });
 
   it("depois do Done a V2 conta £140", () => {
@@ -202,15 +202,15 @@ describe("self-bill da visita no card do job: só a parte deste job", () => {
   });
 });
 
-describe("visita só paga o parceiro depois do Done", () => {
-  it("marcada ou em andamento não paga; feita paga; relatório enviado conta como feita", () => {
+describe("visita feita (só marca; o valor vale desde que a visita nasce)", () => {
+  it("marcada ou em andamento não está feita; Done ou relatório enviado está", () => {
     assert.equal(visitCountsForPartnerPayout({ status: "scheduled", deleted_at: null }), false);
     assert.equal(visitCountsForPartnerPayout({ status: "in_progress", deleted_at: null }), false);
     assert.equal(visitCountsForPartnerPayout({ status: "completed", deleted_at: null }), true);
     assert.equal(visitCountsForPartnerPayout({ status: "in_progress", deleted_at: null, report_submitted_at: "2026-10-22T10:00:00Z" }), true);
   });
 
-  it("cancelada ou apagada nunca paga, mesmo feita", () => {
+  it("cancelada ou apagada nunca conta como feita", () => {
     assert.equal(visitCountsForPartnerPayout({ status: "cancelled", deleted_at: null, report_submitted_at: "x" }), false);
     assert.equal(visitCountsForPartnerPayout({ status: "completed", deleted_at: "2026-10-22T00:00:00Z" }), false);
   });

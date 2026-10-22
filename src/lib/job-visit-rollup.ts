@@ -228,12 +228,12 @@ export function nextVisitLine(
 }
 
 /**
- * A visita entra no PAGAMENTO do parceiro só depois do Done (dono, 22/10/2026),
- * igual ao job, que só entra aprovado. Relatório enviado também é visita feita
- * (o envio fecha a visita). Marcada, em andamento ou cancelada não paga.
+ * A visita já está FEITA (Done, ou relatório enviado, que fecha a visita).
  *
- * Não confundir com `visitCountsForMoney`, que é o total do JOB (cliente e margem):
- * ali a visita marcada já soma, porque é trabalho combinado.
+ * Não decide dinheiro: desde 22/10/2026 a visita entra no self-bill com o valor
+ * dela assim que nasce (`visitCountsForMoney`), e a trava é o documento só sair
+ * de Draft para Ready quando o job fecha. Isto separa a linha "ainda não feita"
+ * da feita, para mostrar.
  */
 export function visitCountsForPartnerPayout(
   visit: Pick<JobVisit, "deleted_at" | "status"> & { report_submitted_at?: string | null },
@@ -255,17 +255,17 @@ type VisitOnBill = Pick<JobVisit, "self_bill_id" | "partner_cost" | "materials_c
  * mesmo número até a quinzena fechar); parceiro diferente, outro documento. O
  * card do job mostra só o que este job põe em cada um; o total fica em Billing.
  *
- * `gross` é o que já conta no pagamento (visitas feitas); `pending` é o das
- * visitas ainda por fazer, que entra quando derem Done.
+ * `gross` é o valor deste job no documento (visitas feitas e ainda não feitas);
+ * `pending` é a parte das que ainda não tiveram Done (já incluída em `gross`).
  */
 export function jobShareOfVisitSelfBill(
   visits: readonly VisitOnBill[],
   selfBillId: string,
 ): { labour: number; materials: number; gross: number; pending: number; visitIndexes: number[] } {
   const noDocumento = visits.filter((v) => v.self_bill_id === selfBillId && visitCountsForMoney(v));
-  const feitas = noDocumento.filter(visitCountsForPartnerPayout);
-  const labour = round2(feitas.reduce((s, v) => s + money(v.partner_cost), 0));
-  const materials = round2(feitas.reduce((s, v) => s + money(v.materials_cost), 0));
+  // Valor de todas as visitas vivas no documento: feita ou ainda não.
+  const labour = round2(noDocumento.reduce((s, v) => s + money(v.partner_cost), 0));
+  const materials = round2(noDocumento.reduce((s, v) => s + money(v.materials_cost), 0));
   const pending = round2(
     noDocumento.filter((v) => !visitCountsForPartnerPayout(v)).reduce((s, v) => s + money(v.partner_cost) + money(v.materials_cost), 0),
   );
