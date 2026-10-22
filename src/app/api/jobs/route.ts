@@ -63,6 +63,16 @@ import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 import { autoAssignGate, suggestedPartnerMarginPctFor } from "@/lib/auto-assign-gate";
 import { decideApiChargeOnCreate, loadChargeAccount, parseChargeOnCreate } from "@/lib/charge-on-create";
 import { chargeJobOnCreateServer, type ChargeOnCreateResult } from "@/lib/ensure-job-invoice-server";
+import { processoDaConta } from "@/lib/processo/conta";
+import {
+  acharClienteEntreContas,
+  acharJobExistente,
+  deduplicarPorReportLink,
+  camposDaContaDoJob,
+  ehExpress as contaEhExpress,
+  precoFixoDoJob,
+} from "@/lib/processo/plataformas";
+import { mandarBoasVindasDoExpress } from "@/lib/processo/express-boas-vindas";
 
 /** Final fallback margin when company_settings.frontend_setup is unreadable. */
 const AUTO_PARTNER_MARGIN_PCT_FALLBACK = 40;
@@ -420,6 +430,10 @@ export async function POST(req: NextRequest) {
   let createdZendeskEncodedId: string | null = null;
   let zendeskCorrections: string[] = [];
   const reportLinkIn    = nullish(body.report_link);
+  // Processos v2 (22/10/2026): só valem quando a conta está no v2 (ver regrasDaConta abaixo).
+  const sourceIn        = nullish(body.source);
+  const quoteIdIn       = str(body.quote_id);
+  const partnerIdIn     = str(body.partner_id);
   /**
    * As fotos do trabalho, vindas de quem viu o pedido primeiro.
    *
@@ -583,6 +597,11 @@ export async function POST(req: NextRequest) {
   // ─── DB ──────────────────────────────────────────────────────────────
   const supabase = createServiceClient();
 
+  // O processo da conta (plano de 22/10/2026). Sem leitura ou fora do v2, tudo
+  // abaixo segue exatamente como antes.
+  const regrasDaConta = await processoDaConta(supabase, accountId).catch(() => null);
+  const contaV2 = regrasDaConta?.v2 === true;
+
   // Margin target — the company-wide percentage staff configured in
   // Settings → Setup → Margin Targets. Drives both the fixed-mode partner
   // cost auto-default and the hourly partner-rate fallback (when the catalog
@@ -688,6 +707,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Housekeep v2: o mesmo booking (card) chega em dois e-mails, e cada e-mail
+  // vira um ticket. Com ticket novo e o mesmo report_link, devolve o job que já
+  // existe em vez de criar o segundo.
+  if (ticketId && deduplicarPorReportLink({ ticketId, reportLink: reportLinkIn, contaId: accountId, v2: contaV2 })) {
+    const dup = await acharJobExistente(supabase, { ticketId: null, reportLink: reportLinkIn, porReportLink: true });
+    if (dup) {
+      return NextResponse.json(
+        {
+          id:          dup.id,
+          reference:   dup.reference,
+          status:      dup.status,
+          action:      "existing",
+          matched_by:  "report_link",
+          report_link: dup.report_link ?? buildReportLink(String(dup.reference)),
+        },
+        { status: 200 },
+      );
+    }
+  }
+
   // Conversion path: a QUOTE for this ticket already exists (created by an
   // earlier Zendesk macro). Carry over its client_id and mark it converted
   // once the job is in.
@@ -703,6 +742,28 @@ export async function POST(req: NextRequest) {
         id:       existingQuote.id as string,
         clientId: (existingQuote.client_id as string | null) ?? null,
       };
+    }
+  }
+  // v2: a quote do pedido pode estar em OUTRO ticket (Housekeep cota num
+  // e-mail e confirma noutro). Quem chama manda o id; só quote aberta converte.
+  let quoteVinculadaPorId = false;
+  let quoteIdIgnorado = false;
+  if (!convertingFromQuote && contaV2 && quoteIdIn && isValidUUID(quoteIdIn)) {
+    const { data: q } = await supabase
+      .from("quotes")
+      .select("id, client_id, status")
+      .eq("id", quoteIdIn)
+      .is("deleted_at", null)
+      .maybeSingle();
+    const st = String((q as { status?: string } | null)?.status ?? "");
+    if (q && st !== "converted_to_job" && st !== "rejected") {
+      convertingFromQuote = {
+        id:       (q as { id: string }).id,
+        clientId: ((q as { client_id?: string | null }).client_id ?? null),
+      };
+      quoteVinculadaPorId = true;
+    } else {
+      quoteIdIgnorado = true;
     }
   }
 
@@ -759,6 +820,7 @@ export async function POST(req: NextRequest) {
       console.info("[api/jobs] Zendesk ingest corrections:", zendeskCorrections.join(", "));
     }
   }
+  if (quoteIdIgnorado) zendeskCorrections.push("quote_id_ignored_not_open");
 
   // A chave única do auto assign: ligada, TODO job injetado nasce candidato —
   // o portão (completude + piso de margem) decide logo abaixo se entra de
@@ -827,6 +889,29 @@ export async function POST(req: NextRequest) {
   // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
   let resolvedClientFullName = clientName;
+  // v2: quem já veio por uma plataforma e agora contrata direto (ou o
+  // contrário) continua sendo UM cliente. E-mail ou telefone (últimos 10
+  // dígitos) provam, em qualquer conta; nome sozinho nunca junta. O cadastro
+  // achado não muda de conta: a conta que contrata vai em jobs.account_id.
+  if (!clientId && contaV2) {
+    try {
+      const achado = await acharClienteEntreContas(supabase, {
+        email: clientEmail,
+        telefone: clientPhone,
+        nome: clientName,
+        contaId: accountId,
+        nomesProibidos: [accountCompanyName, "Housekeep", "Fantastic Services", "Checkatrade", "Fixfy", "Fixfy Team"],
+      });
+      if (achado) {
+        clientId = achado.id;
+        resolvedClientFullName = nomeProprio(achado.full_name ?? "") || achado.full_name || clientName;
+        if (achado.source_account_id !== accountId) zendeskCorrections.push("client_reused_from_other_account");
+      }
+    } catch (e) {
+      // Busca entre contas é ajuda, não portão: falhou, segue pelo resolvedor de sempre.
+      console.error("[api/jobs] cross-account client lookup failed:", e instanceof Error ? e.message : e);
+    }
+  }
   if (!clientId) {
     try {
       const resolved = await resolveClientIdForZendeskJob(supabase, {
@@ -914,6 +999,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // O que vai para jobs.client_price / partner_cost. Null só no Express v2 sem o valor.
+  let clientPriceGravado: number | null = clientPrice;
+  let partnerCostGravado: number | null = partnerCost;
   if (rateType === "fixed") {
     if (catalogServiceIdIn && isValidUUID(catalogServiceIdIn)) {
       resolvedCatalogServiceId = catalogServiceIdIn;
@@ -945,8 +1033,22 @@ export async function POST(req: NextRequest) {
       partnerCost,
       targetMarginPct: suggestedPartnerMarginPctFor(serviceType, targetMarginPct),
     });
+    // Express v2: sem custo do parceiro não se estima nada (pendência partner_cost_missing),
+    // e preço que não veio fica nulo (price_missing). Fora disso, o de sempre.
+    const fixoDaConta = precoFixoDoJob({
+      contaId: accountId,
+      v2: contaV2,
+      clientPrice,
+      clientPriceSent,
+      partnerCost,
+      partnerCostSent,
+      partnerCostEstimado: fixedResolved.partnerCost,
+    });
     clientPrice = fixedResolved.clientPrice;
     partnerCost = fixedResolved.partnerCost;
+    if (fixoDaConta.partnerCost === null) partnerCost = 0;
+    clientPriceGravado = fixoDaConta.clientPrice;
+    partnerCostGravado = fixoDaConta.partnerCost;
   }
 
   // ─── Portão do auto assign (Fase 2) ─────────────────────────────────
@@ -1020,7 +1122,9 @@ export async function POST(req: NextRequest) {
   // so the percentage is the same).
   const margin = rateType === "hourly"
     ? (marginPercent(hourlyClientRate, hourlyPartnerRate) ?? 0)
-    : (marginPercent(clientPrice, partnerCost) ?? 0);
+    : clientPriceGravado === null || partnerCostGravado === null
+      ? 0
+      : (marginPercent(clientPrice, partnerCost) ?? 0);
 
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
@@ -1029,8 +1133,10 @@ export async function POST(req: NextRequest) {
     client_name:        resolvedClientFullName,
     property_address:   propertyAddress,
     status,
-    client_price:       rateType === "hourly" ? 0 : clientPrice,
-    partner_cost:       rateType === "hourly" ? 0 : partnerCost,
+    // A conta que contrata, sempre escrita (o trigger da 342 fica de rede); origem só no v2.
+    ...camposDaContaDoJob(accountId, contaV2, sourceIn),
+    client_price:       rateType === "hourly" ? 0 : clientPriceGravado,
+    partner_cost:       rateType === "hourly" ? 0 : partnerCostGravado,
     materials_cost:     0,
     margin_percent:     margin,
     scheduled_date:     isoDate,
@@ -1120,6 +1226,24 @@ export async function POST(req: NextRequest) {
     delete jobRow.promotion_amount;
     const aviso = `FIXFY PROMOTION £${promotionAmount.toFixed(2)} paid on the customer's behalf: the customer owes the price less this (apply migration 313 to store it).`;
     jobRow.internal_notes = jobRow.internal_notes ? `${aviso}\n${String(jobRow.internal_notes)}` : aviso;
+    ({ data: inserted, error: insErr } = await supabase
+      .from("jobs")
+      .insert(jobRow)
+      .select("id, reference, status")
+      .single());
+  }
+  /**
+   * Rede das colunas novas (342/343) e do custo nulo: o job entra assim mesmo.
+   * Sem account_id o trigger põe a conta do cliente; sem source fica sem origem;
+   * custo/preço nulo recusado vira 0 (a pendência aparece igual).
+   */
+  for (let tentativa = 0; insErr && tentativa < 3; tentativa++) {
+    if (isSupabaseMissingColumnError(insErr, "account_id") && "account_id" in jobRow) delete jobRow.account_id;
+    else if ("source" in jobRow && (isSupabaseMissingColumnError(insErr, "source") || (insErr.code === "23503" && /source/i.test(insErr.message ?? "")))) delete jobRow.source;
+    else if (insErr.code === "23502" && (jobRow.partner_cost === null || jobRow.client_price === null)) {
+      if (jobRow.partner_cost === null) jobRow.partner_cost = 0;
+      if (jobRow.client_price === null) jobRow.client_price = 0;
+    } else break;
     ({ data: inserted, error: insErr } = await supabase
       .from("jobs")
       .insert(jobRow)
@@ -1378,6 +1502,25 @@ export async function POST(req: NextRequest) {
     }).catch((e) => ({ kind: "falhou" as const, motivo: String(e) }));
     if (r.kind === "falhou") zendeskCorrections.push("express_whatsapp_failed");
   }
+  // Express v2: e-mail de boas-vindas com os dados do booking, no ticket do job
+  // (reserva express-welcome-email:<jobId>). Esperado, nunca lança.
+  if (contaV2 && contaEhExpress(accountId) && clientEmail && ticketId) {
+    const r = await mandarBoasVindasDoExpress(supabase, {
+      jobId: String(inserted.id),
+      referencia: String(inserted.reference ?? ""),
+      contaId: accountId,
+      ticketId: Number(ticketId) || null,
+      clienteId: clientId,
+      nome: clientName,
+      email: clientEmail,
+      servico: titleResolved,
+      dataIso: isoDate,
+      inicioIso: startIso,
+      fimIso: endIso,
+      endereco: propertyAddress,
+    }, regrasDaConta);
+    if (r.kind === "falhou") zendeskCorrections.push("express_welcome_email_failed");
+  }
 
   // ─── Zendesk dispatch (depois da resposta; idempotent) ───────────────
   // Sync ticket custom_status_id and post the customer-facing booking
@@ -1423,7 +1566,19 @@ export async function POST(req: NextRequest) {
   // serviço, não há o que leiloar. Fica atrás de PARTNER_ROUTING_ENABLED
   // porque a consequência é email saindo para parceiro de verdade.
   let routedPartner: { partner_id: string; email_sent: boolean } | undefined;
-  if (partnerRoutingEnabled() && !dataAConfirmar) {
+  // v2: a quote ligada já tem o parceiro aceito para esta data (quem chama
+  // confere, ver zendesk-quoter subirJobBooked). O job nasce com ele, Scheduled,
+  // e o parceiro recebe o pedido de confirmação de sempre.
+  if (contaV2 && convertingFromQuote && partnerIdIn && isValidUUID(partnerIdIn) && !dataAConfirmar) {
+    const r = await assignRoutedPartner(supabase, { jobId: String(inserted.id), partnerId: partnerIdIn });
+    if (r.assigned) {
+      routedPartner = { partner_id: partnerIdIn, email_sent: Boolean(r.emailSent) };
+      (inserted as { status: string }).status = "scheduled";
+    } else {
+      zendeskCorrections.push(`quote_partner_not_assigned:${r.reason ?? "?"}`);
+    }
+  }
+  if (partnerRoutingEnabled() && !dataAConfirmar && !routedPartner) {
     const rota = await routePartnerForJob(supabase, {
       catalogServiceId: resolvedCatalogServiceId ?? catalogServiceIdIn,
       scheduledDate: isoDate,
@@ -1475,7 +1630,15 @@ export async function POST(req: NextRequest) {
   // aqui nunca desfaz o job: volta sent=false com o motivo.
   let chargeOnCreate: ChargeOnCreateResult | undefined;
   {
-    const chargeAccount = await loadChargeAccount(supabase, clientId).catch(() => null);
+    // v2: a conta que contrata é a do job (o cliente pode ter vindo de outra conta).
+    const chargeAccount = contaV2
+      ? await supabase
+          .from("accounts")
+          .select("company_name, collection_mode, email_include_invoice_on_final")
+          .eq("id", accountId)
+          .maybeSingle()
+          .then((r) => (r.data as Awaited<ReturnType<typeof loadChargeAccount>>) ?? null, () => null)
+      : await loadChargeAccount(supabase, clientId).catch(() => null);
     const decision = decideApiChargeOnCreate({
       request: chargeRequestIn,
       account: chargeAccount,
@@ -1506,6 +1669,7 @@ export async function POST(req: NextRequest) {
       action:      convertingFromQuote ? "converted_from_quote" : "created",
       report_link: reportLinkIn ?? buildReportLink(String(inserted.reference)),
       ...(convertingFromQuote ? { from_quote_id: convertingFromQuote.id } : {}),
+      ...(quoteVinculadaPorId ? { quote_linked_by_id: true } : {}),
       ...(autoAssign ? { matched_partners_count: matchedPartnerIds.length } : {}),
       ...(routedPartner ? { routed_partner: routedPartner } : {}),
       ...(noMatchingPartners ? { warning: "no_matching_partners" } : {}),
