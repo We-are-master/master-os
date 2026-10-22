@@ -226,3 +226,26 @@ export function nextVisitLine(
 
   return upcoming[0]?.line ?? null;
 }
+
+/**
+ * A parte DESTE job num self-bill de visita (22/10/2026).
+ *
+ * O self-bill do parceiro da visita é o documento da quinzena dele, com todos os
+ * jobs que ele fez no período (SB-14535 da F&V tinha 9 jobs + a V2 do JOB-9705 =
+ * £1,309.66). O card do job mostra só o que este job põe no documento: as visitas
+ * dele ligadas àquele documento. O total da quinzena fica em Billing.
+ */
+export function jobShareOfVisitSelfBill(
+  visits: readonly Pick<JobVisit, "self_bill_id" | "partner_cost" | "materials_cost" | "status" | "deleted_at" | "visit_index">[],
+  selfBillId: string,
+): { labour: number; materials: number; gross: number; visitIndexes: number[] } {
+  const doDocumento = visits.filter((v) => v.self_bill_id === selfBillId && visitCountsForMoney(v));
+  const labour = round2(doDocumento.reduce((s, v) => s + money(v.partner_cost), 0));
+  const materials = round2(doDocumento.reduce((s, v) => s + money(v.materials_cost), 0));
+  return {
+    labour,
+    materials,
+    gross: round2(labour + materials),
+    visitIndexes: doDocumento.map((v) => v.visit_index).sort((a, b) => a - b),
+  };
+}

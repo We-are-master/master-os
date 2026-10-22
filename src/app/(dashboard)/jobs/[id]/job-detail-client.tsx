@@ -165,7 +165,7 @@ import type {
   AuditLog,
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
-import { nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { jobShareOfVisitSelfBill, nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
 import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -10448,25 +10448,28 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       <JobDetailSelfBillPanel sb={jobSelfBill} job={job} jobLineGross={partnerCashOutJobLine} />
                     </div>
                   ) : null}
-                  {visitSelfBills.map((sb) => (
-                    <div key={sb.id} className="space-y-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        {sb.partner_name?.trim() || "Visit partner"}
-                      </p>
-                      {/* Linha do documento da visita: o valor dele, não o do job. */}
-                      <JobDetailSelfBillPanel
-                        sb={sb}
-                        job={job}
-                        jobLineGross={Number(sb.net_payout ?? 0)}
-                        visitScope={{
-                          label: sb.partner_name?.trim() || "Visit partner",
-                          // O documento da visita já guarda os próprios totais.
-                          labour: Number(sb.job_value ?? 0),
-                          materials: Number(sb.materials ?? 0),
-                        }}
-                      />
-                    </div>
-                  ))}
+                  {visitSelfBills.map((sb) => {
+                    // Só o que ESTE job põe no documento (as visitas dele); a quinzena inteira fica em Billing.
+                    const parte = jobShareOfVisitSelfBill(jobVisits, sb.id);
+                    return (
+                      <div key={sb.id} className="space-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                          {sb.partner_name?.trim() || "Visit partner"}
+                          {parte.visitIndexes.length ? ` · ${parte.visitIndexes.map((i) => `V${i}`).join(", ")}` : ""}
+                        </p>
+                        <JobDetailSelfBillPanel
+                          sb={sb}
+                          job={job}
+                          jobLineGross={parte.gross}
+                          visitScope={{
+                            label: sb.partner_name?.trim() || "Visit partner",
+                            labour: parte.labour,
+                            materials: parte.materials,
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>

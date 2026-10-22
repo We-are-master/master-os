@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rollUpJobVisits, rollupFromStoredColumns } from "@/lib/job-visit-rollup";
+import { jobShareOfVisitSelfBill, rollUpJobVisits, rollupFromStoredColumns } from "@/lib/job-visit-rollup";
 import { summariseVisits } from "@/services/job-visits";
 import { jobListClientAmount, jobListMargin, jobListPartnerCost, sumJobsMoney } from "@/lib/job-financials";
 import { uniqueRowPerJob, visitAsJobRow, type VisitWithParent } from "@/lib/job-visit-day-rows";
@@ -169,5 +169,29 @@ describe("self-bill por visita, sem contar duas vezes", () => {
     const linha = visitAsJobRow({ ...V3, parent: job } as VisitWithParent);
     assert.equal(job.partner_cost, 480);
     assert.equal(linha.__visit_money.partner_cost, 35);
+  });
+});
+
+describe("self-bill da visita no card do job: só a parte deste job", () => {
+  // SB-14535 (F&V Cleaning, quinzena 12-25/10) somava £1,309.66: 9 jobs dela + a V2 do JOB-9705.
+  const SB_FV = "83919054-c56d-4ffa-b20c-c30b7433a90e";
+
+  it("JOB-9705 mostra £140 (a V2) no documento da F&V, não os £1,309.66 da quinzena", () => {
+    const parte = jobShareOfVisitSelfBill([{ ...V2, self_bill_id: SB_FV }, { ...V3, self_bill_id: null }], SB_FV);
+    assert.deepEqual(parte, { labour: 140, materials: 0, gross: 140, visitIndexes: [2] });
+  });
+
+  it("duas visitas do mesmo job no mesmo documento somam; cancelada ou apagada não", () => {
+    const visitas = [
+      { ...V2, self_bill_id: SB_FV },
+      { ...V3, self_bill_id: SB_FV, materials_cost: 12.5 },
+      { ...V3, id: "x", visit_index: 4, self_bill_id: SB_FV, status: "cancelled" as const },
+      { ...V3, id: "y", visit_index: 5, self_bill_id: SB_FV, deleted_at: "2026-10-22T00:00:00Z" },
+    ];
+    assert.deepEqual(jobShareOfVisitSelfBill(visitas, SB_FV), { labour: 175, materials: 12.5, gross: 187.5, visitIndexes: [2, 3] });
+  });
+
+  it("visita de outro documento não entra", () => {
+    assert.equal(jobShareOfVisitSelfBill([{ ...V2, self_bill_id: "outro" }], SB_FV).gross, 0);
   });
 });
