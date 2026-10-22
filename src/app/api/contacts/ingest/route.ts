@@ -259,6 +259,13 @@ async function contatarPeloHarvey(ids: string[], contaId: string | null) {
     if (d.kind === "email") {
       const e = await mandarPrimeiroContatoPorEmail(d.contato);
       console.log(`[contacts/ingest] harvey e-mail ${d.contato.nome}: ${e.kind}${e.kind === "falhou" ? ` (${e.motivo})` : ""}`);
+      // Lead só com e-mail também recebe o Welcome to Fixfy (dono, 22/10/2026). Uma vez por pessoa.
+      const { mandarBoasVindasDoLead, dependenciasDasBoasVindas } = await import("@/lib/processo/boas-vindas-lead");
+      const bv = await mandarBoasVindasDoLead(
+        { ticketId: null, clienteId: r.id, telefone: null, leadExterno: null, servico: "", nome: r.full_name ?? null, email: r.email ?? null, contaId },
+        dependenciasDasBoasVindas(sb),
+      );
+      if (bv.enviado) console.log(`[contacts/ingest] welcome ${r.id}: ${bv.motivo}`);
       continue;
     }
     const res = await mandarPrimeiroContato(sb, d.contato);

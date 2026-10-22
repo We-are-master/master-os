@@ -7,7 +7,6 @@ import {
 } from "./b2b-humano";
 import { chaveDoB2bCotar, pedeCotacaoPelaMacro, varrerB2bCotar, type DependenciasDoB2bCotar, type TicketDaMacro } from "./b2b-cotar";
 import { chaveDasBoasVindas, decidirBoasVindas, mandarBoasVindasDoLead, type DependenciasDasBoasVindas, type LeadParaBoasVindas } from "./boas-vindas-lead";
-import { emailDeBoasVindasDoLead, paragrafosDeBoasVindas } from "./textos-lead";
 import { decidirAviso, TAG_AVISO_COTANDO } from "@/lib/zendesk-quoter/aviso-de-cotacao";
 import { notaDaAcao } from "@/lib/fila-de-acao";
 import { chipsPorJob, idsSegurosParaFiltro, motivoPoeNaFila, MAX_IDS_COM_MOTIVO } from "@/lib/pendencias/chips";
@@ -152,15 +151,16 @@ describe("macro Get partner quotes (b2b_cotar)", () => {
 
 const LEAD: LeadParaBoasVindas = { ticketId: 900, clienteId: "c1", telefone: "+447700900123", leadExterno: "CT-123", servico: "Plumbing", nome: "Sarah" };
 
-function mundoDasBoasVindas(o: { janela?: boolean; regras?: RegrasDoProcesso | null; requester?: string | null } = {}) {
+function mundoDasBoasVindas(o: { janela?: boolean; regras?: RegrasDoProcesso | null; bloqueado?: boolean; jaComprou?: boolean } = {}) {
   const reservas = new Map<string, string>();
-  const enviados: Array<{ ticket: number; html: string }> = [];
+  const enviados: Array<{ para: string; html: string; assunto: string }> = [];
   let leituras = 0;
   const deps: DependenciasDasBoasVindas = {
     regras: async () => (o.regras === undefined ? directV2() : o.regras),
     janelaAberta: async () => o.janela ?? true,
-    emailDoCliente: async () => { leituras++; return "sarah@example.com"; },
-    requesterDoTicket: async () => { leituras++; return o.requester === undefined ? "Sarah@Example.com" : o.requester; },
+    emailDoCliente: async () => { leituras++; return "Sarah@Example.com"; },
+    bloqueado: async () => o.bloqueado ?? false,
+    jaComprou: async () => o.jaComprou ?? false,
     reservar: async (chave) => {
       if (reservas.get(chave) === "sent") return { reservado: false, motivo: "already sent" };
       reservas.set(chave, "reserved");
@@ -168,60 +168,48 @@ function mundoDasBoasVindas(o: { janela?: boolean; regras?: RegrasDoProcesso | n
     },
     confirmar: async (chave) => { reservas.set(chave, "sent"); },
     falhou: async (chave) => { reservas.set(chave, "failed"); },
-    comentar: async (ticket, html) => { enviados.push({ ticket, html }); },
+    linkDeSaida: () => "https://app.getfixfy.com/api/email/unsubscribe?e=x",
+    enviar: async (para, e) => { enviados.push({ para, html: e.html, assunto: e.assunto }); return "re_1"; },
   };
   return { deps, reservas, enviados, leituras: () => leituras };
 }
 
-describe("e-mail de boas-vindas ao lead", () => {
-  it("sai uma vez por lead", async () => {
+describe("Welcome to Fixfy ao lead novo", () => {
+  it("sai uma vez por pessoa, pelo e-mail", async () => {
     const m = mundoDasBoasVindas();
-    const r1 = await mandarBoasVindasDoLead(LEAD, m.deps);
-    assert.equal(r1.enviado, true);
-    const r2 = await mandarBoasVindasDoLead(LEAD, m.deps);
-    assert.equal(r2.enviado, false);
+    assert.equal((await mandarBoasVindasDoLead(LEAD, m.deps)).enviado, true);
+    assert.equal((await mandarBoasVindasDoLead({ ...LEAD, leadExterno: "OUTRO" }, m.deps)).enviado, false);
     assert.equal(m.enviados.length, 1);
-    assert.equal(m.reservas.get("lead-welcome-email:CT-123"), "sent");
-    assert.match(m.enviados[0]!.html, /plumbing/);
+    assert.equal(m.enviados[0]!.para, "sarah@example.com");
+    assert.equal(m.reservas.get("welcome:sarah@example.com"), "sent");
+    assert.equal(m.enviados[0]!.assunto, "Welcome to Fixfy: 10% off your first booking");
+    assert.match(m.enviados[0]!.html, /Hi Sarah,/);
+    assert.match(m.enviados[0]!.html, /WELCOME10/);
+    assert.doesNotMatch(m.enviados[0]!.html, /\{\{|<!--/);
   });
   it("respeita a janela de envio", async () => {
     const m = mundoDasBoasVindas({ janela: false });
-    const r = await mandarBoasVindasDoLead(LEAD, m.deps);
-    assert.deepEqual(r, { enviado: false, motivo: "outside sending hours" });
-    assert.equal(m.enviados.length, 0);
+    assert.deepEqual(await mandarBoasVindasDoLead(LEAD, m.deps), { enviado: false, motivo: "outside sending hours" });
     assert.equal(m.reservas.size, 0, "fora do horário nem reserva");
   });
   it("conta fora do v2 direct: nada lido, nada enviado", async () => {
     const m = mundoDasBoasVindas({ regras: comV2(() => regrasDoProcesso("direct", {})) });
-    const r = await mandarBoasVindasDoLead(LEAD, m.deps);
-    assert.equal(r.enviado, false);
+    assert.equal((await mandarBoasVindasDoLead(LEAD, m.deps)).enviado, false);
     assert.equal(m.leituras(), 0);
   });
-  it("ticket com requester da casa (lead sem e-mail no ticket) não recebe comentário público", async () => {
-    const m = mundoDasBoasVindas({ requester: "team@getfixfy.com" });
-    assert.equal((await mandarBoasVindasDoLead(LEAD, m.deps)).motivo, "ticket requester is not the customer");
+  it("não manda para quem descadastrou nem para quem já comprou", async () => {
+    assert.equal((await mandarBoasVindasDoLead(LEAD, mundoDasBoasVindas({ bloqueado: true }).deps)).motivo, "email is on the marketing block list");
+    assert.equal((await mandarBoasVindasDoLead(LEAD, mundoDasBoasVindas({ jaComprou: true }).deps)).motivo, "returning customer: the offer is for a first booking");
   });
   it("falha no envio libera a chave para tentar de novo", async () => {
     const m = mundoDasBoasVindas();
-    m.deps.comentar = async () => { throw new Error("Zendesk 500"); };
-    const r = await mandarBoasVindasDoLead(LEAD, m.deps);
-    assert.equal(r.enviado, false);
-    assert.equal(m.reservas.get("lead-welcome-email:CT-123"), "failed");
+    m.deps.enviar = async () => { throw new Error("Resend 500"); };
+    assert.equal((await mandarBoasVindasDoLead(LEAD, m.deps)).enviado, false);
+    assert.equal(m.reservas.get("welcome:sarah@example.com"), "failed");
   });
-  it("chave pelo lead externo, senão pelo telefone", () => {
-    assert.equal(chaveDasBoasVindas({ leadExterno: "CT-9", telefone: "+44 7700" }), "lead-welcome-email:CT-9");
-    assert.equal(chaveDasBoasVindas({ leadExterno: null, telefone: "+44 7700 900123" }), "lead-welcome-email:447700900123");
-    assert.equal(decidirBoasVindas({ lead: { ...LEAD, ticketId: null }, regras: directV2(), janelaAberta: true, email: "a@b.co", requesterDoTicket: "a@b.co" }).mandar, false);
-  });
-  it("texto: inglês, formal, sem travessão, sem falar em IA ou bot", () => {
-    const ps = paragrafosDeBoasVindas({ nome: "Sarah", servico: "End Of Tenancy Cleaning", checkatrade: true });
-    const tudo = ps.join(" ");
-    assert.match(tudo, /through Checkatrade about end of tenancy cleaning/);
-    assert.doesNotMatch(tudo, /[—–]/);
-    assert.doesNotMatch(tudo, /\b(AI|bot|assistant|automated)\b/i);
-    const { text } = emailDeBoasVindasDoLead({ nome: "there", servico: null, checkatrade: false });
-    assert.match(text, /^Hi there,/);
-    assert.doesNotMatch(text, /[—]/);
+  it("chave e decisão", () => {
+    assert.equal(chaveDasBoasVindas(" Sarah@Example.com "), "welcome:sarah@example.com");
+    assert.equal(decidirBoasVindas({ regras: directV2(), janelaAberta: true, email: "team@getfixfy.com", bloqueado: false, jaComprou: false }).mandar, false);
   });
 });
 

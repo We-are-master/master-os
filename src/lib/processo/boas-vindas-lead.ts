@@ -1,25 +1,23 @@
 /**
- * E-mail de boas-vindas ao lead (plano do dono, 22/10/2026, etapa 3).
+ * "Welcome to Fixfy" ao lead novo (dono, 22-23/10/2026).
  *
- * Lead do Checkatrade (ou direto) que chega COM e-mail, na conta Fixfy em v2: além
- * do template de WhatsApp, o cliente recebe um e-mail simples e formal que diz o
- * serviço que ele pediu. Sai como comentário público no ticket do lead
- * (primeiro-contato.ts `abrirTicketDoLead`), para a resposta cair no mesmo ticket.
+ * Todo lead que entra na conta Fixfy, de qualquer origem (Checkatrade, Bark, Meta,
+ * WhatsApp, site), recebe o e-mail de boas-vindas com 10% na primeira compra
+ * (`emails/welcome.ts`). Lead gen leva também o WhatsApp do enquiry, que sai em
+ * primeiro-contato.ts. O Welcome sai pela Resend, não no ticket: é e-mail de marketing,
+ * com descadastro, e o Zendesk desmontaria o desenho.
  *
  * Travas, todas obrigatórias:
  *   1. conta v2 e direct (Fixfy). Fora disso nada muda.
  *   2. janela de envio do Harvey (ajustes.ts `janelaAberta`, padrão 8h às 20h de Londres).
- *   3. o requester do ticket é o próprio cliente (ticket sem e-mail nasce no
- *      team@getfixfy.com: comentário público ali seria e-mail para nós mesmos).
- *   4. reservarEnvio `lead-welcome-email:<leadExterno ou telefone>` ANTES do envio.
- *
- * Lead só com e-mail (sem telefone) já recebe o primeiro contato por e-mail
- * (mandarPrimeiroContatoPorEmail): este não sai em cima dele, porque só é chamado
- * no caminho do WhatsApp.
+ *   3. e-mail válido, fora da lista de bloqueio do marketing.
+ *   4. cliente que já comprou (job no OS) não recebe: a oferta é de primeira compra.
+ *   5. reservarEnvio `welcome:<email>` ANTES do envio: uma vez por pessoa, para sempre.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RegrasDoProcesso } from "./conta";
-import { emailDeBoasVindasDoLead } from "./textos-lead";
+import { emailDeWelcome } from "@/lib/emails/welcome";
+import { unsubscribeUrl } from "@/lib/email/unsubscribe";
 
 /** A conta Fixfy: é com ela que os leads do Checkatrade e diretos entram. */
 export const CONTA_FIXFY = "5cf896ec-ee42-441b-a698-34fdaeeb28b3";
@@ -39,9 +37,9 @@ export type LeadParaBoasVindas = {
   checkatrade?: boolean;
 };
 
-export function chaveDasBoasVindas(l: Pick<LeadParaBoasVindas, "leadExterno" | "telefone">): string | null {
-  const id = String(l.leadExterno ?? "").trim() || String(l.telefone ?? "").replace(/\D/g, "");
-  return id ? `lead-welcome-email:${id}` : null;
+/** Uma vez por pessoa: a chave é o e-mail. */
+export function chaveDasBoasVindas(email: string): string {
+  return `welcome:${email.trim().toLowerCase()}`;
 }
 
 export function emailDoLeadValido(email: string | null | undefined): string | null {
@@ -52,37 +50,37 @@ export function emailDoLeadValido(email: string | null | undefined): string | nu
 export type DecisaoDasBoasVindas = { mandar: true; chave: string; email: string } | { mandar: false; motivo: string };
 
 export function decidirBoasVindas(a: {
-  lead: LeadParaBoasVindas;
   regras: Pick<RegrasDoProcesso, "v2" | "tipo"> | null;
   janelaAberta: boolean;
   email: string | null;
-  requesterDoTicket: string | null;
+  bloqueado: boolean;
+  jaComprou: boolean;
 }): DecisaoDasBoasVindas {
   if (!(a.regras?.v2 === true && a.regras.tipo === "direct")) return { mandar: false, motivo: "account not on the v2 direct process" };
-  if (!a.lead.ticketId) return { mandar: false, motivo: "no lead ticket" };
   const email = emailDoLeadValido(a.email);
   if (!email) return { mandar: false, motivo: "lead has no valid email" };
-  if (emailDoLeadValido(a.requesterDoTicket) !== email) return { mandar: false, motivo: "ticket requester is not the customer" };
+  if (a.bloqueado) return { mandar: false, motivo: "email is on the marketing block list" };
+  if (a.jaComprou) return { mandar: false, motivo: "returning customer: the offer is for a first booking" };
   if (!a.janelaAberta) return { mandar: false, motivo: "outside sending hours" };
-  const chave = chaveDasBoasVindas(a.lead);
-  if (!chave) return { mandar: false, motivo: "no lead id or phone for the dedupe key" };
-  return { mandar: true, chave, email };
+  return { mandar: true, chave: chaveDasBoasVindas(email), email };
 }
 
 export type DependenciasDasBoasVindas = {
   regras: (contaId: string) => Promise<RegrasDoProcesso | null>;
   janelaAberta: (agora: Date) => Promise<boolean>;
   emailDoCliente: (clienteId: string) => Promise<string | null>;
-  requesterDoTicket: (ticketId: number) => Promise<string | null>;
+  bloqueado: (email: string) => Promise<boolean>;
+  jaComprou: (email: string, clienteId: string | null) => Promise<boolean>;
   reservar: (chave: string, l: LeadParaBoasVindas, email: string) => Promise<{ reservado: boolean; motivo?: string }>;
-  confirmar: (chave: string) => Promise<void>;
+  confirmar: (chave: string, providerId?: string | null) => Promise<void>;
   falhou: (chave: string, erro: unknown) => Promise<void>;
-  comentar: (ticketId: number, html: string) => Promise<void>;
+  enviar: (para: string, e: { assunto: string; html: string; text: string }, sair: string) => Promise<string | null>;
+  linkDeSaida: (email: string) => string;
 };
 
 export type ResultadoDasBoasVindas = { enviado: boolean; motivo: string };
 
-/** Nunca lança: o template de WhatsApp já saiu e é o que importa. */
+/** Nunca lança: o WhatsApp do enquiry já saiu e é o que importa. */
 export async function mandarBoasVindasDoLead(
   lead: LeadParaBoasVindas,
   deps: DependenciasDasBoasVindas,
@@ -93,21 +91,22 @@ export async function mandarBoasVindasDoLead(
     const regras = await deps.regras(lead.contaId ?? CONTA_FIXFY);
     // Sem v2 sai antes de qualquer leitura: produção igual a antes.
     if (!(regras?.v2 === true && regras.tipo === "direct")) return { enviado: false, motivo: "account not on the v2 direct process" };
-    const email = lead.email !== undefined ? lead.email : await deps.emailDoCliente(lead.clienteId);
+    const email = emailDoLeadValido(lead.email !== undefined ? lead.email : await deps.emailDoCliente(lead.clienteId));
     const d = decidirBoasVindas({
-      lead,
       regras,
       janelaAberta: await deps.janelaAberta(agora),
       email,
-      requesterDoTicket: lead.ticketId ? await deps.requesterDoTicket(lead.ticketId) : null,
+      bloqueado: email ? await deps.bloqueado(email) : false,
+      jaComprou: email ? await deps.jaComprou(email, lead.clienteId || null) : false,
     });
     if (!d.mandar) return { enviado: false, motivo: d.motivo };
     const r = await deps.reservar(d.chave, lead, d.email);
     if (!r.reservado) return { enviado: false, motivo: r.motivo ?? "already sent" };
     reserva = d.chave;
-    const { html } = emailDeBoasVindasDoLead({ nome: lead.nome, servico: lead.servico, checkatrade: lead.checkatrade ?? Boolean(lead.leadExterno) });
-    await deps.comentar(lead.ticketId!, html);
-    await deps.confirmar(d.chave);
+    const sair = deps.linkDeSaida(d.email);
+    const e = emailDeWelcome({ primeiroNome: /^(there|unnamed.*|checkatrade lead)$/i.test(String(lead.nome ?? "").trim()) ? null : lead.nome, unsubscribeUrl: sair });
+    const id = await deps.enviar(d.email, { assunto: e.assunto, html: e.html, text: e.text }, sair);
+    await deps.confirmar(d.chave, id);
     return { enviado: true, motivo: `welcome email sent to ${d.email}` };
   } catch (e) {
     if (reserva) await deps.falhou(reserva, e).catch(() => undefined);
@@ -115,7 +114,7 @@ export async function mandarBoasVindasDoLead(
   }
 }
 
-/** As dependências de verdade (Supabase, Zendesk, ajustes do Harvey). */
+/** As dependências de verdade (Supabase, Resend, ajustes do Harvey, lista de bloqueio). */
 export function dependenciasDasBoasVindas(sb: SupabaseClient): DependenciasDasBoasVindas {
   return {
     regras: async (contaId) => (await import("./conta")).processoDaConta(sb, contaId),
@@ -124,24 +123,41 @@ export function dependenciasDasBoasVindas(sb: SupabaseClient): DependenciasDasBo
       return janelaAberta(await ajustesDoHarvey(), agora);
     },
     emailDoCliente: async (clienteId) => {
+      if (!clienteId) return null;
       const { data } = await sb.from("clients").select("email").eq("id", clienteId).maybeSingle();
       return ((data as { email?: string | null } | null)?.email ?? null) || null;
     },
-    requesterDoTicket: async (ticketId) => {
-      const { zendeskApi } = await import("@/lib/zendesk");
-      const r = await zendeskApi<{ ticket?: { requester_id?: number }; users?: Array<{ id: number; email?: string | null }> }>(`tickets/${ticketId}.json?include=users`);
-      return r.users?.find((u) => u.id === r.ticket?.requester_id)?.email ?? null;
+    bloqueado: async (email) => (await import("@/lib/marketing/suppressions")).estaBloqueado(email),
+    jaComprou: async (email, clienteId) => {
+      const ids = new Set<string>(clienteId ? [clienteId] : []);
+      const { data: cs } = await sb.from("clients").select("id").ilike("email", email.replace(/[%_\\]/g, "\\$&")).is("deleted_at", null).limit(10);
+      for (const c of cs ?? []) ids.add((c as { id: string }).id);
+      if (!ids.size) return false;
+      const { count } = await sb.from("jobs").select("id", { count: "exact", head: true }).in("client_id", [...ids]).is("deleted_at", null).neq("status", "cancelled");
+      return (count ?? 0) > 0;
     },
     reservar: async (chave, l, email) => {
       const { reservarEnvio } = await import("@/lib/idempotencia/envio");
-      return reservarEnvio(sb, { chave, finalidade: "lead-welcome-email", canal: "email", ticketId: l.ticketId, destinatario: email, template: "lead_welcome_v1", motivo: "new lead" });
+      return reservarEnvio(sb, { chave, finalidade: "welcome-email", canal: "email", ticketId: l.ticketId, destinatario: email, template: "welcome_to_fixfy_v1", motivo: "new Fixfy lead" });
     },
-    confirmar: async (chave) => (await import("@/lib/idempotencia/envio")).confirmarEnvio(sb, chave),
+    confirmar: async (chave, id) => (await import("@/lib/idempotencia/envio")).confirmarEnvio(sb, chave, id ?? null),
     falhou: async (chave, erro) => (await import("@/lib/idempotencia/envio")).falhouEnvio(sb, chave, erro),
-    comentar: async (ticketId, html) => {
-      const { updateTicket } = await import("@/lib/zendesk");
-      const { autorDoAviso } = await import("@/lib/zendesk-quoter/aviso-de-cotacao");
-      await updateTicket({ ticketId, htmlBody: html, publicComment: true, authorId: await autorDoAviso(), additionalTags: [TAG_BOAS_VINDAS] });
+    linkDeSaida: (email) => unsubscribeUrl(email),
+    enviar: async (para, e, sair) => {
+      const key = process.env.RESEND_API_KEY?.trim();
+      if (!key) throw new Error("RESEND_API_KEY is not configured");
+      const { Resend } = await import("resend");
+      const { data, error } = await new Resend(key).emails.send({
+        from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy Team <hello@getfixfy.com>",
+        to: para,
+        replyTo: "hello@getfixfy.com",
+        subject: e.assunto,
+        html: e.html,
+        text: e.text,
+        headers: { "List-Unsubscribe": `<${sair}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+      });
+      if (error) throw new Error(error.message);
+      return data?.id ?? null;
     },
   };
 }
