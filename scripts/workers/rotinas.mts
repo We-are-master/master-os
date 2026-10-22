@@ -18,6 +18,8 @@
  *   weekly-report             (sem janela)                     18h sáb
  *   stefane                   (sem janela)                     a cada 2 min
  *   clube-lista               (sem janela; antes das 8h do cron) 07:30
+ *   pendencias                (sem janela; só grava motivos)   a cada 10 min
+ *   cobranca-cartao           (só conta direct v2)             10h
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -114,6 +116,28 @@ export const ROTINAS: Rotina[] = [
     args: ["--lista", "--aplicar"],
     runtime: "tsx",
     limiteMinutos: 50,
+  },
+  {
+    // Action Required com motivo (migration 344): só grava job_attention_reasons,
+    // não manda mensagem nem mexe em job.
+    nome: "pendencias",
+    rotulo: "com.fixfy.pendencias",
+    agenda: { tipo: "intervalo", minutos: 10 },
+    script: "scripts/pendencias.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 9,
+  },
+  {
+    // Cartão recusado (plano de 22/10/2026, etapa 4): e-mails do dia 1, 3 e 7 e, no
+    // dia 7, Payment Unsuccessful. Só conta direct com process_rules.v2.
+    nome: "cobranca-cartao",
+    rotulo: "com.fixfy.cobranca-cartao",
+    agenda: { tipo: "diario", horarios: ["10:00"] },
+    script: "scripts/cobranca-cartao-recusado.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 20,
   },
   {
     nome: "stefane",
