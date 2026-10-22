@@ -20,7 +20,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { varrerChases } from "@/lib/harvey-wa/chase";
 import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
-import { varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
+import { fecharLeadsParados, varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
 import { varrerCobrancaDeQuotes } from "@/lib/harvey-wa/followup-quotes";
 import { varrerCotacaoAutomatica } from "@/lib/harvey-wa/varredura-cotacao-automatica";
 
@@ -49,8 +49,10 @@ export async function GET(req: NextRequest) {
     const sb = createServiceClient();
     const chase = await varrerChases(sb, { aplicar: !ensaio });
     const transferencias = await varrerTransferencias(sb, new Date(), { aplicar: !ensaio });
-    // Lead que nunca respondeu o primeiro contato: 3 WhatsApps e 3 e-mails em 3 dias, depois fecha (followup-leads.ts).
+    // Lead que nunca respondeu o primeiro contato: 2 WhatsApps e 3 e-mails em 3 dias, depois fecha (followup-leads.ts).
     const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
+    // Lead que respondeu uma vez e sumiu: fecha sozinho depois de 7 dias quieto, sem mensagem.
+    leads.parados = await fecharLeadsParados({ aplicar: !ensaio }).catch((e) => [`falhou: ${e instanceof Error ? e.message : e}`]);
     // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
     const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
     // Needs Quote → parceiros → preço → cliente. Chave HARVEY_AUTO_QUOTE=1; no ensaio só lista.

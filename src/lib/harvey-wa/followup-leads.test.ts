@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { assuntoInterno, destinoDoLead, ehDaReguaAntiga, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, servicoDoTicketDeLead, type PedidoDoOs } from "./followup-leads";
+import { assuntoInterno, destinoDoLead, ehDaReguaAntiga, ehLeadParado, emailDoPasso, notaDoPedidoExistente, passosFeitos, proximoPasso, servicoDoTicketDeLead, type PedidoDoOs } from "./followup-leads";
 import { montarEmail } from "./email-do-leo";
 
 // Horários em BST (UTC+1): "2026-10-14T09:00:00Z" é 10h em Londres.
@@ -122,4 +122,15 @@ describe("trava: lead que já tem pedido no OS", () => {
       assert.match(n, /Nothing was sent to the customer/);
     }
   });
+});
+
+describe("ehLeadParado (lead que respondeu e sumiu)", () => {
+  const agora = new Date("2026-10-22T12:00:00Z");
+  const base = { id: 1, status: "pending", custom_status_id: 6417913706527, tags: ["lead_gen", "harvey_handling"], updated_at: "2026-10-14T12:00:00Z", custom_fields: [{ id: 5698641403423, value: "reply_replied" }] };
+  it("fecha quem respondeu, a bola está com o cliente e está quieto há 7 dias", () => assert.equal(ehLeadParado(base, agora), true));
+  it("não fecha com menos de 7 dias", () => assert.equal(ehLeadParado({ ...base, updated_at: "2026-10-17T12:00:00Z" }, agora), false));
+  it("não fecha quem ainda está na régua (nunca respondeu)", () => assert.equal(ehLeadParado({ ...base, tags: ["lead_gen", "lead_fu_2"] }, agora), false));
+  it("não fecha quando o cliente escreveu por último", () => assert.equal(ehLeadParado({ ...base, custom_fields: [{ id: 5698641403423, value: "reply_awaiting" }] }, agora), false));
+  it("não fecha fora do status Lead", () => assert.equal(ehLeadParado({ ...base, custom_status_id: 5679178035743 }, agora), false));
+  it("não fecha lead com job", () => assert.equal(ehLeadParado({ ...base, tags: [...base.tags, "lead_has_order"] }, agora), false));
 });

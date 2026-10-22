@@ -53,7 +53,7 @@ import { externalIdDoLead, idDaIntegracaoWhatsApp } from "./primeiro-contato";
 import { scNotificacao } from "./sunshine";
 import { registrarDecisao } from "./diario";
 import { clientesPeloTelefone } from "./identidade";
-import { ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_BIDDING, ZD_STATUS_QUOTE_READY } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_BIDDING, ZD_STATUS_LEAD, ZD_STATUS_QUOTE_READY } from "@/lib/zendesk-statuses";
 
 const H = 3_600_000;
 const TEMPLATE_CHECKIN = process.env.HARVEY_WA_LEAD_CHECKIN_TEMPLATE?.trim() || "quote_request_checkin";
@@ -67,9 +67,9 @@ const WHAT_HAPPENED = 5687150349343;
 /** Lead que já tem pedido no OS: a régua não volta a olhar. */
 const TAG_TEM_PEDIDO = "lead_has_order";
 
-export type ResultadoFollowup = { ensaio: boolean; olhados: number; enviados: string[]; fechados: string[]; pulados: string[]; jaComPedido: string[] };
+export type ResultadoFollowup = { ensaio: boolean; olhados: number; enviados: string[]; fechados: string[]; pulados: string[]; jaComPedido: string[]; parados: string[] };
 
-type Ticket = { id: number; status: string; tags: string[]; created_at?: string; requester_id?: number; subject?: string };
+type Ticket = { id: number; status: string; tags: string[]; created_at?: string; requester_id?: number; subject?: string; assignee_id?: number | null };
 type Comentario = { created_at: string; author_id: number; public: boolean };
 
 // ─── A régua (pura, sem rede) ───────────────────────────────────────────────
@@ -391,6 +391,11 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
     const feito: string[] = [];
     const corpoDoTicket: Record<string, unknown> = {};
     if (PASSOS_DE_WHATSAPP.has(passo)) {
+      // A marca do passo entra ANTES do WhatsApp (22/10/2026): se o resto falhar, a
+      // próxima varredura vê o passo feito e não manda de novo. Até aqui o passo 5
+      // mandava o template e depois falhava ao fechar (o Zendesk exige Assignee), e
+      // a varredura de 10 em 10 minutos repetia o WhatsApp a noite toda.
+      await addTicketTags(t.id, [`lead_fu_${passo}`]);
       if (l.telefone && l.leadExterno) {
         const tpl = passo === 1 ? TEMPLATE_CHECKIN : TEMPLATE_FINAL;
         await mandarTemplateNoWhatsApp(tpl, l.telefone, l.nome, l.servico, l.leadExterno);
@@ -412,6 +417,8 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
     }
     if (passo === 5) {
       corpoDoTicket.status = "solved";
+      // Sem responsável o Zendesk recusa o solved (Assignee é obrigatório no formulário).
+      if (!t.assignee_id) corpoDoTicket.assignee_id = (await autorDosEmails()).zendesk_user_id;
       // "What Happened" também: é o campo que o relatório de perda lê (dono, 14/10/2026).
       corpoDoTicket.custom_fields = [{ id: RESOLUCAO, value: "res_no_response" }, { id: 5687150349343, value: "no_reply" }];
     } else {
@@ -433,7 +440,7 @@ async function seguirLead(sb: SupabaseClient, l: Lead, out: ResultadoFollowup, a
 }
 
 export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { aplicar: boolean }, agora = new Date()): Promise<ResultadoFollowup> {
-  const out: ResultadoFollowup = { ensaio: !aplicar, olhados: 0, enviados: [], fechados: [], pulados: [], jaComPedido: [] };
+  const out: ResultadoFollowup = { ensaio: !aplicar, olhados: 0, enviados: [], fechados: [], pulados: [], jaComPedido: [], parados: [] };
   if (!janelaAberta(await ajustesDoHarvey(), agora)) return out;
   const hora = emLondres(agora).hora;
   if (hora < 8 || hora >= 21) return out;
@@ -501,4 +508,74 @@ export async function varrerFollowupDeLeads(sb: SupabaseClient, { aplicar }: { a
     );
   }
   return out;
+}
+
+// ─── Lead que respondeu e sumiu ─────────────────────────────────────────────
+
+/** Dias sem nenhuma mudança no ticket até o lead parado fechar como sem resposta. */
+export const DIAS_DE_LEAD_PARADO = 7;
+
+type TicketParado = { id: number; status: string; tags: string[]; updated_at: string; custom_status_id?: number | null; assignee_id?: number | null; custom_fields?: Array<{ id: number; value: unknown }> };
+
+/**
+ * Lead que respondeu uma vez (a régua parou), a bola ficou com o cliente e o
+ * ticket não mexe há DIAS_DE_LEAD_PARADO dias. Até 22/10/2026 nada fechava
+ * esse lead: 38 dos 43 da view 🎯 Leads eram assim. Pura, para teste.
+ */
+export function ehLeadParado(t: TicketParado, agora: Date): boolean {
+  const tags = new Set(t.tags);
+  if (t.status === "solved" || t.status === "closed") return false;
+  if (t.custom_status_id !== ZD_STATUS_LEAD) return false;
+  if (tags.has("lead_no_response") || tags.has(TAG_TEM_PEDIDO)) return false;
+  // Ainda na régua (não respondeu): a régua fecha ele no dia 3.
+  if (!tags.has("harvey_handling") && !tags.has("lead_replied") && !tags.has("harvey_passou")) return false;
+  // A bola está com a gente: é da equipe, não fecha sozinho.
+  const reply = t.custom_fields?.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
+  if (reply === "reply_awaiting") return false;
+  return agora.getTime() - Date.parse(t.updated_at) >= DIAS_DE_LEAD_PARADO * 24 * H;
+}
+
+/** Fecha os leads parados como no response, sem mensagem ao cliente. A conversa espelhada fecha junto. */
+export async function fecharLeadsParados({ aplicar }: { aplicar: boolean }, agora = new Date()): Promise<string[]> {
+  const ate = new Date(agora.getTime() - DIAS_DE_LEAD_PARADO * 24 * H).toISOString().slice(0, 10);
+  const q = `type:ticket status<solved tags:lead_gen updated<${ate}`;
+  const { results } = await zendeskApi<{ results?: TicketParado[] }>(`search.json?query=${encodeURIComponent(q)}&per_page=100`).catch(() => ({ results: [] as TicketParado[] }));
+  const feitos: string[] = [];
+  const dono = aplicar ? (await autorDosEmails()).zendesk_user_id : null;
+  for (const t of results ?? []) {
+    if (!ehLeadParado(t, agora)) continue;
+    feitos.push(`#${t.id}`);
+    if (!aplicar) continue;
+    try {
+      const fechar = async (id: number, assignee: number | null | undefined, nota: string) =>
+        zendeskApi(`tickets/${id}.json`, {
+          method: "PUT",
+          body: {
+            ticket: {
+              status: "solved",
+              ...(assignee ? {} : { assignee_id: dono }),
+              custom_fields: [{ id: RESOLUCAO, value: "res_no_response" }, { id: WHAT_HAPPENED, value: "no_reply" }],
+              comment: { body: nota, public: false },
+            },
+          },
+        });
+      const nota = `Lead closed as no response: the customer replied once and has been quiet for ${DIAS_DE_LEAD_PARADO} days, with the last message from us. Nothing was sent to the customer. If they write again, the ticket reopens.`;
+      // O ticket do lead aponta a conversa em que o Harvey atendeu ("…conversation ticket #N").
+      const cs = await comentarios(t.id).catch(() => [] as Comentario[]);
+      const conversa = cs.map((c) => /conversation ticket #(\d+)/.exec((c as Comentario & { body?: string }).body ?? "")?.[1]).find(Boolean);
+      await fechar(t.id, t.assignee_id, nota);
+      await addTicketTags(t.id, ["lead_no_response", "lead_parado"]);
+      if (conversa) {
+        const { ticket: c } = await zendeskApi<{ ticket?: TicketParado }>(`tickets/${conversa}.json`).catch(() => ({ ticket: undefined }));
+        if (c && c.status !== "solved" && c.status !== "closed" && Date.parse(c.updated_at) <= agora.getTime() - DIAS_DE_LEAD_PARADO * 24 * H) {
+          await fechar(c.id, c.assignee_id, nota);
+          feitos[feitos.length - 1] += ` + conversa #${c.id}`;
+        }
+      }
+      await registrarDecisao({ origem: "followup", ticketId: t.id, decisao: `Lead closed as no response after ${DIAS_DE_LEAD_PARADO} quiet days`, regra: "lead that replied once and went quiet closes (owner, 22/10/2026)", pendente: null });
+    } catch (e) {
+      feitos[feitos.length - 1] += ` falhou: ${e instanceof Error ? e.message.slice(0, 100) : "erro"}`;
+    }
+  }
+  return feitos;
 }
