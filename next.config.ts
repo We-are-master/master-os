@@ -11,6 +11,11 @@ const projectRoot =
     : path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  // PDF do report (22/10/2026): a fonte Inter e o logo vêm de public/, que não entra
+  // sozinho no bundle da função. Sem isso o @react-pdf buscava por URL.
+  outputFileTracingIncludes: {
+    "/api/**": ["./public/fonts/**", "./public/logos/fixfy-primary-navy-trim.png"],
+  },
   turbopack: {
     root: path.resolve(projectRoot),
   },
