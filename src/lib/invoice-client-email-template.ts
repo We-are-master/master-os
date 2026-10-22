@@ -1,4 +1,5 @@
 import "server-only";
+import { FRASE_CERTIFICADO_RETIDO } from "@/lib/emails/final-report-email";
 import type { Invoice } from "@/types/database";
 import { invoiceAmountPaid, invoiceBalanceDue } from "@/lib/invoice-balance";
 import { isInvoicePaymentVerified } from "@/lib/invoice-payment-verified";
@@ -11,6 +12,7 @@ import {
   type AgentReceiptView,
 } from "@/lib/agent-model/receipt-view";
 import { dataLonga, emailFixfy, gbp, saudacao, type EmailFixfy } from "@/lib/emails/fixfy-shell";
+import { passosAte, PASSOS_FATURA } from "@/lib/emails/faixas-do-email";
 import {
   dadosBancariosVerificados,
   nomeDoDocumento,
@@ -73,6 +75,16 @@ export type InvoiceEmailOptions = {
   documentAttached?: boolean;
   /** E-mail final do job (copy 12): o trabalho está concluído. */
   final?: boolean;
+  /**
+   * Certificado só com o job pago (dono, 22/10/2026): "retido" avisa que ele sai com o
+   * pagamento; "liberado" é o e-mail do pagamento recebido com o certificado anexado.
+   */
+  certificado?: "retido" | "liberado";
+  /** Entrada já paga (dono, 22/10/2026): o e-mail final mostra total, entrada e saldo, sem recibo à parte. */
+  deposito?: { pago: number; total: number } | null;
+  /** E-mail final: fotos do trabalho, link do report completo e o "What we did." (moldura). */
+  fotos?: EmailFixfy["fotos"];
+  resumo?: EmailFixfy["resumo"];
   /** Comentário público do Zendesk: sem tabelas internas. */
   zendesk?: boolean;
   /** Linhas da conta para transferência; padrão = a conta verificada da configuração (a do PDF). */
@@ -265,6 +277,8 @@ export function buildInvoiceClientEmail(
         ? "Please have a look through the report. If anything needs our attention, just reply and let us know."
         : "If anything needs our attention, just reply and let us know.";
     subject = reportCount > 0 ? `Your job report and ${docName} · ${jobRef ?? ref}` : `Your ${docName} · ${jobRef ?? ref}`;
+    const liberado = paid && options?.certificado === "liberado";
+    if (liberado) subject = `Payment received · your certificate · ${jobRef ?? ref}`;
     shell = {
       preheader: paid
         ? reportCount > 0
@@ -273,16 +287,40 @@ export function buildInvoiceClientEmail(
         : reportCount > 0
           ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
           : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
-      titulo: "Your work is complete",
+      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "red" },
+      titulo: liberado ? "Your certificate is ready" : "Your work is complete",
       destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      metricas: paid
+        ? [
+            { rotulo: "Amount paid", valor: gbp(paidAmt || invAmt) },
+            { rotulo: "Paid on", valor: dataDoPagamento(invoice) ?? "" },
+          ]
+        : [
+            { rotulo: "Amount due", valor: gbp(amountDueNow) },
+            { rotulo: "Due by", valor: due ?? "" },
+          ],
+      passos: passosAte(PASSOS_FATURA, paid ? 3 : 2),
       saudacao: greeting,
-      paragrafos: [custom ?? p1, ...(pMissing ? [pMissing] : []), p2, p3],
+      paragrafos: liberado
+        ? [
+            custom ?? "Thank you, we’ve received your payment in full. Your certificate is attached, together with your final report.",
+            ...(attached ? ["Your payment receipt is also attached for your records."] : []),
+            "If you have any questions about the certificate, just reply and let us know.",
+          ]
+        : [
+            custom ?? p1,
+            ...(pMissing ? [pMissing] : []),
+            p2,
+            ...(!paid && options?.certificado === "retido" ? [FRASE_CERTIFICADO_RETIDO] : []),
+            p3,
+          ],
       linhas: [
         ["Service", service],
         ["Property", property],
         ["Booking", jobRef],
         ["Billing reference", ref],
+        ["Total", options?.deposito ? gbp(options.deposito.total) : null],
+        ["Deposit paid", options?.deposito ? gbp(options.deposito.pago) : null],
         ["Balance due", paid ? null : gbp(amountDueNow)],
         ["Due date", paid ? null : due],
       ],
@@ -307,6 +345,14 @@ export function buildInvoiceClientEmail(
       estado: { texto: "Payment received", cor: "green" },
       titulo: "Thank you for your payment",
       destaque: { linha1: `${gbp(recebido)} received`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null },
+      metricas: [
+        { rotulo: "Amount received", valor: gbp(recebido), sub: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null },
+        restante > 0.02
+          ? { rotulo: "Balance", valor: gbp(restante), sub: "due on completion" }
+          : { rotulo: "Balance", valor: gbp(0) },
+      ],
+      // Recibo de sinal: a reserva está feita, o trabalho ainda não. Recibo do resto: pago.
+      passos: passosAte(PASSOS_FATURA, ehEntrada ? 0 : 3),
       saudacao: greeting,
       paragrafos: [
         custom ?? `We’ve received ${gbp(recebido)} for ${service}.${attached ? " Your receipt is attached for your records." : ""}`,
@@ -329,9 +375,18 @@ export function buildInvoiceClientEmail(
     subject = `Your ${docName} ${ref} is ready`;
     shell = {
       preheader: `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: { texto: "Payment due", cor: "navy" },
+      estado: { texto: "Payment due", cor: "red" },
       titulo: `Your ${docName} is ready`,
       destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
+      metricas: [
+        { rotulo: "Amount due", valor: gbp(amountDueNow) },
+        { rotulo: "Due by", valor: due ?? "" },
+      ],
+      // Fatura de sinal sai antes do trabalho: a reserva é o passo atual.
+      passos: passosAte(
+        PASSOS_FATURA,
+        String((invoice as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit" ? 0 : 2,
+      ),
       saudacao: greeting,
       paragrafos: [
         custom ?? `Your ${docName} for ${service} is ready. You’ll find the amount due and payment details below.`,
@@ -352,6 +407,7 @@ export function buildInvoiceClientEmail(
     };
   }
 
+  if (final) shell = { ...shell, fotos: options?.fotos ?? null, resumo: options?.resumo ?? null };
   const { html, text } = emailFixfy(shell);
   return { subject, preheader: shell.preheader, html, text, documentName: docName, billingReference: ref };
 }

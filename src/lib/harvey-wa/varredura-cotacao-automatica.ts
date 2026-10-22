@@ -32,6 +32,8 @@ import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
+import { foraDaCotacaoAutomatica } from "@/lib/processo/b2b-humano";
+import { processoDaConta } from "@/lib/processo/conta";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PEDIU_CONTEXTO, TAG_SEM_LANCE,
   enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres,
@@ -59,6 +61,7 @@ type QuoteRow = {
   postcode: string | null; property_address: string | null; scope: string | null; images: unknown; total_value: number | null;
   partner_cost: number | null; partner_id: string | null; bidding_started_at?: string | null; client_email: string | null;
   automation_status?: string | null;
+  source_account_id?: string | null;
 };
 
 function campo(t: Ticket, id: number): string | null {
@@ -91,7 +94,7 @@ async function entrouEmNeedsQuote(ticketId: number): Promise<Date | null> {
 async function quoteDoTicket(sb: SupabaseClient, ticketId: number): Promise<QuoteRow | null> {
   const { data } = await sb
     .from("quotes")
-    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, client_email, automation_status, client_id, deposit_required")
+    .select("id, reference, status, title, service_type, catalog_service_id, postcode, property_address, scope, images, total_value, partner_cost, partner_id, client_email, automation_status, client_id, deposit_required, source_account_id")
     .eq("external_source", "zendesk")
     .eq("external_ref", String(ticketId))
     .is("deleted_at", null)
@@ -293,10 +296,20 @@ async function criarOuAbrirQuote(sb: SupabaseClient, t: Ticket, user: Usuario, q
 async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, agora: Date, out: ResultadoCotacaoAutomatica): Promise<boolean> {
   const quem = `#${t.id} ${t.subject.slice(0, 50)}`;
   if (t.tags.includes(TAG_CONVIDOU) || t.tags.includes(TAG_FIM) || t.tags.includes("harvey_off")) return false;
+  // B2B só com gente (processo/b2b-humano.ts): a equipe decide, e os convites só saem pela macro.
+  if (foraDaCotacaoAutomatica(t.tags)) {
+    out.pulados.push(`${quem}: B2B human review, handled by the team`);
+    return false;
+  }
   const { user } = await zendeskApi<{ user: Usuario }>(`users/${t.requester_id}.json`);
   const desde = await entrouEmNeedsQuote(t.id);
   const conv = await lerConversa(sb, t, user, desde, agora);
   const q = await quoteDoTicket(sb, t.id);
+  // A tag pode não ter sido gravada: a conta da quote também segura.
+  if (q?.source_account_id && foraDaCotacaoAutomatica(t.tags, await processoDaConta(sb, q.source_account_id).catch(() => null))) {
+    out.pulados.push(`${quem}: ${q.reference} belongs to a B2B human review account, handled by the team`);
+    return false;
+  }
   if (!q) {
     const daConversa = await ticketDaConversaDoLead(t.id).catch(() => null);
     const qc = daConversa ? await quoteDoTicket(sb, daConversa) : null;

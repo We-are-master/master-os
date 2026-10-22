@@ -154,6 +154,10 @@ export function emailDoRelampagoPronto(
       "Have a question about the work before booking? Just reply. We’re happy to help.",
     ],
     cta: { label: "View the offer", url: linkDoRelampago(r, "email") },
+    metricas: [
+      { rotulo: "Code", valor: r.codigo, sub: `${r.percentual}% off` },
+      { rotulo: "Ends", valor: prazo.data, sub: prazo.data ? `${horaCurta(fechaEm(r)) ?? ""} UK time`.trim() : null },
+    ],
     descadastroUrl: opcoes?.descadastroUrl ?? LINK_DE_SAIDA,
   });
   return { assunto: assuntoDoRelampago(r), preheader, html, texto: text };

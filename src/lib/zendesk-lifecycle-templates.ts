@@ -22,6 +22,7 @@
  */
 
 import { emailFixfy, dataLonga, saudacao, type Publico } from "@/lib/emails/fixfy-shell";
+import { passosAte, PASSOS_VISITA } from "@/lib/emails/faixas-do-email";
 
 export type AvisoDoCiclo = {
   assunto: string;
@@ -43,7 +44,9 @@ type Base = {
 const limpo = (s: string | null | undefined) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 /** #37: job concluído (fim do final check). */
-export function buildJobCompleted(args: Base & { propertyAddress?: string | null; photoCount?: number }): AvisoDoCiclo {
+export function buildJobCompleted(
+  args: Base & { propertyAddress?: string | null; photoCount?: number; /** Dia da conclusão; padrão: hoje (o aviso sai no fim do final check). */ completedOn?: string | Date | null },
+): AvisoDoCiclo {
   const ref = limpo(args.reference);
   const servico = limpo(args.service) || "maintenance";
   const endereco = limpo(args.propertyAddress);
@@ -66,6 +69,11 @@ export function buildJobCompleted(args: Base & { propertyAddress?: string | null
     preheader,
     estado: { texto: "Completed", cor: "green" },
     titulo: "That’s another job sorted",
+    metricas: [
+      { rotulo: "Completed on", valor: dataLonga(args.completedOn ?? new Date()) ?? "" },
+      { rotulo: "Service", valor: servico },
+    ],
+    passos: passosAte(PASSOS_VISITA, 3),
     saudacao: saudacao(args.publico),
     paragrafos,
     linhas: [
@@ -95,6 +103,10 @@ export function buildJobCancelled(args: Base & { propertyAddress?: string | null
     preheader,
     estado: { texto: "Cancelled", cor: "muted" },
     titulo: "Your booking has been cancelled",
+    metricas: [
+      { rotulo: "Cancelled visit", valor: dia ?? "" },
+      { rotulo: "Booking", valor: ref },
+    ],
     saudacao: saudacao(args.publico),
     paragrafos,
     linhas: [

@@ -37,6 +37,9 @@ import { soOqueENovo } from "./sem-citacao";
 import { chamarOpenAI } from "@/lib/openai-com-retry";
 import { modoDe } from "@/lib/harvey/autonomia";
 import { blocoDasRegras } from "@/lib/harvey/regras-do-negocio";
+import { processoDaConta } from "@/lib/processo/conta";
+import { planoDoPedido, proximaAcaoDaRevisao, TAG_REVISAO_HUMANA, type PlanoDoPedido } from "@/lib/processo/b2b-humano";
+import { precisaDeAcao } from "@/lib/fila-de-acao";
 
 const MAX_IMAGENS = 6;
 
@@ -472,6 +475,12 @@ export async function garantirQuoteNoOs(
   resultado: ResultadoPriceCheck,
   /** A organização dona do pedido. Obrigatória: quote sem dono não nasce. */
   organizacaoId: string,
+  /**
+   * `naoTransmitir`: conta B2B só com gente (processo/b2b-humano.ts). A quote nasce
+   * `draft` interna e fica assim: nada aparece em Available Quotes no portal até a
+   * equipe pedir pela macro "Get partner quotes".
+   */
+  opcoes: { naoTransmitir?: boolean } = {},
 ): Promise<{ quoteId: string; reference: string; jaExistia: boolean } | null> {
   const supabase = createServiceClient();
   const ticketRef = String(ticket.id);
@@ -500,7 +509,7 @@ export async function garantirQuoteNoOs(
      */
     const agora = pedido.propertyAddress ?? pedido.postcode;
     if (!e.property_address && agora && e.status === "draft") {
-      const vaiTransmitirAgora = (await modoDe("cotacao")) === "on";
+      const vaiTransmitirAgora = !opcoes.naoTransmitir && (await modoDe("cotacao")) === "on";
       const { error: errPreenche } = await supabase
         .from("quotes")
         .update({
@@ -593,7 +602,7 @@ export async function garantirQuoteNoOs(
    * aconteceu é pior do que um estado atrasado, e é ele que o ticket copia.
    */
   const endereco = pedido.propertyAddress ?? pedido.postcode;
-  const transmite = Boolean(endereco) && (vaiTransmitir || (autoFlow && catalogServiceId));
+  const transmite = !opcoes.naoTransmitir && Boolean(endereco) && (vaiTransmitir || (autoFlow && catalogServiceId));
   const { data: inserted, error: insertErr } = await supabase
     .from("quotes")
     .insert({
@@ -708,12 +717,20 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
   const org = await organizacaoDoTicket(ticket);
 
   /**
+   * O processo da conta decide o que acontece sozinho (plano do dono 22/10/2026,
+   * etapa D). Conta v2 B2B só com gente: registra, reconhece e para em Action
+   * Required. Fora do v2 o plano é o de sempre.
+   */
+  const regras = org.ok ? await processoDaConta(createServiceClient(), org.id).catch(() => null) : null;
+  const plano: PlanoDoPedido = planoDoPedido(regras);
+
+  /**
    * Conta B2B pedindo trabalho por hora (dono, 19/10/2026): não vai para cotação. Aceita
    * no valor do e-mail ou na taxa da conta e o job nasce sem parceiro (b2b-hora.ts).
    * Em ensaio só escreve "eu faria" e o fluxo de cotação segue como antes.
    */
   let notaHora: string | null = null;
-  if (org.ok && !isDirectConsumerAccount(org.id)) {
+  if (plano.aceitarHora && org.ok && !isDirectConsumerAccount(org.id)) {
     const catalogo = await catalogoAtivo(createServiceClient()).catch(() => []);
     const classe = classificarPedido({ servico: resultado.quote.services[0]?.trade ?? null, descricao: pedido.scopeOfWork || pedido.quoteRequest }, catalogo);
     if (classe.modo === "hora") {
@@ -743,7 +760,7 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
 
   let quoteRef: string | null = null;
   if (postar && org.ok) {
-    const criada = await garantirQuoteNoOs(ticket, pedido, resultado, org.id).catch((e) => {
+    const criada = await garantirQuoteNoOs(ticket, pedido, resultado, org.id, { naoTransmitir: !plano.transmitir }).catch((e) => {
       console.error("[quoter] garantirQuoteNoOs:", e);
       return null;
     });
@@ -762,7 +779,7 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
    * não manda nada. Convite é e-mail e push para gente de fora: o portão fica
    * fechado até você ver a lista e concordar com ela.
    */
-  const convite = quoteRef && org.ok
+  const convite = quoteRef && org.ok && plano.convidarParceiros
     ? await calcularOuMandarConvites(ticket, pedido, resultado, quoteRef).catch((e) => {
         console.error("[quoter] convites:", e);
         return null;
@@ -785,6 +802,7 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
     convitesEnviados: convite?.enviados ?? 0,
     orgReconhecida: org.ok,
     postar,
+    b2bSoHumano: plano.avisoSempre,
   }).catch((e) => {
     console.error("[quoter] aviso ao cliente:", e);
     return null;
@@ -792,7 +810,7 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
 
   // Pedido B2B com informação faltando: até 3 perguntas essenciais, uma vez por ticket (pedir-info.ts).
   const pedidoDeInfo =
-    org.ok && quoteRef
+    org.ok && quoteRef && plano.pedirInfo
       ? await pedirInfoQueFalta({
           ticketId,
           tags: ticket.tags,
@@ -814,6 +832,21 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
       ].join("\n")
     : null;
   if (avisoB2b && postar && !ticket.tags.includes("b2b_potential")) await addTicketTags(ticketId, ["b2b_potential"]).catch(() => null);
+
+  /**
+   * B2B só com gente: o ticket para em Action Required com "Human Review Required".
+   * A tag vem antes, e é ela que tira o ticket da varredura da cotação automática.
+   */
+  let revisao: string | null = null;
+  if (plano.revisaoHumana && org.ok) {
+    if (postar) {
+      if (!ticket.tags.includes(TAG_REVISAO_HUMANA)) await addTicketTags(ticketId, [TAG_REVISAO_HUMANA]).catch((e) => console.error("[quoter] tag de revisão humana:", e));
+      const r = await precisaDeAcao(ticketId, proximaAcaoDaRevisao(quoteRef));
+      revisao = `── B2B human review ──\n${r.linha}\nNo partner invited, no hourly auto-accept, no missing-info questions: this account is handled by the team.`;
+    } else {
+      revisao = `── B2B human review (DRY RUN) ──\nWould put the ticket in Action Required: ${proximaAcaoDaRevisao(quoteRef)}`;
+    }
+  }
   const nota = [
     montarNotaInterna(ticket, pedido, resultado, quoteRef),
     ...(tabelaDaConta ? ["", "──────────", tabelaDaConta] : []),
@@ -823,9 +856,80 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
     ...(pedidoDeInfo ? ["", "──────────", pedidoDeInfo] : []),
     ...(org.ok ? [] : ["", "──────────", org.nota]),
     ...(notaHora ? ["", "──────────", notaHora] : []),
+    ...(revisao ? ["", "──────────", revisao] : []),
   ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
   return { ticketId, nota, pedido, resultado, quoteRef };
+}
+
+/**
+ * A macro "Get partner quotes" (tag b2b_cotar) num ticket B2B só com gente: o
+ * preparo de sempre (leitura com fotos, quote no OS) e os convites aos
+ * parceiros, neste ticket e só nele. Quem chama (processo/b2b-cotar.ts) já
+ * reservou e carimbou a trava.
+ *
+ * As fotos: `lerTicketCompleto` baixa os anexos de imagem (e os links de foto do
+ * corpo); aqui elas são gravadas em `quotes.images`, que é de onde o e-mail de
+ * convite e a galeria do bid leem. Quote que nasceu `draft` sem as fotos (ou com
+ * fotos de antes) recebe a união, sem duplicar: o caminho no bucket é fixo por
+ * ticket e índice.
+ *
+ * Nada sai para o cliente aqui. A quote para em Quote Ready quando os lances
+ * chegarem; o envio é da equipe.
+ */
+export async function cotarComParceirosB2B(
+  ticketId: number,
+  postar: boolean,
+): Promise<{ nota: string; enviados: number; quoteRef: string | null }> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+  const ticket = await lerTicketCompleto(ticketId);
+  const org = await organizacaoDoTicket(ticket);
+  if (!org.ok) {
+    if (postar) await postarNotaInterna(ticketId, org.nota);
+    return { nota: org.nota, enviados: 0, quoteRef: null };
+  }
+  const pedido = await consolidarPedido(ticket, apiKey);
+  const resultado = await executarPriceCheck(pedido.quoteRequest, pedido.scopeOfWork);
+
+  let quoteRef: string | null = null;
+  let fotosLinha = "";
+  let convite: { nota: string; enviados: number } | null = null;
+  if (postar) {
+    const supabase = createServiceClient();
+    const criada = await garantirQuoteNoOs(ticket, pedido, resultado, org.id);
+    quoteRef = criada?.reference ?? null;
+    if (criada) {
+      const { data: q } = await supabase.from("quotes").select("id, reference, status, property_address, images").eq("id", criada.quoteId).maybeSingle();
+      const atual = q as { id: string; reference: string; status: string; property_address: string | null; images: unknown } | null;
+      if (atual) {
+        const antes = Array.isArray(atual.images) ? (atual.images as unknown[]).filter((u): u is string => typeof u === "string") : [];
+        const novas = await guardarFotosDoTicket(ticket.id, ticket.imagens, supabase);
+        const imagens = [...new Set([...antes, ...novas])];
+        const transmitir = atual.status === "draft" && Boolean(atual.property_address) && (await modoDe("cotacao")) === "on";
+        const mudou = imagens.length !== antes.length || transmitir;
+        if (mudou) {
+          await supabase
+            .from("quotes")
+            .update({ images: imagens, ...(transmitir ? { status: "bidding", quote_type: "partner" } : {}), updated_at: new Date().toISOString() })
+            .eq("id", atual.id);
+          if (transmitir) await sincronizarTicket(atual.id, atual.reference, supabase);
+        }
+        fotosLinha = `Photos on the quote: ${imagens.length} (${ticket.imagens.length} read from the ticket).`;
+      }
+      convite = await calcularOuMandarConvites(ticket, pedido, resultado, criada.reference);
+    }
+  }
+  const nota = [
+    "🤖 Partner quotes requested (Get partner quotes macro).",
+    quoteRef ? `Quote: ${quoteRef}` : "No quote in the OS: nothing was sent to partners.",
+    ...(fotosLinha ? [fotosLinha] : []),
+    ...(convite ? ["", convite.nota] : []),
+    "",
+    "The quote stops at Quote Ready when bids arrive: the team reviews and sends it to the customer.",
+  ].join("\n");
+  if (postar) await postarNotaInterna(ticketId, nota);
+  return { nota, enviados: convite?.enviados ?? 0, quoteRef };
 }
 
 
@@ -1522,6 +1626,30 @@ export async function subirJobBooked(
    */
   const tituloDoJob = tituloCanonico(ex.jobNome, ex.serviceSummary, ex.detalhesJob, ticket.subject);
 
+  /**
+   * Housekeep v2 (plano de 22/10/2026): a cotação pode estar noutro ticket. Liga
+   * o job na quote aberta do mesmo endereço (até 30 dias) e, se ela já tem o
+   * parceiro e a data, o job nasce com ele (Scheduled). Fora do v2: nada muda.
+   */
+  let planoV2: import("@/lib/processo/booking-housekeep").PlanoDoJob | null = null;
+  {
+    const { ehHousekeep } = await import("@/lib/processo/plataformas");
+    if (ehHousekeep(conta!.id)) {
+      const { processoDaConta } = await import("@/lib/processo/conta");
+      const regras = await processoDaConta(createServiceClient(), conta!.id).catch(() => null);
+      if (regras?.v2) {
+        const { escolherQuoteDoBooking, planoDoJobDoBooking, quotesAbertasDaHousekeep } = await import("@/lib/processo/booking-housekeep");
+        try {
+          const abertas = await quotesAbertasDaHousekeep(createServiceClient());
+          const quote = escolherQuoteDoBooking(abertas, { postcode: ex.postcode ?? null, endereco: ex.propertyAddress ?? null });
+          planoV2 = planoDoJobDoBooking(quote, { dataDoBooking: ex.date ?? null, janelaDoCard: /\d{1,2}:\d{2}/.test(janelaCrua) });
+        } catch (err) {
+          planoV2 = { quoteId: null, partnerId: null, partnerCost: null, status: "unassigned", notas: [`Could not look for the Housekeep quote (${err instanceof Error ? err.message.slice(0, 120) : String(err)}).`] };
+        }
+      }
+    }
+  }
+
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
@@ -1568,13 +1696,20 @@ export async function subirJobBooked(
       // O ticket JÁ existe: linka por external_source/external_ref e ganha
       // idempotência — repostar o mesmo ticket devolve o job existente.
       ticket_id: String(ticketId),
+      ...(planoV2?.quoteId ? { quote_id: planoV2.quoteId } : {}),
+      ...(planoV2?.status === "scheduled" && planoV2.partnerId
+        ? { partner_id: planoV2.partnerId, partner_cost: planoV2.partnerCost ?? undefined }
+        : {}),
     }),
   });
-  const corpo = (await res.json().catch(() => ({}))) as { reference?: string; error?: string };
+  const corpo = (await res.json().catch(() => ({}))) as { reference?: string; error?: string; action?: string; status?: string };
   if (!res.ok) throw new Error(`OS /api/jobs ${res.status}: ${corpo.error ?? "?"}`);
 
+  const jaExistia = planoV2 !== null && corpo.action === "existing";
   const nota = [
-    `✅ HARVEY — job ${corpo.reference ?? "?"} created in the OS from this booking.`,
+    jaExistia
+      ? `✅ HARVEY: this booking already has job ${corpo.reference ?? "?"} in the OS (same booking card), nothing new created.`
+      : `✅ HARVEY — job ${corpo.reference ?? "?"} created in the OS from this booking.`,
     "",
     `Account: ${conta!.nome}`,
     `Client: ${ex.clientName} · ${ex.propertyAddress}${ex.postcode ? ` · ${ex.postcode}` : ""}`,
@@ -1582,7 +1717,9 @@ export async function subirJobBooked(
     ex.priceGbp != null ? `Value: £${ex.priceGbp.toFixed(2)}` : "Value: not stated in ticket",
     ...(ex.cardUrl ? [`Report link: ${ex.cardUrl}`] : []),
     "",
-    "Unassigned — office picks the partner in the OS.",
+    ...(planoV2
+      ? [...planoV2.notas, corpo.status === "scheduled" ? "The partner was asked to confirm." : "Unassigned: office picks the partner in the OS."]
+      : ["Unassigned — office picks the partner in the OS."]),
   ].join("\n");
   // O job nasceu: este ticket não deve mais nada a ninguém.
   if (postar) await postarNotaInterna(ticketId, nota, { marcarComoRespondido: true });

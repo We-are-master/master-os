@@ -28,7 +28,10 @@
  * HARVEY_LANCE_EMAIL diferente de "0". Sem isso, só conta o que leria.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { zendeskApi } from "@/lib/zendesk";
+import { replyToSideConversation, zendeskApi } from "@/lib/zendesk";
+import { normalizeCalendarDateToYmd } from "@/lib/utils";
+import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
+import { processoDaQuoteV2 } from "@/lib/processo/quote";
 import { chamarModeloJson, lerMarcaDeEspera, type ChamadaAoModelo } from "@/lib/quote-lance-escopo";
 import { buildBidNotesJson } from "@/lib/quote-bid-payload";
 import { gravarLanceDoParceiro } from "@/lib/quotes/gravar-lance";
@@ -56,6 +59,11 @@ export type Classificacao = {
   resposta: string | null;
   /** A pergunta do parceiro, reescrita para o cliente (classe question). */
   pergunta?: string | null;
+  /**
+   * Até duas datas de início que o parceiro propôs (YYYY-MM-DD). Só são pedidas
+   * ao modelo para conta com regras.v2 (etapa 3); fora disso vem vazia.
+   */
+  datas?: string[];
 };
 
 /** Evento como o Zendesk devolve em /side_conversations/{id}/events.json. */
@@ -127,6 +135,18 @@ function textoOuNull(v: unknown, max = 600): string | null {
  * A resposta do modelo, normalizada. Lance sem total não é lance (vira "other"),
  * e labour + materials sempre somam o total: o e-mail ao cliente sai das metades.
  */
+/** Até duas datas válidas e diferentes, no formato YYYY-MM-DD. */
+export function normalizarDatas(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const d of v) {
+    const n = normalizeCalendarDateToYmd(typeof d === "string" ? d.slice(0, 10) : "");
+    if (n && !out.includes(n)) out.push(n);
+    if (out.length === 2) break;
+  }
+  return out;
+}
+
 export function lerClassificacaoJson(texto: string): Classificacao | null {
   let j: Record<string, unknown>;
   try {
@@ -143,7 +163,7 @@ export function lerClassificacaoJson(texto: string): Classificacao | null {
   let labour = numero(j.labour);
   let materials = numero(j.materials);
   if (total === null && labour !== null) total = Math.round((labour + (materials ?? 0)) * 100) / 100;
-  const base = { duracao: textoOuNull(j.duration, 120), notas: textoOuNull(j.notes), resposta: textoOuNull(j.answer), pergunta: textoOuNull(j.question) };
+  const base = { duracao: textoOuNull(j.duration, 120), notas: textoOuNull(j.notes), resposta: textoOuNull(j.answer), pergunta: textoOuNull(j.question), datas: normalizarDatas(j.dates) };
   if ((tipo === "bid" || tipo === "revised_bid") && total === null) return { tipo: "other", total: null, labour: null, materials: null, ...base };
   if (total !== null) {
     if (materials !== null && materials >= total) materials = null;
@@ -173,6 +193,8 @@ export function notasDoLancePorEmail(c: Classificacao, a: { quando: string; text
     labour_pricing: "fixed" as const,
     materials_pricing: "bulk" as const,
     ...(c.notas ? { labour_description: c.notas } : {}),
+    ...(c.datas?.[0] ? { start_date_option_1: c.datas[0] } : {}),
+    ...(c.datas?.[1] ? { start_date_option_2: c.datas[1] } : {}),
   };
   const extra = [
     `Sent by email in the Zendesk side conversation (${a.quando}).`,
@@ -199,24 +221,128 @@ export const SISTEMA_CLASSIFICACAO = [
   "Never guess a number: only numbers they wrote.",
 ].join("\n");
 
+/** Linhas extras do prompt quando a conta pede duas datas no lance (regras.v2). */
+export const SISTEMA_DATAS = [
+  'Also return "dates": an array with up to two start dates the tradesperson proposed for the job, as YYYY-MM-DD, earliest first. [] if they gave none.',
+  "Resolve relative dates (\"next Tuesday\", \"the 28th\") using TODAY given in the message. Never invent a date they did not offer.",
+].join("\n");
+
+/* ===================== lance por e-mail sem as duas datas (etapa 3) ===================== */
+
+/** Marca no corpo de quote_partner_messages: lance guardado, ainda sem as duas datas, fora do preço. */
+export const MARCA_LANCE_INCOMPLETO = "INCOMPLETE_BID_NO_DATES:";
+
+/** Lance que precisa das duas datas antes de valer (só conta v2, e só em leilão). */
+export function faltamDatas(c: Pick<Classificacao, "datas">): boolean {
+  return (c.datas?.length ?? 0) < 2;
+}
+
+export function corpoDoLanceIncompleto(c: Classificacao, textoDoParceiro: string): string {
+  const json = JSON.stringify({ c, texto: textoDoParceiro.slice(0, 2000) });
+  return `${MARCA_LANCE_INCOMPLETO}${json}`.slice(0, 4000);
+}
+
+/** O lance guardado sem datas, de volta. Corpo sem a marca (ou cortado): null. */
+export function lerLanceIncompleto(corpo: string | null | undefined): { c: Classificacao; texto: string } | null {
+  const s = String(corpo ?? "");
+  if (!s.startsWith(MARCA_LANCE_INCOMPLETO)) return null;
+  try {
+    const j = JSON.parse(s.slice(MARCA_LANCE_INCOMPLETO.length)) as { c?: Classificacao; texto?: string };
+    if (!j.c || !(Number(j.c.total) > 0)) return null;
+    return { c: { ...j.c, datas: normalizarDatas(j.c.datas) }, texto: String(j.texto ?? "") };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Junta o lance guardado com a mensagem nova do parceiro. Preço novo na
+ * mensagem manda (é um lance revisado); sem preço, vale o guardado. As datas
+ * somam: a nova primeiro, depois as do guardado, até duas.
+ */
+export function completarComDatas(pendente: Classificacao, nova: Classificacao): Classificacao {
+  const base = nova.total ? nova : pendente;
+  return { ...base, datas: normalizarDatas([...(nova.datas ?? []), ...(pendente.datas ?? [])]) };
+}
+
+/** O pedido das duas datas ao parceiro, na side conversation. Inglês, sem travessão. */
+export function htmlDoPedidoDeDatas(referencia: string, total: number | null): string {
+  const preco = total ? ` of £${total.toFixed(2)}` : "";
+  return [
+    `<p>Hi,</p>`,
+    `<p>Thank you for your price${preco} for ${referencia}.</p>`,
+    `<p>Before we can send it to the customer, could you reply with two dates you could start the job? For example: Tuesday 28 October or Thursday 30 October.</p>`,
+    `<p>Thank you,<br>Fixfy Team</p>`,
+  ].join("");
+}
+
+/** A chave da reserva do pedido de datas: uma vez por quote e parceiro. */
+export function chaveDoPedidoDeDatas(quoteId: string, partnerId: string): string {
+  return chaveDeEnvio("bid-datas", quoteId, partnerId);
+}
+
+/**
+ * Pede as duas datas ao parceiro UMA vez (reserva antes de mandar). Devolve
+ * "pediu", "ja_pediu" (outra rodada mandou ou está mandando) ou "falhou".
+ */
+export async function pedirDatasAoParceiro(
+  sb: SupabaseClient,
+  p: { quoteId: string; partnerId: string; referencia: string; total: number | null; ticketId: number; email: string | null },
+  enviar: (html: string) => Promise<{ ok: boolean; id?: string | null; error?: string }>,
+): Promise<"pediu" | "ja_pediu" | "falhou"> {
+  const chave = chaveDoPedidoDeDatas(p.quoteId, p.partnerId);
+  const r = await reservarEnvio(sb, { chave, finalidade: "bid-datas", canal: "email", quoteId: p.quoteId, ticketId: p.ticketId, destinatario: p.email, motivo: "partner bid by email without two date options" });
+  if (!r.reservado) return "ja_pediu";
+  try {
+    const res = await enviar(htmlDoPedidoDeDatas(p.referencia, p.total));
+    if (!res.ok) throw new Error(res.error ?? "side conversation reply failed");
+    await confirmarEnvio(sb, chave, res.id ?? null);
+    return "pediu";
+  } catch (e) {
+    await falhouEnvio(sb, chave, e);
+    return "falhou";
+  }
+}
+
 export async function classificarMensagem(
-  a: { referencia: string; escopo: string | null; nossaUltima: string | null; texto: string },
+  a: { referencia: string; escopo: string | null; nossaUltima: string | null; texto: string; comDatas?: boolean; hoje?: string },
   chamar: ChamadaAoModelo = chamarModeloJson,
 ): Promise<Classificacao | null> {
   const usuario = [
+    ...(a.comDatas ? [`TODAY is ${a.hoje ?? new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" })} (London).`] : []),
     `QUOTE ${a.referencia}. What the customer asked for: ${(a.escopo ?? "not given").slice(0, 1500)}`,
     a.nossaUltima ? `\nOUR LAST MESSAGE TO THEM:\n${a.nossaUltima.slice(0, 1500)}` : "",
     `\nTHEIR NEW MESSAGE:\n${a.texto.slice(0, 3000)}`,
   ].join("\n");
-  const cru = await chamar(SISTEMA_CLASSIFICACAO, usuario);
-  return lerClassificacaoJson(cru);
+  const cru = await chamar(a.comDatas ? `${SISTEMA_CLASSIFICACAO}\n${SISTEMA_DATAS}` : SISTEMA_CLASSIFICACAO, usuario);
+  const c = lerClassificacaoJson(cru);
+  // Fora da v2 o lance segue como antes: sem datas no BID_JSON.
+  return c && !a.comDatas ? { ...c, datas: [] } : c;
 }
 
 /* ============================== a varredura ============================== */
 
-export type ResultadoDosLancesPorEmail = { armado: boolean; quotes: number; lidas: number; lances: number; respostas: number; outras: number; detalhes: string[] };
+export type ResultadoDosLancesPorEmail = { armado: boolean; quotes: number; lidas: number; lances: number; respostas: number; outras: number; incompletos?: number; detalhes: string[] };
 
-type QuoteDaLeitura = { id: string; reference: string; status: string; scope: string | null; external_ref: string; automation_status: string | null };
+type QuoteDaLeitura = { id: string; reference: string; status: string; scope: string | null; external_ref: string; automation_status: string | null; source_account_id?: string | null; client_id?: string | null };
+
+/** O lance deste parceiro guardado sem as duas datas (etapa 3), se houver. */
+async function lanceIncompletoGuardado(supabase: SupabaseClient, quoteId: string, partnerId: string): Promise<{ messageId: string; c: Classificacao } | null> {
+  const { data } = await supabase
+    .from("quote_partner_messages")
+    .select("message_id, body")
+    .eq("quote_id", quoteId)
+    .eq("partner_id", partnerId)
+    .in("kind", ["bid", "revised_bid"])
+    .is("bid_id", null)
+    .order("created_at", { ascending: false })
+    .limit(5);
+  for (const linha of (data ?? []) as Array<{ message_id: string; body: string | null }>) {
+    const l = lerLanceIncompleto(linha.body);
+    if (l) return { messageId: linha.message_id, c: l.c };
+  }
+  return null;
+}
 
 function libras(v: number): string {
   return `£${v.toFixed(2)}`;
@@ -232,7 +358,7 @@ export async function lerLancesPorEmail(
   const desde = new Date(Date.now() - IDADE_MAXIMA_DIAS * 864e5).toISOString();
   const { data: quotes, error } = await supabase
     .from("quotes")
-    .select("id, reference, status, scope, external_ref, automation_status")
+    .select("id, reference, status, scope, external_ref, automation_status, source_account_id, client_id")
     // Já precificada ou enviada: só entra se o Harvey perguntou algo ao parceiro pelo cliente (ask_partner).
     .in("status", ["bidding", "quote_ready", "awaiting_customer"])
     .eq("external_source", "zendesk")
@@ -261,9 +387,11 @@ export async function lerLancesPorEmail(
     const { data: convites } = await supabase.from("quote_partner_invitations").select("partner_id").eq("quote_id", q.id);
     const ids = [...new Set(((convites ?? []) as Array<{ partner_id: string }>).map((c) => c.partner_id).filter(Boolean))];
     if (!ids.length) continue;
-    const { data: ps } = await supabase.from("partners").select("id, email, job_cc_emails, company_name, contact_name").in("id", ids);
-    const parceiros = (ps ?? []) as ParceiroComEmails[];
+    const { data: ps } = await supabase.from("partners").select("id, email, job_cc_emails, company_name, contact_name, zendesk_user_id").in("id", ids);
+    const parceiros = (ps ?? []) as Array<ParceiroComEmails & { zendesk_user_id?: number | string | null }>;
     r.quotes++;
+    // Etapa 3: conta com regras.v2 pede duas datas no lance. Sem PROCESSOS_V2=on nem lê a conta.
+    const pedeDatas = emLeilao && !!(await processoDaQuoteV2(supabase, q).catch(() => null));
 
     let scs: Array<{ id: string; participants?: Array<{ email?: string | null }> }> = [];
     try {
@@ -312,14 +440,27 @@ export async function lerLancesPorEmail(
         const nossaUltima = todas.filter((x) => x.em < m.em && !parceiroDoEmail(x.deEmail, parceiros)).at(-1)?.texto ?? null;
         let c: Classificacao | null;
         try {
-          c = await classificarMensagem({ referencia: q.reference, escopo: q.scope, nossaUltima, texto: m.texto }, opcoes.chamar);
+          c = await classificarMensagem({ referencia: q.reference, escopo: q.scope, nossaUltima, texto: m.texto, comDatas: pedeDatas }, opcoes.chamar);
         } catch (err) {
           // Modelo fora do ar: não marca, tenta no próximo ciclo.
           r.detalhes.push(`${q.reference}: não consegui classificar o e-mail de ${nome} (${String(err).slice(0, 100)})`);
           continue;
         }
         const lida = c ?? { tipo: "other" as const, total: null, labour: null, materials: null, duracao: null, notas: null, resposta: null };
-        const passo = passoDaMensagem(lida);
+        let passo = passoDaMensagem(lida);
+        // Etapa 3 (v2): lance sem as duas datas fica guardado fora do preço até o parceiro mandar as datas.
+        let lance: Classificacao = lida;
+        let pendente: { messageId: string; c: Classificacao } | null = null;
+        let incompleto = false;
+        if (pedeDatas) {
+          pendente = await lanceIncompletoGuardado(supabase, q.id, parceiro.id).catch(() => null);
+          // Só as datas, respondendo ao nosso pedido: completa o lance guardado.
+          if (pendente && !lida.total && (lida.datas?.length ?? 0) > 0) passo = "gravar_lance";
+          if (passo === "gravar_lance") {
+            lance = pendente ? completarComDatas(pendente.c, lida) : lida;
+            incompleto = faltamDatas(lance);
+          }
+        }
         let bidId: string | null = null;
         let perguntaEnviada = false;
         try {
@@ -335,6 +476,32 @@ export async function lerLancesPorEmail(
             ].filter((l) => l !== null).join("\n"));
             await precisaDeAcao(ticketId, `${nome} gave a new price by email on ${q.reference} (${libras(lida.total!)}): decide whether to re-quote the customer`);
             r.respostas++;
+          } else if (passo === "gravar_lance" && incompleto) {
+            const pedido = await pedirDatasAoParceiro(
+              supabase,
+              { quoteId: q.id, partnerId: parceiro.id, referencia: q.reference, total: lance.total, ticketId, email: parceiro.email },
+              async (html) => {
+                const env = await replyToSideConversation({
+                  ticketId,
+                  sideConversationId: m.scId,
+                  htmlBody: html,
+                  toEmail: parceiro.email ?? m.deEmail,
+                  toName: parceiro.contact_name || parceiro.company_name || undefined,
+                  toUserId: parceiro.zendesk_user_id ?? null,
+                  extraEmails: parceiro.job_cc_emails ?? undefined,
+                });
+                return { ok: env.ok, error: env.ok ? undefined : String(env.error ?? env.status ?? "failed") };
+              },
+            );
+            if (pedido === "falhou") throw new Error("could not ask the partner for two dates");
+            await postarNotaInterna(ticketId, [
+              `🤖 HARVEY — bid by email from ${nome} on ${q.reference}: ${libras(lance.total!)}, held (not used for pricing yet)`,
+              "",
+              `It came without two start date options${lance.datas?.length ? ` (only ${lance.datas[0]})` : ""}.`,
+              pedido === "pediu" ? "Asked the partner in their side conversation for two dates. When they reply, the bid is saved and priced as usual." : "Already asked the partner for two dates; waiting for their reply.",
+              `Partner wrote: "${m.texto.slice(0, 500)}"`,
+            ].join("\n"));
+            r.incompletos = (r.incompletos ?? 0) + 1;
           } else if (passo === "gravar_lance") {
             const { data: antes } = await supabase.from("quote_bids").select("id, bid_amount").eq("quote_id", q.id).eq("partner_id", parceiro.id).maybeSingle();
             const g = await gravarLanceDoParceiro(supabase, {
@@ -342,27 +509,29 @@ export async function lerLancesPorEmail(
               quoteReference: q.reference,
               partnerId: parceiro.id,
               partnerName: nome,
-              bidAmount: lida.total!,
+              bidAmount: lance.total!,
               jobType: "fixed",
-              notes: notasDoLancePorEmail(lida, { quando: m.em.slice(0, 16).replace("T", " "), textoDoParceiro: m.texto }),
+              notes: notasDoLancePorEmail(lance, { quando: m.em.slice(0, 16).replace("T", " "), textoDoParceiro: m.texto }),
               origem: "side_conversation_email",
             });
             if (!g.ok) throw new Error(g.error);
             bidId = g.bidId;
+            // O lance guardado sem datas agora tem lance de verdade: sai da espera.
+            if (pendente) await supabase.from("quote_partner_messages").update({ bid_id: bidId }).eq("message_id", pendente.messageId);
             const revisao = antes ? ` (was ${libras(Number(antes.bid_amount) || 0)})` : "";
             await postarNotaInterna(ticketId, [
-              `🤖 HARVEY — ${antes ? "revised bid" : "bid"} by email from ${nome} on ${q.reference}: ${libras(lida.total!)}${revisao}`,
+              `🤖 HARVEY — ${antes ? "revised bid" : "bid"} by email from ${nome} on ${q.reference}: ${libras(lance.total!)}${revisao}`,
               "",
-              lida.materials ? `Labour ${libras(lida.labour ?? 0)} + materials ${libras(lida.materials)}.` : null,
-              lida.duracao ? `Duration: ${lida.duracao}.` : null,
-              lida.notas ? `Scope: ${lida.notas}` : null,
+              lance.materials ? `Labour ${libras(lance.labour ?? 0)} + materials ${libras(lance.materials)}.` : null,
+              lance.duracao ? `Duration: ${lance.duracao}.` : null,
+              lance.notas ? `Scope: ${lance.notas}` : null,
               "",
               `Saved as their bid in the OS, so it goes through the normal draft. Partner wrote: "${m.texto.slice(0, 500)}"`,
             ].filter((l) => l !== null).join("\n"));
             r.lances++;
             // O trigger do Zendesk pôs Action Required ao chegar o e-mail; o lance já está no OS e segue para o rascunho.
             await acaoFeita(ticketId);
-            await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Read ${antes ? "a revised bid" : "a bid"} of ${libras(lida.total!)} from ${nome} in their email and saved it`, regra: "partner bid by email in the side conversation" }, supabase);
+            await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Read ${antes ? "a revised bid" : "a bid"} of ${libras(lance.total!)} from ${nome} in their email and saved it`, regra: "partner bid by email in the side conversation" }, supabase);
           } else if (passo === "pergunta_ao_cliente") {
             // B3: o parceiro precisa de algo do cliente para cotar: a pergunta vai ao cliente.
             const { perguntaDoParceiroAoCliente } = await import("@/lib/harvey/ponte-cliente-parceiro");
@@ -407,12 +576,12 @@ export async function lerLancesPorEmail(
           ticket_id: ticketId,
           side_conversation_id: m.scId,
           kind: tipo,
-          body: (lida.pergunta ?? lida.resposta ?? m.texto).slice(0, 4000),
-          amount: lida.total,
+          body: incompleto ? corpoDoLanceIncompleto(lance, m.texto) : (lida.pergunta ?? lida.resposta ?? m.texto).slice(0, 4000),
+          amount: passo === "gravar_lance" ? lance.total : lida.total,
           bid_id: bidId,
         });
         if (errMarca) r.detalhes.push(`${q.reference}: não marquei o e-mail como lido (${errMarca.message})`);
-        r.detalhes.push(`${q.reference}: e-mail de ${nome} → ${tipo}${lida.total ? ` ${libras(lida.total)}` : ""}`);
+        r.detalhes.push(`${q.reference}: e-mail de ${nome} → ${tipo}${incompleto ? " (sem as duas datas, guardado)" : ""}${lance.total ? ` ${libras(lance.total)}` : ""}`);
       }
     }
   }

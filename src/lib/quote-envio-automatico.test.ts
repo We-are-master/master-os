@@ -1,7 +1,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { validarAutonomia } from "@/lib/harvey/autonomia";
-import { contaEhDireta, maximoDoEnvioAutomatico, podeMandarSozinho, envioAutomaticoLigado, type EntradaDoEnvio } from "./quote-envio-automatico";
+import { contaEhDireta, maximoDoEnvioAutomatico, podeMandarSozinho, envioAutomaticoLigado, quoteJaEnviadaAMao, type EntradaDoEnvio } from "./quote-envio-automatico";
 
 const seguro: EntradaDoEnvio = {
   ligado: true, total: 480, maximo: 1001, escopoConferido: true, perguntaPendente: false,
@@ -79,5 +79,43 @@ describe("direct customer account", () => {
   it("no account only counts when the quote came from Harvey's WhatsApp", () => {
     assert.equal(contaEhDireta({ contaDeOrigem: null, contaFixfy: "x", daConversaDoHarvey: true }), true);
     assert.equal(contaEhDireta({ contaDeOrigem: null, contaFixfy: "x", daConversaDoHarvey: false }), false);
+  });
+});
+
+describe("quote already sent by hand (stage 3)", () => {
+  const criada = "2026-10-20T10:00:00Z";
+  const cliente = 111;
+  const equipe = 222;
+  const harvey = 333;
+
+  it("blocks the automatic send with its own reason", () => {
+    const d = podeMandarSozinho({ ...seguro, envioManualDetectado: true });
+    assert.equal(d.enviar, false);
+    assert.deepEqual(d.motivos, ["a quote was already sent by the team"]);
+    // Callers that do not pass it keep the old decision.
+    assert.equal(podeMandarSozinho(seguro).enviar, true);
+  });
+
+  it("a public agent comment with a price after the quote was created", () => {
+    assert.equal(quoteJaEnviadaAMao([{ public: true, author_id: equipe, created_at: "2026-10-20T12:00:00Z", body: "Hi Sam, the price is £480 including materials." }], criada, { requesterId: cliente }), true);
+  });
+
+  it("the quote reference or the quote PDF also count", () => {
+    assert.equal(quoteJaEnviadaAMao([{ public: true, author_id: equipe, created_at: "2026-10-20T12:00:00Z", body: "Please see Q-1234 attached." }], criada, { referencia: "Q-1234" }), true);
+    assert.equal(
+      quoteJaEnviadaAMao([{ public: true, author_id: equipe, created_at: "2026-10-20T12:00:00Z", body: "Attached.", attachments: [{ file_name: "Fixfy-Quote.pdf", content_type: "application/pdf" }] }], criada),
+      true,
+    );
+  });
+
+  it("ignores the customer, private notes, older comments and listed automatic authors", () => {
+    const cs = [
+      { public: true, author_id: cliente, created_at: "2026-10-20T12:00:00Z", body: "Can you do it for £400?" },
+      { public: false, author_id: equipe, created_at: "2026-10-20T12:00:00Z", body: "Partner bid £350" },
+      { public: true, author_id: equipe, created_at: "2026-10-19T12:00:00Z", body: "Last year it was £300" },
+      { public: true, author_id: harvey, created_at: "2026-10-20T12:00:00Z", body: "Handyman visits start at £72 per hour." },
+      { public: true, author_id: equipe, created_at: "2026-10-20T13:00:00Z", body: "We are getting prices from our partners." },
+    ];
+    assert.equal(quoteJaEnviadaAMao(cs, criada, { requesterId: cliente, ignorarAutores: [harvey] }), false);
   });
 });

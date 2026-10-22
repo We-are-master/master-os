@@ -98,7 +98,9 @@ export async function aposEntradaDaCotacaoPaga(
     metadata: { deposit_paid: true, source: origem },
   });
 
-  await enviarReciboDaEntrada(supabase, jobReference);
+  // Sem recibo da entrada por e-mail (dono, 22/10/2026: "manda tudo no final"): a entrada
+  // aparece na confirmação do booking e na fatura final. O PDF segue no OS para quem pedir.
+  void enviarReciboDaEntrada;
 
   // O parceiro entra agora SÓ se o preço veio de um lance que ele mesmo enviou
   // (dono, 16/10/2026). Preço nosso (tabela) ou dado pela equipe: o job fica em

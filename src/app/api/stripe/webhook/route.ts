@@ -28,6 +28,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
+  // Evento já processado com sucesso (a Stripe reentrega o mesmo evento): não credita de novo.
+  // O registro entra só no fim, depois de tudo certo: se algo falhar no meio, a Stripe tenta
+  // de novo e o evento é processado na tentativa seguinte (22/10/2026).
+  const { data: jaFeito } = await supabaseAdmin.from("processed_events").select("event_id").eq("provider", "stripe").eq("event_id", event.id).maybeSingle();
+  if (jaFeito) return NextResponse.json({ received: true, duplicate: true });
+
   if (event.type === "checkout.session.completed" || event.type === "payment_intent.succeeded") {
     const session = event.data.object as unknown as Record<string, unknown>;
     const metadata = (session.metadata ?? {}) as Record<string, string>;
@@ -105,5 +111,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  await supabaseAdmin
+    .from("processed_events")
+    .insert({ provider: "stripe", event_id: event.id, kind: event.type })
+    .then(({ error }) => { if (error && error.code !== "23505") console.error("[stripe webhook] processed_events:", error.message); });
   return NextResponse.json({ received: true });
 }

@@ -811,6 +811,19 @@ async function ciclo(): Promise<void> {
   }
   console.log(`[harvey] ciclo fechado: ${cotados} ${rascunhoDePrecoLigado() ? "rascunho(s)" : "pedido(s) de quote registrado(s)"}, ${criados} booking(s) processado(s), ${notasTriagem} triagem(ns)${poupadas ? `, ${poupadas} sem mudanca (modelo poupado)` : ""}`);
 
+  // Macro "Get partner quotes" (tag b2b_cotar) em ticket B2B só com gente: preparo +
+  // convites com as fotos do ticket, neste ticket só, uma vez (processo/b2b-cotar.ts).
+  // A quote para em Quote Ready: o envio ao cliente é da equipe.
+  try {
+    const { varrerB2bCotar, dependenciasReais } = await import("../../src/lib/processo/b2b-cotar");
+    const { createServiceClient } = await import("../../src/lib/supabase/service");
+    const rb = await varrerB2bCotar(await dependenciasReais(createServiceClient()));
+    for (const c of rb.cotados) console.log(`[harvey] b2b_cotar ✔ ${c}`);
+    for (const p of rb.pulados) console.log(`[harvey] b2b_cotar · ${p}`);
+  } catch (err) {
+    console.error(`[harvey] macro b2b_cotar morreu: ${err}`);
+  }
+
   // Vigia de OFERTAS em todo ciclo (Fase 3 do auto-flow): expira convites
   // vencidos, convida parceiros novos sem reenviar email a quem já recebeu, e
   // marca encalhe de 24h. Nasce em ensaio — só age com HARVEY_OFERTAS_ARMADO=1.

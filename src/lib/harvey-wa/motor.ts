@@ -39,6 +39,8 @@ import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+import { processosV2Ligado } from "@/lib/processo/conta";
+import { registrarCanalAtivo } from "@/lib/processo/canal-ativo";
 
 type EventoSc = {
   type: string;
@@ -420,6 +422,12 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   if (repetida) return "ignorado: repetida";
 
   const { data: estado } = await sb.from("harvey_wa_conversas").select("*").eq("conversation_id", conversa.id).maybeSingle();
+  // Canal ativo (etapa 3): o cliente escreveu no WhatsApp, a próxima mensagem automática sai por aqui.
+  // Vale mesmo com a equipe na conversa. Sem PROCESSOS_V2=on não faz nada.
+  if (processosV2Ligado() && estado?.tipo !== "parceiro") {
+    const telCanal = (estado?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId).catch(() => null) : null);
+    if (telCanal) await registrarCanalAtivo(sb, { telefone: telCanal }, "whatsapp").catch((e) => console.error("[harvey-wa] canal ativo:", e));
+  }
   if (estado && estado.estado !== "harvey") return `ignorado: ${estado.estado}`;
 
   const telefone = (estado?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId) : null);

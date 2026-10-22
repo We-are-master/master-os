@@ -16,7 +16,9 @@ import {
   janelaTexto,
   saudacao,
   type Publico,
+  gbp,
 } from "@/lib/emails/fixfy-shell";
+import { metricasDaVisita, passosAte, PASSOS_VISITA } from "@/lib/emails/faixas-do-email";
 
 export interface JobConfirmationEmailArgs {
   /** Organization name when linked; otherwise client first name. */
@@ -36,6 +38,8 @@ export interface JobConfirmationEmailArgs {
    * o que `resolveCustomerGreetingName` resolveu: nome de organização = B2B.
    */
   publico?: Publico;
+  /** Entrada já paga (dono, 22/10/2026): sai na confirmação em vez de um recibo à parte. */
+  deposito?: { pago: number; restante: number } | null;
 }
 
 function firstName(full: string): string {
@@ -247,6 +251,12 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
     "You’ll find the booking details below. If there’s anything we should know about access or parking, just reply and we’ll make a note.",
     "We look forward to getting everything sorted for you.",
   ];
+  const dep = args.deposito && args.deposito.pago > 0.009 ? args.deposito : null;
+  const linhaDoPagamento = dep
+    ? dep.restante > 0.009
+      ? `Deposit of ${gbp(dep.pago)} received. The remaining ${gbp(dep.restante)} is due when the job is done.`
+      : `${gbp(dep.pago)} received. Nothing left to pay.`
+    : null;
   const preheader = [servico && endereco ? `${servico} at ${endereco}.` : servico ? `${servico}.` : endereco ? `${endereco}.` : "", janela ? `Arrival ${janela}.` : ""]
     .filter(Boolean)
     .join(" ") || "Your booking is confirmed.";
@@ -257,14 +267,16 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
     estado: { texto: String(args.eyebrow ?? "").trim() || "Confirmed", cor: "green" },
     titulo: "Your booking is confirmed",
     destaque: data ? { linha1: data, linha2: janela ?? "Arrival time to be confirmed" } : null,
+    metricas: metricasDaVisita(data, janela),
+    passos: passosAte(PASSOS_VISITA, 1),
     saudacao: saudacao(publico),
     paragrafos,
     linhas: [
       ["Service", servico],
-      ["Date", data],
-      ["Arrival", janela],
+      // Data e janela já estão no bloco de destaque: não repete (dono, 22/10/2026).
       ["Property", endereco],
       ["Booking", args.jobReference],
+      ["Payment", linhaDoPagamento],
     ],
   });
   return { subject: buildJobConfirmationSubject(args), html, text };
@@ -313,6 +325,8 @@ export function buildJobRescheduledEmail(args: JobRescheduledEmailArgs): { subje
     destaque: novo.data
       ? { linha1: novo.data, linha2: novo.janela ?? "Arrival time to be confirmed", riscado: juntar(antes.data, antes.janela) || null }
       : null,
+    metricas: metricasDaVisita(novo.data, novo.janela),
+    passos: passosAte(PASSOS_VISITA, 1),
     saudacao: saudacao(publico),
     paragrafos: [
       `We’re writing to confirm a change to ${ondeFrase}. The previous and revised arrangements are below.${args.iniciadoPelaFixfy ? " We’re sorry for the disruption." : ""}`,

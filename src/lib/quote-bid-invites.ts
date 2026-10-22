@@ -73,7 +73,7 @@ export async function dispatchQuoteBidInvites(
 
   const tradeLabel = serviceType || params.title.trim() || "Quote";
   const pushSent = await sendPushToPartners(supabase, partnerIds, {
-    title: "New quote — bid invitation",
+    title: "New quote · bid invitation",
     body: `${params.quoteReference} · ${tradeLabel} · ${params.propertyAddress || serviceType}`.slice(0, 500),
     data: {
       type: "quote_bid_invite",

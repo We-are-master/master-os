@@ -57,7 +57,7 @@ test("Resend (21): B2C cumprimenta pelo primeiro nome, um botão, recusar como l
   assert.match(e.text, /Itemised pricing: Labour £150\.00 · Materials £30\.00/);
   assert.doesNotMatch(e.text, /The Fixfy team/);
   assert.match(e.text, /A PDF copy of this quote is attached/);
-  assert.equal((e.html.match(/min-height:44px/g) ?? []).length, 1, "um botão só");
+  assert.equal((e.html.match(/display:block;background:#ED4B00/g) ?? []).length, 1, "um botão só");
   for (const s of [e.assunto, e.html, e.text]) {
     assert.doesNotMatch(s, DASHES);
     assert.doesNotMatch(s, /\{\{/);

@@ -39,7 +39,7 @@ import {
   publicoDoAviso,
 } from "@/lib/zendesk-lifecycle-templates";
 import {
-  buildJobConfirmationHtml,
+  buildJobConfirmationEmail,
   formatJobConfirmationArrivalWindow,
   formatJobConfirmationLongDate,
   loadAccountOrganizationName,
@@ -127,7 +127,7 @@ export async function dispatchJobCreatedZendesk(args: {
       catalog_service_id,
       external_source, external_ref, partner_id, partner_confirmed_at, client_id,
       zendesk_side_conversation_id,
-      job_creation_notice_sent_at,
+      job_creation_notice_sent_at, client_price, extras_amount, customer_deposit, customer_deposit_paid,
       clients ( full_name )
     `)
     .eq("id", args.jobId)
@@ -196,7 +196,7 @@ export async function dispatchJobCreatedZendesk(args: {
     String(job.title ?? ""),
   );
 
-  const html = buildJobConfirmationHtml({
+  const argsDaConfirmacao = {
     greetingName,
     jobReference: String(job.reference ?? ""),
     jobTitle: String(job.title ?? "Maintenance job"),
@@ -208,7 +208,10 @@ export async function dispatchJobCreatedZendesk(args: {
     propertyAddress,
     propertyPostcode,
     typeOfWork,
-  });
+    deposito: depositoDoJob(job as Record<string, unknown>),
+  };
+  const confirmacao = buildJobConfirmationEmail(argsDaConfirmacao);
+  const html = confirmacao.html;
 
   // Make the booking confirmation reach the CUSTOMER on this ticket. Jobs
   // created in the OS open a ticket with team@getfixfy.com as requester (and a
@@ -284,29 +287,32 @@ export async function dispatchJobCreatedZendesk(args: {
     console.error("[zendesk-lifecycle] dispatchJobCreated main reply failed:", err);
   }
 
-  // Ticket de WhatsApp: a confirmação acima é nota interna; o cliente ouve uma linha curta
-  // na conversa (16/10/2026). Falha ou janela fechada vira nota, nunca derruba o dispatch.
+  /**
+   * Ticket de WhatsApp: a confirmação acima ficou como nota interna. Ela vai ao cliente
+   * por E-MAIL, como conversa lateral do próprio ticket (dono, 22/10/2026: "todo job
+   * confirmed só por email"; WhatsApp só para enquiry, véspera e cobrança vencida).
+   * Cliente sem e-mail: a equipe é avisada por nota para confirmar por telefone.
+   */
   if (viaWhatsApp) {
     try {
-      const { confirmarJobNoWhatsApp } = await import("@/lib/harvey-wa/confirmacao-no-whatsapp");
-      const r = await confirmarJobNoWhatsApp(supabase, {
-        ticketId: Number(ticketId),
-        dia: formatJobConfirmationLongDate(dateStr),
-        janela: formatJobConfirmationArrivalWindow({
-          scheduled_start_at: job.scheduled_start_at,
-          scheduled_end_at: (job as { scheduled_end_at?: string | null }).scheduled_end_at,
-        }),
-        referencia: String(job.reference ?? ""),
-      });
-      if (!r.enviado) {
+      if (!clientEmail.includes("@") || clientEmail.toLowerCase() === TEAM_REQUESTER) {
         await zdUpdateTicket({
           ticketId,
-          htmlBody: `<p>WhatsApp confirmation not sent: ${r.motivo ?? "unknown reason"}. Confirm with the customer by phone or template.</p>`,
+          htmlBody: "<p>Booking confirmation not emailed: the customer has no email on file. Confirm with the customer by phone.</p>",
           publicComment: false,
         }).catch(() => undefined);
+      } else {
+        const { entregarEmailNoTicket } = await import("@/lib/um-ticket/entregar");
+        await entregarEmailNoTicket({
+          ticket: { id: Number(ticketId), origem: "job", canal: "whatsapp" },
+          para: { email: clientEmail, nome: clientName || null },
+          assunto: confirmacao.subject,
+          html,
+          soEmail: true,
+        });
       }
     } catch (err) {
-      console.error("[zendesk-lifecycle] WhatsApp confirmation failed:", err);
+      console.error("[zendesk-lifecycle] confirmation email on WhatsApp ticket failed:", err);
     }
   }
 
@@ -604,4 +610,12 @@ export async function dispatchQuoteRejectedZendesk(
     .eq("id", quoteId);
 
   return { ok: true, posted: true };
+}
+
+/** Entrada paga do job, para a linha "Payment" da confirmação. Sem entrada paga: null. */
+function depositoDoJob(j: Record<string, unknown>): { pago: number; restante: number } | null {
+  const pago = Number(j.customer_deposit ?? 0);
+  if (!j.customer_deposit_paid || !(pago > 0)) return null;
+  const total = Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
+  return { pago, restante: Math.max(0, Math.round((total - pago) * 100) / 100) };
 }

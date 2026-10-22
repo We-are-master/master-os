@@ -23,7 +23,7 @@ describe("seta da lista: próxima fase", () => {
   it("scheduled vira Start job → in_progress", () => {
     const r = proximaFaseDoJob(job({}));
     assert.equal(r?.to, "in_progress");
-    assert.equal(r?.label, "Start Job");
+    assert.equal(r?.label, "Start job");
     assert.equal(r?.bloqueio, null);
   });
 

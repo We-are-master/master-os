@@ -43,6 +43,8 @@ function job(partial: Partial<Job> & Pick<Job, "id" | "status">): Job {
     report_1_approved: false,
     report_2_uploaded: false,
     report_2_approved: false,
+    report_3_uploaded: false,
+    report_3_approved: false,
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-06-01T00:00:00Z",
     ...partial,

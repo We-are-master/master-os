@@ -11,6 +11,7 @@ import {
   canSendClientEmailWithPack,
 } from "@/lib/account-final-email-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { EmailFixfy } from "@/lib/emails/fixfy-shell";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
 import { buildInvoiceClientEmail } from "@/lib/invoice-email-template";
@@ -28,6 +29,10 @@ import type { Account, Invoice } from "@/types/database";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
+import { contaDoJob } from "@/lib/processo/conta";
+import { finalidadePendente, finalidadeRetido, reterCertificado } from "@/lib/certificado/regra";
+import { certificateAttachmentUrls } from "@/lib/certificate-expiry";
+import { chaveDeEnvio, confirmarEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 type ReportRow = {
   id: string;
@@ -73,6 +78,8 @@ export type FinalReviewEmailResult =
       to: string;
       includeInvoice: boolean;
       includeReport: boolean;
+      certificadoRetido: boolean;
+      certificadoAnexado: boolean;
     }
   | { ok: false; status: number; error: string; detail?: string };
 
@@ -87,14 +94,21 @@ function falha(status: number, error: string, detail?: string): FinalReviewEmail
 export async function sendFinalReviewEmail(
   admin: SupabaseClient,
   jobId: string,
-  opts: { includeInvoice: boolean; includeReport: boolean; jobClient?: SupabaseClient; source?: string },
+  opts: {
+    includeInvoice: boolean;
+    includeReport: boolean;
+    jobClient?: SupabaseClient;
+    source?: string;
+    /** E-mail do pagamento recebido (`certificado/liberar.ts`): anexa o certificado retido. */
+    liberarCertificado?: boolean;
+  },
 ): Promise<FinalReviewEmailResult> {
   const { includeInvoice, includeReport } = opts;
   const jobClient = opts.jobClient ?? admin;
   const { data: job, error: jobErr } = await jobClient
     .from("jobs")
     .select(
-      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report",
+      "id, reference, title, client_id, client_name, partner_id, created_at, property_address, status, invoice_id, quote_id, completed_date, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, external_source, external_ref, start_report, final_report, finance_status, payment_status, account_id, customer_deposit, customer_deposit_paid",
     )
     .eq("id", jobId)
     .is("deleted_at", null)
@@ -165,6 +179,21 @@ export async function sendFinalReviewEmail(
    * linha em `job_reports`, então o cliente recebia fotos soltas. Sem PDF legado, vai o
    * PDF montado do start_report + final_report (as fotos já estão dentro dele).
    */
+  /**
+   * Certificado só com o job pago (dono, 22/10/2026): cliente da Fixfy com saldo recebe o
+   * report sem o certificado; ele sai sozinho quando o pagamento entra (`certificado/liberar.ts`).
+   */
+  const contaId = await contaDoJob(admin, { account_id: (j.account_id as string | null) ?? null, client_id: clientId });
+  const certificadoRetido =
+    includeReport &&
+    reterCertificado(
+      { title: j.title as string | null, status: j.status as string | null, finance_status: j.finance_status as string | null, payment_status: j.payment_status as string | null, final_report: j.final_report },
+      contaId,
+      { forcarAnexo: opts.liberarCertificado },
+    );
+  let certificadoAnexado = false;
+  const urlsDoCertificado = new Set(certificateAttachmentUrls(j.final_report));
+
   let pdfV2Anexado = false;
   if (includeReport && attachments.length === 0) {
     try {
@@ -219,7 +248,11 @@ export async function sendFinalReviewEmail(
       totalBytes += buf.length;
       const ehPdf = /\.pdf(\?|$)/i.test(u);
       // Com o PDF do report anexado, foto solta seria repetida: só seguem os PDFs (certificados).
-      if (pdfV2Anexado && !ehPdf) continue;
+      // Certificado = PDF do relatório ou arquivo do slot "certificate" (pode ser foto do papel).
+      const ehCertificado = ehPdf || urlsDoCertificado.has(u);
+      if (ehCertificado && certificadoRetido) continue;
+      if (pdfV2Anexado && !ehCertificado) continue;
+      if (ehCertificado) certificadoAnexado = true;
       attachments.push({
         filename: ehPdf
           ? `${safe}-certificate${++nPdf > 1 ? `-${nPdf}` : ""}.pdf`
@@ -346,6 +379,10 @@ export async function sendFinalReviewEmail(
     }
   }
 
+  // E-mail final no layout do Welcome (dono, 22/10/2026): 3 fotos do trabalho, o botão do
+  // report completo (o PDF, por link que dura semanas) e o "What we did." do parceiro.
+  const visual = includeReport ? await visualDoFinal(admin, jobId, j, attachments) : { fotos: null, resumo: null };
+
   // Copy 12 (relatório + fatura, ou recibo se já pago) ou 13 (só relatório), na moldura única.
   // Duas versões do mesmo texto: e-mail inteiro (Resend / ticket) e comentário público do Zendesk.
   const montar = (zendesk: boolean) => {
@@ -370,7 +407,14 @@ export async function sendFinalReviewEmail(
         {
           final: true,
           reportAttachmentCount,
+          certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
+          deposito:
+            j.customer_deposit_paid && Number(j.customer_deposit) > 0
+              ? { pago: Number(j.customer_deposit), total: Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0) }
+              : null,
           missingReportNote: missingReportNote || undefined,
+          fotos: visual.fotos,
+          resumo: visual.resumo,
           documentAttached: invoicePdfAttached,
           // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
           agentParty,
@@ -387,6 +431,9 @@ export async function sendFinalReviewEmail(
       propertyAddress: typeof j.property_address === "string" ? j.property_address : null,
       reportAttachmentCount,
       reportRequested: includeReport,
+      certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
+      fotos: visual.fotos,
+      resumo: visual.resumo,
       zendesk,
     });
   };
@@ -496,6 +543,20 @@ export async function sendFinalReviewEmail(
     console.error("final-review-email job update:", upErr);
   }
 
+  // Saiu com saldo: quando o pagamento entrar, a varredura manda o recibo com a fatura final paga.
+  if (includeInvoice && invoiceRow && invoiceRow.status !== "paid" && !opts.liberarCertificado) {
+    const chave = chaveDeEnvio("recibo-pendente", jobId);
+    const r = await reservarEnvio(admin, { chave, finalidade: finalidadePendente, canal: "email", jobId, destinatario: emailTo, motivo: invoiceRow.id });
+    if (r.reservado) await confirmarEnvio(admin, chave);
+  }
+
+  // Marca o certificado retido: a varredura do pagamento só manda para quem ficou esperando.
+  if (certificadoRetido) {
+    const chave = chaveDeEnvio("certificado-retido", jobId);
+    const r = await reservarEnvio(admin, { chave, finalidade: finalidadeRetido, canal: "email", jobId, destinatario: emailTo, motivo: "certificate held until the job is paid" });
+    if (r.reservado) await confirmarEnvio(admin, chave);
+  }
+
   return {
     ok: true,
     channel: channel as "zendesk" | "resend",
@@ -505,5 +566,56 @@ export async function sendFinalReviewEmail(
     to: emailTo,
     includeInvoice,
     includeReport,
+    certificadoRetido,
+    certificadoAnexado,
+  };
+}
+
+/** Links do e-mail final duram o bastante para o cliente voltar depois (60 dias). */
+const LINK_DO_FINAL_SEG = 60 * 24 * 60 * 60;
+const FOTO_DESENHAVEL = /\.(jpe?g|png)(\?|$)/i;
+
+/**
+ * As 3 fotos do trabalho (as de depois; sem elas, as de antes), o link do PDF do report
+ * e o texto do parceiro. O PDF anexado sobe para o storage para o botão "See the full
+ * report" abrir no navegador. Falhou alguma parte: o e-mail sai sem ela.
+ */
+async function visualDoFinal(
+  admin: SupabaseClient,
+  jobId: string,
+  j: Record<string, unknown>,
+  anexos: Array<{ filename: string; content: Buffer; contentType?: string }>,
+): Promise<{ fotos: EmailFixfy["fotos"]; resumo: EmailFixfy["resumo"] }> {
+  const doCertificado = new Set(certificateAttachmentUrls(j.final_report));
+  const fotosDe = (r: unknown): string[] => {
+    const ph = (r as { photos?: unknown } | null)?.photos;
+    const todas = Array.isArray(ph) ? ph : ph && typeof ph === "object" ? Object.values(ph as Record<string, unknown>).flat() : [];
+    return todas.filter((u): u is string => typeof u === "string" && FOTO_DESENHAVEL.test(u) && !doCertificado.has(u));
+  };
+  const escolhidas = (fotosDe(j.final_report).length ? fotosDe(j.final_report) : fotosDe(j.start_report)).slice(0, 3);
+  const lista: Array<{ url: string }> = [];
+  for (const u of escolhidas) {
+    const path = jobReportPdfPathFromStoredUrl(u);
+    if (!path) continue;
+    const { data } = await admin.storage.from("job-reports").createSignedUrl(path, LINK_DO_FINAL_SEG);
+    if (data?.signedUrl) lista.push({ url: data.signedUrl });
+  }
+
+  let link: string | null = null;
+  const pdf = anexos.find((a) => /-report(-\d+)?\.pdf$/i.test(a.filename));
+  if (pdf) {
+    const caminho = `email-final/${jobId}/${pdf.filename}`;
+    const { error } = await admin.storage.from("job-reports").upload(caminho, pdf.content, { contentType: "application/pdf", upsert: true });
+    if (!error) {
+      const { data } = await admin.storage.from("job-reports").createSignedUrl(caminho, LINK_DO_FINAL_SEG);
+      link = data?.signedUrl ?? null;
+    } else console.warn("final-review-email: report PDF upload failed:", error.message);
+  }
+
+  const campos = ((j.final_report as { fields?: Record<string, unknown> } | null)?.fields ?? j.final_report ?? {}) as Record<string, unknown>;
+  const descricao = typeof campos.description === "string" && campos.description.trim() && !/ticket\s*#?\d+|from the partner|zendesk/i.test(campos.description) ? campos.description.trim() : null;
+  return {
+    fotos: lista.length || link ? { lista, link: link ? { label: "See the full report", url: link } : null } : null,
+    resumo: descricao ? { titulo: "What we did.", texto: descricao } : null,
   };
 }

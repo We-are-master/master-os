@@ -6,215 +6,138 @@
  * arrasta `server-only` por dependência e não pode ser importada fora do Next.
  *
  * Aqui ele pode ser renderizado num script, conferido antes de sair, e testado.
- * O corpo é o mesmo, sem uma vírgula mudada: isto é mudança de lugar, não de
- * conteúdo. O detalhamento job a job continua indo no PDF anexado.
+ * Desde 20/10/2026 usa a moldura única (`emailFixfy`, "Painel de status"):
+ * o texto é o mesmo, o desenho mudou. O detalhamento job a job continua indo
+ * no PDF anexado.
  */
 import { formatCurrency } from "@/lib/utils";
 import type { SelfBill } from "@/types/database";
+import { emailFixfy, dataLonga, type Estado } from "./fixfy-shell";
+import { PASSO_PAGO, passosDoJob, saudacaoDoParceiro } from "./partner-shell";
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function fmtSbDate(ymd?: string | null): string {
+/** `2026-10-11` (ou ISO) vira `Sun 11 Oct 26`. */
+function fmtSbDate(ymd?: string | null): string | null {
   const raw = ymd?.trim();
-  if (!raw) return "—";
-  const d = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
-  if (Number.isNaN(d.getTime())) return raw.slice(0, 10);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  if (!raw) return null;
+  return dataLonga(raw) ?? raw.slice(0, 10);
 }
 
-/** Branded "Self-Bill Issued" partner email — mirrors the Fixfy statement
- *  design (navy header, orange accent, reference bar, summary, HMRC notice).
- *  The full job-by-job breakdown rides along as the attached PDF. */
+type ArgsDoSelfBill = {
+  partnerName?: string | null;
+  companyName?: string | null;
+  /**
+   * Modelo de agente: o documento tem reservas da plataforma (Schedule A) e
+   * vira Payout Statement, com a fatura de VAT da comissão anexada.
+   * Ausente = e-mail de self-bill de sempre.
+   */
+  payoutStatement?: { commissionInvoiceRef?: string | null; hasClientWork?: boolean } | null;
+};
+
+/** O estado do pagamento: enviado, agendado ou pendente. */
+function estadoDoPagamento(sb: SelfBill, dueYmd: string | null): { estado: Estado; sub: string | null } {
+  const paidAt = sb.paid_at?.trim() ? fmtSbDate(sb.paid_at) : null;
+  if (paidAt) return { estado: { texto: "Payout sent", cor: "green" }, sub: `Transferred on ${paidAt}` };
+  if (dueYmd) return { estado: { texto: "Payout scheduled", cor: "navy" }, sub: `Payment due ${fmtSbDate(dueYmd)}` };
+  return { estado: { texto: "Payout pending", cor: "navy" }, sub: null };
+}
+
+function periodoDo(sb: SelfBill): string {
+  const a = sb.week_start ? fmtSbDate(sb.week_start) : null;
+  const b = sb.week_end ? fmtSbDate(sb.week_end) : null;
+  return a && b ? `${a} to ${b}` : String(sb.week_label ?? sb.period ?? "").replace(/\s*[—–]\s*/g, " to ");
+}
+
+/**
+ * O e-mail de self-bill (ou de Payout Statement, no modelo de agente), em HTML
+ * e texto. O PDF segue anexado por quem envia.
+ */
+export function buildSelfBillEmail(sb: SelfBill, dueYmd: string | null, args?: ArgsDoSelfBill): { html: string; text: string } {
+  const ps = args?.payoutStatement ?? null;
+  const nome = args?.partnerName?.trim() || sb.partner_name?.trim() || "there";
+  const payout = formatCurrency(Number(sb.net_payout ?? 0));
+  const periodo = periodoDo(sb);
+  const { estado, sub } = estadoDoPagamento(sb, dueYmd);
+
+  if (ps) {
+    // Payout Statement: reservas da plataforma pagas como agente, a fatura de
+    // VAT da comissão junto, e o self-bill só para o trabalho B2B.
+    const invoiceRef = ps.commissionInvoiceRef?.trim() || null;
+    const attached = invoiceRef
+      ? `Your payout statement is attached, with Fixfy's VAT invoice for its commission (${invoiceRef}).`
+      : "Your payout statement is attached.";
+    const partB = ps.hasClientWork ? " Part B, for Fixfy Client Work, is your self-billing invoice." : "";
+    return emailFixfy({
+      preheader: `Payout statement: ${payout} for this period. PDFs attached.`,
+      estado,
+      titulo: "Payout statement",
+      passos: passosDoJob(PASSO_PAGO),
+      metricas: [
+        { rotulo: "Payout amount", valor: payout, sub },
+        { rotulo: "Period", valor: periodo },
+      ],
+      saudacao: saudacaoDoParceiro(nome),
+      paragrafos: [
+        `${attached} Review the jobs, your prices, Fixfy's commission percentage and your net payout for Platform Bookings.${partB} Please contact us if any details need correcting.`,
+      ],
+      linhas: [
+        ["Statement reference", sb.reference || null],
+        ["Period", periodo],
+        ["Commission VAT invoice", invoiceRef],
+      ],
+      letraPequena: ["Questions about your payout? Reply to this email.", "Getfixfy Ltd · VAT No. 478 1027 82"],
+    });
+  }
+
+  return emailFixfy({
+    preheader: `Self-bill issued: ${payout} for jobs completed this period. PDF attached.`,
+    estado,
+    titulo: "Self-bill issued",
+    passos: passosDoJob(PASSO_PAGO),
+    metricas: [
+      { rotulo: "Payout amount", valor: payout, sub },
+      { rotulo: "Period", valor: periodo },
+    ],
+    saudacao: saudacaoDoParceiro(nome),
+    paragrafos: ["Your self-bill is attached. Review the period and payment details below, and keep the PDF for your records."],
+    linhas: [
+      ["Self-bill reference", sb.reference || null],
+      ["Period", periodo],
+    ],
+    letraPequena: ["Questions about your payout? Reply to this email."],
+  });
+}
+
 /**
  * Exportado para poder ser RENDERIZADO sem disparar envio.
  *
- * Sem isto, a única forma de ver o email era mandá-lo para um parceiro de
- * verdade. Exportar deixa o preview possível e não muda nada de quem já usa.
+ * Devolve só o HTML, como sempre; o texto sai de `buildSelfBillEmail`.
  */
-export function buildSelfBillEmailHtml(
-  sb: SelfBill,
-  dueYmd: string | null,
-  args?: {
-    partnerName?: string | null;
-    companyName?: string | null;
-    /**
-     * Modelo de agente: o documento tem reservas da plataforma (Schedule A) e
-     * vira Payout Statement, com a fatura de VAT da comissão anexada.
-     * Ausente = e-mail de self-bill de sempre, sem mudar nada.
-     */
-    payoutStatement?: { commissionInvoiceRef?: string | null; hasClientWork?: boolean } | null;
-  },
-): string {
-  if (args?.payoutStatement) return buildPayoutStatementEmailHtml(sb, dueYmd, args.partnerName, args.payoutStatement);
-  const greeting = esc((args?.partnerName?.trim() || sb.partner_name?.trim() || "there"));
-  const ref = esc(sb.reference || "");
-  const periodStart = sb.week_start ? fmtSbDate(sb.week_start) : null;
-  const periodEnd = sb.week_end ? fmtSbDate(sb.week_end) : null;
-  const periodText = periodStart && periodEnd ? `${periodStart} — ${periodEnd}` : esc(sb.week_label ?? sb.period ?? "—");
-  const payout = formatCurrency(Number(sb.net_payout ?? 0));
-  const labour = formatCurrency(Number(sb.job_value ?? 0));
-  const materials = formatCurrency(Number(sb.materials ?? 0));
-  const commission = Number(sb.commission ?? 0);
-  const jobsCount = Number(sb.jobs_count ?? 0);
-  const paidAt = sb.paid_at?.trim() ? fmtSbDate(sb.paid_at) : null;
-
-  // Banner adapts to whether the payout has actually been sent yet.
-  const banner = paidAt
-    ? `<tr><td bgcolor="#DCFCE7" style="background:#DCFCE7; padding:18px 40px; border-bottom:3px solid #22C55E;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#166534; text-transform:uppercase;">PAYOUT SENT</p>
-         <p style="margin:2px 0 0 0; font-size:14px; color:#166534;">${payout} transferred on ${paidAt}</p>
-       </td></tr>`
-    : `<tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:18px 40px; border-bottom:3px solid #020040;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">${dueYmd ? "PAYOUT SCHEDULED" : "PAYOUT PENDING"}</p>
-         <p style="margin:2px 0 0 0; font-size:14px; color:#020040;">${payout}${dueYmd ? ` · payment due ${fmtSbDate(dueYmd)}` : ""}</p>
-       </td></tr>`;
-
-
-
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"></head>
-<body style="margin:0; padding:0; background:#F5F5F7; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <div style="display:none; max-height:0; overflow:hidden; font-size:1px; line-height:1px; color:#F5F5F7;">Self-bill issued — ${payout} for jobs completed this period. PDF attached.</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;"><tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(2,0,64,0.06);">
-
-      <tr><td align="center" bgcolor="#020040" style="background:#020040; padding:24px;">
-        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="100" height="auto" style="display:block; width:100px; height:auto;">
-      </td></tr>
-      <tr><td style="background:#ED4B00; line-height:5px; font-size:5px; height:5px;" height="5">&nbsp;</td></tr>
-
-      ${banner}
-
-      <tr><td style="padding:32px 40px 8px 40px;">
-        <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:3px; color:#ED4B00; text-transform:uppercase;">SELF-BILL ISSUED</p>
-      </td></tr>
-      <tr><td style="padding:0 40px 8px 40px;">
-        <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
-      </td></tr>
-      <tr><td style="padding:0 40px 28px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">Your self-bill is attached. Review the period and payment details below, and keep the PDF for your records.</p>
-      </td></tr>
-
-      <tr><td style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            <tr><td valign="middle" style="font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Self-bill reference</td>
-                <td valign="middle" align="right" style="font-size:14px; font-weight:700; color:#020040;">${ref}</td></tr>
-            <tr><td valign="middle" style="padding-top:6px; font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">Period</td>
-                <td valign="middle" align="right" style="padding-top:6px; font-size:13px; color:#020040;">${periodText}</td></tr>
-
-          </table>
-        </td></tr></table>
-      </td></tr>
-
-
-
-
-      <tr><td style="padding:0 40px 32px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
-          <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Questions about your payout?</p>
-          <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">Reply to this email or contact <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a> &middot; <a href="tel:+442045384668" style="color:#020040; font-weight:600; text-decoration:none;">020 4538 4668</a></p>
-        </td></tr></table>
-      </td></tr>
-
-      <tr><td bgcolor="#020040" style="background:#020040; padding:24px 40px; text-align:center;">
-        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="70" height="auto" style="display:inline-block; width:70px; height:auto; margin-bottom:10px;">
-        <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">Getfixfy Ltd &middot; Co. No. 15406523<br>124 City Road, London EC1V 2NX, United Kingdom<br><a href="https://getfixfy.com" style="color:#AAAAD0; text-decoration:none;">getfixfy.com</a></p>
-      </td></tr>
-
-    </table>
-  </td></tr></table>
-</body></html>`;
+export function buildSelfBillEmailHtml(sb: SelfBill, dueYmd: string | null, args?: ArgsDoSelfBill): string {
+  return buildSelfBillEmail(sb, dueYmd, args).html;
 }
 
 /**
- * O e-mail do Payout Statement (modelo de agente). Mesmo desenho do de
- * self-bill, com o texto certo: reservas da plataforma pagas como agente, a
- * fatura de VAT da comissão junto, e o self-bill só para o trabalho B2B.
+ * O registro curto na conversa lateral do parceiro, no ticket mestre da rodada
+ * de pagamento. Conversa lateral não leva anexo: o PDF vai pela Resend.
  */
-function buildPayoutStatementEmailHtml(
-  sb: SelfBill,
-  dueYmd: string | null,
-  partnerName: string | null | undefined,
-  ps: { commissionInvoiceRef?: string | null; hasClientWork?: boolean },
-): string {
-  const greeting = esc(partnerName?.trim() || sb.partner_name?.trim() || "there");
-  const ref = esc(sb.reference || "");
-  const periodStart = sb.week_start ? fmtSbDate(sb.week_start) : null;
-  const periodEnd = sb.week_end ? fmtSbDate(sb.week_end) : null;
-  const periodText = periodStart && periodEnd ? `${periodStart} to ${periodEnd}` : esc(sb.week_label ?? sb.period ?? "");
+export function buildSelfBillSideConvHtml(sb: SelfBill, dueYmd: string | null, partnerEmail: string, partnerName?: string | null): string {
   const payout = formatCurrency(Number(sb.net_payout ?? 0));
-  const paidAt = sb.paid_at?.trim() ? fmtSbDate(sb.paid_at) : null;
-  const invoiceRef = ps.commissionInvoiceRef?.trim() ? esc(ps.commissionInvoiceRef.trim()) : null;
-
-  const banner = paidAt
-    ? `<tr><td bgcolor="#DCFCE7" style="background:#DCFCE7; padding:18px 40px; border-bottom:3px solid #22C55E;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#166534; text-transform:uppercase;">PAYOUT SENT</p>
-         <p style="margin:2px 0 0 0; font-size:14px; color:#166534;">${payout} transferred on ${paidAt}</p>
-       </td></tr>`
-    : `<tr><td bgcolor="#F2F0FA" style="background:#F2F0FA; padding:18px 40px; border-bottom:3px solid #020040;">
-         <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:2px; color:#020040; text-transform:uppercase;">${dueYmd ? "PAYOUT SCHEDULED" : "PAYOUT PENDING"}</p>
-         <p style="margin:2px 0 0 0; font-size:14px; color:#020040;">${payout}${dueYmd ? ` · payment due ${fmtSbDate(dueYmd)}` : ""}</p>
-       </td></tr>`;
-
-  const attached = invoiceRef
-    ? `Your payout statement is attached, with Fixfy's VAT invoice for its commission (${invoiceRef}).`
-    : "Your payout statement is attached.";
-  const partB = ps.hasClientWork ? " Part B, for Fixfy Client Work, is your self-billing invoice." : "";
-
-  const row = (label: string, value: string, first = false) =>
-    `<tr><td valign="middle" style="${first ? "" : "padding-top:6px; "}font-size:11px; font-weight:700; letter-spacing:1.5px; color:#9A9AA8; text-transform:uppercase;">${label}</td>
-                <td valign="middle" align="right" style="${first ? "" : "padding-top:6px; "}font-size:${first ? "14px; font-weight:700" : "13px"}; color:#020040;">${value}</td></tr>`;
-
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"></head>
-<body style="margin:0; padding:0; background:#F5F5F7; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <div style="display:none; max-height:0; overflow:hidden; font-size:1px; line-height:1px; color:#F5F5F7;">Payout statement: ${payout} for this period. PDFs attached.</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F5F5F7;"><tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(2,0,64,0.06);">
-
-      <tr><td align="center" bgcolor="#020040" style="background:#020040; padding:24px;">
-        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="100" height="auto" style="display:block; width:100px; height:auto;">
-      </td></tr>
-      <tr><td style="background:#ED4B00; line-height:5px; font-size:5px; height:5px;" height="5">&nbsp;</td></tr>
-
-      ${banner}
-
-      <tr><td style="padding:32px 40px 8px 40px;">
-        <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:3px; color:#ED4B00; text-transform:uppercase;">PAYOUT STATEMENT</p>
-      </td></tr>
-      <tr><td style="padding:0 40px 8px 40px;">
-        <h1 style="margin:0; font-size:26px; line-height:32px; font-weight:700; color:#020040;">Hi ${greeting},</h1>
-      </td></tr>
-      <tr><td style="padding:0 40px 28px 40px;">
-        <p style="margin:0; font-size:15px; line-height:24px; color:#4A4A55;">${attached} Review the jobs, your prices, Fixfy's commission percentage and your net payout for Platform Bookings.${partB} Please contact us if any details need correcting.</p>
-      </td></tr>
-
-      <tr><td style="padding:0 40px 24px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-            ${row("Statement reference", ref, true)}
-            ${row("Period", periodText)}
-            ${invoiceRef ? row("Commission VAT invoice", invoiceRef) : ""}
-          </table>
-        </td></tr></table>
-      </td></tr>
-
-      <tr><td style="padding:0 40px 32px 40px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F2F0FA; border-radius:8px;"><tr><td style="padding:14px 18px;">
-          <p style="margin:0 0 4px 0; font-size:12px; font-weight:700; color:#020040;">Questions about your payout?</p>
-          <p style="margin:0; font-size:13px; line-height:20px; color:#4A4A55;">Reply to this email or contact <a href="mailto:support@getfixfy.com" style="color:#020040; font-weight:600; text-decoration:none;">support@getfixfy.com</a> &middot; <a href="tel:+442045384668" style="color:#020040; font-weight:600; text-decoration:none;">020 4538 4668</a></p>
-        </td></tr></table>
-      </td></tr>
-
-      <tr><td bgcolor="#020040" style="background:#020040; padding:24px 40px; text-align:center;">
-        <img src="https://www.getfixfy.com/brand/fixfy-primary-white.png" alt="Fixfy" width="70" height="auto" style="display:inline-block; width:70px; height:auto; margin-bottom:10px;">
-        <p style="margin:0; font-size:11px; line-height:18px; color:#AAAAD0;">Getfixfy Ltd &middot; Co. No. 15406523 &middot; VAT No. 478 1027 82<br>124 City Road, London EC1V 2NX, United Kingdom<br><a href="https://getfixfy.com" style="color:#AAAAD0; text-decoration:none;">getfixfy.com</a></p>
-      </td></tr>
-
-    </table>
-  </td></tr></table>
-</body></html>`;
+  const { estado } = estadoDoPagamento(sb, dueYmd);
+  return emailFixfy({
+    zendesk: true,
+    preheader: `Self-bill ${sb.reference} sent to ${partnerEmail}.`,
+    estado,
+    titulo: `Self-bill ${sb.reference} sent`,
+    metricas: [
+      { rotulo: "Amount", valor: payout },
+      { rotulo: "Payment due", valor: dueYmd ? fmtSbDate(dueYmd) ?? dueYmd : "" },
+    ],
+    saudacao: saudacaoDoParceiro(partnerName ?? sb.partner_name),
+    paragrafos: [`Self-bill ${sb.reference} sent to ${partnerEmail}.`],
+    linhas: [
+      ["Week", periodoDo(sb) || null],
+      ["Sent to", partnerEmail],
+    ],
+    letraPequena: ["PDF was emailed via Resend (Zendesk side conversations don't carry attachments)."],
+  }).html;
 }

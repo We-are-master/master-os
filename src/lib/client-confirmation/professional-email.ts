@@ -28,6 +28,7 @@ import { invoiceCollectedAmount } from "@/lib/invoice-balance";
 import type { Invoice } from "@/types/database";
 import { mensagensAoClienteLigadas } from "./policy";
 import { dataLonga, emailFixfy, gbp, janelaTexto, saudacao } from "@/lib/emails/fixfy-shell";
+import { metricasDaVisita, passosAte, PASSOS_VISITA } from "@/lib/emails/faixas-do-email";
 
 const REMETENTE_PADRAO = "Fixfy Team <no-reply@getfixfy.com>";
 const RESPONDER_PARA = "hello@getfixfy.com";
@@ -129,6 +130,8 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
       estado: { texto: "Confirmed", cor: "green" },
       titulo: "Your professional is confirmed",
       destaque: { linha1: i.dateLabel, linha2: i.windowLabel },
+      metricas: metricasDaVisita(i.dateLabel, i.windowLabel),
+      passos: passosAte(PASSOS_VISITA, 1),
       saudacao: saudacao({ tipo: "b2c", primeiroNome: i.firstName === "there" ? null : i.firstName }),
       paragrafos: [
         `Your booking with ${pro} is confirmed. They’ll arrive on ${i.dateLabel}, ${i.windowLabel}, ready to carry out the work agreed.`,

@@ -256,7 +256,7 @@ async function handlePost(
       const { error } = await resend.emails.send({
         from: fromEmail,
         to: [partnerEmail],
-        subject: `${branding.companyName} — please update your documents`,
+        subject: `${branding.companyName}: please update your documents`,
         html,
       });
       if (error) {

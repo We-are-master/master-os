@@ -6,6 +6,7 @@
 
 import { Resend } from "resend";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { buildPartnerAccountActivatedEmailHTML, PARTNER_ACCOUNT_ACTIVATED_SUBJECT } from "@/lib/partner-account-activated-email";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import { createTradePortalAutoLoginUrl } from "@/lib/partner-portal-link";
@@ -42,7 +43,8 @@ export async function enviarEmailDeAtivacao(supabase: SupabaseClient, partnerId:
   if (error || !partner) return { ok: false, status: 404, error: "Partner not found" };
   const email = (partner.email as string | null)?.trim() ?? "";
   if (!email) return { ok: false, status: 422, error: "Partner has no email on file." };
-  const contactName = (partner.contact_name as string | null)?.trim() || (partner.company_name as string | null)?.trim() || "there";
+  // Saudação de parceiro: empresa antes do contato (partnerEmailGreetingName).
+  const contactName = partnerEmailGreetingName(partner as { company_name?: string | null; contact_name?: string | null });
   const tradePortalBase = resolvePartnerTradePortalBaseUrl().replace(/\/$/, "");
   // O botão entra direto no portal; sem o token, cai na tela de login em vez de não mandar.
   let loginUrl = `${tradePortalBase}/login?email=${encodeURIComponent(email)}`;

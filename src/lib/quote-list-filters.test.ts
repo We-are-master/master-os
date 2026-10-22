@@ -43,8 +43,10 @@ describe("matchesQuotesNewTabOrFilter vs isQuoteListNew", () => {
         isQuoteListNew(q),
         `PostgREST OR filter and isQuoteListNew must agree`,
       );
-      if (isQuoteListNew(q)) {
-        assert.equal(isQuoteReadyToSend(q), false);
+      // Desde o #531 o rascunho pronto (Ready to send) também fica em New: todo
+      // pronto para enviar é New, mas nem todo New está pronto.
+      if (isQuoteReadyToSend(q)) {
+        assert.equal(isQuoteListNew(q), true);
       }
     });
   }

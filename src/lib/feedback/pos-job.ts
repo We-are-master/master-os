@@ -41,6 +41,7 @@ import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } fr
 import { horaEmLondres } from "@/lib/client-confirmation/sweep-24h";
 import { hojeEmLondres, type EnvioWhatsApp } from "@/lib/client-confirmation/send";
 import { reclamacaoNoBanco, reclamacaoNoJob, reclamacaoNoZendesk } from "./reclamacao";
+import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib/processo/conta";
 
 const template = () => process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
 const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
@@ -75,6 +76,45 @@ export function clienteDaFixfy(sourceAccountId: string | null | undefined, fixfy
   return !sourceAccountId || sourceAccountId === fixfyId;
 }
 
+/**
+ * Contas com os fluxos novos (regras.v2, plano do dono 22/10/2026): quem decide é
+ * `regras.feedback`, não a regra "só cliente da Fixfy" do passo 3.
+ *
+ *   depois_da_conclusao                 dia seguinte à conclusão, concluído OU em
+ *                                       Awaiting Payment (saldo pendente não segura)
+ *   depois_do_pagamento_da_plataforma   só com finance_status = paid, no dia seguinte
+ *                                       ao pagamento (sem data de pagamento: a conclusão)
+ *   nunca                               não pede
+ *
+ * `anotar`: vale uma linha na lista da rodada (fora da janela é silêncio, como hoje).
+ */
+export function feedbackPeloProcesso(p: {
+  status: string;
+  financeStatus: string | null | undefined;
+  regra: RegrasDoProcesso["feedback"];
+  conclusaoYmd: string | null;
+  pagoYmd?: string | null;
+  hojeYmd: string;
+  maxDias: number;
+}): { elegivel: boolean; ancora: string | null; motivo: string; anotar: boolean } {
+  if (p.status !== "completed" && p.status !== "awaiting_payment") return { elegivel: false, ancora: null, motivo: "job not finished", anotar: false };
+  if (p.regra === "nunca") {
+    const naJanela = naJanelaDoFeedback(p.conclusaoYmd, p.hojeYmd, p.maxDias);
+    return { elegivel: false, ancora: p.conclusaoYmd, motivo: "account process never sends feedback requests", anotar: naJanela };
+  }
+  if (p.regra === "depois_do_pagamento_da_plataforma") {
+    if (p.financeStatus !== "paid") {
+      const naJanela = naJanelaDoFeedback(p.conclusaoYmd, p.hojeYmd, p.maxDias);
+      return { elegivel: false, ancora: p.conclusaoYmd, motivo: "waiting for the platform to pay before asking for feedback", anotar: naJanela };
+    }
+    const ancora = (p.pagoYmd ?? "").slice(0, 10) || p.conclusaoYmd;
+    const ok = naJanelaDoFeedback(ancora, p.hojeYmd, p.maxDias);
+    return { elegivel: ok, ancora, motivo: ok ? "paid by the platform" : "outside the feedback window", anotar: ok };
+  }
+  const ok = naJanelaDoFeedback(p.conclusaoYmd, p.hojeYmd, p.maxDias);
+  return { elegivel: ok, ancora: p.conclusaoYmd, motivo: ok ? "finished" : "outside the feedback window", anotar: ok };
+}
+
 export type LinhaDoFeedback = {
   reference: string;
   resultado: "enviado" | "enviaria" | "pulado" | "falhou";
@@ -85,7 +125,7 @@ const SELECT =
   "id, reference, title, status, client_id, client_name, external_source, external_ref, internal_notes, " +
   "scheduled_date, scheduled_start_at, completed_date, partner_timer_ended_at, final_report, " +
   "on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description, customer_review_submitted_at, " +
-  "feedback_requested_at";
+  "feedback_requested_at, account_id, finance_status, payment_status, invoice_id";
 
 export async function varrerFeedbackPosJob(
   sb: SupabaseClient,
@@ -120,11 +160,14 @@ export async function varrerFeedbackPosJob(
     aplicar = false;
   }
 
+  // Fluxos novos ligados (PROCESSOS_V2=on): Awaiting Payment também entra na leitura,
+  // mas só conta v2 passa dele; as outras seguem exatamente a regra de antes.
+  const v2Ligado = processosV2Ligado();
+  const regrasPorConta = new Map<string, RegrasDoProcesso | null>();
+
   // Corte barato no banco (a agenda vem antes da conclusão); o fino é em JS.
-  const { data: jobs, error } = await sb
-    .from("jobs")
-    .select(SELECT)
-    .eq("status", "completed")
+  const base = sb.from("jobs").select(SELECT);
+  const { data: jobs, error } = await (v2Ligado ? base.in("status", ["completed", "awaiting_payment"]) : base.eq("status", "completed"))
     .is("feedback_requested_at", null)
     .is("deleted_at", null)
     .gte("scheduled_date", diasAntes(hoje, maxDias + 30))
@@ -141,11 +184,43 @@ export async function varrerFeedbackPosJob(
   for (const raw of jobs ?? []) {
     const j = raw as unknown as Record<string, unknown> & { id: string; reference: string };
     const conclusao = resolveJobCompletionYmd(j as Parameters<typeof resolveJobCompletionYmd>[0]);
-    // Fora da janela não entra nem na lista: é ruído de todo dia.
-    if (!naJanelaDoFeedback(conclusao, hoje, maxDias)) continue;
+
+    let regras: RegrasDoProcesso | null = null;
+    if (v2Ligado) {
+      let contaId = typeof j.account_id === "string" ? j.account_id : "";
+      if (!contaId && typeof j.client_id === "string") {
+        const { data: cl } = await sb.from("clients").select("source_account_id").eq("id", j.client_id).maybeSingle();
+        contaId = (cl as { source_account_id?: string | null } | null)?.source_account_id ?? "";
+      }
+      if (contaId && !regrasPorConta.has(contaId)) regrasPorConta.set(contaId, await processoDaConta(sb, contaId));
+      regras = contaId ? regrasPorConta.get(contaId) ?? null : null;
+      if (!regras?.v2) regras = null;
+    }
+
+    let ancora = conclusao;
+    if (regras) {
+      const finance = (j.finance_status ?? j.payment_status ?? null) as string | null;
+      let pagoYmd: string | null = null;
+      if (regras.feedback === "depois_do_pagamento_da_plataforma" && finance === "paid" && typeof j.invoice_id === "string" && j.invoice_id) {
+        const { data: inv } = await sb.from("invoices").select("paid_date, last_payment_date").eq("id", j.invoice_id).maybeSingle();
+        const i = inv as { paid_date?: string | null; last_payment_date?: string | null } | null;
+        pagoYmd = i?.paid_date ?? i?.last_payment_date ?? null;
+      }
+      const e = feedbackPeloProcesso({ status: String(j.status), financeStatus: finance, regra: regras.feedback, conclusaoYmd: conclusao, pagoYmd, hojeYmd: hoje, maxDias });
+      if (!e.elegivel) {
+        if (e.anotar) linhas.push({ reference: j.reference, resultado: "pulado", detalhe: `${e.ancora ?? conclusao} · ${e.motivo}` });
+        continue;
+      }
+      ancora = e.ancora;
+    } else {
+      // Sem v2: só concluído (a leitura pode trazer Awaiting Payment quando a chave geral está ligada).
+      if (j.status !== "completed") continue;
+      // Fora da janela não entra nem na lista: é ruído de todo dia.
+      if (!naJanelaDoFeedback(conclusao, hoje, maxDias)) continue;
+    }
 
     const anota = (resultado: LinhaDoFeedback["resultado"], detalhe: string) =>
-      linhas.push({ reference: j.reference, resultado, detalhe: `${conclusao} · ${detalhe}` });
+      linhas.push({ reference: j.reference, resultado, detalhe: `${ancora} · ${detalhe}` });
 
     try {
       const clientId = typeof j.client_id === "string" ? j.client_id : null;
@@ -156,8 +231,8 @@ export async function varrerFeedbackPosJob(
         .from("clients").select("full_name, phone, source_account_id").eq("id", clientId).maybeSingle();
       const c = (cliente ?? {}) as { full_name?: string | null; phone?: string | null; source_account_id?: string | null };
 
-      // 3. de quem é o cliente
-      if (!clienteDaFixfy(c.source_account_id, fixfyAccountId())) {
+      // 3. de quem é o cliente (conta v2: já decidido acima por regras.feedback)
+      if (!regras && !clienteDaFixfy(c.source_account_id, fixfyAccountId())) {
         const id = c.source_account_id as string;
         if (!contas.has(id)) {
           const r = await sb.from("accounts").select("company_name, client_feedback_whatsapp").eq("id", id).maybeSingle();
