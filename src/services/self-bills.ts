@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "./base";
 import type { Job, JobVisit, SelfBill, SelfBillStatus } from "@/types/database";
-import { plannedVisitLines, selfBillReleasedByDoneVisit, visitCountsForPartnerPayout, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
+import { plannedVisitLines, selfBillReleasedForPayout, visitCountsForPartnerPayout, visitSelfBillAnchorYmd, type PlannedVisitLine } from "@/lib/job-visit-rollup";
 import {
   officeCancellationPartnerClawbackGbp,
   officeCancellationPartnerPayoutGbp,
@@ -721,14 +721,16 @@ async function refreshSelfBillTotalsAndStatus(
   if (uErr) throw uErr;
 
   /**
-   * Visita feita com valor libera o documento do parceiro na hora (dono,
-   * 22/10/2026: "o partner não pode ter culpa do job não ter acabado"). O valor a
-   * pagar só tem o que foi feito (visita feita, job aprovado); visita ainda
-   * marcada e job ainda aberto ficam no documento sem entrar no pagamento. A data
-   * do pagamento continua a da quinzena.
+   * Trabalho aprovado libera o documento do parceiro na hora (dono, 22/10/2026:
+   * "o partner não pode ter culpa do job não ter acabado"): job aprovado no Final
+   * review ou visita feita, com valor, levam para Ready to pay. Antes o Ready só
+   * vinha no fechamento da quinzena (finance-promover). O valor a pagar só tem o
+   * que foi aprovado; job ainda aberto e visita marcada ficam no documento fora
+   * do pagamento. A data do pagamento continua a da quinzena.
    */
   const valorDeVisitaFeita = visitLines.reduce((n, l) => n + l.labour + l.materials, 0);
-  if (selfBillReleasedByDoneVisit({ status: before.status, doneVisitValue: valorDeVisitaFeita, netPayout })) {
+  const valorDeJobAprovado = payable.reduce((n, r) => n + (Number(r.partner_cost) || 0) + (Number(r.materials_cost) || 0), 0);
+  if (selfBillReleasedForPayout({ status: before.status, approvedValue: valorDeVisitaFeita + valorDeJobAprovado, netPayout })) {
     if (before.status !== "ready_to_pay") {
       const { error: prontoErr } = await updateSelfBillPossiblyReopening(supabase, selfBillId, {
         status: "ready_to_pay",

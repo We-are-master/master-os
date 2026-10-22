@@ -11,7 +11,7 @@ import { workPeriodForJobStartYmd } from "@/lib/partner-payout-schedule";
 import {
   jobShareOfVisitSelfBill,
   plannedVisitLines,
-  selfBillReleasedByDoneVisit,
+  selfBillReleasedForPayout,
   visitCountsForPartnerPayout,
   visitSelfBillAnchorYmd,
 } from "@/lib/job-visit-rollup";
@@ -94,23 +94,31 @@ describe("JOB-9705 V3 no self-bill da TM", () => {
   });
 });
 
-describe("Done da visita libera o self-bill do parceiro (dono, 22/10/2026)", () => {
+describe("trabalho aprovado libera o self-bill do parceiro (dono, 22/10/2026)", () => {
   it("F&V com a V2 do JOB-9705 feita (£140) vai para Ready mesmo com o job ainda aberto", () => {
-    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 140, netPayout: 1309.66 }), true);
+    assert.equal(selfBillReleasedForPayout({ status: "accumulating", approvedValue: 140, netPayout: 1309.66 }), true);
   });
 
   it("TM com a V3 ainda marcada: nada feito, o documento continua juntando", () => {
-    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 0, netPayout: 685 }), false);
+    assert.equal(selfBillReleasedForPayout({ status: "accumulating", approvedValue: 0, netPayout: 0 }), false);
   });
 
   it("visita feita de £0 não libera nada", () => {
-    assert.equal(selfBillReleasedByDoneVisit({ status: "accumulating", doneVisitValue: 0, netPayout: 0 }), false);
+    assert.equal(selfBillReleasedForPayout({ status: "accumulating", approvedValue: 0, netPayout: 0 }), false);
   });
 
   it("pago, anulado ou em revisão não muda pelo Done", () => {
     for (const status of ["paid", "rejected", "payout_cancelled", "needs_attention", "audit_required"]) {
-      assert.equal(selfBillReleasedByDoneVisit({ status, doneVisitValue: 35, netPayout: 35 }), false, status);
+      assert.equal(selfBillReleasedForPayout({ status, approvedValue: 35, netPayout: 35 }), false, status);
     }
+  });
+
+  it("job aprovado no Final review (TM, 10 jobs aprovados, £685) leva o documento para Ready na hora", () => {
+    assert.equal(selfBillReleasedForPayout({ status: "accumulating", approvedValue: 685, netPayout: 685 }), true);
+  });
+
+  it("documento já em Ready continua em Ready", () => {
+    assert.equal(selfBillReleasedForPayout({ status: "ready_to_pay", approvedValue: 140, netPayout: 140 }), true);
   });
 
   it("visita marcada no documento não entra no valor a pagar; o card mostra o valor dela", () => {
