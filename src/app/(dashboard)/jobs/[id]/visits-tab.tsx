@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
+import { VisitDoneModal } from "@/components/jobs/visit-done-modal";
+import type { VisitDoneAmounts } from "@/lib/visit-done-billing";
 import { Plus, Pencil, Trash2, Loader2, X, Save, Check, Mail, Link2, FileText } from "lucide-react";
 import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
 import { Button } from "@/components/ui/button";
@@ -129,6 +131,8 @@ export function VisitsTab({
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
   /** Índice da visita recém-fechada: abre o "e agora?" logo depois do Done. */
   const [justCompleted, setJustCompleted] = useState<number | null>(null);
+  /** Visita cujo Done está sendo confirmado no modal do custo. */
+  const [doneTarget, setDoneTarget] = useState<JobVisit | null>(null);
   /** Relatório de visita aberto para leitura (19/10/2026). */
   const [relatorioAberto, setRelatorioAberto] = useState<JobVisit | null>(null);
   /** Account ID resolved from the job's client (clients.source_account_id). Used by the pricing resolver. */
@@ -212,16 +216,28 @@ export function VisitsTab({
     return "finish" as const;
   }
 
-  async function handleComplete(visit: JobVisit) {
+  /**
+   * Done numa visita extra abre o modal do custo (22/10/2026): só o Confirm fecha
+   * a visita, grava os valores finais e a põe no self-bill do parceiro dela.
+   * Cancelar deixa a visita aberta.
+   */
+  function handleComplete(visit: JobVisit) {
+    setDoneTarget(visit);
+  }
+
+  async function aposConfirmarDone(r: { visit: JobVisit; amounts: VisitDoneAmounts; payoutError: string | null }) {
+    setDoneTarget(null);
+    setVisits((rows) => rows.map((x) => (x.id === r.visit.id ? { ...x, ...r.visit } : x)));
+    toast.success(
+      `Visit ${r.visit.visit_index} done · client ${formatCurrency(r.amounts.clientToCharge)} · partner ${formatCurrency(r.amounts.partnerToPay)}`,
+    );
+    if (r.payoutError) toast.message(`Self-bill: ${r.payoutError}`);
+    onVisitsChanged?.();
     try {
-      const { followed: _seguiu, ...updated } = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
-      void _seguiu;
-      setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
-      onVisitsChanged?.();
-      const passo = await avancar(visit.visit_index, false);
-      if (passo === "finish") setJustCompleted(visit.visit_index);
+      const passo = await avancar(r.visit.visit_index, false);
+      if (passo === "finish") setJustCompleted(r.visit.visit_index);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to complete visit");
+      toast.error(e instanceof Error ? e.message : "Failed to move the job on");
     }
   }
 
@@ -518,6 +534,9 @@ export function VisitsTab({
         </SectionPortal>
       ) : null}
 
+      {doneTarget ? (
+        <VisitDoneModal job={job} visit={doneTarget} onClose={() => setDoneTarget(null)} onDone={(r) => void aposConfirmarDone(r)} />
+      ) : null}
       {editTarget ? (
         <SectionPortal>
         <VisitEditModal
@@ -694,6 +713,10 @@ interface FormState {
    * a limpeza já estava na fatura e o resolver preenchia o preço sozinho, cobrando duas vezes.
    */
   billing: "" | "included" | "extra";
+  /** Por hora ou fixa (dono, 22/10/2026): perguntado sempre, "" = ainda não escolhido. */
+  rate_type: "" | "fixed" | "hourly";
+  hourly_client_rate: string;
+  hourly_partner_rate: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -707,6 +730,9 @@ const EMPTY_FORM: FormState = {
   partner_cost: "",
   scope: "",
   billing: "",
+  rate_type: "",
+  hourly_client_rate: "",
+  hourly_partner_rate: "",
 };
 
 function VisitEditModal({
@@ -743,6 +769,9 @@ function VisitEditModal({
         partner_cost: v.partner_cost?.toString() ?? "",
         scope: v.scope ?? "",
         billing: Number(v.client_price) > 0 ? "extra" : "included",
+        rate_type: v.job_type === "hourly" || v.job_type === "fixed" ? v.job_type : "",
+        hourly_client_rate: v.hourly_client_rate != null ? String(v.hourly_client_rate) : "",
+        hourly_partner_rate: v.hourly_partner_rate != null ? String(v.hourly_partner_rate) : "",
       };
     }
     // Visita nova herda o serviço do job: quase sempre é o mesmo trabalho, e
@@ -812,6 +841,9 @@ function VisitEditModal({
           ? String(pricing.partner.hourly_partner_rate * pricing.partner.default_hours)
           : p.partner_cost)
         : (pricing.partner.fixed_partner_cost?.toString() ?? p.partner_cost)),
+      // Taxas por hora do serviço e do parceiro (ex.: General Maintenance £72/h), para o Hourly.
+      hourly_client_rate: p.hourly_client_rate || (pricing.client.hourly_rate != null ? String(pricing.client.hourly_rate) : ""),
+      hourly_partner_rate: p.hourly_partner_rate || (pricing.partner.hourly_partner_rate != null ? String(pricing.partner.hourly_partner_rate) : ""),
     }));
   }, [pricing, lastAppliedTriple, appliedTripleKey]);
 
@@ -830,11 +862,20 @@ function VisitEditModal({
       toast.error("Set a scheduled date for the visit");
       return;
     }
-    if (!form.billing) {
+    if (!form.rate_type) {
+      toast.error("Choose how this visit is charged: Hourly or Fixed");
+      return;
+    }
+    const porHora = form.rate_type === "hourly";
+    if (porHora && (Number(form.hourly_client_rate) < 0 || Number(form.hourly_partner_rate) < 0)) {
+      toast.error("Rates cannot be negative");
+      return;
+    }
+    if (!porHora && !form.billing) {
       toast.error("Choose whether the client pays extra for this visit");
       return;
     }
-    if (form.billing === "extra" && !(Number(form.client_price) > 0)) {
+    if (!porHora && form.billing === "extra" && !(Number(form.client_price) > 0)) {
       toast.error("Set how much the client pays for this visit");
       return;
     }
@@ -860,8 +901,17 @@ function VisitEditModal({
         scheduled_start_at: startIso,
         scheduled_end_at: endIso,
         expected_finish_at: endIso,
-        client_price: form.billing === "extra" ? Number(form.client_price) || 0 : 0,
-        partner_cost: Number(form.partner_cost) || 0,
+        // Hourly: estimativa de 1 hora (mínimo); o valor final sai do Done, com chegada e saída.
+        client_price: porHora
+          ? Math.round((Number(form.hourly_client_rate) || 0) * 100) / 100
+          : form.billing === "extra" ? Number(form.client_price) || 0 : 0,
+        partner_cost: porHora
+          ? Math.round((Number(form.hourly_partner_rate) || 0) * 100) / 100
+          : Number(form.partner_cost) || 0,
+        job_type: form.rate_type,
+        hourly_client_rate: porHora ? Number(form.hourly_client_rate) || 0 : null,
+        hourly_partner_rate: porHora ? Number(form.hourly_partner_rate) || 0 : null,
+        billed_hours: porHora ? 1 : null,
         // Materiais não são campo da visita: entram como extra no job, onde o
         // ledger já sabe alocá-los.
         materials_cost: target.mode === "edit" ? target.visit.materials_cost : 0,
@@ -962,6 +1012,54 @@ function VisitEditModal({
         </section>
 
         <section className={BLOCO}>
+          <p className={SECAO}>How is this visit charged?</p>
+          <div role="radiogroup" aria-label="Rate type for this visit" className="grid grid-cols-2 gap-2">
+            {([
+              { v: "hourly", titulo: "Hourly", texto: "Rate per hour. Hours are set when the visit is marked Done." },
+              { v: "fixed", titulo: "Fixed", texto: "Agreed price. Client or partner can be £0." },
+            ] as const).map((o) => {
+              const ativo = form.rate_type === o.v;
+              return (
+                <button
+                  key={o.v}
+                  type="button"
+                  role="radio"
+                  aria-checked={ativo}
+                  onClick={() => setForm((p) => ({ ...p, rate_type: o.v }))}
+                  className={cn(
+                    "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                    ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                  )}
+                >
+                  <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                  <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                </button>
+              );
+            })}
+          </div>
+          {form.rate_type === "hourly" ? (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={ROTULO}>Client rate (£/h)</label>
+                  <Input type="number" step="0.01" min={0} value={form.hourly_client_rate} placeholder="0.00"
+                    onChange={(e) => setForm((p) => ({ ...p, hourly_client_rate: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={ROTULO}>Partner rate (£/h)</label>
+                  <Input type="number" step="0.01" min={0} value={form.hourly_partner_rate} placeholder="0.00"
+                    onChange={(e) => setForm((p) => ({ ...p, hourly_partner_rate: e.target.value }))} />
+                </div>
+              </div>
+              <p className="m-0 text-[11px] text-text-tertiary tabular-nums">
+                Minimum 1 hour, then by the half hour. Booked as 1 hour for now: client {formatCurrency(Number(form.hourly_client_rate) || 0)} · partner {formatCurrency(Number(form.hourly_partner_rate) || 0)}.
+              </p>
+            </>
+          ) : null}
+        </section>
+
+        {form.rate_type === "fixed" ? (
+        <section className={BLOCO}>
           <p className={SECAO}>Does the client pay for this visit?</p>
           <div role="radiogroup" aria-label="Client billing for this visit" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {([
@@ -1032,6 +1130,7 @@ function VisitEditModal({
             </p>
           ) : null}
         </section>
+        ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
           <p className="m-0 max-w-[18rem] text-[11px] leading-snug text-text-tertiary">
@@ -1041,7 +1140,7 @@ function VisitEditModal({
             <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.billing}>
+            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing)}>
               {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
             </Button>
           </div>

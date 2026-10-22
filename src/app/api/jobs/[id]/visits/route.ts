@@ -7,6 +7,7 @@ import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
 import { avisarClienteDaVisita } from "@/lib/notify-visit-client-server";
 import { avancarVisitas } from "@/lib/job-visit-advance-server";
 import { followActiveVisit } from "@/lib/job-visit-lifecycle-server";
+import { isMissingRateColumn, withoutRateColumns } from "@/lib/job-visit-rate-columns";
 import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
@@ -28,7 +29,10 @@ const WRITABLE = [
   "scheduled_date", "scheduled_start_at", "scheduled_end_at", "expected_finish_at",
   "client_price", "partner_cost", "materials_cost",
   "status", "scope", "notes",
+  // Por hora ou fixa (mig 349).
+  "job_type", "hourly_client_rate", "hourly_partner_rate", "billed_hours",
 ] as const;
+
 
 /** No POST o status é do servidor: visita nasce agendada. Nascer `completed`
  *  deixava a linha pagável na hora e com `completed_at` nulo para sempre. */
@@ -194,11 +198,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       .maybeSingle();
     const nextIndex = ((top as { visit_index?: number } | null)?.visit_index ?? 1) + 1 + attempt;
 
-    const { data, error } = await supabase
-      .from("job_visits")
-      .insert({ ...patch, job_id: jobId, visit_index: nextIndex, created_by: userId, updated_by: userId })
-      .select()
-      .single();
+    const linha = { ...patch, job_id: jobId, visit_index: nextIndex, created_by: userId, updated_by: userId };
+    let { data, error } = await supabase.from("job_visits").insert(linha).select().single();
+    if (error && isMissingRateColumn(error)) {
+      ({ data, error } = await supabase.from("job_visits").insert(withoutRateColumns(linha)).select().single());
+    }
 
     if (!error) {
       const created = data as JobVisit;
@@ -334,6 +338,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       .single();
 
   let { data, error } = await applyPatch(patch);
+  if (error && isMissingRateColumn(error)) ({ data, error } = await applyPatch(withoutRateColumns(patch)));
   if (error && isSupabaseMissingColumnError(error, "completed_at")) {
     // Ambiente sem a mig 275: fecha a visita do mesmo jeito, sem o carimbo. O
     // gate lê `status`, então continua funcionando; quem perde é o payout, que
