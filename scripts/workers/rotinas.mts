@@ -21,6 +21,7 @@
  *   pendencias                (sem janela; só grava motivos)   a cada 10 min
  *   cobranca-cartao           (só conta direct v2)             10h
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
+ *   reclamacao                (aviso de reclamação ao cliente) a cada 15 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -147,6 +148,16 @@ export const ROTINAS: Rotina[] = [
     rotulo: "com.fixfy.pagamento-recebido",
     agenda: { tipo: "intervalo", minutos: 15 },
     script: "scripts/pagamento-recebido.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 6,
+  },
+  {
+    // Aviso de reclamação (dono, 22/10/2026): job em On Hold por reclamação manda um e-mail curto ao cliente.
+    nome: "reclamacao",
+    rotulo: "com.fixfy.reclamacao",
+    agenda: { tipo: "intervalo", minutos: 15 },
+    script: "scripts/reclamacao.mts",
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 6,
