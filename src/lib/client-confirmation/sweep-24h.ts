@@ -24,7 +24,8 @@ import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib
 import { canalDoLembrete, chaveDoLembrete, emailDoLembrete } from "./lembrete-canal";
 import { emailDoCliente } from "@/lib/um-ticket/escolha";
 import type { AvisoNoTicket } from "@/lib/um-ticket/aviso-do-job";
-import { selectVisitsInRange, visitPartnerId, visitReference, type VisitWithParent } from "@/lib/job-visit-day-rows";
+import { mergeJobAndVisitRows, selectVisitsInRange, visitPartnerId, visitReference, type VisitWithParent } from "@/lib/job-visit-day-rows";
+import type { Job } from "@/types/database";
 
 /** Quem entrega o e-mail no ticket do job. Injeção para teste; no ar é o avisarNoTicketDoJob. */
 export type AvisoPorEmail = (a: AvisoNoTicket) => Promise<unknown>;
@@ -107,7 +108,7 @@ const SELECT =
   "id, reference, status, title, scheduled_date, scheduled_start_at, scheduled_end_at, " +
   "partner_id, partner_name, client_id, client_name, property_address, " +
   "client_reminder_sent_at, client_confirmation_sent_at, external_source, external_ref, " +
-  "account_id, conversation_channel";
+  "account_id, conversation_channel, primary_visit_done";
 
 const VISITA_SELECT =
   "id, job_id, visit_index, status, scheduled_date, scheduled_start_at, scheduled_end_at, " +
@@ -120,18 +121,24 @@ const VISITA_SELECT =
  * são da visita, e `__visita_id` diz onde carimbar.
  *
  * Visita com `client_confirmation_sent_at` preenchido não recebe lembrete: é o
- * escritório dizendo que o cliente já sabe (ou que não quer aviso). Visita que é
- * o próprio horário de um job agendado já está na lista dos jobs.
+ * escritório dizendo que o cliente já sabe (ou que não quer aviso).
+ *
+ * Junto com os jobs de amanhã: job seguindo a visita (V1 feita) sai da lista e o
+ * lembrete é o da visita, com a regra dela; visita no horário de uma V1 por fazer
+ * não gera segundo lembrete.
  */
 export function visitasComoLembretes(
   visitas: VisitWithParent[],
   dia: string,
-): { lembretes: Record<string, unknown>[]; jaAvisadas: { reference: string; cliente: string }[] } {
+  jobsDoDia: Record<string, unknown>[] = [],
+): { jobs: Record<string, unknown>[]; lembretes: Record<string, unknown>[]; jaAvisadas: { reference: string; cliente: string }[] } {
   const lembretes: Record<string, unknown>[] = [];
   const jaAvisadas: { reference: string; cliente: string }[] = [];
-  const doDia = selectVisitsInRange(visitas, { from: dia, to: dia }, (job) => AGENDADOS.includes(String(job.status)))
-    .filter((v) => v.status === "scheduled");
-  for (const v of doDia) {
+  const juntos = mergeJobAndVisitRows(
+    jobsDoDia as unknown as Job[],
+    selectVisitsInRange(visitas, { from: dia, to: dia }).filter((v) => v.status === "scheduled"),
+  );
+  for (const v of juntos.visits) {
     const pai = v.parent!;
     const reference = visitReference(pai.reference, v.visit_index);
     if (v.client_confirmation_sent_at) {
@@ -151,7 +158,7 @@ export function visitasComoLembretes(
       __visita_id: v.id,
     });
   }
-  return { lembretes, jaAvisadas };
+  return { jobs: juntos.jobs as unknown as Record<string, unknown>[], lembretes, jaAvisadas };
 }
 
 /** Carimba o envio: no job, ou na visita quando o lembrete era dela. */
@@ -215,9 +222,10 @@ export async function varrerLembretesDeVespera(
     .eq("status", "scheduled")
     .is("deleted_at", null);
   if (visitasErr) console.warn(`[lembrete-24h] visitas extras não lidas: ${visitasErr.message}`);
-  const { lembretes: lembretesDeVisita, jaAvisadas } = visitasComoLembretes(
+  const { jobs: jobsDoDia, lembretes: lembretesDeVisita, jaAvisadas } = visitasComoLembretes(
     (visitasRaw ?? []) as unknown as VisitWithParent[],
     dia,
+    (jobs ?? []) as unknown as Record<string, unknown>[],
   );
   for (const v of jaAvisadas) {
     linhas.push({ reference: v.reference, cliente: v.cliente, resultado: "pulado", detalhe: "visit already marked as client notified" });
@@ -229,7 +237,7 @@ export async function varrerLembretesDeVespera(
   const v2 = processosV2Ligado();
   const regrasPorConta = new Map<string, RegrasDoProcesso | null>();
 
-  for (const raw of [...(jobs ?? []), ...lembretesDeVisita]) {
+  for (const raw of [...jobsDoDia, ...lembretesDeVisita]) {
     const j = raw as unknown as Record<string, unknown>;
     const ref = String(j.reference);
     const nomeCliente = String(j.client_name ?? "");

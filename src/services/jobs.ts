@@ -15,7 +15,8 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
-import { cancelOpenVisitsForJobCancellation, listOpenVisitRowsForJobsList } from "./job-visits";
+import { cancelOpenVisitsForJobCancellation, listOpenVisitsForJobsList } from "./job-visits";
+import { mergeJobAndVisitRows, visitAsJobRow, visitPartnerId } from "@/lib/job-visit-day-rows";
 import {
   applyOfficeRescheduleStatus,
   jobPatchApprovesReport,
@@ -404,16 +405,25 @@ export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
       : !params.status || params.status === "all"
         ? "all"
         : null;
-  if (!tab || (params.page ?? 1) > 1 || (params.statusIn && params.statusIn.length > 0)) return result;
+  if (!tab || (params.statusIn && params.statusIn.length > 0)) return result;
   try {
-    const visitRows = await listOpenVisitRowsForJobsList({
-      tab,
-      scheduleRange: params.scheduleRange,
-      partnerId: params.jobsPartnerId,
-      search: params.search,
-    });
-    if (visitRows.length === 0) return result;
-    return { ...result, data: [...result.data, ...visitRows], count: result.count + visitRows.length };
+    // Sem o filtro de parceiro: o job seguindo a visita de OUTRO parceiro também sai da lista dele.
+    const visits = await listOpenVisitsForJobsList({ tab, scheduleRange: params.scheduleRange, search: params.search });
+    if (visits.length === 0) return result;
+    // Job seguindo uma visita (V1 feita) vira a linha da visita; visita no horário de uma V1 por fazer some.
+    const merged = mergeJobAndVisitRows(result.data, visits);
+    const dropped = result.data.length - merged.jobs.length;
+    // As linhas de visita entram na primeira página; nas outras só sai o job que virou visita.
+    const partner = params.jobsPartnerId;
+    const added =
+      (params.page ?? 1) > 1
+        ? []
+        : merged.visits.filter((v) => !partner || (partner !== "__none__" && visitPartnerId(v) === partner));
+    return {
+      ...result,
+      data: [...merged.jobs, ...added.map(visitAsJobRow)],
+      count: result.count - dropped + added.length,
+    };
   } catch (err) {
     console.warn("[jobs] visit rows skipped:", err instanceof Error ? err.message : err);
     return result;

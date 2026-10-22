@@ -26,6 +26,7 @@ import {
   apiCreateJobVisit,
   apiDeleteJobVisit,
   apiUpdateJobVisit,
+  type JobFollowedVisit,
 } from "@/services/job-visits-api";
 import { getSupabase } from "@/services/base";
 import { jobStatusRank } from "@/lib/job-phases";
@@ -213,7 +214,8 @@ export function VisitsTab({
 
   async function handleComplete(visit: JobVisit) {
     try {
-      const updated = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
+      const { followed: _seguiu, ...updated } = await apiUpdateJobVisit(job.id, visit.id, { status: "completed" });
+      void _seguiu;
       setVisits((rows) => rows.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
       onVisitsChanged?.();
       const passo = await avancar(visit.visit_index, false);
@@ -268,9 +270,17 @@ export function VisitsTab({
     }
   }
 
+  /** O job seguiu a visita (voltou para Scheduled, ou foi para In progress): diz e recarrega o card. */
+  function avisarJobSeguiu(followed: JobFollowedVisit | undefined) {
+    if (!followed?.ok || !followed.followed || !followed.visit) return;
+    const rotulo = followed.status === "in_progress" ? "In progress" : "Scheduled";
+    toast.success(`Job moved to ${rotulo} for visit ${followed.visit.visit_index}`);
+    onJobChanged?.();
+  }
+
   async function handleCreate(input: CreateJobVisitInput) {
     try {
-      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced } = await apiCreateJobVisit(input);
+      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input);
       // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
       setVisits((rows) => [
         ...rows,
@@ -291,6 +301,7 @@ export function VisitsTab({
         );
         onJobChanged?.();
       }
+      avisarJobSeguiu(followed);
       if (clientNotified && !clientNotified.ok) {
         toast.message(`Client not notified: ${clientNotified.skipped ?? clientNotified.error ?? "unknown"}`);
       }
@@ -302,10 +313,11 @@ export function VisitsTab({
 
   async function handleUpdate(id: string, patch: Partial<JobVisit>) {
     try {
-      const updated = await apiUpdateJobVisit(job.id, id, patch);
+      const { followed, ...updated } = await apiUpdateJobVisit(job.id, id, patch);
       setVisits((rows) => rows.map((r) => r.id === id ? { ...r, ...updated } : r));
       setEditTarget(null);
       toast.success("Visit updated");
+      avisarJobSeguiu(followed);
       onVisitsChanged?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update visit");

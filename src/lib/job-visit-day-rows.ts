@@ -67,14 +67,14 @@ export function visitPartnerName(v: VisitWithParent): string | null {
  * As visitas que entram num período, cada uma uma vez.
  *
  *  - só visita aberta (scheduled / in_progress), com data, dentro de [from, to];
- *  - job pai existe e não foi cancelado nem apagado;
- *  - visita que é o próprio horário do job sai quando a linha do job já aparece
- *    naquele lugar (`jobRowShown`), senão o dia teria a mesma parada duas vezes.
+ *  - job pai existe e não foi cancelado nem apagado.
+ *
+ * Quem junta com as linhas dos jobs passa por `mergeJobAndVisitRows`, que decide
+ * a linha quando job e visita estão no mesmo horário.
  */
 export function selectVisitsInRange(
   rows: VisitWithParent[],
   range: { from?: string | null; to?: string | null },
-  jobRowShown: (job: Job) => boolean = (j) => JOB_FIELD_STATUSES.has(String(j.status)),
 ): VisitWithParent[] {
   const out: VisitWithParent[] = [];
   const vistos = new Set<string>();
@@ -87,11 +87,58 @@ export function selectVisitsInRange(
     if (!dia) continue;
     if (range.from && dia < range.from) continue;
     if (range.to && dia > range.to) continue;
-    if (visitMatchesJobSlot(parent, v) && jobRowShown(parent)) continue;
     vistos.add(v.id);
     out.push(v);
   }
   return out;
+}
+
+type JobSlotRow = Pick<Job, "id" | "scheduled_date" | "scheduled_start_at" | "primary_visit_done">;
+
+/**
+ * O job está seguindo esta visita: a V1 já foi feita (`primary_visit_done`) e o
+ * dia de trabalho do job é o da visita (22/10/2026). A linha certa é a da visita,
+ * com o parceiro e o pagamento dela.
+ */
+export function jobFollowsVisit(job: JobSlotRow, v: Pick<JobVisit, "scheduled_date" | "scheduled_start_at">): boolean {
+  return Boolean(job.primary_visit_done) && visitMatchesJobSlot(job, v);
+}
+
+/**
+ * Junta as linhas de um lugar (aba, dia do parceiro, lembretes) sem repetir o
+ * mesmo horário. Quando o job e uma visita dele estão no mesmo dia e janela:
+ *  - job seguindo a visita (V1 feita) → fica a linha da visita;
+ *  - V1 ainda por fazer → fica a linha do job, a visita é o próprio horário dele.
+ */
+export function mergeJobAndVisitRows<J extends JobSlotRow>(
+  jobs: J[],
+  visits: VisitWithParent[],
+): { jobs: J[]; visits: VisitWithParent[] } {
+  const byId = new Map(jobs.map((j) => [j.id, j]));
+  const dropJobs = new Set<string>();
+  const keptVisits: VisitWithParent[] = [];
+  for (const v of visits) {
+    const j = byId.get(v.job_id);
+    if (!j || !visitMatchesJobSlot(j, v)) {
+      keptVisits.push(v);
+      continue;
+    }
+    if (j.primary_visit_done) {
+      dropJobs.add(j.id);
+      keptVisits.push(v);
+    }
+  }
+  return { jobs: dropJobs.size ? jobs.filter((j) => !dropJobs.has(j.id)) : jobs, visits: keptVisits };
+}
+
+/**
+ * A visita é uma linha a mais na aba, além da do job? Para as badges, que contam
+ * os jobs pelo status: visita no horário de um job em campo já está contada nele.
+ */
+export function visitIsExtraRow(v: VisitWithParent): boolean {
+  const parent = v.parent;
+  if (!parent) return false;
+  return !(visitMatchesJobSlot(parent, v) && JOB_FIELD_STATUSES.has(String(parent.status)));
 }
 
 /** Em qual aba da lista a visita mora: a do status dela. */

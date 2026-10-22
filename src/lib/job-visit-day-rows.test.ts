@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   isVisitJobRow,
+  jobFollowsVisit,
   jobIdOfRow,
+  mergeJobAndVisitRows,
   jobRowHref,
   selectVisitsInRange,
   visitAsJobRow,
   visitJobsTab,
+  visitIsExtraRow,
   visitMatchesJobSlot,
   type VisitWithParent,
 } from "@/lib/job-visit-day-rows";
@@ -95,41 +98,56 @@ describe("selectVisitsInRange: visita no dia dela", () => {
 });
 
 describe("não duplicar quando a visita é o próprio horário do job", () => {
-  // O Done da V1 copia data e janela da próxima visita para o job: a linha do job já é ela.
-  const avancado = job({
-    status: "scheduled",
+  const slot = {
     scheduled_date: "2026-10-23",
     scheduled_start_at: "2026-10-23T07:00:00Z",
     scheduled_end_at: "2026-10-23T08:00:00Z",
+  };
+  // O job segue a visita: V1 guardada em primary_visit_done, dia de trabalho = o da V3.
+  const seguindo = job({
+    status: "scheduled",
+    ...slot,
+    primary_visit_done: { scheduled_date: "2026-10-20", scheduled_start_at: null, scheduled_end_at: null, done_at: "2026-10-21T10:00:00Z" },
+  });
+  // V1 ainda por fazer, marcada no mesmo horário que a visita.
+  const v1PorFazer = job({ status: "scheduled", ...slot, primary_visit_done: null });
+
+  it("job seguindo a visita: fica só a linha da visita, com o parceiro dela", () => {
+    const v = visit({ parent: seguindo });
+    assert.equal(jobFollowsVisit(seguindo, v), true);
+    const r = mergeJobAndVisitRows([seguindo], [v]);
+    assert.deepEqual(r.jobs, []);
+    assert.equal(r.visits.length, 1);
+    assert.equal(visitAsJobRow(r.visits[0]!).partner_name, "TM Handyman");
   });
 
-  it("mesmo dia e mesma janela do job em campo: sai, a linha do job já mostra", () => {
-    assert.equal(visitMatchesJobSlot(avancado, visit()), true);
-    assert.equal(selectVisitsInRange([visit({ parent: avancado })], { from: "2026-10-23", to: "2026-10-23" }).length, 0);
+  it("visita no horário de uma V1 por fazer: fica só a linha do job", () => {
+    const v = visit({ parent: v1PorFazer });
+    assert.equal(jobFollowsVisit(v1PorFazer, v), false);
+    const r = mergeJobAndVisitRows([v1PorFazer], [v]);
+    assert.equal(r.jobs.length, 1);
+    assert.deepEqual(r.visits, []);
   });
 
   it("mesmo instante escrito com fuso diferente ainda é o mesmo horário", () => {
-    assert.equal(
-      visitMatchesJobSlot(avancado, visit({ scheduled_start_at: "2026-10-23T08:00:00+01:00" })),
-      true,
-    );
+    assert.equal(visitMatchesJobSlot(seguindo, visit({ scheduled_start_at: "2026-10-23T08:00:00+01:00" })), true);
   });
 
   it("mesmo dia, outra janela: são duas paradas, as duas aparecem", () => {
-    const tarde = visit({ scheduled_start_at: "2026-10-23T13:00:00Z", scheduled_end_at: "2026-10-23T14:00:00Z" });
-    assert.equal(visitMatchesJobSlot(avancado, tarde), false);
-    assert.equal(selectVisitsInRange([{ ...tarde, parent: avancado }], {}).length, 1);
+    const tarde = visit({ parent: v1PorFazer, scheduled_start_at: "2026-10-23T13:00:00Z" });
+    const r = mergeJobAndVisitRows([v1PorFazer], [tarde]);
+    assert.equal(r.jobs.length, 1);
+    assert.equal(r.visits.length, 1);
   });
 
-  it("mesma data e horário, mas o job não está mais em campo: a visita é a única linha do dia", () => {
-    const naRevisao = { ...avancado, status: "final_check" } as Job;
-    assert.equal(selectVisitsInRange([visit({ parent: naRevisao })], {}).length, 1);
+  it("job que não está na lista daquele lugar não tira a visita", () => {
+    assert.equal(mergeJobAndVisitRows([], [visit({ parent: v1PorFazer })]).visits.length, 1);
   });
 
-  it("quem chama decide se a linha do job está na lista (e-mail e rota usam o próprio dia)", () => {
-    const naRevisao = { ...avancado, status: "final_check" } as Job;
-    const jaNaLista = new Set([naRevisao.id]);
-    assert.equal(selectVisitsInRange([visit({ parent: naRevisao })], {}, (j) => jaNaLista.has(j.id)).length, 0);
+  it("badge: visita no horário de um job em campo já conta no job", () => {
+    assert.equal(visitIsExtraRow(visit({ parent: seguindo })), false);
+    assert.equal(visitIsExtraRow(visit({ parent: v1PorFazer })), false);
+    assert.equal(visitIsExtraRow(visit()), true); // JOB-9705 em Final review dia 20: a V3 é linha a mais
   });
 
   it("sem horário nos dois lados, mesmo dia conta como o mesmo horário", () => {

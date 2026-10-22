@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
-import { selectVisitsInRange, visitAsJobRow, visitPartnerId, type VisitWithParent } from "@/lib/job-visit-day-rows";
+import { mergeJobAndVisitRows, selectVisitsInRange, visitAsJobRow, visitPartnerId, type VisitWithParent } from "@/lib/job-visit-day-rows";
+import type { Job } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -151,9 +152,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     return rows;
   };
 
-  const doDia = (stopRows ?? []) as Row[];
-  const jaNaRota = new Set(doDia.map((r) => r.id));
-  const visitas = selectVisitsInRange((visitRows ?? []) as VisitWithParent[], { from: date, to: date }, (job) => jaNaRota.has(job.id))
+  // Job seguindo a visita (V1 feita) vira a parada da visita, com o parceiro dela.
+  const juntos = mergeJobAndVisitRows(
+    (stopRows ?? []) as unknown as Job[],
+    selectVisitsInRange((visitRows ?? []) as VisitWithParent[], { from: date, to: date }),
+  );
+  const doDia = juntos.jobs as unknown as Row[];
+  const visitas = juntos.visits
     .filter((v) => visitPartnerId(v) === p.id)
     .map((v) => ({ ...(visitAsJobRow(v) as unknown as Row), job_id: v.job_id, visit_index: v.visit_index }));
   const stops = await completar(

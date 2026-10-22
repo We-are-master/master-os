@@ -26,7 +26,7 @@ const MAX_ENVIOS_POR_RODADA = 30;
 // FIXFY_STATE_DIR no Railway (volume); sem ela, scripts/.tomorrow-sent.json como sempre.
 const SENT_PATH = arquivoDeEstado(".tomorrow-sent.json");
 
-const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }, { selectVisitsInRange, visitAsJobRow, visitPartnerId }] =
+const [{ createServiceClient }, { formatPartnerJobPriceDisplay }, { buildPartnerTomorrowEmail }, { resolvePartnerTradePortalBaseUrl }, { getOptimizedStopOrder }, { geocodeUkAddressServer }, { mergeJobAndVisitRows, selectVisitsInRange, visitAsJobRow, visitPartnerId }] =
   await Promise.all([
     import("../src/lib/supabase/service"),
     import("../src/lib/job-pricing-resolver"),
@@ -120,13 +120,13 @@ const { data: jobData } = await supabase
   .is("deleted_at", null)
   .not("status", "in", "(cancelled,deleted)")
   .order("scheduled_start_at", { ascending: true, nullsFirst: false });
-const jobs = (jobData ?? []) as JobRow[];
+let jobs = (jobData ?? []) as JobRow[];
 
 /**
  * Visitas extras do dia (22/10/2026): a V3 de um job em Final review também é
  * trabalho de amanhã. Cada visita aberta com data amanhã vira uma parada do
- * parceiro DELA, com o pagamento DELA. Visita que é o próprio horário do job já
- * veio na consulta acima e não entra de novo.
+ * parceiro DELA, com o pagamento DELA. Job seguindo a visita (V1 feita) sai da
+ * lista e fica a parada da visita; visita no horário de uma V1 por fazer não repete.
  */
 const { data: visitData, error: visitErr } = await supabase
   .from("job_visits")
@@ -135,8 +135,9 @@ const { data: visitData, error: visitErr } = await supabase
   .is("deleted_at", null)
   .in("status", ["scheduled", "in_progress"]);
 if (visitErr) console.warn(`[amanha] visitas extras não lidas: ${visitErr.message}`);
-const jaNaLista = new Set(jobs.map((j) => j.id));
-for (const v of selectVisitsInRange((visitData ?? []) as never, { from: ymd, to: ymd }, (job) => jaNaLista.has(job.id))) {
+const juntos = mergeJobAndVisitRows(jobs as never[], selectVisitsInRange((visitData ?? []) as never, { from: ymd, to: ymd }));
+jobs = juntos.jobs as unknown as JobRow[];
+for (const v of juntos.visits) {
   if (!visitPartnerId(v)) continue;
   const linha = visitAsJobRow(v) as unknown as JobRow;
   // Pagamento da visita é valor combinado; hourly só quando a visita não tem valor e o job é por hora.

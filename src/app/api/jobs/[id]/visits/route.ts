@@ -6,6 +6,7 @@ import { isSupabaseMissingColumnError } from "@/lib/supabase-schema-compat";
 import { notifyVisitPartner } from "@/lib/notify-visit-partner-server";
 import { avisarClienteDaVisita } from "@/lib/notify-visit-client-server";
 import { avancarVisitas } from "@/lib/job-visit-advance-server";
+import { followActiveVisit } from "@/lib/job-visit-lifecycle-server";
 import { detachVisitFromSelfBill, ensureWeeklySelfBillForVisit } from "@/services/self-bills";
 import type { Job, JobVisit } from "@/types/database";
 
@@ -276,9 +277,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           console.error("closing the current visit on add failed", e);
         }
       }
+      /**
+       * Visita nova devolve o job ao ciclo (dono, 22/10/2026): job em Final review,
+       * Awaiting payment ou fechado volta para Scheduled no dia da visita. Pagamento
+       * fica como está. Job em campo com a V1 por fazer não muda.
+       */
+      const followed = advanced
+        ? null
+        : await followActiveVisit(supabase, jobId, { userId, userName, reason: "visit_added" }).catch((e) => ({
+            ok: false as const,
+            error: e instanceof Error ? e.message : "follow failed",
+          }));
       return NextResponse.json({
         ok: true, visit: created, notified, clientNotified, selfBillId, payoutError,
-        closedVisitIndex, advanced,
+        closedVisitIndex, advanced, followed,
       });
     }
     if (error.code !== "23505") {
@@ -391,7 +403,21 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     visit: updated, userId, userName,
     extra: { fields: Object.keys(patch) },
   });
-  return NextResponse.json({ ok: true, visit: updated, selfBillId, payoutError });
+
+  /**
+   * Remarcou, reabriu ou começou a visita: o job acompanha (22/10/2026). Fechar
+   * (`completed`) segue pelo Done, que chama o /advance como sempre.
+   */
+  const mexeuNoCiclo =
+    (typeof patch.status === "string" && patch.status !== "completed") ||
+    "scheduled_date" in patch || "scheduled_start_at" in patch || "scheduled_end_at" in patch;
+  const followed = mexeuNoCiclo && updated.status !== "completed"
+    ? await followActiveVisit(supabase, jobId, {
+        userId, userName,
+        reason: updated.status === "in_progress" ? "visit_started" : "visit_rescheduled",
+      }).catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : "follow failed" }))
+    : null;
+  return NextResponse.json({ ok: true, visit: updated, selfBillId, payoutError, followed });
 }
 
 /** DELETE — soft delete, para o rollup e o payout pararem de contar a visita. */

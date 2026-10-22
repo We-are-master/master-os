@@ -208,12 +208,33 @@ describe("varrerLembretesDeVespera, visita extra de amanhã (22/10/2026)", () =>
 
   test("visita no mesmo horário de um job agendado não vira segundo lembrete", async () => {
     const { visitasComoLembretes } = await import("./sweep-24h");
-    const agendado = { ...pai, status: "scheduled", scheduled_date: "2026-10-23", scheduled_start_at: "2026-10-23T07:00:00Z" };
-    const { lembretes } = visitasComoLembretes([{
+    // V1 ainda por fazer, no mesmo horário: o lembrete é o do job, um só.
+    const agendado = { ...pai, status: "scheduled", scheduled_date: "2026-10-23", scheduled_start_at: "2026-10-23T07:00:00Z", primary_visit_done: null };
+    const v2 = {
       id: "v2", job_id: "j9705", visit_index: 2, status: "scheduled", scheduled_date: "2026-10-23",
       scheduled_start_at: "2026-10-23T07:00:00Z", client_price: 0, partner_cost: 0, materials_cost: 0,
       created_at: "", updated_at: "", parent: agendado,
-    } as never], "2026-10-23");
-    assert.equal(lembretes.length, 0);
+    };
+    const r = visitasComoLembretes([v2 as never], "2026-10-23", [agendado]);
+    assert.equal(r.lembretes.length, 0);
+    assert.equal(r.jobs.length, 1);
+  });
+
+  test("job seguindo a visita marcada pelo escritório: nem o job nem a visita mandam lembrete", async () => {
+    const { visitasComoLembretes } = await import("./sweep-24h");
+    const seguindo = {
+      ...pai, status: "scheduled", scheduled_date: "2026-10-23", scheduled_start_at: "2026-10-23T07:00:00Z",
+      client_reminder_sent_at: null,
+      primary_visit_done: { scheduled_date: "2026-10-20", scheduled_start_at: null, scheduled_end_at: null, done_at: "2026-10-21T10:00:00Z" },
+    };
+    const v3 = {
+      id: "v3", job_id: "j9705", visit_index: 3, status: "scheduled", scheduled_date: "2026-10-23",
+      scheduled_start_at: "2026-10-23T07:00:00Z", client_price: 0, partner_cost: 0, materials_cost: 0,
+      client_confirmation_sent_at: "2026-10-22T19:43:50Z", created_at: "", updated_at: "", parent: seguindo,
+    };
+    const r = visitasComoLembretes([v3 as never], "2026-10-23", [seguindo]);
+    assert.equal(r.jobs.length, 0);
+    assert.equal(r.lembretes.length, 0);
+    assert.deepEqual(r.jaAvisadas.map((x) => x.reference), ["JOB-9705 · V3"]);
   });
 });
