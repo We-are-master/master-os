@@ -166,6 +166,7 @@ import type {
 } from "@/types/database";
 import { listJobVisits } from "@/services/job-visits";
 import { jobShareOfVisitSelfBill, nextVisitLine, rollUpJobVisits } from "@/lib/job-visit-rollup";
+import { selfBillHeaderSource, selfBillPanelRows, type SelfBillPanelRow } from "@/lib/job-self-bill-panel";
 import { jobStatusRank } from "@/lib/job-phases";
 import { createInvoice, listInvoicesLinkedToJob, updateInvoice } from "@/services/invoices";
 import { getInvoiceDueDateIsoForClient } from "@/services/invoice-due-date";
@@ -674,6 +675,16 @@ const selfBillStatusConfig: Record<
   rejected: { label: "Rejected", variant: "default" },
 };
 
+/** Documento rejeitado ou cancelado: não paga nada, então não mostra valor. */
+function DeadSelfBillLine({ row }: { row: SelfBillPanelRow }) {
+  const motivo = row.status === "rejected" ? "rejected" : "cancelled";
+  return (
+    <div className="rounded-lg border border-border-light bg-surface-hover/40 px-2.5 py-2 text-[11px] text-text-tertiary">
+      No self-bill for this job · {row.reference} {motivo}, nothing to pay
+    </div>
+  );
+}
+
 function JobDetailSelfBillPanel({
   sb,
   job,
@@ -735,7 +746,11 @@ function JobDetailSelfBillPanel({
             <div className="flex items-start justify-between gap-2 pt-0.5">
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
-                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight">
+                {/* O valor grande é deste job; o documento da quinzena fica como referência. */}
+                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight truncate" title={`Week ${weekLine}`}>
+                  {sb.reference} · this job {formatCurrency(jobGrossOnBill)} · fortnight total {formatCurrency(Number(sb.net_payout ?? 0))}
+                </p>
+                <p className="text-[10px] text-text-tertiary leading-tight">
                   <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
                   <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
                 </p>
@@ -7398,13 +7413,27 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           ? financeDocDraftBadge
           : financeDocSentBadge
       : null;
-  const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = jobSelfBill
-    ? ["payout_cancelled", "payout_lost", "payout_archived", "rejected"].includes(jobSelfBill.status)
+  /**
+   * Um documento por parceiro, cada um com o que ESTE job põe nele (22/10/2026).
+   * O selo do cabeçalho sai dos documentos vivos: rejeitado ou cancelado só manda
+   * quando não sobra nenhum vivo (SB-14546 rejeitado da Fixfy pintava "Cancelled"
+   * por cima do SB-14535 da F&V, que está aberto).
+   */
+  const selfBillRows = selfBillPanelRows({
+    primary: jobSelfBill,
+    visitDocs: visitSelfBills,
+    visits: jobVisits,
+    primaryJobLine: partnerCashOutJobLine,
+    primaryPartnerName: job.partner_name,
+  });
+  const selfBillHeader = selfBillHeaderSource(selfBillRows);
+  const selfBillLifecycleBadge: { label: "Draft" | "Sent" | "Cancelled"; className: string } | null = !selfBillHeader
+    ? null
+    : selfBillHeader.kind === "all_dead"
       ? financeDocCancelledBadge
-      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(jobSelfBill.status)
+      : job.status === "on_hold" || financeDocsAwaitingJobApproval || selfBillDbDraftStatuses.has(selfBillHeader.status)
         ? financeDocDraftBadge
-        : financeDocSentBadge
-    : null;
+        : financeDocSentBadge;
   const flowStep = jobFlowActiveStepIndex(job.status);
   const previousStageStatus = getPreviousJobStatus(job);
   const canReverseStage =
@@ -10456,41 +10485,41 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : null}
               {visitSelfBills.length > 0 ? (
                 /* Um documento por parceiro: cada bloco leva o nome de quem
-                   recebe, senão dois cartões seguidos viram um só na leitura. */
+                   recebe e as visitas deste job que estão nele. */
                 <div className="space-y-3">
-                  {jobSelfBill ? (
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                        {jobSelfBill.partner_name?.trim() || job.partner_name?.trim() || "Primary partner"}
-                      </p>
-                      <JobDetailSelfBillPanel
-                        sb={jobSelfBill}
-                        job={job}
-                        jobLineGross={partnerCashOutJobLine}
-                        sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
-                      />
-                    </div>
-                  ) : null}
-                  {visitSelfBills.map((sb) => {
-                    // Só o que ESTE job põe no documento (as visitas dele); a quinzena inteira fica em Billing.
+                  {selfBillRows.map((row) => {
+                    const sb = row.selfBillId === jobSelfBill?.id ? jobSelfBill : visitSelfBills.find((x) => x.id === row.selfBillId);
+                    if (!sb) return null;
+                    const ehV1 = sb.id === jobSelfBill?.id;
                     const parte = jobShareOfVisitSelfBill(jobVisits, sb.id);
                     return (
-                      <div key={sb.id} className="space-y-1">
+                      <div key={row.selfBillId} className="space-y-1">
                         <p className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                          {sb.partner_name?.trim() || "Visit partner"}
-                          {parte.visitIndexes.length ? ` · ${parte.visitIndexes.map((i) => `V${i}`).join(", ")}` : ""}
+                          {row.partnerName}
+                          {row.visitsLabel ? ` · ${row.visitsLabel}` : ""}
                         </p>
-                        <JobDetailSelfBillPanel
-                          sb={sb}
-                          job={job}
-                          jobLineGross={parte.gross}
-                          visitScope={{
-                            label: sb.partner_name?.trim() || "Visit partner",
-                            labour: parte.labour,
-                            materials: parte.materials,
-                            pending: parte.pending,
-                          }}
-                        />
+                        {row.dead ? (
+                          <DeadSelfBillLine row={row} />
+                        ) : ehV1 ? (
+                          <JobDetailSelfBillPanel
+                            sb={sb}
+                            job={job}
+                            jobLineGross={partnerCashOutJobLine}
+                            sameDocVisits={parte}
+                          />
+                        ) : (
+                          <JobDetailSelfBillPanel
+                            sb={sb}
+                            job={job}
+                            jobLineGross={parte.gross}
+                            visitScope={{
+                              label: row.partnerName,
+                              labour: parte.labour,
+                              materials: parte.materials,
+                              pending: parte.pending,
+                            }}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -10498,12 +10527,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               ) : !job.partner_id?.trim() ? null : loadingSelfBill ? (
                 <p className="text-xs text-text-tertiary">Loading…</p>
               ) : jobSelfBill ? (
-                <JobDetailSelfBillPanel
-                  sb={jobSelfBill}
-                  job={job}
-                  jobLineGross={partnerCashOutJobLine}
-                  sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
-                />
+                selfBillRows[0]?.dead ? (
+                  <DeadSelfBillLine row={selfBillRows[0]} />
+                ) : (
+                  <JobDetailSelfBillPanel
+                    sb={jobSelfBill}
+                    job={job}
+                    jobLineGross={partnerCashOutJobLine}
+                    sameDocVisits={jobShareOfVisitSelfBill(jobVisits, jobSelfBill.id)}
+                  />
+                )
               ) : (
                 <div className="space-y-2">
                   <p className="text-xs text-text-tertiary">
