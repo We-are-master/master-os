@@ -720,10 +720,6 @@ function JobDetailSelfBillPanel({
     sb.week_start && sb.week_end
       ? `${sb.week_start} → ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
       : sb.week_label ?? sb.period;
-  const compactWeekLine =
-    sb.week_start && sb.week_end
-      ? `${sb.week_start} -> ${sb.week_end}${sb.week_label ? ` (${sb.week_label})` : ""}`
-      : weekLine;
   const extra = sameDocVisits ?? { labour: 0, materials: 0, gross: 0, pending: 0, visitIndexes: [] };
   const jobLabourOnBill =
     Math.round(((visitScope ? visitScope.labour : partnerPaymentCap(job)) + (visitScope ? 0 : extra.labour)) * 100) / 100;
@@ -748,16 +744,12 @@ function JobDetailSelfBillPanel({
         <div className="min-w-0 flex-1 space-y-1.5">
           {!open ? (
             <div className="flex items-start justify-between gap-2 pt-0.5">
-              <div className="min-w-0">
+              {/* Só a referência; a quinzena e o total do documento ficam no hover (dono, 22/10/2026). */}
+              <div
+                className="min-w-0"
+                title={`${sb.reference} · this job ${formatCurrency(jobGrossOnBill)} · fortnight total ${formatCurrency(Number(sb.net_payout ?? 0))}\nWeek ${weekLine}`}
+              >
                 <p className="text-xs font-semibold text-text-primary truncate">{sb.reference}</p>
-                {/* O valor grande é deste job; o documento da quinzena fica como referência. */}
-                <p className="text-[10px] text-text-tertiary mt-0.5 leading-tight truncate" title={`Week ${weekLine}`}>
-                  {sb.reference} · this job {formatCurrency(jobGrossOnBill)} · fortnight total {formatCurrency(Number(sb.net_payout ?? 0))}
-                </p>
-                <p className="text-[10px] text-text-tertiary leading-tight">
-                  <span className="sm:hidden block break-words">Week {compactWeekLine}</span>
-                  <span className="hidden sm:block truncate" title={`Week ${weekLine}`}>Week {weekLine}</span>
-                </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-lg font-bold tabular-nums text-primary tracking-tight">{formatCurrency(jobGrossOnBill)}</p>
