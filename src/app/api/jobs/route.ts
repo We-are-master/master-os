@@ -1502,9 +1502,10 @@ export async function POST(req: NextRequest) {
     }).catch((e) => ({ kind: "falhou" as const, motivo: String(e) }));
     if (r.kind === "falhou") zendeskCorrections.push("express_whatsapp_failed");
   }
-  // Express v2: e-mail de boas-vindas com os dados do booking, no ticket do job
-  // (reserva express-welcome-email:<jobId>). Esperado, nunca lança.
-  if (contaV2 && contaEhExpress(accountId) && clientEmail && ticketId) {
+  // Express: o cliente recebe UMA confirmação, a de sempre, quando o profissional é
+  // alocado (dono, 22/10/2026: "apenas 1 quando o pro for alocado"). O e-mail de
+  // boas-vindas na criação fica guardado atrás de EXPRESS_BOAS_VINDAS_EMAIL=on.
+  if (process.env.EXPRESS_BOAS_VINDAS_EMAIL?.trim() === "on" && contaV2 && contaEhExpress(accountId) && clientEmail && ticketId) {
     const r = await mandarBoasVindasDoExpress(supabase, {
       jobId: String(inserted.id),
       referencia: String(inserted.reference ?? ""),
