@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, isValidUUID } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { geocodeUkAddressServer } from "@/lib/job-geocode-server";
+import { selectVisitsInRange, visitAsJobRow, visitPartnerId, type VisitWithParent } from "@/lib/job-visit-day-rows";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -87,7 +88,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   // rota não pode morrer num 400 de coluna enquanto o SQL não for colado.
   const STOP_SELECT = "*";
 
-  const [{ data: stopRows }, { data: openRows }] = await Promise.all([
+  const [{ data: stopRows }, { data: openRows }, { data: visitRows }] = await Promise.all([
     supabase
       .from("jobs")
       .select(STOP_SELECT)
@@ -103,6 +104,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       .in("status", ["unassigned", "auto_assigning"])
       .is("deleted_at", null)
       .or(`scheduled_date.eq.${date},scheduled_date.is.null`),
+    // Visitas extras do dia (22/10/2026): parada do parceiro da visita, no dia dela.
+    supabase
+      .from("job_visits")
+      .select("*, parent:job_id ( * )")
+      .eq("scheduled_date", date)
+      .is("deleted_at", null)
+      .in("status", ["scheduled", "in_progress"]),
   ]);
 
   type Row = {
@@ -122,6 +130,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     job_type: string | null;
     hourly_partner_rate: number | null;
     route_seq?: number | null;
+    /** Parada de visita extra: o job a abrir e o número da visita. */
+    job_id?: string;
+    visit_index?: number;
   };
 
   // Parada cega geocoda na hora e grava — uma vez só por job.
@@ -135,12 +146,25 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       await supabase
         .from("jobs")
         .update({ latitude: geo.latitude, longitude: geo.longitude })
-        .eq("id", r.id);
+        .eq("id", r.job_id ?? r.id);
     }
     return rows;
   };
 
-  const stops = await completar((stopRows ?? []) as Row[]);
+  const doDia = (stopRows ?? []) as Row[];
+  const jaNaRota = new Set(doDia.map((r) => r.id));
+  const visitas = selectVisitsInRange((visitRows ?? []) as VisitWithParent[], { from: date, to: date }, (job) => jaNaRota.has(job.id))
+    .filter((v) => visitPartnerId(v) === p.id)
+    .map((v) => ({ ...(visitAsJobRow(v) as unknown as Row), job_id: v.job_id, visit_index: v.visit_index }));
+  const stops = await completar(
+    visitas.length
+      ? [...doDia, ...visitas].sort((a, b) => {
+          const ta = a.scheduled_start_at ? Date.parse(a.scheduled_start_at) : Infinity;
+          const tb = b.scheduled_start_at ? Date.parse(b.scheduled_start_at) : Infinity;
+          return ta === tb ? 0 : ta - tb;
+        })
+      : doDia,
+  );
   // Ordem decidida à mão (drag no painel, mig 282) vence a janela de chegada;
   // sem route_seq, fica a ordem do banco (scheduled_start_at asc).
   if (stops.some((s) => s.route_seq != null)) {

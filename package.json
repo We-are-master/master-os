@@ -20,6 +20,7 @@
     "workers": "node --import tsx scripts/workers/agendador.mts",
     "workers:ensaio": "node --import tsx scripts/workers/agendador.mts --ensaio",
     "test:workers": "npx tsx --test scripts/workers/agenda.test.mts",
+    "test:visits": "npx tsx --test src/lib/job-visit-day-rows.test.ts src/lib/client-confirmation/lembrete-canal.test.ts",
     "test:agent-model": "npx tsx --test src/lib/agent-model/schedule.test.ts src/lib/agent-model/commission.test.ts src/lib/agent-model/receipt-view.test.ts src/lib/agent-model/promotion.test.ts src/lib/client-confirmation/professional-email.test.ts src/lib/invoice-trade-fee-split.test.ts src/lib/client-confirmation/send.test.ts",
     "test:cliente": "npx tsx --test src/lib/client-confirmation/send.test.ts src/lib/client-confirmation/catch-up.test.ts src/lib/client-confirmation/sweep-24h.test.ts src/lib/feedback/pos-job.test.ts src/lib/depois-da-resposta.test.ts"
   },

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import { Plus, Pencil, Trash2, Loader2, X, Save, Check, Mail, Link2, FileText } from "lucide-react";
 import { JobReportV2Card } from "@/components/jobs/job-report-v2-card";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,8 @@ export function VisitsTab({
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Linha de visita da lista de Jobs abre aqui com `?visit=<id>`: a visita fica em destaque. */
+  const visitaEmFoco = useSearchParams()?.get("visit") ?? null;
   const [editTarget, setEditTarget] = useState<EditTarget>(null);
   /** Índice da visita recém-fechada: abre o "e agora?" logo depois do Done. */
   const [justCompleted, setJustCompleted] = useState<number | null>(null);
@@ -405,6 +408,8 @@ export function VisitsTab({
             {vivas.map((v) => (
               <VisitCard
                 key={v.id}
+                domId={`visit-${v.id}`}
+                focused={visitaEmFoco === v.id}
                 index={v.visit_index}
                 partner={v.partner_name ?? "No partner"}
                 service={v.catalog_service_name ?? null}
@@ -528,9 +533,11 @@ function diaCurto(ymd: string | null | undefined): string {
 
 /** Uma visita = um cartão. Feita fica riscada e apagada, mas fica: é o histórico do job. */
 function VisitCard({
-  index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
+  domId, focused, index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
   statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle,
 }: {
+  domId?: string;
+  focused?: boolean;
   index: number;
   partner: string;
   service: string | null;
@@ -557,8 +564,19 @@ function VisitCard({
   completeTitle?: string;
 }) {
   const janela = startAt && endAt ? formatArrivalTimeRange(startAt, endAt) : startAt ? startAt.slice(11, 16) : null;
+  useEffect(() => {
+    if (!focused || !domId) return;
+    document.getElementById(domId)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focused, domId]);
   return (
-    <div className={cn("flex items-center gap-3 rounded-lg border border-border-light bg-card px-3 py-2", done && "bg-surface-hover/40")}>
+    <div
+      id={domId}
+      className={cn(
+        "flex items-center gap-3 rounded-lg border border-border-light bg-card px-3 py-2",
+        done && "bg-surface-hover/40",
+        focused && "ring-2 ring-primary/60",
+      )}
+    >
       <span
         className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",

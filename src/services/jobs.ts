@@ -15,7 +15,7 @@ import {
   listSelfBillsLinkedToJob,
   syncSelfBillAfterJobChange,
 } from "./self-bills";
-import { cancelOpenVisitsForJobCancellation } from "./job-visits";
+import { cancelOpenVisitsForJobCancellation, listOpenVisitRowsForJobsList } from "./job-visits";
 import {
   applyOfficeRescheduleStatus,
   jobPatchApprovesReport,
@@ -390,7 +390,37 @@ export async function markLateJobs(): Promise<void> {
   lastMarkLateAt = Date.now();
 }
 
+/**
+ * A lista de Jobs com as visitas extras no dia delas (22/10/2026): Scheduled,
+ * In progress e All ganham, na primeira página, uma linha por visita aberta
+ * (`JOB-XXXX · V3`). A visita não tem ciclo próprio ainda; a linha só mostra.
+ * Falha ao ler visitas não derruba a lista: volta só com os jobs.
+ */
 export async function listJobs(params: ListParams): Promise<ListResult<Job>> {
+  const result = await listJobsOnly(params);
+  const tab =
+    params.status === "scheduled" || params.status === "in_progress"
+      ? params.status
+      : !params.status || params.status === "all"
+        ? "all"
+        : null;
+  if (!tab || (params.page ?? 1) > 1 || (params.statusIn && params.statusIn.length > 0)) return result;
+  try {
+    const visitRows = await listOpenVisitRowsForJobsList({
+      tab,
+      scheduleRange: params.scheduleRange,
+      partnerId: params.jobsPartnerId,
+      search: params.search,
+    });
+    if (visitRows.length === 0) return result;
+    return { ...result, data: [...result.data, ...visitRows], count: result.count + visitRows.length };
+  } catch (err) {
+    console.warn("[jobs] visit rows skipped:", err instanceof Error ? err.message : err);
+    return result;
+  }
+}
+
+async function listJobsOnly(params: ListParams): Promise<ListResult<Job>> {
   const shouldRunMarkLate =
     (params.page ?? 1) <= 1 &&
     !params.search &&

@@ -96,7 +96,8 @@ import { sumCustomerCollectionsByJobIds } from "@/services/job-payments";
 import { softDeleteInvoicesForArchivedJobs, cancelOpenInvoicesForJobCancellation } from "@/services/invoices";
 import { patchOfficeCancelZeroJobEconomics, patchOfficeCancelLostSnapshot } from "@/lib/job-cancel-economics";
 import { cancelOpenSelfBillsForJobCancellation } from "@/services/self-bills";
-import { cancelOpenVisitsForJobCancellation } from "@/services/job-visits";
+import { cancelOpenVisitsForJobCancellation, countOpenVisitRowsByJobsTab } from "@/services/job-visits";
+import { isVisitJobRow, jobIdOfRow, jobRowHref } from "@/lib/job-visit-day-rows";
 import { bumpLinkedInvoiceAmountsToJobSchedule } from "@/lib/sync-invoice-amount-from-job";
 import { useProfile } from "@/hooks/use-profile";
 import type { Partner } from "@/types/database";
@@ -1491,6 +1492,8 @@ function JobsPageContent() {
   /** Etiqueta de Payment de cada linha; null = sem estado (perdido sem nada a cobrar). */
   const estadoDoPagamento = useCallback(
     (item: Job): JobPaymentState | null => {
+      // Linha de visita não tem cobrança própria: o pagamento é do job.
+      if (isVisitJobRow(item)) return null;
       if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
         return null;
       }
@@ -1690,8 +1693,8 @@ function JobsPageContent() {
 
   const openJobDetail = useCallback(
     (job: Job) => {
-      setJobsNavQueue(scheduleSortedData.map((j) => j.id));
-      router.push(`/jobs/${job.id}`);
+      setJobsNavQueue([...new Set(scheduleSortedData.map(jobIdOfRow))]);
+      router.push(jobRowHref(job));
     },
     [router, scheduleSortedData],
   );
@@ -1718,13 +1721,14 @@ function JobsPageContent() {
         })(),
         (async () => {
           try {
-            const [counts, deletedHead] = await Promise.all([
+            const [counts, deletedHead, visitCounts] = await Promise.all([
               getStatusCounts("jobs", [...JOB_STATUSES], "status", countOpts),
               supabase
                 .from("jobs")
                 .select("*", { count: "exact", head: true })
                 .eq("status", "deleted")
                 .not("deleted_at", "is", null),
+              countOpenVisitRowsByJobsTab(countOpts?.scheduleRange).catch(() => ({ scheduled: 0, in_progress: 0 })),
             ]);
             const deletedCount = deletedHead.error ? 0 : deletedHead.count ?? 0;
             const archivedOverlap =
@@ -1746,12 +1750,15 @@ function JobsPageContent() {
                 .or("and(status.in.(completed,cancelled),deleted_at.is.null),and(status.eq.deleted,deleted_at.not.is.null)");
               if (!fechadosErr) counts.closed_all_time = fechados ?? 0;
             }
-            const allTabCount = JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+            const allTabCount =
+              JOB_LIST_ALL_TAB_STATUSES.reduce((sum, s) => sum + (counts[s] ?? 0), 0) + visitCounts.scheduled + visitCounts.in_progress;
             setTabCounts({
               ...counts,
               all: allTabCount,
               deleted: deletedCount,
               archived_overlap_window: archivedOverlap,
+              visit_scheduled: visitCounts.scheduled,
+              visit_in_progress: visitCounts.in_progress,
             });
           } catch {
             /* tab badges — keep prior counts */
@@ -1819,12 +1826,13 @@ function JobsPageContent() {
     };
   }, [loadDashboardStats]);
 
+  // Visitas extras abertas contam na aba do status delas (22/10/2026).
   const inProgressTabCount =
-    (tabCounts.in_progress ?? 0);
+    (tabCounts.in_progress ?? 0) + (tabCounts.visit_in_progress ?? 0);
 
   const onHoldTabCount = tabCounts.on_hold ?? 0;
 
-  const scheduledTabCount = (tabCounts.scheduled ?? 0) + (tabCounts.late ?? 0);
+  const scheduledTabCount = (tabCounts.scheduled ?? 0) + (tabCounts.late ?? 0) + (tabCounts.visit_scheduled ?? 0);
 
   const finalChecksTabCount = (tabCounts.final_check ?? 0) + (tabCounts.need_attention ?? 0);
 
@@ -2423,6 +2431,11 @@ function JobsPageContent() {
    */
   const handleKanbanDrop = useCallback(
     (job: Job, toColumnId: string) => {
+      // Visita ainda não tem ciclo próprio: o status dela muda dentro do job.
+      if (isVisitJobRow(job)) {
+        toast.info("Visits follow their job. Open the job to update this visit.");
+        return;
+      }
       const target = JOBS_KANBAN_DROP_STATUS[toColumnId];
       if (!target) {
         setKanbanMove({
@@ -3162,6 +3175,8 @@ function JobsPageContent() {
               <Badge variant="info" dot className="text-[10px] font-medium normal-case">
                 Auto assign
               </Badge>
+            ) : isVisitJobRow(item) ? (
+              <span className="text-[11px] italic text-text-tertiary">Unassigned</span>
             ) : (
               <button
                 type="button"
@@ -3190,6 +3205,12 @@ function JobsPageContent() {
       sortable: true,
       sortOptions: JOB_SORT_STATUS,
       render: (item) => {
+        if (isVisitJobRow(item)) {
+          const c = statusConfig[item.status] ?? { label: item.status, variant: "default" as const };
+          return (
+            <Badge variant={c.variant} dot={c.dot} size="sm" className={LIST_CHIP_CLASS}>{c.label}</Badge>
+          );
+        }
         if (status === "action_required") {
           const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
           const st = effectiveJobStatusForDisplay(item);
@@ -3268,6 +3289,7 @@ function JobsPageContent() {
         if (!customerPaidSumsReady) {
           return <span className="text-sm text-text-tertiary">…</span>;
         }
+        if (isVisitJobRow(item)) return <span className="text-xs text-text-tertiary">—</span>;
         const due = valorEmAberto(item, customerPaidByJobId[item.id] ?? 0);
         return <span className="text-sm font-semibold text-text-primary">{formatCurrency(due)}</span>;
       },
@@ -3769,7 +3791,7 @@ function JobsPageContent() {
               loading={loading}
               getRowId={(item) => item.id}
               onRowClick={openJobDetail}
-              rowHref={(j) => `/jobs/${j.id}`}
+              rowHref={jobRowHref}
               // On hold tints the whole line: the status chip alone was easy to
               // miss when scanning a page of rows for what is stuck.
               rowClassName={(j) =>
@@ -3792,7 +3814,11 @@ function JobsPageContent() {
               fillHeight
               selectable
               selectedIds={selectedIds}
-              onSelectionChange={setSelectedIds}
+              // Linha de visita não entra em ação em lote: as ações são do job.
+              onSelectionChange={(ids) => {
+                const visitas = new Set(sortedDataForTable.filter(isVisitJobRow).map((j) => j.id));
+                setSelectedIds(visitas.size ? new Set([...ids].filter((id) => !visitas.has(id))) : ids);
+              }}
               sortColumnKey={jobsListSortKey}
               sortDirection={jobsListSortDir}
               onSortChange={handleJobsListSortChange}
@@ -3945,7 +3971,9 @@ function JobsPageContent() {
                   // disparando os avisos — assign de um clique sem confirmação
                   // seria dinheiro e notificação real no escuro.
                   onAssignJob={(job, partnerId) =>
-                    setAssignTarget({ id: job.id, reference: job.reference, initialPartnerId: partnerId })
+                    isVisitJobRow(job)
+                      ? openJobDetail(job)
+                      : setAssignTarget({ id: job.id, reference: job.reference, initialPartnerId: partnerId })
                   }
                 />
               )}

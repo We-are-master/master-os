@@ -18,6 +18,9 @@ export type DayRouteStop = {
   scheduled_end_at: string | null;
   /** O que o parceiro ganha nesta parada — a API day-route já manda. */
   partner_cost?: number | null;
+  /** Parada de visita extra: `id` é o da visita, `job_id` o do job a abrir. */
+  job_id?: string;
+  visit_index?: number;
 };
 
 export type DayRouteData = {

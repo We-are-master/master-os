@@ -128,3 +128,92 @@ describe("varrerLembretesDeVespera, conta v2 com canal e-mail", () => {
     assert.equal(enviados.length, 2);
   });
 });
+
+describe("varrerLembretesDeVespera, visita extra de amanhã (22/10/2026)", () => {
+  const FIXFY = "5cf896ec-ee42-441b-a698-34fdaeeb28b3";
+  const AGORA = new Date("2026-10-22T10:00:00Z"); // amanhã = 23/10
+  const ENV = ["PROCESSOS_V2", "CLIENT_MESSAGING_ENABLED", "ZENDESK_SUBDOMAIN", "ZENDESK_EMAIL", "ZENDESK_API_TOKEN"];
+  let salvo: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    salvo = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+    process.env.PROCESSOS_V2 = "on";
+    process.env.CLIENT_MESSAGING_ENABLED = "1";
+    process.env.ZENDESK_SUBDOMAIN = "x"; process.env.ZENDESK_EMAIL = "x@y.z"; process.env.ZENDESK_API_TOKEN = "t";
+  });
+  afterEach(() => {
+    for (const k of ENV) { if (salvo[k] === undefined) delete process.env[k]; else process.env[k] = salvo[k]; }
+  });
+
+  // JOB-9705: o job está em Final review dia 20; a V3 é amanhã às 8h com outro parceiro.
+  const pai = {
+    id: "j9705", reference: "JOB-9705", status: "final_check", title: "Maintenance", scheduled_date: "2026-10-20",
+    scheduled_start_at: "2026-10-20T07:00:00Z", scheduled_end_at: "2026-10-20T08:00:00Z",
+    partner_id: "p1", client_id: "c1", client_name: "Kate Allen", property_address: "13 Herne Hill, SE24",
+    client_reminder_sent_at: "2026-10-19T10:00:00Z", client_confirmation_sent_at: null, external_source: "zendesk", external_ref: "777",
+    account_id: FIXFY, conversation_channel: "email", deleted_at: null,
+  };
+  const montar = (visita: Record<string, unknown>) => {
+    const fake = fakeSupabase({
+      jobs: [pai],
+      job_visits: [{
+        id: "v3", job_id: "j9705", visit_index: 3, status: "scheduled", scheduled_date: "2026-10-23",
+        scheduled_start_at: "2026-10-23T07:00:00Z", scheduled_end_at: "2026-10-23T08:00:00Z",
+        partner_id: "p-tm", partner_name: "TM Handyman", client_confirmation_sent_at: null, deleted_at: null,
+        parent: pai, ...visita,
+      }],
+      clients: [{ id: "c1", full_name: "Kate Allen", phone: "07508801803", email: "kate@example.com", source_account_id: FIXFY }],
+      accounts: [{ id: FIXFY, process_type: "direct", process_rules: { v2: true }, company_name: "Fixfy", client_confirmation_whatsapp: true }],
+    });
+    const outbox = outboxEmMemoria();
+    const sb = { from: (t: string) => (t === "outbound_messages" ? outbox.tabela() : fake.client.from(t)) } as unknown as SupabaseClient;
+    return { fake, outbox, sb };
+  };
+
+  test("a V3 recebe o lembrete pela data dela, e o carimbo vai na visita, não no job", async () => {
+    const { varrerLembretesDeVespera } = await import("./sweep-24h");
+    const { fake, outbox, sb } = montar({});
+    const enviados: number[] = [];
+    const r = await varrerLembretesDeVespera(sb, {
+      agora: AGORA, enviarDeVerdade: true,
+      avisarPorEmail: async (a: { ticketId: number }) => { enviados.push(a.ticketId); },
+      enviar: (async () => ({ messageId: "x" })) as never,
+    });
+    assert.equal(r.linhas.length, 1);
+    assert.equal(r.linhas[0].reference, "JOB-9705 · V3");
+    assert.equal(r.linhas[0].resultado, "enviado");
+    assert.deepEqual(enviados, [777]);
+    assert.equal(outbox.linhas[0].dedupe_key, "lembrete-24h:j9705:2026-10-23T07:00:00Z");
+    assert.ok((fake.tabelas.job_visits[0] as Record<string, unknown>).client_confirmation_sent_at);
+    assert.equal((fake.tabelas.jobs[0] as Record<string, unknown>).client_reminder_sent_at, "2026-10-19T10:00:00Z");
+
+    // Segunda rodada: a visita já está carimbada, nada sai de novo.
+    const r2 = await varrerLembretesDeVespera(sb, { agora: AGORA, enviarDeVerdade: true, avisarPorEmail: async () => { enviados.push(0); } });
+    assert.equal(r2.linhas[0].resultado, "pulado");
+    assert.equal(enviados.length, 1);
+  });
+
+  test("visita marcada pelo escritório (client_confirmation_sent_at) não recebe lembrete", async () => {
+    const { varrerLembretesDeVespera } = await import("./sweep-24h");
+    const { sb } = montar({ client_confirmation_sent_at: "2026-10-21T09:00:00Z" });
+    let chamadas = 0;
+    const r = await varrerLembretesDeVespera(sb, {
+      agora: AGORA, enviarDeVerdade: true,
+      avisarPorEmail: async () => { chamadas++; },
+      enviar: (async () => { chamadas++; return { messageId: "x" }; }) as never,
+    });
+    assert.equal(chamadas, 0);
+    assert.equal(r.linhas[0].resultado, "pulado");
+    assert.match(r.linhas[0].detalhe, /already marked as client notified/);
+  });
+
+  test("visita no mesmo horário de um job agendado não vira segundo lembrete", async () => {
+    const { visitasComoLembretes } = await import("./sweep-24h");
+    const agendado = { ...pai, status: "scheduled", scheduled_date: "2026-10-23", scheduled_start_at: "2026-10-23T07:00:00Z" };
+    const { lembretes } = visitasComoLembretes([{
+      id: "v2", job_id: "j9705", visit_index: 2, status: "scheduled", scheduled_date: "2026-10-23",
+      scheduled_start_at: "2026-10-23T07:00:00Z", client_price: 0, partner_cost: 0, materials_cost: 0,
+      created_at: "", updated_at: "", parent: agendado,
+    } as never], "2026-10-23");
+    assert.equal(lembretes.length, 0);
+  });
+});
