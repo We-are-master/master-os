@@ -731,19 +731,23 @@ function JobDetailSelfBillPanel({
   const payoutHoldNote = visitScope ? null : selfBillJobPayoutStateLabel(job);
   return (
     <div className="rounded-lg border border-rose-200/70 bg-white/80 p-2.5 shadow-sm dark:border-rose-500/20 dark:bg-[#101621]/80">
-      <div className="flex items-start gap-2">
+      {/* Fechado, tudo numa linha centrada: seta, referência, valor e PDF (dono, 22/10/2026). */}
+      <div className={cn("flex gap-2", open ? "items-start" : "items-center")}>
         <button
           type="button"
           aria-expanded={open}
           aria-label={open ? "Hide self-bill details" : "Show self-bill details"}
           onClick={() => setOpen((v) => !v)}
-          className="shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary mt-0.5"
+          className={cn(
+            "shrink-0 rounded-lg border border-transparent p-1.5 text-text-secondary transition-colors hover:border-border-light hover:bg-surface-tertiary hover:text-text-primary",
+            open && "mt-0.5",
+          )}
         >
           <ChevronDown className={cn("h-5 w-5 transition-transform duration-200", open && "rotate-180")} />
         </button>
         <div className="min-w-0 flex-1 space-y-1.5">
           {!open ? (
-            <div className="flex items-start justify-between gap-2 pt-0.5">
+            <div className="flex items-center justify-between gap-2">
               {/* Só a referência; a quinzena e o total do documento ficam no hover (dono, 22/10/2026). */}
               <div
                 className="min-w-0"
