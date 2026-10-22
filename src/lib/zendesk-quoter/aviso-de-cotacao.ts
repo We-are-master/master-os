@@ -77,7 +77,7 @@ export async function autorDoAviso(): Promise<number> {
 }
 
 export type DecisaoDoAviso =
-  | { fala: true; cara: "cotando" | "pede_postcode"; tag: string; html: string; status: number; resumo: string }
+  | { fala: true; cara: "cotando" | "pede_postcode"; tag: string; html: string; status: number | null; resumo: string }
   | { fala: false; motivo: string };
 
 /**
@@ -116,10 +116,27 @@ export function decidirAviso(args: {
   temEndereco: boolean;
   convitesEnviados: number;
   tags: string[];
+  /**
+   * Conta v2 B2B só com gente (processo/b2b-humano.ts): o reconhecimento sai mesmo
+   * com HARVEY_QUOTE_ACK desligado, sempre o "we're working on it", uma vez só, e o
+   * ticket não muda de status (ninguém foi convidado, então nada de Bidding).
+   */
+  b2bSoHumano?: boolean;
 }): DecisaoDoAviso {
-  if (!args.armado) return { fala: false, motivo: "HARVEY_QUOTE_ACK is off" };
+  if (!args.armado && !args.b2bSoHumano) return { fala: false, motivo: "HARVEY_QUOTE_ACK is off" };
   if (!args.orgReconhecida) {
     return { fala: false, motivo: "organization not recognised — never speak publicly on a ticket we can't place" };
+  }
+  if (args.b2bSoHumano) {
+    if (args.tags.includes(TAG_AVISO_COTANDO)) return { fala: false, motivo: "already acknowledged" };
+    return {
+      fala: true,
+      cara: "cotando",
+      tag: TAG_AVISO_COTANDO,
+      html: CORPO_COTANDO,
+      status: null,
+      resumo: "told the customer we're working on it (B2B human review, no partner invited)",
+    };
   }
 
   if (!args.temEndereco) {
@@ -163,6 +180,7 @@ export async function avisarNoTicket(args: {
   orgReconhecida: boolean;
   /** `false` é ensaio: decide, escreve na nota, não fala com ninguém. */
   postar: boolean;
+  b2bSoHumano?: boolean;
 }): Promise<string> {
   const d = decidirAviso({
     armado: process.env.HARVEY_QUOTE_ACK === "1",
@@ -170,6 +188,7 @@ export async function avisarNoTicket(args: {
     temEndereco: args.temEndereco,
     convitesEnviados: args.convitesEnviados,
     tags: args.tags,
+    b2bSoHumano: args.b2bSoHumano,
   });
 
   if (!d.fala) return `── Customer reply ──\nNot sent: ${d.motivo}.`;
@@ -181,7 +200,7 @@ export async function avisarNoTicket(args: {
   try {
     await updateTicket({
       ticketId: args.ticketId,
-      customStatusId: d.status,
+      ...(d.status != null ? { customStatusId: d.status } : {}),
       htmlBody: d.html,
       publicComment: true,
       authorId: await autorDoAviso(),
