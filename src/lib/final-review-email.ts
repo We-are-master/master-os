@@ -11,6 +11,7 @@ import {
   canSendClientEmailWithPack,
 } from "@/lib/account-final-email-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { EmailFixfy } from "@/lib/emails/fixfy-shell";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { missingBillingEmailReason } from "@/lib/invoice-send-eligibility";
 import { buildInvoiceClientEmail } from "@/lib/invoice-email-template";
@@ -378,6 +379,10 @@ export async function sendFinalReviewEmail(
     }
   }
 
+  // E-mail final no layout do Welcome (dono, 22/10/2026): 3 fotos do trabalho, o botão do
+  // report completo (o PDF, por link que dura semanas) e o "What we did." do parceiro.
+  const visual = includeReport ? await visualDoFinal(admin, jobId, j, attachments) : { fotos: null, resumo: null };
+
   // Copy 12 (relatório + fatura, ou recibo se já pago) ou 13 (só relatório), na moldura única.
   // Duas versões do mesmo texto: e-mail inteiro (Resend / ticket) e comentário público do Zendesk.
   const montar = (zendesk: boolean) => {
@@ -408,6 +413,8 @@ export async function sendFinalReviewEmail(
               ? { pago: Number(j.customer_deposit), total: Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0) }
               : null,
           missingReportNote: missingReportNote || undefined,
+          fotos: visual.fotos,
+          resumo: visual.resumo,
           documentAttached: invoicePdfAttached,
           // Schedule A (modelo de agente): recibo em nome do profissional. Null = B.
           agentParty,
@@ -425,6 +432,8 @@ export async function sendFinalReviewEmail(
       reportAttachmentCount,
       reportRequested: includeReport,
       certificado: certificadoRetido ? "retido" : opts.liberarCertificado && certificadoAnexado ? "liberado" : undefined,
+      fotos: visual.fotos,
+      resumo: visual.resumo,
       zendesk,
     });
   };
@@ -552,5 +561,54 @@ export async function sendFinalReviewEmail(
     includeReport,
     certificadoRetido,
     certificadoAnexado,
+  };
+}
+
+/** Links do e-mail final duram o bastante para o cliente voltar depois (60 dias). */
+const LINK_DO_FINAL_SEG = 60 * 24 * 60 * 60;
+const FOTO_DESENHAVEL = /\.(jpe?g|png)(\?|$)/i;
+
+/**
+ * As 3 fotos do trabalho (as de depois; sem elas, as de antes), o link do PDF do report
+ * e o texto do parceiro. O PDF anexado sobe para o storage para o botão "See the full
+ * report" abrir no navegador. Falhou alguma parte: o e-mail sai sem ela.
+ */
+async function visualDoFinal(
+  admin: SupabaseClient,
+  jobId: string,
+  j: Record<string, unknown>,
+  anexos: Array<{ filename: string; content: Buffer; contentType?: string }>,
+): Promise<{ fotos: EmailFixfy["fotos"]; resumo: EmailFixfy["resumo"] }> {
+  const doCertificado = new Set(certificateAttachmentUrls(j.final_report));
+  const fotosDe = (r: unknown): string[] => {
+    const ph = (r as { photos?: unknown } | null)?.photos;
+    const todas = Array.isArray(ph) ? ph : ph && typeof ph === "object" ? Object.values(ph as Record<string, unknown>).flat() : [];
+    return todas.filter((u): u is string => typeof u === "string" && FOTO_DESENHAVEL.test(u) && !doCertificado.has(u));
+  };
+  const escolhidas = (fotosDe(j.final_report).length ? fotosDe(j.final_report) : fotosDe(j.start_report)).slice(0, 3);
+  const lista: Array<{ url: string }> = [];
+  for (const u of escolhidas) {
+    const path = jobReportPdfPathFromStoredUrl(u);
+    if (!path) continue;
+    const { data } = await admin.storage.from("job-reports").createSignedUrl(path, LINK_DO_FINAL_SEG);
+    if (data?.signedUrl) lista.push({ url: data.signedUrl });
+  }
+
+  let link: string | null = null;
+  const pdf = anexos.find((a) => /-report(-\d+)?\.pdf$/i.test(a.filename));
+  if (pdf) {
+    const caminho = `email-final/${jobId}/${pdf.filename}`;
+    const { error } = await admin.storage.from("job-reports").upload(caminho, pdf.content, { contentType: "application/pdf", upsert: true });
+    if (!error) {
+      const { data } = await admin.storage.from("job-reports").createSignedUrl(caminho, LINK_DO_FINAL_SEG);
+      link = data?.signedUrl ?? null;
+    } else console.warn("final-review-email: report PDF upload failed:", error.message);
+  }
+
+  const campos = ((j.final_report as { fields?: Record<string, unknown> } | null)?.fields ?? j.final_report ?? {}) as Record<string, unknown>;
+  const descricao = typeof campos.description === "string" && campos.description.trim() && !/ticket\s*#?\d+|from the partner|zendesk/i.test(campos.description) ? campos.description.trim() : null;
+  return {
+    fotos: lista.length || link ? { lista, link: link ? { label: "See the full report", url: link } : null } : null,
+    resumo: descricao ? { titulo: "What we did.", texto: descricao } : null,
   };
 }

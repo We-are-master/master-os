@@ -240,6 +240,13 @@ export type EmailFixfy = {
   assinatura?: string | null;
   /** E-mail de marketing: link de descadastro e a frase de por que recebe. */
   marketing?: { descadastroUrl: string; motivo: string } | null;
+  /**
+   * Fotos do trabalho (e-mail final, dono 22/10/2026): até 3 lado a lado e, embaixo,
+   * o link do report completo (o PDF). URLs públicas e duráveis (assinadas por semanas).
+   */
+  fotos?: { lista: Array<{ url: string; alt?: string | null }>; link?: { label: string; url: string | null | undefined } | null } | null;
+  /** Bloco "What we did." com o texto do parceiro e linhas curtas. */
+  resumo?: { titulo: string; texto?: string | null; linhas?: Array<[string, string | null | undefined]> } | null;
   /** Comentário público do Zendesk: sem tabela interna. */
   zendesk?: boolean;
 };
@@ -364,6 +371,35 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     ? `<p style="margin:12px 0 0 0;font-family:${SANS};font-size:14px;line-height:20px;text-align:center;color:${W.ink3};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:700;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
     : "";
   const acao = botao || links ? bloco(`${botao}${links}`, 22, 24) : "";
+
+  // ─── fotos do trabalho e o report completo ───
+  const fotosLista = (e.fotos?.lista ?? []).filter((f) => urlSegura(f.url)).slice(0, 3);
+  const linkDoReport = e.fotos?.link && urlSegura(e.fotos.link.url) ? { label: e.fotos.link.label, url: urlSegura(e.fotos.link.url)! } : null;
+  const fotoHtml = (f: { url: string; alt?: string | null }, i: number) =>
+    `<img src="${esc(urlSegura(f.url)!)}" width="176" alt="${esc(f.alt || `Photo ${i + 1} of the finished work`)}" style="display:block;width:100%;height:150px;object-fit:cover;border:0;border-radius:10px;">`;
+  const gradeFotos = !fotosLista.length
+    ? ""
+    : z
+      ? `<div style="font-size:0;">${fotosLista.map((f, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / fotosLista.length)}%;box-sizing:border-box;padding:0 ${i < fotosLista.length - 1 ? 6 : 0}px 0 0;">${fotoHtml(f, i)}</div>`).join("")}</div>`
+      : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${fotosLista.map((f, i) => `<td width="${Math.floor(100 / fotosLista.length)}%" valign="top" style="padding:0 ${i < fotosLista.length - 1 ? 6 : 0}px 0 0;">${fotoHtml(f, i)}</td>`).join("")}</tr></table>`;
+  const botaoReport = linkDoReport
+    ? `<div style="text-align:center;margin-top:${gradeFotos ? 14 : 0}px;"><a href="${esc(linkDoReport.url)}" style="display:inline-block;border:1.5px solid ${FX.navy};border-radius:10px;padding:11px 26px;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;color:${FX.navy};text-decoration:none;">${esc(linkDoReport.label)}</a></div>`
+    : "";
+  const fotos = gradeFotos || botaoReport ? bloco(`${gradeFotos}${botaoReport}`, 18, 24) : "";
+
+  // ─── o que foi feito ───
+  const linhasResumo = (e.resumo?.linhas ?? []).filter((l): l is [string, string] => Boolean(l[1] && String(l[1]).trim()));
+  const resumo = e.resumo && (e.resumo.texto?.trim() || linhasResumo.length)
+    ? bloco(
+        `<p style="margin:0 0 10px 0;font-family:${SANS};font-size:24px;line-height:30px;font-weight:800;letter-spacing:-0.01em;color:${FX.navy};">${esc(e.resumo.titulo)}</p>` +
+          (e.resumo.texto?.trim() ? `<p style="margin:0 0 12px 0;font-family:${SANS};font-size:16px;line-height:25px;color:${W.ink};">${esc(e.resumo.texto.trim())}</p>` : "") +
+          linhasResumo
+            .map(([r, v], i) => `<div style="padding:10px 0;border-top:1px solid ${W.line};${i === linhasResumo.length - 1 ? `border-bottom:1px solid ${W.line};` : ""}font-family:${SANS};font-size:15px;line-height:20px;"><span style="color:${W.ink3};">${esc(r)}</span><span style="float:right;color:${FX.navy};font-weight:700;">${esc(v)}</span></div>`)
+            .join(""),
+        26,
+        28,
+      )
+    : "";
   const transferencia = e.transferencia ? bloco(blocoTransferenciaHtml(e.transferencia), 14, 24) : "";
   const nota = e.nota
     ? bloco(`<div style="border-left:3px solid ${FX.orange};background:${W.canvas};border-radius:10px;padding:14px 16px;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">${esc(e.nota)}</div>`, 16, 24)
@@ -392,7 +428,8 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     ? `<div style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</div>`
     : `<tr><td align="center" style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</td></tr>`;
 
-  const miolo = topo + abertura + destaque + detalhes + acao + transferencia + nota + assina + ajuda + finoHtml + rodape;
+  // Com fotos (e-mail final): fotos e "What we did." vêm antes do resumo do pagamento.
+  const miolo = topo + abertura + fotos + resumo + destaque + detalhes + acao + transferencia + nota + assina + ajuda + finoHtml + rodape;
 
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${W.canvas};">${esc(e.preheader)}</div>` +
@@ -421,6 +458,8 @@ ${miolo}
     e.saudacao,
     "",
     ...e.paragrafos.flatMap((p) => [p, ""]),
+    linkDoReport ? `${linkDoReport.label}: ${linkDoReport.url}\n` : "",
+    e.resumo?.texto?.trim() ? `${e.resumo.titulo}\n${e.resumo.texto.trim()}\n` : "",
     ...linhas.map(([r, v]) => `${r}: ${v}`),
     cta ? `\n${cta.label}: ${cta.url}` : "",
     ...secundarios.map((l) => `${l.label}: ${urlSegura(l.url)}`),

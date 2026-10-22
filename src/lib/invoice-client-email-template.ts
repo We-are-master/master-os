@@ -81,6 +81,9 @@ export type InvoiceEmailOptions = {
   certificado?: "retido" | "liberado";
   /** Entrada já paga (dono, 22/10/2026): o e-mail final mostra total, entrada e saldo, sem recibo à parte. */
   deposito?: { pago: number; total: number } | null;
+  /** E-mail final: fotos do trabalho, link do report completo e o "What we did." (moldura). */
+  fotos?: EmailFixfy["fotos"];
+  resumo?: EmailFixfy["resumo"];
   /** Comentário público do Zendesk: sem tabelas internas. */
   zendesk?: boolean;
   /** Linhas da conta para transferência; padrão = a conta verificada da configuração (a do PDF). */
@@ -376,6 +379,7 @@ export function buildInvoiceClientEmail(
     };
   }
 
+  if (final) shell = { ...shell, fotos: options?.fotos ?? null, resumo: options?.resumo ?? null };
   const { html, text } = emailFixfy(shell);
   return { subject, preheader: shell.preheader, html, text, documentName: docName, billingReference: ref };
 }

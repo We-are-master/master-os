@@ -5,7 +5,7 @@
  * Não promete fatura depois (conta que não recebe fatura não pode ler isso) e
  * só diz "attached" quando algum arquivo do relatório foi de fato anexado.
  */
-import { emailFixfy, FIXFY_CONTACT, saudacao, type Publico } from "./fixfy-shell";
+import { emailFixfy, FIXFY_CONTACT, saudacao, type EmailFixfy, type Publico } from "./fixfy-shell";
 import { semTravessao } from "./billing-email-common";
 
 export type FinalReportEmailInput = {
@@ -19,6 +19,9 @@ export type FinalReportEmailInput = {
   reportRequested: boolean;
   /** Certificado retido até o pagamento, ou liberado agora (`certificado/regra.ts`). */
   certificado?: "retido" | "liberado";
+  /** Fotos do trabalho, link do report completo e o "What we did." (dono, 22/10/2026). */
+  fotos?: EmailFixfy["fotos"];
+  resumo?: EmailFixfy["resumo"];
   zendesk?: boolean;
 };
 
@@ -59,6 +62,8 @@ export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: stri
       ["Property", property],
       ["Booking", ref || null],
     ],
+    fotos: d.fotos ?? null,
+    resumo: d.resumo ?? null,
     zendesk: d.zendesk,
   });
   return { subject, preheader, html, text };
