@@ -13,10 +13,9 @@
  *                         para a nutrição.
  *
  * Pelo canal da conversa (dono, 22/10/2026): cada lead só leva os passos do canal
- * por onde ele chegou (`acaoDoPasso`). Lead de WhatsApp: check-in no dia 1, um
- * e-mail no dia 2 (só se tiver e-mail) e o WhatsApp final no dia 3; nada de três
- * e-mails para quem nunca falou por e-mail. Lead de e-mail: e-mail no dia 2 e o
- * último no dia 3, e fecha sem WhatsApp. Os passos que não são do canal só ganham
+ * por onde ele chegou (`acaoDoPasso`). Lead de WhatsApp: só WhatsApp, o check-in
+ * no dia 1 e o final no dia 3, nenhum e-mail. Lead de e-mail: só e-mail, no dia 2
+ * e o último no dia 3, nenhum WhatsApp. Os passos que não são do canal só ganham
  * a marca, sem mensagem, e a régua anda no mesmo horário.
  *
  * Os e-mails saem como comentário público do ticket do lead, então a resposta
@@ -100,9 +99,7 @@ export type AcaoDoPasso = "whatsapp" | "email" | "pular";
  */
 export function acaoDoPasso(passo: number, canal: CanalDoLead, contato: { temEmail: boolean; temTelefone: boolean }): AcaoDoPasso {
   if (canal === "whatsapp") {
-    if (passo === 1 || passo === 5) return contato.temTelefone ? "whatsapp" : "pular";
-    if (passo === 2) return contato.temEmail ? "email" : "pular";
-    return "pular";
+    return (passo === 1 || passo === 5) && contato.temTelefone ? "whatsapp" : "pular";
   }
   if (passo === 2 || passo === 4) return contato.temEmail ? "email" : "pular";
   return "pular";
