@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
   let skipped = 0;
   const erros: string[] = [];
 
+  const ganharamContato: string[] = [];
   for (const c of contacts) {
     const marker = leadMarker(c.notes);
     const key = phoneKey(c.phone);
@@ -216,6 +217,10 @@ export async function POST(req: NextRequest) {
     }
     updated++;
     results.push({ id: existing.id as string, action: "updated" });
+    // Lead que chegou sem telefone nem e-mail (o Checkatrade esconde até o "I'm interested")
+    // e agora ganhou contato: conta como novo para o primeiro contato (dono, 22/10/2026).
+    const tinhaContato = Boolean(String(existing.phone ?? "").trim() || String(existing.email ?? "").trim());
+    if (!tinhaContato && (patch.phone || patch.email)) ganharamContato.push(existing.id as string);
   }
 
   // ── despacho imediato ─────────────────────────────────────────────────────
@@ -228,7 +233,7 @@ export async function POST(req: NextRequest) {
   // Nada aqui pode alterar o status devolvido. Se o despacho falhar, o contato
   // continua gravado e o `scripts/harvey-wa/leads-checkatrade.mts` o pega na varredura seguinte, que
   // é justamente por que o lote continua existindo.
-  const novos = results.filter((r) => r.action === "created").map((r) => r.id);
+  const novos = [...results.filter((r) => r.action === "created").map((r) => r.id), ...ganharamContato];
   // O primeiro contato sai pelo WhatsApp do Zendesk, como mensagem do Harvey
   // (o respond.io saiu do ar). Desligado até HARVEY_WA_LEADS_ON_INGEST=1.
   if (novos.length && process.env.HARVEY_WA_LEADS_ON_INGEST === "1" && templateDoLeadConfigurado()) {

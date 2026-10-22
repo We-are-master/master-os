@@ -4,8 +4,8 @@
  * Todo lead que entra na conta Fixfy, de qualquer origem (Checkatrade, Bark, Meta,
  * WhatsApp, site), recebe o e-mail de boas-vindas com 10% na primeira compra
  * (`emails/welcome.ts`). Lead gen leva também o WhatsApp do enquiry, que sai em
- * primeiro-contato.ts. O Welcome sai pela Resend, não no ticket: é e-mail de marketing,
- * com descadastro, e o Zendesk desmontaria o desenho.
+ * primeiro-contato.ts. Com ticket do lead, o Welcome sai como conversa lateral por e-mail
+ * nesse ticket (tudo num ticket só); sem ticket, pela Resend com descadastro.
  *
  * Travas, todas obrigatórias:
  *   1. conta v2 e direct (Fixfy). Fora disso nada muda.
@@ -74,7 +74,8 @@ export type DependenciasDasBoasVindas = {
   reservar: (chave: string, l: LeadParaBoasVindas, email: string) => Promise<{ reservado: boolean; motivo?: string }>;
   confirmar: (chave: string, providerId?: string | null) => Promise<void>;
   falhou: (chave: string, erro: unknown) => Promise<void>;
-  enviar: (para: string, e: { assunto: string; html: string; text: string }, sair: string) => Promise<string | null>;
+  /** Com ticket: conversa lateral por e-mail no ticket do lead (a resposta cai nele). Sem ticket: Resend. */
+  enviar: (para: string, e: { assunto: string; html: string; text: string }, sair: string, ticketId: number | null) => Promise<string | null>;
   linkDeSaida: (email: string) => string;
 };
 
@@ -105,7 +106,7 @@ export async function mandarBoasVindasDoLead(
     reserva = d.chave;
     const sair = deps.linkDeSaida(d.email);
     const e = emailDeWelcome({ primeiroNome: /^(there|unnamed.*|checkatrade lead)$/i.test(String(lead.nome ?? "").trim()) ? null : lead.nome, unsubscribeUrl: sair });
-    const id = await deps.enviar(d.email, { assunto: e.assunto, html: e.html, text: e.text }, sair);
+    const id = await deps.enviar(d.email, { assunto: e.assunto, html: e.html, text: e.text }, sair, lead.ticketId);
     await deps.confirmar(d.chave, id);
     return { enviado: true, motivo: `welcome email sent to ${d.email}` };
   } catch (e) {
@@ -143,7 +144,15 @@ export function dependenciasDasBoasVindas(sb: SupabaseClient): DependenciasDasBo
     confirmar: async (chave, id) => (await import("@/lib/idempotencia/envio")).confirmarEnvio(sb, chave, id ?? null),
     falhou: async (chave, erro) => (await import("@/lib/idempotencia/envio")).falhouEnvio(sb, chave, erro),
     linkDeSaida: (email) => unsubscribeUrl(email),
-    enviar: async (para, e, sair) => {
+    enviar: async (para, e, sair, ticketId) => {
+      // Tudo no mesmo ticket do lead (dono, 22/10/2026): WhatsApp na conversa e o Welcome
+      // como e-mail lateral; a resposta do cliente volta para o ticket.
+      if (ticketId) {
+        const { createSideConversation } = await import("@/lib/zendesk");
+        const r = await createSideConversation({ ticketId, toEmail: para, toName: null, subject: e.assunto, htmlBody: e.html, attachmentIds: [] });
+        if (!r.ok) throw new Error(`side conversation: ${r.error ?? r.status}`);
+        return r.ok ? String(r.id ?? "") || null : null;
+      }
       const key = process.env.RESEND_API_KEY?.trim();
       if (!key) throw new Error("RESEND_API_KEY is not configured");
       const { Resend } = await import("resend");
