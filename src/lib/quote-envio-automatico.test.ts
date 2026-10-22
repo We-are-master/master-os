@@ -70,8 +70,15 @@ describe("direct customer account", () => {
   it("the Fixfy account is direct", () => {
     assert.equal(contaEhDireta({ contaDeOrigem: "ABC", contaFixfy: "abc", daConversaDoHarvey: false }), true);
   });
-  it("the Checkatrade direct account is direct", () => {
-    assert.equal(contaEhDireta({ contaDeOrigem: "8060fcf3-a538-4e5a-9318-1b49ee59f432", contaFixfy: "x", daConversaDoHarvey: false }), true);
+  it("an account opened by DIRECT_CONSUMER_ACCOUNT_IDS is direct", () => {
+    const antes = process.env.DIRECT_CONSUMER_ACCOUNT_IDS;
+    process.env.DIRECT_CONSUMER_ACCOUNT_IDS = "conta-direta";
+    try {
+      assert.equal(contaEhDireta({ contaDeOrigem: "conta-direta", contaFixfy: "x", daConversaDoHarvey: false }), true);
+    } finally {
+      if (antes === undefined) delete process.env.DIRECT_CONSUMER_ACCOUNT_IDS;
+      else process.env.DIRECT_CONSUMER_ACCOUNT_IDS = antes;
+    }
   });
   it("any other account (B2B, platform) is not", () => {
     assert.equal(contaEhDireta({ contaDeOrigem: "some-agency", contaFixfy: "x", daConversaDoHarvey: true }), false);

@@ -22,7 +22,6 @@ export type TipoDeProcesso = "direct" | "platform" | "b2b";
 /** As mesmas contas da migration 341, para quando a coluna não vier na leitura. */
 const TIPO_PELO_ID: Record<string, TipoDeProcesso> = {
   "5cf896ec-ee42-441b-a698-34fdaeeb28b3": "direct", // Fixfy
-  "8060fcf3-a538-4e5a-9318-1b49ee59f432": "direct", // Checkatrade (clientes diretos)
   "38b48520-f116-4263-90e5-8cd5a7d39ecf": "platform", // Express
   "9659bbfb-eb56-4a31-9773-7f5e1335d0b4": "platform", // Housekeep
   "3da39c93-4456-4ab1-9bcc-4e87d9564dbd": "platform", // Fantastic Services

@@ -9,10 +9,12 @@
  * Está escrito aqui, e não só numa variável de ambiente, para a decisão ficar
  * visível a quem lê o código. `DIRECT_CONSUMER_ACCOUNT_IDS` abre exceção por id,
  * separado por vírgula.
+ *
+ * 22/10/2026: a conta "Checkatrade" foi arquivada (migration 350). O lead da
+ * Checkatrade é cliente da conta Fixfy com origem `checkatrade`, e a lista ficou
+ * vazia. A Express continua conta de plataforma.
  */
-const CONTAS_DIRETAS = [
-  "8060fcf3-a538-4e5a-9318-1b49ee59f432", // Checkatrade (leads que pagam direto)
-];
+const CONTAS_DIRETAS: string[] = [];
 
 export function directConsumerAccountIds(): Set<string> {
   const ids = [...CONTAS_DIRETAS, ...(process.env.DIRECT_CONSUMER_ACCOUNT_IDS ?? "").split(",")];
