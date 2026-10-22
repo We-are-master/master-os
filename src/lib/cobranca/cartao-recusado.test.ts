@@ -142,8 +142,9 @@ describe("varrerCartaoRecusado", () => {
     const r = await varrerCartaoRecusado(sb, { aplicar: true, agora: AGORA, nota: async () => undefined });
     assert.equal((tabelas.jobs[0] as Record<string, unknown>).card_retry_at, null);
     // Abre Payment Unsuccessful nas pendências.
-    const upsert = chamadas.find((c) => c.op === "upsert")?.arg as Array<{ reason: string }>;
-    assert.ok(upsert.some((m) => m.reason === "payment_unsuccessful"));
+    // Gravado um a um com insert desde #852 (o upsert não casava com o índice parcial).
+    const inseridos = chamadas.filter((c) => c.op === "insert").map((c) => c.arg as { reason: string });
+    assert.ok(inseridos.some((m) => m.reason === "payment_unsuccessful"));
     assert.equal(r.linhas[0].resultado, "enviaria");
     assert.match(r.linhas[0].detalhe, /day 7/);
   });
