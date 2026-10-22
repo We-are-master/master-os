@@ -274,7 +274,7 @@ export function buildInvoiceClientEmail(
         : reportCount > 0
           ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
           : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "navy" },
+      estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "red" },
       titulo: "Your work is complete",
       destaque: paid ? { linha1: `${gbp(paidAmt || invAmt)} paid`, linha2: dataDoPagamento(invoice) ? `on ${dataDoPagamento(invoice)}` : null } : { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       metricas: paid
@@ -348,7 +348,7 @@ export function buildInvoiceClientEmail(
     subject = `Your ${docName} ${ref} is ready`;
     shell = {
       preheader: `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: { texto: "Payment due", cor: "navy" },
+      estado: { texto: "Payment due", cor: "red" },
       titulo: `Your ${docName} is ready`,
       destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       metricas: [

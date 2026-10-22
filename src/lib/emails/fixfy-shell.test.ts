@@ -49,7 +49,8 @@ describe("emailFixfy", () => {
   };
   test("html e texto do mesmo conteúdo, linha vazia some, rodapé novo", () => {
     const m = emailFixfy(base);
-    assert.match(m.html, /Need a hand\? Reply to this email/);
+    assert.match(m.html, />Need a hand\?</);
+    assert.match(m.html, /Reply to this email or message us on WhatsApp/);
     assert.match(m.html, /\+44 20 4538 4668/);
     assert.doesNotMatch(m.html, />Property</);
     assert.match(m.text, /Service: Handyman/);
@@ -62,9 +63,9 @@ describe("emailFixfy", () => {
     const m = emailFixfy({ ...base, cta: { label: "Pay", url: "javascript:x" } });
     assert.doesNotMatch(m.html, /javascript:/);
   });
-  test("zendesk sem tabela interna", () => {
+  test("zendesk sem tabela nenhuma (o visualizador desenha borda em toda célula)", () => {
     const m = emailFixfy({ ...base, zendesk: true });
-    assert.equal((m.html.match(/<table/g) ?? []).length, 1);
+    assert.equal((m.html.match(/<table/g) ?? []).length, 0);
   });
   test("escapa campo do cliente", () => {
     const m = emailFixfy({ ...base, saudacao: "Hi <b>x</b>," });

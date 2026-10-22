@@ -264,8 +264,7 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
     paragrafos,
     linhas: [
       ["Service", servico],
-      ["Date", data],
-      ["Arrival", janela],
+      // Data e janela já estão no bloco de destaque: não repete (dono, 22/10/2026).
       ["Property", endereco],
       ["Booking", args.jobReference],
     ],

@@ -8,6 +8,7 @@ import { normalizeReport, type NormalizedReport } from "@/lib/job-report-v2";
 import { JobReportPDF, type SignedPhoto } from "@/lib/pdf/job-report-v2-template";
 import { resolveCompanyPdfLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
 import { materialDoJobInteiro } from "@/lib/report-material-extra";
+import { certificateAttachmentUrls } from "@/lib/certificate-expiry";
 
 const REPORT_BUCKET = "job-reports";
 const SIGN_TTL_SECONDS = 60 * 60;
@@ -58,6 +59,15 @@ export async function renderJobReportV2PdfBuffer(
     }
   }
 
+  /**
+   * O certificado não entra no relatório visual (dono, 22/10/2026): ele é documento próprio,
+   * anexado à parte, e para cliente da Fixfy só sai com o job pago (`certificado/regra.ts`).
+   */
+  if (finalNorm) {
+    const doCertificado = new Set(certificateAttachmentUrls(job.final_report));
+    finalNorm.photosFlat = finalNorm.photosFlat.filter((p) => !doCertificado.has(p.url));
+  }
+
   const start = startNorm
     ? {
         report: startNorm,
@@ -97,7 +107,29 @@ async function signAllPhotos(admin: SupabaseClient, report: NormalizedReport): P
   for (const p of report.photosFlat) {
     const path = jobReportPdfPathFromStoredUrl(p.url) ?? p.url;
     const { data } = await admin.storage.from(REPORT_BUCKET).createSignedUrl(path, SIGN_TTL_SECONDS);
-    if (data?.signedUrl) out.push({ url: data.signedUrl, label: p.label });
+    if (!data?.signedUrl) continue;
+    const imagem = await imagemDesenhavel(data.signedUrl);
+    if (imagem) out.push({ url: imagem, label: p.label });
   }
   return out;
+}
+
+/**
+ * Baixa a foto e só devolve JPEG/PNG (como data URI): o @react-pdf não desenha
+ * HEIC, WebP nem PDF, e cada um desses virava um quadro vazio no relatório (22/10/2026).
+ */
+async function imagemDesenhavel(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const jpeg = buf[0] === 0xff && buf[1] === 0xd8;
+    const png = buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    if (!jpeg && !png) return null;
+    // Foto de verdade nunca tem 4 KB: abaixo disso é quadro em branco do app (JOB-9698, "Equipment").
+    if (buf.length < 4096) return null;
+    return `data:image/${png ? "png" : "jpeg"};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
