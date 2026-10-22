@@ -47,7 +47,8 @@ describe("motivos de Action Required", () => {
 
   it("job em ordem não tem pendência", () => assert.deepEqual(motivosDoJob(base, fixfy), []));
   it("com parceiro e sem data aparece (Date TBC)", () => assert.deepEqual(motivosDoJob({ ...base, scheduled_date: null }, fixfy), ["date_tbc"]));
-  it("sem parceiro aparece", () => assert.ok(motivosDoJob({ ...base, status: "unassigned", partner_id: null }, fixfy).includes("partner_required")));
+  it("sem parceiro aparece", () => assert.ok(motivosDoJob({ ...base, status: "auto_assigning", partner_id: null }, fixfy).includes("partner_required")));
+  it("Unassigned não repete Partner Required (o status já diz)", () => assert.ok(!motivosDoJob({ ...base, status: "unassigned", partner_id: null }, fixfy).includes("partner_required")));
   it("sinal pendente só no fluxo com sinal", () => {
     const j = { ...base, customer_deposit_paid: false };
     assert.ok(motivosDoJob(j, fixfy).includes("deposit_pending"));
