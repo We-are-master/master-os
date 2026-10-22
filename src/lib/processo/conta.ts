@@ -30,6 +30,12 @@ const TIPO_PELO_ID: Record<string, TipoDeProcesso> = {
 
 export type RegrasDoProcesso = {
   tipo: TipoDeProcesso;
+  /**
+   * Os fluxos novos do plano de 22/10/2026 valem para esta conta. Precisa das duas
+   * chaves: PROCESSOS_V2=on (geral) e process_rules.v2=true (na conta). Desligado =
+   * o comportamento de antes, para ligar conta por conta e voltar atrás sem deploy.
+   */
+  v2: boolean;
   /** Quem conduz a quote depois do pedido: o sistema (Harvey e parceiros) ou só gente. */
   conducaoDaQuote: "automatica" | "humana";
   /** Só entra em Scheduled com o sinal pago (fluxo Fixfy com sinal). */
@@ -44,7 +50,7 @@ export type RegrasDoProcesso = {
   canais: Array<"email" | "whatsapp">;
 };
 
-const PADRAO: Record<TipoDeProcesso, Omit<RegrasDoProcesso, "tipo">> = {
+const PADRAO: Record<TipoDeProcesso, Omit<RegrasDoProcesso, "tipo" | "v2">> = {
   direct: { conducaoDaQuote: "automatica", agendarSoComSinal: true, cobraDoCliente: true, feedback: "depois_da_conclusao", mensagensAoCliente: true, canais: ["email", "whatsapp"] },
   platform: { conducaoDaQuote: "automatica", agendarSoComSinal: false, cobraDoCliente: false, feedback: "depois_do_pagamento_da_plataforma", mensagensAoCliente: true, canais: ["email", "whatsapp"] },
   b2b: { conducaoDaQuote: "humana", agendarSoComSinal: false, cobraDoCliente: false, feedback: "nunca", mensagensAoCliente: false, canais: ["email"] },
@@ -52,12 +58,18 @@ const PADRAO: Record<TipoDeProcesso, Omit<RegrasDoProcesso, "tipo">> = {
 
 /** Exceções aceitas em accounts.process_rules. Chave desconhecida é ignorada. */
 export type ExcecoesDaConta = Partial<{
+  v2: boolean;
   b2b_human_only: boolean;
   schedule_requires_deposit: boolean;
   feedback: RegrasDoProcesso["feedback"];
   client_messages: boolean;
   channels: Array<"email" | "whatsapp">;
 }>;
+
+/** A chave geral dos fluxos novos. */
+export function processosV2Ligado(): boolean {
+  return process.env.PROCESSOS_V2?.trim().toLowerCase() === "on";
+}
 
 export function tipoDaConta(conta: { id?: string | null; process_type?: string | null } | null | undefined): TipoDeProcesso | null {
   const t = String(conta?.process_type ?? "").trim();
@@ -67,8 +79,8 @@ export function tipoDaConta(conta: { id?: string | null; process_type?: string |
 }
 
 export function regrasDoProcesso(tipo: TipoDeProcesso, excecoes: ExcecoesDaConta | null | undefined = {}): RegrasDoProcesso {
-  const r: RegrasDoProcesso = { tipo, ...PADRAO[tipo], canais: [...PADRAO[tipo].canais] };
   const e = excecoes ?? {};
+  const r: RegrasDoProcesso = { tipo, v2: processosV2Ligado() && e.v2 === true, ...PADRAO[tipo], canais: [...PADRAO[tipo].canais] };
   if (typeof e.b2b_human_only === "boolean") r.conducaoDaQuote = e.b2b_human_only ? "humana" : "automatica";
   if (typeof e.schedule_requires_deposit === "boolean") r.agendarSoComSinal = e.schedule_requires_deposit;
   if (e.feedback === "depois_da_conclusao" || e.feedback === "depois_do_pagamento_da_plataforma" || e.feedback === "nunca") r.feedback = e.feedback;

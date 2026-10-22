@@ -24,6 +24,15 @@ describe("tipo de processo da conta", () => {
     assert.equal(r.agendarSoComSinal, true);
     assert.equal(regrasDoProcesso("b2b", { b2b_human_only: false }).conducaoDaQuote, "automatica");
   });
+  it("fluxos novos só com as duas chaves", () => {
+    const antes = process.env.PROCESSOS_V2;
+    delete process.env.PROCESSOS_V2;
+    assert.equal(regrasDoProcesso("direct", { v2: true }).v2, false);
+    process.env.PROCESSOS_V2 = "on";
+    assert.equal(regrasDoProcesso("direct", { v2: true }).v2, true);
+    assert.equal(regrasDoProcesso("direct", {}).v2, false);
+    if (antes === undefined) delete process.env.PROCESSOS_V2; else process.env.PROCESSOS_V2 = antes;
+  });
   it("não compartilha a lista de canais entre chamadas", () => {
     regrasDoProcesso("direct").canais.push("sms" as never);
     assert.deepEqual(regrasDoProcesso("direct").canais, ["email", "whatsapp"]);
