@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { donoDeTicketSemPedido, espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus } from "./zendesk-espelho";
 import {
   ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_COMPLAINT, ZD_STATUS_COMPLETED, ZD_STATUS_DEPOSIT_PENDING, ZD_STATUS_FINAL_CHECKS,
-  ZD_STATUS_ON_HOLD, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER,
+  ZD_STATUS_ON_HOLD, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER, ZD_STATUS_NO_BIDS,
 } from "./zendesk-statuses";
 
 const base: { esperandoEntrada: boolean; motivos: never[]; reclamacao: boolean } = { esperandoEntrada: false, motivos: [], reclamacao: false };
@@ -131,4 +131,14 @@ test("ticket sem job nem quote: plataforma pedindo quote é vendas, o resto da p
   assert.equal(donoDeTicketSemPedido({ organizacao: "Fixfy Customers", assunto: "Lead · Carpentry · Jo", customStatusId: ZD_STATUS_LEAD }), "vendas");
   assert.equal(donoDeTicketSemPedido({ organizacao: null, assunto: "Hi", customStatusId: ZD_STATUS_PARTNER }), "operacao");
   assert.equal(donoDeTicketSemPedido({ organizacao: "Li & Fung", assunto: "Your invoice INV-2026-904 is ready", customStatusId: ZD_STATUS_NEW }), "financeiro");
+});
+
+test("Bidding fica fora da fila nas primeiras 24h; sem lance em 24h vira 🔎 No Bids (vendas)", () => {
+  assert.equal(espelhoDaQuote("bidding")!.customStatusId, ZD_STATUS_BIDDING);
+  assert.equal(espelhoDaQuote("bidding", null)!.customStatusId, ZD_STATUS_BIDDING);
+  const sem = espelhoDaQuote("bidding", "no_bids_reported")!;
+  assert.equal(sem.customStatusId, ZD_STATUS_NO_BIDS);
+  assert.equal(sem.papel, "vendas");
+  assert.equal(papelDoStatus(ZD_STATUS_NO_BIDS), "vendas");
+  assert.equal(espelhoDaQuote("quote_ready", "no_bids_reported")!.customStatusId === ZD_STATUS_NO_BIDS, false);
 });

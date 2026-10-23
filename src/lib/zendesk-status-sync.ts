@@ -273,7 +273,7 @@ export async function syncQuoteZendeskStatus(
 ): Promise<ZendeskSyncResult> {
   const supabase = client ?? createServiceClient();
 
-  const { data: quote, error } = await supabase.from("quotes").select("id, status, external_source, external_ref").eq("id", quoteId).single();
+  const { data: quote, error } = await supabase.from("quotes").select("id, status, automation_status, external_source, external_ref").eq("id", quoteId).single();
   if (error || !quote) {
     return { ok: false, synced: false, error: error?.message ?? "Quote not found", skip: "entity_not_found" };
   }
@@ -286,7 +286,7 @@ export async function syncQuoteZendeskStatus(
     return { ok: true, synced: false, skip: "zendesk_not_configured" };
   }
 
-  const alvo = espelhoDaQuote(quote.status as QuoteStatus);
+  const alvo = espelhoDaQuote(quote.status as QuoteStatus, (quote as { automation_status?: string | null }).automation_status);
   if (!alvo) return { ok: true, synced: false, ticketId, skip: "no_status_mapping" };
 
   const { data: jobNoTicket } = await supabase
