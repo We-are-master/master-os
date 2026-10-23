@@ -29,7 +29,7 @@ import { guardarFotosDoTicket } from "./guardar-fotos";
 import { tipoDoPedido, classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
-import { aceitarHoraB2B } from "./b2b-hora";
+import { aceitarHoraB2B, pedeCotacao } from "./b2b-hora";
 import { pedirInfoQueFalta } from "./pedir-info";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
@@ -730,7 +730,11 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
    * Em ensaio só escreve "eu faria" e o fluxo de cotação segue como antes.
    */
   let notaHora: string | null = null;
-  if (plano.aceitarHora && org.ok && !isDirectConsumerAccount(org.id)) {
+  // Pediu quote, é quote (dono, 23/10/2026): o #51694 da Housekeep pediu
+  // "painting quote", caiu aqui como "small job, sold by the hour", parou sem
+  // taxa e nenhum parceiro foi convidado. Por hora só quando ninguém pediu cotação.
+  const pediuCotacao = pedeCotacao(`${ticket.subject}\n${ticket.threadNova || ticket.thread}`);
+  if (plano.aceitarHora && org.ok && !isDirectConsumerAccount(org.id) && !pediuCotacao) {
     const catalogo = await catalogoAtivo(createServiceClient()).catch(() => []);
     const classe = classificarPedido({ servico: resultado.quote.services[0]?.trade ?? null, descricao: pedido.scopeOfWork || pedido.quoteRequest }, catalogo);
     if (classe.modo === "hora") {
@@ -750,7 +754,9 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
           postar,
           apiKey,
         }).catch((e) => `── B2B hourly ──\nFailed: ${e instanceof Error ? e.message : String(e)}`);
-        if (modo === "on" && postar) {
+        // Sem taxa para cobrar por hora, vira cotação normal em vez de parar.
+        const semTaxa = notaHora.includes("Passed to the team:") && !notaHora.includes("Job NOT created");
+        if (modo === "on" && postar && !semTaxa) {
           await postarNotaInterna(ticketId, notaHora);
           return { ticketId, nota: notaHora, pedido, resultado, quoteRef: null };
         }
