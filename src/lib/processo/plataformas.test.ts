@@ -204,7 +204,7 @@ describe("Housekeep v2: o mesmo booking em dois tickets é um job", () => {
 
 /* --------------------------- Housekeep quotes --------------------------- */
 
-describe("Housekeep v2: quotes 8h / 36h", () => {
+describe("Housekeep v2: quotes 8h / 48h", () => {
   it("proposta viável antes das 8h é processada na hora", () => {
     const p = passoDaQuoteHousekeep({ horasDesdeConvite: 1.5, temLanceViavel: true, marca: null });
     assert.equal(p, "processar");
@@ -215,17 +215,19 @@ describe("Housekeep v2: quotes 8h / 36h", () => {
     // resposta sem preço não segura o rascunho
     assert.equal(passoDepoisDoHistorico("processar", { respostaManual: true, respostaManualComPreco: false }), "processar");
   });
-  it("sem lance: espera, avisa às 8h uma vez, fecha às 36h", () => {
+  it("sem lance: espera, avisa às 8h uma vez, fecha às 48h (dono, 23/10/2026; era 36h)", () => {
     assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 3, temLanceViavel: false, marca: null }), "esperar");
     assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 9, temLanceViavel: false, marca: null }), "avisar_8h");
     assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 20, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 37, temLanceViavel: false, marca: HK_MARCA_8H }), "fechar_36h");
+    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 37, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
+    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 47.9, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
+    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 48, temLanceViavel: false, marca: HK_MARCA_8H }), "fechar_48h");
     assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 50, temLanceViavel: false, marca: HK_MARCA_SEM_DISPONIBILIDADE }), "nada");
     assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 50, temLanceViavel: true, marca: HK_MARCA_EQUIPE_RESPONDEU }), "nada");
   });
-  it("36h sem proposta e sem resposta humana: sem disponibilidade; com resposta humana: não", () => {
-    assert.equal(passoDepoisDoHistorico("fechar_36h", { respostaManual: false, respostaManualComPreco: false }), "sem_disponibilidade");
-    assert.equal(passoDepoisDoHistorico("fechar_36h", { respostaManual: true, respostaManualComPreco: false }), "equipe_respondeu");
+  it("48h sem proposta e sem resposta humana: sem disponibilidade; com resposta humana: não", () => {
+    assert.equal(passoDepoisDoHistorico("fechar_48h", { respostaManual: false, respostaManualComPreco: false }), "sem_disponibilidade");
+    assert.equal(passoDepoisDoHistorico("fechar_48h", { respostaManual: true, respostaManualComPreco: false }), "equipe_respondeu");
   });
   it("o 'no availability' sai uma vez e fecha a quote", async () => {
     const { sb, t } = bancoFalso({ quotes: [{ id: "q1", reference: "QT-1", status: "bidding", external_ref: "777" }] });

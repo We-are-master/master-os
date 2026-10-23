@@ -4,7 +4,7 @@
  * No lugar da janela de 2h e do aviso de 26h da varredura de lances:
  *   - lance viável chegou: processa NA HORA (não espera janela nenhuma);
  *   - 8h depois do primeiro convite sem lance viável: nota interna, uma vez;
- *   - 36h sem lance viável: relê o ticket; se ninguém da equipe respondeu à mão,
+ *   - 48h sem lance viável (era 36h; dono, 23/10/2026): relê o ticket; se ninguém da equipe respondeu à mão,
  *     manda o "sem disponibilidade" (textos.ts) no ticket, uma vez
  *     (`housekeep-sem-disponibilidade:<quoteId>`), e fecha a quote como rejected
  *     com o motivo. Se alguém respondeu, não manda nada e deixa com a equipe.
@@ -18,7 +18,7 @@ import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/
 import { HOUSEKEEP_SEM_DISPONIBILIDADE_HTML, HOUSEKEEP_SEM_DISPONIBILIDADE_MOTIVO, preencherTexto } from "./textos";
 
 export const HK_CHECAGEM_HORAS = 8;
-export const HK_SEM_DISPONIBILIDADE_HORAS = 36;
+export const HK_SEM_DISPONIBILIDADE_HORAS = 48;
 
 /** Marcas em quotes.automation_status. */
 export const HK_MARCA_8H = "housekeep_no_bid_8h";
@@ -28,12 +28,12 @@ export const HK_MARCA_EQUIPE_RESPONDEU = "housekeep_team_replied";
 /** Marcas que encerram a automação desta quote. */
 const MARCAS_FINAIS = new Set([HK_MARCA_SEM_DISPONIBILIDADE, HK_MARCA_EQUIPE_RESPONDEU, "no_bids_reported", "no_bids_ticket_closed"]);
 
-export type PassoHousekeep = "nada" | "esperar" | "avisar_8h" | "processar" | "fechar_36h";
+export type PassoHousekeep = "nada" | "esperar" | "avisar_8h" | "processar" | "fechar_48h";
 
 export function passoDaQuoteHousekeep(i: { horasDesdeConvite: number; temLanceViavel: boolean; marca: string | null | undefined }): PassoHousekeep {
   if (i.marca && MARCAS_FINAIS.has(i.marca)) return "nada";
   if (i.temLanceViavel) return "processar";
-  if (i.horasDesdeConvite >= HK_SEM_DISPONIBILIDADE_HORAS) return "fechar_36h";
+  if (i.horasDesdeConvite >= HK_SEM_DISPONIBILIDADE_HORAS) return "fechar_48h";
   if (i.horasDesdeConvite >= HK_CHECAGEM_HORAS && i.marca !== HK_MARCA_8H) return "avisar_8h";
   return "esperar";
 }
@@ -42,10 +42,10 @@ export type PassoDepoisDoHistorico = "processar" | "sem_disponibilidade" | "equi
 
 /**
  * O passo depois de reler o ticket. `processar` só para quando a equipe já
- * mandou preço à mão; `fechar_36h` para com QUALQUER resposta manual.
+ * mandou preço à mão; `fechar_48h` para com QUALQUER resposta manual.
  */
 export function passoDepoisDoHistorico(
-  passo: "processar" | "fechar_36h",
+  passo: "processar" | "fechar_48h",
   h: { respostaManual: boolean; respostaManualComPreco: boolean },
 ): PassoDepoisDoHistorico {
   if (passo === "processar") return h.respostaManualComPreco ? "equipe_respondeu" : "processar";
