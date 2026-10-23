@@ -76,8 +76,8 @@ describe("rotuloDoDia", () => {
 
 describe("rotuloDaJanela", () => {
   it("reads like a person in London", () => {
-    assert.equal(rotuloDaJanela("2026-10-08T08:00:00Z", "2026-10-08T11:00:00Z"), "between 9am and midday");
-    assert.equal(rotuloDaJanela("2026-12-08T09:30:00Z", "2026-12-08T13:00:00Z"), "between 9:30am and 1pm");
+    assert.equal(rotuloDaJanela("2026-10-08T08:00:00Z", "2026-10-08T11:00:00Z"), "09:00-12:00");
+    assert.equal(rotuloDaJanela("2026-12-08T09:30:00Z", "2026-12-08T13:00:00Z"), "09:30-13:00");
     assert.equal(rotuloDaJanela(null, "2026-10-08T11:00:00Z"), null);
   });
 });

@@ -16,6 +16,7 @@
  * nota INTERNA na thread com o preço pronto e o leque de lances, e marca a
  * quote para não repetir. Quem clica enviar é gente, por enquanto.
  */
+import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { assumirConversa, conversaDoTicket } from "@/lib/harvey-wa/controle";
@@ -784,7 +785,7 @@ async function checarEscopoDoLance(
   const enviado = await replyToSideConversation({
     ticketId,
     sideConversationId: sc.id,
-    htmlBody: htmlDaPergunta(q.reference, v.pergunta),
+    htmlBody: htmlDaPergunta(q.reference, v.pergunta, parceiro ? partnerEmailGreetingName(parceiro) : lance.partner_name),
     toEmail: email,
     toName: parceiro?.contact_name || parceiro?.company_name || undefined,
     toUserId: parceiro?.zendesk_user_id ?? null,

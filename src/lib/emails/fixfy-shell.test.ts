@@ -19,13 +19,16 @@ describe("data e janela", () => {
     assert.equal(dataLonga("2026-10-21"), "Wed 21 Oct 26");
     assert.equal(dataLonga(null), null);
   });
-  test("janela em Londres, meio-dia vira midday", () => {
-    assert.equal(janelaTexto("2026-10-21T08:00:00Z", "2026-10-21T11:00:00Z"), "between 9am and midday");
-    assert.equal(janelaTexto("2026-11-02T09:30:00Z", "2026-11-02T13:00:00Z"), "between 9:30am and 1pm");
+  test("janela em Londres, 24h compacta (09:00-12:00)", () => {
+    assert.equal(janelaTexto("2026-10-21T08:00:00Z", "2026-10-21T11:00:00Z"), "09:00-12:00");
+    assert.equal(janelaTexto("2026-11-02T09:30:00Z", "2026-11-02T13:00:00Z"), "09:30-13:00");
   });
   test("janela que chega como texto", () => {
-    assert.equal(janelaDeTexto("9AM – 12PM"), "between 9am and midday");
-    assert.equal(janelaDeTexto("09:00-15:00"), "between 9am and 3pm");
+    assert.equal(janelaDeTexto("9AM – 12PM"), "09:00-12:00");
+    assert.equal(janelaDeTexto("between 9am and midday"), "09:00-12:00");
+    assert.equal(janelaDeTexto("1-5pm"), "13:00-17:00");
+    assert.equal(janelaDeTexto("9-12pm"), "09:00-12:00");
+    assert.equal(janelaDeTexto("09:00-15:00"), "09:00-15:00");
     assert.equal(janelaDeTexto("To be confirmed"), null);
   });
 });
@@ -66,6 +69,39 @@ describe("emailFixfy", () => {
   test("zendesk sem tabela nenhuma (o visualizador desenha borda em toda célula)", () => {
     const m = emailFixfy({ ...base, zendesk: true });
     assert.equal((m.html.match(/<table/g) ?? []).length, 0);
+  });
+  test("opções do parceiro não mudam o e-mail do cliente quando ausentes", () => {
+    const antes = emailFixfy(base);
+    const comCamposVazios = emailFixfy({ ...base, antesDoBotao: null, semAjuda: false, estado: { ...base.estado, chip: undefined } });
+    assert.equal(comCamposVazios.html, antes.html);
+    assert.equal(comCamposVazios.text, antes.text);
+    // Sem chip, o estado verde segue texto (não pílula).
+    assert.doesNotMatch(antes.html, /border-radius:999px/);
+  });
+  test("chip colorido, saudação vazia some, fotos antes do botão, sem quadro de ajuda", () => {
+    const m = emailFixfy({
+      ...base,
+      estado: { texto: "Job booked", cor: "green", chip: true },
+      saudacao: "",
+      paragrafos: [],
+      antesDoBotao: { html: "<div>FOTOS</div>", text: "Site photos (2)" },
+      semAjuda: true,
+    });
+    assert.match(m.html, /background:#E8F5EC;color:#15803D;[^>]*border-radius:999px;">Job booked</);
+    assert.doesNotMatch(m.html, /Need a hand\?/);
+    assert.doesNotMatch(m.html, /<p[^>]*><\/p>/);
+    const fotos = m.html.indexOf("FOTOS");
+    assert.ok(fotos > m.html.indexOf(">Handyman<") && fotos < m.html.indexOf(">Pay now<"));
+    assert.ok(m.text.indexOf("Site photos (2)") < m.text.indexOf("Pay now:"));
+    assert.doesNotMatch(m.text, /^Hi /m);
+  });
+  test("vermelho continua pílula sem pedir chip", () => {
+    const m = emailFixfy({ ...base, estado: { texto: "Overdue", cor: "red" } });
+    assert.match(m.html, /background:#FDECEC;color:#C62828;border:1px solid #F5C2C2;/);
+  });
+  test("métrica riscada", () => {
+    const m = emailFixfy({ ...base, metricas: [{ rotulo: "Was", valor: "Wed 28 Oct 26", riscado: true }] });
+    assert.match(m.html, /text-decoration:line-through[^>]*>Wed 28 Oct 26</);
   });
   test("escapa campo do cliente", () => {
     const m = emailFixfy({ ...base, saudacao: "Hi <b>x</b>," });

@@ -11,8 +11,8 @@
  * vira "Potential earnings £X+" — nunca prometer número que depende do
  * relógio. O rótulo do acordo vem NA FRENTE do valor em cada card.
  */
-import { emailFixfy, dataLonga, type Metrica } from "./fixfy-shell";
-import { PASSO_NO_DIA, horaDeTexto, janelaCurtaDeTexto, passosDoJob, saudacaoDoParceiro, semTravessao } from "./partner-shell";
+import { dataLonga, esc, urlSegura, type Metrica } from "./fixfy-shell";
+import { emailParceiro, horaDeTexto, janelaCurtaDeTexto, pagaDoParceiro, saudacaoDoParceiro, semTravessao } from "./partner-shell";
 import { formatDuration, formatDistanceMiles } from "@/lib/mapbox-directions";
 
 export type PartnerTomorrowStop = {
@@ -64,61 +64,78 @@ export function buildPartnerTomorrowEmail(data: PartnerTomorrowEmailData): {
   const dayWord = data.dayWord ?? "tomorrow";
   const dia = dataLonga(data.dateYmd ?? null) ?? semTravessao(data.dateLabel);
   const jobs = `${n} job${n === 1 ? "" : "s"}`;
+  // Assunto e copy antigos (dono, 23/10/2026), sem travessão.
   const subject = `Your jobs for ${dayWord} · ${dia} (${jobs})`;
   const primeira = horaDeTexto(data.firstArrivalLabel);
 
+  const naEstrada = data.showRoute && data.totalDriveSec != null && data.totalDriveSec > 0 ? formatDuration(data.totalDriveSec) : null;
+
+  // O e-mail antigo (dono, 23/10/2026: "volta o jeito antigo desse"), na moldura
+  // nova: saudação e a frase do dia, a faixa de números, os cartões das paradas
+  // por slot com a perna de carro, "Open" em cada uma e um botão. Sem barra (o
+  // antigo não tinha), sem emoji, sem negrito pesado, janela 09:00-12:00.
   const metricas: Metrica[] = [
     { rotulo: n === 1 ? "Job" : "Jobs", valor: String(n) },
     { rotulo: "First arrival", valor: primeira },
-    ...(data.showRoute && data.totalDriveSec != null && data.totalDriveSec > 0
-      ? [{ rotulo: "On the road", valor: formatDuration(data.totalDriveSec) }]
-      : []),
+    ...(naEstrada ? [{ rotulo: "On the road", valor: naEstrada }] : []),
     { rotulo: data.earningsLabel, valor: data.earningsDisplay },
   ];
 
-  // Cabeçalho de slot entra quando o slot MUDA de uma parada pra outra; a
-  // numeração segue contínua (a ordem do dia é uma só, o slot é só leitura).
+  const F = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
   const temSlots = data.stops.some((s) => s.slot != null);
-  const paradas: string[] = [];
+  const blocos: string[] = [];
+  const textos: string[] = [];
   data.stops.forEach((s, i) => {
-    if (temSlots && s.slot != null && data.stops[i - 1]?.slot !== s.slot) {
-      paradas.push(s.slot === "morning" ? "Morning slot" : "Afternoon slot");
-    }
+    const slot = temSlots && s.slot != null && data.stops[i - 1]?.slot !== s.slot ? (s.slot === "morning" ? "Morning slot" : "Afternoon slot") : null;
     const perna =
       data.showRoute && s.drive && s.drive.durationSec > 0
-        ? ` · ${formatDuration(s.drive.durationSec)} drive (${formatDistanceMiles(s.drive.distanceM)}) to get here`
-        : "";
-    const partes = [
-      `${i + 1}. ${janelaCurtaDeTexto(s.windowLabel)}`,
-      s.title,
-      s.address,
-      s.clientFirstName,
-      s.payDisplay,
-    ].filter((p): p is string => Boolean(p && String(p).trim()));
-    paradas.push(semTravessao(`${partes.join(" · ")}${perna}`));
+        ? `${formatDuration(s.drive.durationSec)} drive · ${formatDistanceMiles(s.drive.distanceM)}`
+        : null;
+    const janela = janelaCurtaDeTexto(s.windowLabel);
+    const paga = pagaDoParceiro(s.payDisplay)?.linha ?? semTravessao(s.payDisplay);
+    const quemEPaga = [s.clientFirstName, paga].filter((p): p is string => Boolean(p && String(p).trim())).join(" · ");
+    const abrir = urlSegura(s.portalUrl);
+    if (slot) {
+      blocos.push(`<p style="margin:${i === 0 ? 0 : 18}px 0 4px 0;font-family:${F};font-size:12px;line-height:16px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#7A7C92;">${esc(slot)}</p>`);
+    }
+    if (perna) {
+      blocos.push(`<p style="margin:${slot || i === 0 ? 0 : 12}px 0 6px 0;font-family:${F};font-size:13px;line-height:18px;color:#7A7C92;">${esc(perna)}</p>`);
+    } else if (!slot && i > 0) {
+      blocos.push(`<div style="height:10px;line-height:10px;font-size:0;">&nbsp;</div>`);
+    }
+    blocos.push(
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F7FA;border:1px solid #EEEEF2;border-radius:12px;"><tr>` +
+        `<td width="44" valign="top" style="padding:16px 0 16px 16px;"><div style="width:26px;height:26px;line-height:26px;border-radius:13px;background:#020040;color:#FFFFFF;text-align:center;font-family:${F};font-size:13px;font-weight:600;">${i + 1}</div></td>` +
+        `<td valign="top" style="padding:14px 12px 14px 4px;">` +
+        `<p style="margin:0;font-family:${F};font-size:13px;line-height:18px;font-weight:600;color:#ED4B00;">${esc(janela)}</p>` +
+        `<p style="margin:2px 0 0 0;font-family:${F};font-size:16px;line-height:22px;font-weight:600;color:#020040;">${esc(semTravessao(s.title))}</p>` +
+        (s.address ? `<p style="margin:2px 0 0 0;font-family:${F};font-size:14px;line-height:20px;color:#505268;">${esc(semTravessao(s.address))}</p>` : "") +
+        (quemEPaga ? `<p style="margin:2px 0 0 0;font-family:${F};font-size:14px;line-height:20px;color:#505268;">${esc(semTravessao(quemEPaga))}</p>` : "") +
+        `</td>` +
+        (abrir
+          ? `<td width="76" valign="middle" align="right" style="padding:14px 16px 14px 0;"><a href="${esc(abrir)}" style="display:inline-block;border:1px solid #DCDCE6;border-radius:8px;background:#FFFFFF;padding:6px 12px;font-family:${F};font-size:13px;line-height:18px;font-weight:600;color:#020040;text-decoration:none;">Open</a></td>`
+          : "") +
+        `</tr></table>`,
+    );
+    textos.push(
+      [slot ? slot.toUpperCase() : null, perna, `${i + 1}. ${janela} · ${semTravessao(s.title)}`, s.address ? semTravessao(s.address) : null, quemEPaga || null, abrir ? `Open: ${abrir}` : null]
+        .filter(Boolean)
+        .join("\n"),
+    );
   });
 
-  // Cada parada leva ao portal; link próprio só quando difere do botão.
-  const linksDasParadas = data.stops
-    .map((s, i) => ({ label: `Open job ${i + 1}`, url: s.portalUrl }))
-    .filter((l) => l.url && l.url !== data.portalUrl);
-
-  const { html, text } = emailFixfy({
+  const { html, text } = emailParceiro({
+    zendesk: false,
     preheader: `${jobs} ${dayWord} · first arrival ${primeira}`,
-    estado: { texto: dayWord === "today" ? "Today" : "Tomorrow", cor: "navy" },
+    estado: { texto: dayWord === "today" ? "Today" : "Tomorrow", cor: "navy", chip: true },
     titulo: `Your jobs for ${dayWord}`,
-    passos: passosDoJob(PASSO_NO_DIA),
-    metricas,
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      `Here's your day for ${dayWord}, ${dia}: ${jobs} lined up, ${data.showRoute ? "in driving order from home" : "in arrival order"}.`,
-      ...(temSlots ? [] : [data.showRoute ? "Leaving from home · route in order" : `${dayWord === "today" ? "Today's" : "Tomorrow's"} jobs · in arrival order`]),
-      ...paradas,
-    ],
-    nota: data.correctionNote?.trim() ? semTravessao(data.correctionNote.trim()) : null,
+    paragrafos: [`Here's your day for ${dayWord}, ${dia}: ${jobs} lined up, ${data.showRoute ? "in driving order from home" : "in arrival order"}.`],
+    avisos: data.correctionNote?.trim() ? [{ tom: "amber", texto: semTravessao(data.correctionNote.trim()), lugar: "topo" }] : [],
+    metricas,
+    antesDoBotao: { html: blocos.join(""), text: textos.join("\n\n") },
     cta: { label: "Open my day in Fixfy Trade", url: data.portalUrl },
-    linksSecundarios: linksDasParadas,
-    letraPequena: ["Anything changed? Reply to this email and we'll sort it before tomorrow."],
+    letraPequena: [`Anything changed? Reply to this email and we'll sort it before ${dayWord}.`],
   });
   return { subject, html, text };
 }

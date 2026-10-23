@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 import {
@@ -593,6 +594,8 @@ export async function sendBookedSideConvReply(args: {
     partnerNotes,
     reportUrl,
     photoUrls: fotos.urls,
+    jobUrl: resolvePartnerTradePortalBaseUrl(),
+    aposAceite: true,
   });
 
   const persistSuccess = async (sideConvId: string | null) => {

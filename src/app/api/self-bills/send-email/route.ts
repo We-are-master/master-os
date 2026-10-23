@@ -5,8 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { renderSelfBillPdfBuffer } from "@/lib/self-bill-pdf-server";
 import { partnerFieldSelfBillPaymentDueDate } from "@/lib/self-bill-period";
 import { formatCurrency } from "@/lib/utils";
-import { buildSelfBillEmail, buildSelfBillSideConvHtml } from "@/lib/emails/self-bill-statement";
-import { dataLonga } from "@/lib/emails/fixfy-shell";
+import { buildSelfBillEmail, buildSelfBillSideConvHtml, motivoSemEmailDoSelfBill, selfBillEmailSubject } from "@/lib/emails/self-bill-statement";
 import { isSelfBillPayoutVoided } from "@/services/self-bills";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -27,12 +26,6 @@ type Skipped = { id: string; reference?: string; reason: string };
 /** Enviado, mas com algo para o escritório olhar (fatura de comissão, comissão zerada). */
 type Warning = { id: string; reference?: string; warning: string };
 
-/** `2026-08-03` → `3 Aug 2026`. O assunto é lido por gente em Londres. */
-function fmtSubjectDate(ymd?: string | null): string {
-  const raw = (ymd ?? "").trim();
-  if (!raw) return "TBC";
-  return dataLonga(raw.length === 10 ? raw : raw.slice(0, 10)) ?? raw.slice(0, 10);
-}
 
 
 /**
@@ -171,6 +164,12 @@ export async function POST(req: NextRequest) {
       skipped.push({ id, reference: sb.reference, reason: "No partner linked" });
       continue;
     }
+    // Pago não gera e-mail ao parceiro (dono, 23/10/2026).
+    const motivoPago = motivoSemEmailDoSelfBill(sb);
+    if (motivoPago) {
+      skipped.push({ id, reference: sb.reference, reason: motivoPago });
+      continue;
+    }
 
     /**
      * `partners.name` NÃO EXISTE. As colunas são `company_name` e `contact_name`.
@@ -276,6 +275,21 @@ export async function POST(req: NextRequest) {
 
     const ccList = ccEmail && ccEmail.toLowerCase() !== partnerEmail ? [ccEmail] : undefined;
 
+    /**
+     * Payout Statement: a fatura de VAT da comissão segue sendo emitida acima,
+     * igual a antes; só o e-mail ao parceiro (e a conversa lateral) não sai
+     * mais (dono, 23/10/2026). Fica em `skipped` com o número da fatura.
+     */
+    const motivoStatement = motivoSemEmailDoSelfBill(sb, { payoutStatement });
+    if (motivoStatement) {
+      skipped.push({
+        id,
+        reference: sb.reference,
+        reason: commissionInvoiceRef ? `${motivoStatement} (commission VAT invoice ${commissionInvoiceRef} issued)` : motivoStatement,
+      });
+      continue;
+    }
+
     const { data: emailResult, error: emailError } = await resend.emails.send({
       from: fromEmail,
       to: [partnerEmail],
@@ -289,17 +303,7 @@ export async function POST(req: NextRequest) {
        * duas datas cruas, que o parceiro lê como americanas, e sem dizer QUAL
        * documento é.
        */
-      subject: payoutStatement
-        ? `Payout statement ${sb.reference} | ${
-            sb.week_start && sb.week_end
-              ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
-              : String(sb.week_label ?? sb.period ?? "this period").replace(/\s*[—–]\s*/g, " to ")
-          }`
-        : `Self-bill ${sb.reference} | ${
-            sb.week_start && sb.week_end
-              ? `${fmtSubjectDate(sb.week_start)} to ${fmtSubjectDate(sb.week_end)}`
-              : String(sb.week_label ?? sb.period ?? "this period").replace(/\s*[—–]\s*/g, " to ")
-          }`,
+      subject: selfBillEmailSubject(sb, dueYmd, { payoutStatement: payoutStatement ? {} : null }),
       ...buildSelfBillEmail(sb, dueYmd, {
         partnerName,
         companyName,
@@ -336,8 +340,10 @@ export async function POST(req: NextRequest) {
     let sideConvId: string | null = sb.zendesk_side_conversation_id?.trim() || null;
 
     if (run?.zendesk_ticket_id) {
-      const subject = `Self-bill ${sb.reference} · ${partnerName ?? partnerEmail}`;
-      const htmlBody = buildSelfBillSideConvHtml(sb, dueYmd, partnerEmail, partnerName);
+      const subject = selfBillEmailSubject(sb, dueYmd, { payoutStatement: payoutStatement ? {} : null });
+      const htmlBody = buildSelfBillSideConvHtml(sb, dueYmd, partnerEmail, partnerName, {
+        payoutStatement: payoutStatement ? { commissionInvoiceRef, hasClientWork: Boolean(agent?.hasClientWork) } : null,
+      });
 
       if (sideConvId) {
         const reply = await replyToSideConversation({

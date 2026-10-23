@@ -132,9 +132,10 @@ export async function notifyVisitPartner(
 
   const email = buildPartnerJobConfirmationEmail({
     partnerFirstName: partnerEmailGreetingName(partner),
-    // A referência carrega a visita: o parceiro da visita 3 precisa saber que
-    // não é o mesmo trabalho do parceiro da visita 1 no mesmo endereço.
-    jobReference: `${job.reference} · Visit ${visit.visit_index}`,
+    // A visita vai no chip, no assunto e no quadro ("Visit 3 booked"): o parceiro
+    // da visita 3 precisa saber que não é o trabalho da visita 1 no mesmo endereço.
+    jobReference: job.reference,
+    visitNumber: visit.visit_index,
     jobTitle: visitTitle,
     clientName: job.client_name || "—",
     clientPhone,

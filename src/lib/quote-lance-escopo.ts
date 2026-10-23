@@ -14,7 +14,7 @@
  * injetável para os testes não tocarem na OpenAI.
  */
 import { chamarOpenAI } from "@/lib/openai-com-retry";
-import { emailPessoal } from "@/lib/emails/fixfy-shell";
+import { CHIP_PARCEIRO, emailParceiro, saudacaoDoParceiro } from "@/lib/emails/partner-shell";
 
 /** O mesmo modelo do cérebro do Harvey (cerebro.ts). */
 const MODELO = () => process.env.HARVEY_WA_MODEL?.trim() || "gpt-5.4";
@@ -306,15 +306,18 @@ export function notasComNovoValor(notes: string | null | undefined, novo: number
   return `${base.replace(m[0], `BID_JSON:${JSON.stringify(novoJson)}${m[2]}`).trim()}\n${linha}`;
 }
 
-/** A mensagem ao parceiro na side conversation. */
-export function htmlDaPergunta(referencia: string, pergunta: string): string {
-  return emailPessoal({
-    zendesk: true,
+/**
+ * A mensagem ao parceiro na side conversation do convite: o texto de antes
+ * (dono, 23/10/2026), com o nome dele na saudação, na moldura nova e mínima.
+ * Sem botão: ele responde no próprio e-mail.
+ */
+export function htmlDaPergunta(referencia: string, pergunta: string, nomeDoParceiro?: string | null): string {
+  return emailParceiro({
     preheader: `Quick check on your price for ${referencia}`,
-    saudacao: "Hi,",
-    paragrafos: [
-      `Quick check on your price for ${referencia} before we send it to the customer.`,
-      pergunta.replace(/\s+[—–]\s+/g, " · ").replace(/[—–]/g, "-"),
-    ],
+    estado: CHIP_PARCEIRO.quote,
+    titulo: "Quick check on your price",
+    saudacao: saudacaoDoParceiro(nomeDoParceiro),
+    paragrafos: [`Quick check on your price for ${referencia} before we send it to the customer.`, pergunta],
+    linhas: [["Reference", referencia]],
   }).html;
 }

@@ -8,16 +8,21 @@
  * em métricas, a limpeza de travessão e o bloco de fotos, que a moldura não
  * desenha e que o parceiro precisa ver antes de sair de casa.
  */
-import { dataLonga, esc, horaCurta, janelaDeTexto, janelaTexto, type Metrica, type Passo } from "./fixfy-shell";
+import { dataLonga, emailFixfy, esc, hora24, semFotosHtml, horaDeTextoPara24, janelaDeTexto, janelaTexto, type Aviso, type EmailFixfy, type Estado, type Metrica, type Passo } from "./fixfy-shell";
+import { extractUkPostcode } from "@/lib/uk-postcode";
 import { janelaCurta, passosAte } from "./faixas-do-email";
 
-/** A vida do job do lado de quem executa. */
-export const PASSOS_JOB_PARCEIRO = ["Offered", "Accepted", "On the day", "Report", "Paid"] as const;
+/**
+ * A vida do job do lado de quem executa. "On the day" saiu da barra (dono,
+ * 23/10/2026): o dia do job é o passo Accepted até o relatório.
+ */
+export const PASSOS_JOB_PARCEIRO = ["Offered", "Accepted", "Report", "Approved"] as const;
 export const PASSO_OFERTA = 0;
 export const PASSO_ACEITO = 1;
-export const PASSO_NO_DIA = 2;
-export const PASSO_RELATORIO = 3;
-export const PASSO_PAGO = 4;
+/** Véspera e remarcação: o job segue no passo Accepted. */
+export const PASSO_NO_DIA = PASSO_ACEITO;
+export const PASSO_RELATORIO = 2;
+export const PASSO_PAGO = 3;
 
 /** O cadastro do parceiro. */
 export const PASSOS_CADASTRO = ["Profile", "Documents", "Active"] as const;
@@ -67,17 +72,15 @@ export function paragrafosDoEscopo(escopo: string | null | undefined, rotulo = "
   return [`${rotulo}: ${linhas[0]}`, ...linhas.slice(1)];
 }
 
-/** "9:00 AM" / "09:00" / "9AM" viram "9am"; "12:00 PM" vira "midday". */
+/** "9:00 AM" / "09:00" / "9AM" viram "09:00" (24h, formato único). */
 export function horaDeTexto(texto: string | null | undefined): string {
   const t = String(texto ?? "").trim();
   const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (!m) return t;
-  const j = janelaDeTexto(`${t} to ${t}`);
-  const h = j?.match(/^between (.+) and /)?.[1];
-  return h ?? t;
+  return horaDeTextoPara24(m[1]!, m[2], m[3]) ?? t;
 }
 
-/** Janela que chegou como texto ("9:00 AM – 12:00 PM") em "9am to midday". */
+/** Janela que chegou como texto ("9:00 AM – 12:00 PM") em "09:00-12:00". */
 export function janelaCurtaDeTexto(texto: string | null | undefined): string {
   const t = String(texto ?? "").trim();
   return janelaCurta(janelaDeTexto(t)) ?? semTravessao(t);
@@ -94,7 +97,7 @@ export type AgendaDoJob = {
 export function agendaDoJob(a: AgendaDoJob): { data: string | null; chegada: string | null; fim: string | null } {
   const data = dataLonga(a.scheduledStartAt || a.scheduledDate || null);
   const janela = janelaTexto(a.scheduledStartAt, a.scheduledEndAt);
-  const chegada = janela ? janelaCurta(janela) : horaCurta(a.scheduledStartAt);
+  const chegada = janela ? janelaCurta(janela) : hora24(a.scheduledStartAt);
   const fimRaw = a.scheduledFinishDate?.trim() || null;
   const fim = fimRaw ? dataLonga(fimRaw.slice(0, 10)) : null;
   return { data, chegada, fim: fim && fim !== data ? fim : null };
@@ -147,6 +150,12 @@ export function blocoDeFotosHtml(
   return `<div style="margin:0 0 12px 0;"><p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:#6B6B85;">${esc(opts.legenda)}</p><div style="font-size:0;line-height:0;">${imgs}${mais}</div></div>`;
 }
 
+/** Sem foto no job: a linha neutra no lugar das miniaturas (dono, 23/10/2026). */
+export const SEM_FOTOS_PARCEIRO = "No site photos available";
+export function semFotosDoParceiro(): { html: string; text: string } {
+  return { html: semFotosHtml(SEM_FOTOS_PARCEIRO), text: SEM_FOTOS_PARCEIRO };
+}
+
 /** Troca a marca de fotos pelo bloco (html) e pela linha (texto). */
 export function comFotos(r: { html: string; text: string }, html: string, text: string): { html: string; text: string } {
   const marca = MARCA_FOTOS.replace(/[[\]]/g, "\\$&");
@@ -154,4 +163,97 @@ export function comFotos(r: { html: string; text: string }, html: string, text: 
     html: r.html.replace(new RegExp(`<p[^>]*>${marca}</p>`), html),
     text: r.text.replace(new RegExp(`${marca}\\n*`), text ? `${text}\n\n` : ""),
   };
+}
+
+// ─── O padrão dos e-mails ao parceiro (dono, 23/10/2026) ────────────────
+//
+// "O partner tem que bater o olho e já ver se é quote, job pra aceitar ou job
+// booked, as infos, e button pra resolver." Cada e-mail: chip do tipo (sempre
+// as mesmas palavras), título curto, bloco navy com 1 ou 2 números e a régua,
+// quadro de detalhes, fotos, UM botão. Sem saudação, sem parágrafo (só quando o
+// e-mail ficaria ambíguo sem ele), sem letra pequena, sem o quadro "Need a hand?".
+
+/** O chip de cada tipo: as mesmas palavras e a mesma cor em todos os e-mails. */
+export const CHIP_PARCEIRO = {
+  quote: { texto: "Quote request", cor: "navy", chip: true },
+  oferta: { texto: "Job to accept", cor: "orange", chip: true },
+  booked: { texto: "Job booked", cor: "green", chip: true },
+  remarcado: { texto: "Rescheduled", cor: "navy", chip: true },
+  emEspera: { texto: "On hold", cor: "orange", chip: true },
+  reclamacao: { texto: "Complaint", cor: "red", chip: true },
+  cancelado: { texto: "Cancelled", cor: "red", chip: true },
+  relatorio: { texto: "Report needed", cor: "orange", chip: true },
+  atrasado: { texto: "Report overdue", cor: "orange", chip: true },
+  concluido: { texto: "Job complete", cor: "green", chip: true },
+  pagamento: { texto: "Self-bill", cor: "navy", chip: true },
+  pago: { texto: "Paid", cor: "green", chip: true },
+} as const satisfies Record<string, Estado>;
+
+/**
+ * A moldura no padrão do parceiro: comentário do Zendesk por padrão, sem
+ * saudação, sem parágrafos, sem o quadro de ajuda.
+ */
+export function emailParceiro(
+  e: Omit<EmailFixfy, "saudacao" | "paragrafos"> & { saudacao?: string; paragrafos?: string[] },
+): { html: string; text: string } {
+  return emailFixfy({ zendesk: true, semAjuda: true, detalhesLeves: true, ...e, saudacao: e.saudacao ?? "", paragrafos: (e.paragrafos ?? []).map(semTravessao) });
+}
+
+/** O quadro azul de ajuda, depois do botão. */
+export function ajudaDoParceiro(texto = "Reply to this email or call +44 20 4538 4668.", titulo = "Questions?"): Aviso {
+  return { tom: "blue", icone: "💬", titulo, texto, lugar: "fim" };
+}
+
+/**
+ * O que o parceiro ganha, a partir do texto de sempre ("Hourly · £35.00/hr",
+ * "Fixed · £70.00", "Half day · £180.00", "£249.00 inc VAT"). Nunca "inc VAT"
+ * (é o dinheiro dele) e nunca "Hourly" duas vezes: por hora vira "£35.00/h".
+ */
+export function pagaDoParceiro(priceDisplay: string | null | undefined): { valor: string; tipo: string | null; linha: string } | null {
+  const t = semTravessao(String(priceDisplay ?? "")).replace(/\s*inc(?:l\.?|luding)?\s*vat\b/i, "").trim();
+  if (!t) return null;
+  const partes = t.split(/\s+·\s+/);
+  const rotulo = partes.length > 1 ? partes[0]!.trim() : null;
+  const bruto = (partes.length > 1 ? partes.slice(1).join(" ") : t).trim();
+  const porHora = /\/\s*(?:hr|hour|h)\b/i.test(bruto) || /^hourly$/i.test(rotulo ?? "");
+  const valor = porHora ? bruto.replace(/\s*\/\s*(?:hr|hour|h)\b.*$/i, "") + "/h" : bruto;
+  const tipo = porHora ? null : rotulo && !/^fixed$/i.test(rotulo) ? rotulo : "Fixed price";
+  const linha = porHora ? valor : tipo === "Fixed price" ? `${valor} fixed` : `${tipo} · ${valor}`;
+  return { valor, tipo, linha };
+}
+
+/** "12 Example Road, London E1 6AN" vira "E1 6AN · London" (o job ainda não é dele). */
+export function areaDoEndereco(endereco: string | null | undefined): string | null {
+  const t = String(endereco ?? "").trim();
+  const postcode = extractUkPostcode(t);
+  const partes = t.split(",").map((p) => p.trim()).filter(Boolean);
+  const ultima = partes[partes.length - 1] ?? "";
+  const cidade = (postcode ? ultima.replace(postcode, "") : ultima).replace(/\s+/g, " ").trim();
+  // Só é área se não parece rua ("12 Example Road") nem é o endereço inteiro.
+  const area = partes.length > 1 && cidade && !/^\d/.test(cidade) ? cidade : null;
+  return [postcode, area].filter(Boolean).join(" · ") || null;
+}
+
+/** O serviço e o começo do escopo, em duas linhas no máximo (~120 caracteres). */
+export function trabalhoCurto(tipo: string | null | undefined, escopo: string | null | undefined, max = 120): string {
+  const t = semTravessao(String(tipo ?? "").trim());
+  const e = semTravessao(
+    String(escopo ?? "")
+      .split(/\n+/)
+      .map((l) => l.trim().replace(/^[-*·•]\s*/, ""))
+      .filter((l) => l && !/^\(no scope provided\)$/i.test(l))
+      .map((l) => (/[.!?:]$/.test(l) ? l : `${l}.`))
+      .join(" "),
+  );
+  const junto = [t, e].filter(Boolean).join(": ");
+  if (junto.length <= max) return junto;
+  const corte = junto.slice(0, max);
+  return `${corte.slice(0, corte.lastIndexOf(" ") > max * 0.6 ? corte.lastIndexOf(" ") : max).replace(/[\s,.;:]+$/, "")}…`;
+}
+
+/** Self-bill: a barra inteira cheia, "Approved" em verde. */
+export function passosDoPagamento(_pago?: boolean): Passo[] {
+  // Self-bill emitido = job aprovado (dono, 23/10/2026): os quatro passos
+  // cheios e "Approved" em verde.
+  return PASSOS_JOB_PARCEIRO.map((nome, i) => ({ nome, estado: i === PASSO_PAGO ? "aprovado" : "feito" }));
 }

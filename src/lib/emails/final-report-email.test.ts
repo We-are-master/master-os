@@ -21,3 +21,14 @@ describe("copy 13: report only", () => {
     assert.match(e.text, /Hi there,/);
   });
 });
+
+it("e-mail final sem foto: linha neutra No photos available (opt-in pelo vazio)", () => {
+  const base = { publico: { tipo: "b2c" as const, primeiroNome: "Sarah" }, jobReference: "JOB-1", service: "Carpentry", propertyAddress: "1 Road", reportAttachmentCount: 1, reportRequested: true };
+  const vazio = buildFinalReportEmail({ ...base, fotos: { lista: [], link: null, vazio: "No photos available" } });
+  assert.match(vazio.html, /border:1px dashed[^>]*><p[^>]*>No photos available</);
+  assert.match(vazio.text, /No photos available/);
+  const semCampo = buildFinalReportEmail({ ...base, fotos: null });
+  assert.doesNotMatch(semCampo.html, /No photos available|dashed/);
+  const comFoto = buildFinalReportEmail({ ...base, fotos: { lista: [{ url: "https://x.test/1.png" }], vazio: "No photos available" } });
+  assert.doesNotMatch(comFoto.html, /No photos available/);
+});

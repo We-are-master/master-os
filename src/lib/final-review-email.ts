@@ -627,7 +627,8 @@ async function visualDoFinal(
   const campos = ((j.final_report as { fields?: Record<string, unknown> } | null)?.fields ?? j.final_report ?? {}) as Record<string, unknown>;
   const descricao = typeof campos.description === "string" && campos.description.trim() && !/ticket\s*#?\d+|from the partner|zendesk/i.test(campos.description) ? campos.description.trim() : null;
   return {
-    fotos: lista.length || link ? { lista, link: link ? { label: "See the full report", url: link } : null } : null,
+    // Sem foto, uma linha neutra no lugar (dono, 23/10/2026), e o link do report se houver.
+    fotos: { lista, link: link ? { label: "See the full report", url: link } : null, vazio: "No photos available" },
     resumo: descricao ? { titulo: "What we did.", texto: descricao } : null,
   };
 }

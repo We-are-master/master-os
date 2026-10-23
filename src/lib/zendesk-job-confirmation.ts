@@ -11,7 +11,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   dataLonga,
   emailFixfy,
-  horaCurta,
+  hora24,
+  horaDeTextoPara24,
   janelaDeTexto,
   janelaTexto,
   saudacao,
@@ -131,7 +132,7 @@ export function formatJobConfirmationLongDate(ymd: string): string {
   return dataLonga(String(ymd ?? "").slice(0, 10)) ?? ymd;
 }
 
-/** `between 9am and midday`, `from 9am` só com o início, senão `To be confirmed`. */
+/** `09:00-12:00`, `from 09:00` só com o início, senão `To be confirmed`. */
 export function formatJobConfirmationArrivalWindow(args: {
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
@@ -139,7 +140,7 @@ export function formatJobConfirmationArrivalWindow(args: {
   if (args.scheduled_start_at && args.scheduled_end_at) {
     return janelaTexto(args.scheduled_start_at, args.scheduled_end_at) ?? "To be confirmed";
   }
-  const so = horaCurta(args.scheduled_start_at);
+  const so = hora24(args.scheduled_start_at);
   return so ? `from ${so}` : "To be confirmed";
 }
 
@@ -173,22 +174,17 @@ function semTravessao(t: string): string {
 
 /**
  * Janela em texto livre (`9AM – 12PM`, `09:00-12:00`, `9 AM`, `between 9am and
- * midday`) no formato da copy: `between 9am and midday` ou `from 9am`. Null sem
+ * midday`) no formato único dos e-mails: `09:00-12:00` ou `from 09:00`. Null sem
  * janela ou "To be confirmed".
  */
 export function janelaDoAviso(texto: string | null | undefined): string | null {
   const t = String(texto ?? "").trim();
   if (!t || /^to be confirmed$/i.test(t)) return null;
-  if (/^(between|from)\s/i.test(t)) return semTravessao(t);
-  const so = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  // Hora sozinha ("9 AM", "from 9am"): "from 09:00" (formato único, dono 23/10/2026).
+  const so = t.replace(/^from\s+/i, "").match(/^(\d{1,2}|midday|noon|midnight)(?::(\d{2}))?\s*(am|pm)?$/i);
   if (so) {
-    let h = Number(so[1]);
-    const ap = so[3]?.toLowerCase();
-    if (ap === "pm" && h < 12) h += 12;
-    if (ap === "am" && h === 12) h = 0;
-    const d = new Date(Date.UTC(2026, 0, 15, h, Number(so[2] ?? 0))); // janeiro: Londres = UTC
-    const hc = horaCurta(d);
-    return hc ? `from ${hc}` : t;
+    const h = horaDeTextoPara24(so[1]!, so[2], so[3]);
+    return h ? `from ${h}` : t;
   }
   const j = janelaDeTexto(t);
   return j ? semTravessao(j) : null;

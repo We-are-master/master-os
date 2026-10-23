@@ -4,15 +4,29 @@ import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** Shown on all hourly partner job confirmation emails unless overridden per catalog row. */
 export const DEFAULT_PARTNER_JOB_EMAIL_NOTES_HOURLY =
-  "⏱ Maximum 3 hours included. If work extends beyond, contact us immediately on +44 20 4538 4668 to avoid disputes.";
+  "Paid by the hour for time on site. Need more time than planned? Call us on +44 20 4538 4668 before you carry on.";
 
 /** Shown on all fixed partner job confirmation emails unless overridden per catalog row. */
 export const DEFAULT_PARTNER_JOB_EMAIL_NOTES_FIXED =
-  "✓ Fixed price confirmed above includes VAT. This is your maximum cost — no additional charges.";
+  "Fixed price: no extra charges without our approval.";
 
 /** Appended to every partner job offer / booked email. */
 export const PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE =
   "⏱ IMPORTANT: Submit your job report within 24 hours of completion. Delayed submissions trigger additional verification checks, which may delay your payment.";
+
+/**
+ * Só o que o catálogo escreveu para este serviço: os textos padrão (por hora,
+ * fixo) saem, porque o e-mail ao parceiro já mostra o valor e o tipo (dono,
+ * 23/10/2026: "só as infos"). Vazio quando não sobra nada.
+ */
+export function partnerJobEmailNotesWithoutDefaults(notes: string | null | undefined): string {
+  const padrao = new Set([DEFAULT_PARTNER_JOB_EMAIL_NOTES_HOURLY, DEFAULT_PARTNER_JOB_EMAIL_NOTES_FIXED].map((t) => t.trim()));
+  return String(notes ?? "")
+    .split(/\n{2,}/)
+    .map((t) => t.trim())
+    .filter((t) => t && !padrao.has(t))
+    .join("\n\n");
+}
 
 export type PartnerJobEmailNotesCatalog = Pick<
   CatalogService,

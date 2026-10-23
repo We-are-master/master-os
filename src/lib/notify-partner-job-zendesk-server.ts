@@ -23,6 +23,7 @@ import { partnerEmailGreetingName } from "@/lib/emails/partner-greeting-name";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
 import { syncJobZendeskFormFields } from "@/lib/zendesk-ticket-form-sync";
 import { appBaseUrl } from "@/lib/app-base-url";
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import { loadPartnerJobEmailNotes } from "@/lib/partner-job-email-notes";
 import { resolvePartnerComplaintReportedText } from "@/lib/job-on-hold-complaint-display";
 import { fotosParaEmailDoJob } from "@/lib/emails/fotos-anexadas";
@@ -268,6 +269,7 @@ export async function notifyPartnerJobZendesk(
       partnerNotes,
       reportUrl,
       photoUrls: fotosUrls,
+      jobUrl: resolvePartnerTradePortalBaseUrl(),
     });
   } else if (kind === "rescheduled") {
     email = buildJobRescheduledEmail({
@@ -279,6 +281,7 @@ export async function notifyPartnerJobZendesk(
       oldTimeLine: input.oldTimeLine ?? null,
       newDateLine: input.newDateLine ?? "New schedule",
       newTimeLine: input.newTimeLine ?? null,
+      jobUrl: resolvePartnerTradePortalBaseUrl(),
     });
   } else if (kind === "on_hold") {
     // Partner-scoped link to the public "resolve this job" form (notes + photos),
@@ -342,6 +345,8 @@ export async function notifyPartnerJobZendesk(
       jobReference: job.reference,
       jobTitle: job.title || "Maintenance job",
       clientName: job.client_name || "—",
+      // O job já é dele: telefone e fotos, como no "assigned" (23/10/2026).
+      clientPhone,
       propertyAddress: job.property_address || "—",
       ...jobScheduleFields,
       scope: job.scope || "(no scope provided)",
@@ -349,6 +354,9 @@ export async function notifyPartnerJobZendesk(
       priceDisplay,
       partnerNotes,
       reportUrl,
+      photoUrls: fotosUrls,
+      jobUrl: resolvePartnerTradePortalBaseUrl(),
+      aposAceite: true,
     });
   } else {
     email = buildPartnerJobStatusUpdateEmail({

@@ -3,32 +3,38 @@
  * mudança de status (cancelado, concluído…), remarcação e on hold.
  *
  * Saem como conversa lateral no ticket do Zendesk do job (Resend quando o job
- * não tem ticket), então usam a moldura única (`emailFixfy`) na variante
- * `zendesk: true`, sem tabela interna. O texto é o de sempre; o que mudou em
- * 20/10/2026 foi o desenho ("Painel de status": chip de estado, régua da vida
- * do job, faixa de métricas, detalhes em duas colunas, um botão navy).
+ * não tem ticket), na moldura única variante `zendesk: true`.
+ *
+ * Padrão do parceiro (dono, 23/10/2026: "bater o olho e já ver se é quote, job
+ * pra aceitar ou job booked, as infos, e button pra resolver"): chip do tipo,
+ * título curto, 1 ou 2 números no bloco navy com a régua no passo certo,
+ * detalhes só do que o tipo pede, fotos, um botão. Sem saudação nem parágrafos.
  */
 
-import { emailFixfy, dataLonga, type Estado, type Metrica } from "@/lib/emails/fixfy-shell";
+import { dataLonga, type Metrica } from "@/lib/emails/fixfy-shell";
+import { buildPartnerComplaintEmailAntigo } from "@/lib/emails/partner-complaint-email-antigo";
 import {
-  MARCA_FOTOS,
+  CHIP_PARCEIRO,
   PASSO_ACEITO,
   PASSO_NO_DIA,
   PASSO_OFERTA,
-  PASSO_PAGO,
+  PASSO_RELATORIO,
   agendaDaLinha,
-  blocoDeFotosHtml,
-  comFotos,
-  metricasDaAgenda,
-  notaLimpa,
-  paragrafosDoEscopo,
-  passosDoJob,
+  ajudaDoParceiro,
   saudacaoDoParceiro,
+  semFotosDoParceiro,
+  agendaDoJob,
+  areaDoEndereco,
+  blocoDeFotosHtml,
+  emailParceiro,
+  notaLimpa,
+  pagaDoParceiro,
+  passosDoJob,
   semTravessao,
+  trabalhoCurto,
 } from "@/lib/emails/partner-shell";
-import { splitMoneyIncVatParts } from "@/lib/money-display-label";
 import { extractUkPostcode } from "@/lib/uk-postcode";
-import { PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE } from "@/lib/partner-job-email-notes";
+import { partnerJobEmailNotesWithoutDefaults } from "@/lib/partner-job-email-notes";
 import { formatJobScheduleLine } from "@/lib/schedule-calendar";
 
 export type PartnerJobEmailScheduleFields = {
@@ -92,8 +98,17 @@ export interface PartnerJobConfirmationData extends PartnerJobEmailScheduleField
   supportEmail?: string;
   /** Support phone (o rodapé da moldura já leva o contato da Fixfy). */
   supportPhone?: string;
-  /** Hourly/fixed + type-of-work rules shown in the notice block. */
+  /** Hourly/fixed + type-of-work rules; só o texto próprio do catálogo aparece (uma linha). */
   partnerNotes?: string | null;
+  /** Visita extra: o número dela (2, 3…). Muda chip, título e assunto. */
+  visitNumber?: number | null;
+  /** Onde o parceiro vê o job (portal). Sem ele, "View job" abre o link do relatório. */
+  jobUrl?: string | null;
+  /**
+   * Job confirmado depois do aceite ou do lance aprovado: abre com "Here's
+   * everything you need to get started." (dono, 23/10/2026).
+   */
+  aposAceite?: boolean;
 }
 
 /** JOB-9265 → 9265 */
@@ -101,43 +116,51 @@ export function partnerJobEmailShortRef(jobReference: string): string {
   return jobReference.replace(/^JOB-/i, "").trim() || jobReference.trim();
 }
 
-/** `2026-10-21` vira `Wed 21 Oct 26`; sem data, "TBC". */
-function formatPartnerJobEmailSubjectDate(scheduledDate?: string | null): string {
+/** `2026-10-21` vira `Wed 21 Oct 26`; sem data, null. */
+function dataDoJob(scheduledDate?: string | null): string | null {
   const raw = scheduledDate?.trim();
-  if (!raw) return "TBC";
+  if (!raw) return null;
   const ymd = raw.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
   return dataLonga(ymd ?? raw) ?? raw;
 }
 
-function partnerJobEmailSubject(args: {
-  kind: "offer" | "booked";
-  jobTitle: string;
-  scheduledDate?: string | null;
-  propertyAddress: string;
-}): string {
-  const typeOfWork = args.jobTitle.trim() || "Job";
-  const postcode = extractUkPostcode(args.propertyAddress);
-  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
-  const partes = [args.kind === "offer" ? "Job offer" : "Job confirmed", typeOfWork, date, postcode].filter(Boolean);
-  return semTravessao(partes.join(" · "));
+/** Assunto: tipo primeiro, a referência inteira sempre. Partes vazias somem. */
+function assunto(...partes: Array<string | null | undefined>): string {
+  return semTravessao(partes.map((p) => String(p ?? "").trim()).filter(Boolean).join(" · "));
 }
 
-/** e.g. Job cancelled · General Maintenance · Mon 1 Jun 26 */
+/** e.g. Job cancelled · General Maintenance · Mon 1 Jun 26 · JOB-9265 (assunto antigo + referência) */
 export function partnerJobCancelledEmailSubject(args: {
+  jobReference?: string | null;
   jobTitle: string;
   scheduledDate?: string | null;
 }): string {
-  const typeOfWork = args.jobTitle.trim() || "Job";
-  const date = formatPartnerJobEmailSubjectDate(args.scheduledDate);
-  return semTravessao(`Job cancelled · ${typeOfWork} · ${date}`);
+  return assunto("Job cancelled", args.jobTitle.trim() || "Job", dataDoJob(args.scheduledDate), args.jobReference);
 }
 
-/** O que o parceiro ganha: valor grande, "inc VAT · Fixed" embaixo. */
-function metricaDeGanho(priceDisplay: string, pill?: string | null): Metrica {
-  const { core, hasIncVat } = splitMoneyIncVatParts(priceDisplay);
-  const sub = [hasIncVat ? "inc VAT" : null, pill ?? null].filter(Boolean).join(" · ");
-  return { rotulo: "Your earnings", valor: core, sub: sub || null };
+/** Uma linha só com o que o catálogo pede para este serviço (os padrões saem). */
+function notaDoCatalogo(partnerNotes: string | null | undefined): string[] {
+  const t = notaLimpa(partnerJobEmailNotesWithoutDefaults(partnerNotes));
+  return t ? [`Note: ${t}`] : [];
 }
+
+/** Métrica do valor do parceiro: "£35.00/h" ou "£70.00" com "Fixed price" embaixo. */
+function metricaDaPaga(priceDisplay: string): Metrica {
+  const p = pagaDoParceiro(priceDisplay);
+  return { rotulo: "Your earnings", valor: p?.valor ?? "TBC", sub: p?.tipo ?? null };
+}
+
+/** O escopo inteiro, uma linha por item (o quadro preserva a quebra). */
+function escopoInteiro(escopo: string | null | undefined): string | null {
+  const t = String(escopo ?? "")
+    .split(/\n+/)
+    .map((l) => semTravessao(l.trim()))
+    .filter((l) => l && !/^\(no scope provided\)$/i.test(l))
+    .join("\n");
+  return t || null;
+}
+
+const enderecoOuNada = (e: string | null | undefined) => (e?.trim() && e.trim() !== "—" ? e.trim() : null);
 
 /**
  * As fotos do trabalho dentro do email de job confirmado.
@@ -147,11 +170,18 @@ function metricaDeGanho(priceDisplay: string, pill?: string | null): Metrica {
  * para inspecionar: quem quer inspecionar abre o anexo, que vem em tamanho
  * cheio no mesmo email.
  */
-function fotosDoJob(photoUrls: readonly string[]): { html: string; text: string } {
-  if (!photoUrls.length) return { html: "", text: "" };
-  const sobra = photoUrls.length > 4 ? ` (+${photoUrls.length - 4} more attached)` : "";
-  const legenda = `Site photos: attached to this email in full size${sobra}.`;
+function fotosDoJob(photoUrls: readonly string[]): { html: string; text: string } | null {
+  if (!photoUrls.length) return null;
+  const legenda = `Site photos: attached to this email in full size${photoUrls.length > 4 ? ` (+${photoUrls.length - 4} more attached)` : ""}.`;
   return { html: blocoDeFotosHtml(photoUrls, { legenda, max: 4 }), text: legenda };
+}
+
+/** Referência sem o sufixo antigo " · Visit N" e o número da visita, se houver. */
+function referenciaEVisita(jobReference: string, visitNumber?: number | null): { ref: string; visita: number | null } {
+  const m = jobReference.match(/^(.*?)\s*·\s*Visit\s+(\d+)\s*$/i);
+  const ref = (m ? m[1]! : jobReference).trim();
+  const n = visitNumber ?? (m ? Number(m[2]) : null);
+  return { ref, visita: n && n > 1 ? n : null };
 }
 
 export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationData): {
@@ -159,41 +189,41 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
   html: string;
   text: string;
 } {
-  const subject = partnerJobEmailSubject({
-    kind: "booked",
-    jobTitle: data.jobTitle,
-    scheduledDate: data.scheduledDate,
-    propertyAddress: data.propertyAddress,
-  });
-  const pill = data.jobType === "hourly" ? "Hourly" : "Fixed";
-  const partnerNotes = notaLimpa(data.partnerNotes);
+  const { ref, visita } = referenciaEVisita(data.jobReference, data.visitNumber);
+  const ag = agendaDoJob(data);
+  const paga = pagaDoParceiro(data.priceDisplay);
+  const tipo = data.jobTitle.trim() || "Job";
+  const subject = assunto(visita ? `Visit ${visita} booked` : "Job booked", tipo, ag.data ?? "Date TBC", extractUkPostcode(data.propertyAddress), ref);
   const fotos = fotosDoJob((data.photoUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0));
+  const verJob = data.jobUrl?.trim() || data.reportUrl;
+  const cliente = data.clientName?.trim() && data.clientName.trim() !== "—" ? data.clientName.trim() : null;
 
-  const r = emailFixfy({
-    zendesk: true,
-    preheader: "Job booked. Here's everything you need to get started.",
-    estado: { texto: "Confirmed", cor: "green" },
+  const { html, text } = emailParceiro({
+    preheader: semTravessao(`${tipo} on ${ag.data ?? "a date to be confirmed"}${ag.chegada ? `, ${ag.chegada}` : ""}. ${ref}.`),
+    estado: visita ? { ...CHIP_PARCEIRO.booked, texto: `Visit ${visita} booked` } : CHIP_PARCEIRO.booked,
+    // Copy da versão antiga (dono, 23/10/2026).
     titulo: "New job booked for you",
-    passos: passosDoJob(PASSO_ACEITO),
-    metricas: [metricaDeGanho(data.priceDisplay, pill), ...metricasDaAgenda(data)],
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      "Here's everything you need to get started.",
-      ...paragrafosDoEscopo(data.scope),
-      ...(fotos.html ? [MARCA_FOTOS] : []),
+    paragrafos: ["Here's everything you need to get started."],
+    passos: passosDoJob(PASSO_ACEITO),
+    metricas: [
+      { rotulo: "Date", valor: ag.data ?? "TBC", sub: ag.fim ? `Expected finish ${ag.fim}` : null },
+      { rotulo: "Arrival", valor: ag.chegada ?? (ag.data ? "TBC" : "") },
+      { rotulo: "Your earnings", valor: paga?.valor ?? "TBC", sub: paga?.tipo ?? null },
     ],
     linhas: [
-      ["Job", `#${data.jobReference}`],
-      ["Type of work", data.jobTitle],
-      ["Client", data.clientName],
+      ["Job", `#${ref}${visita ? ` · Visit ${visita}` : ""}`],
+      ["Type of work", tipo],
+      ["Client", cliente],
       ["Phone", data.clientPhone?.trim() || null],
-      ["Address", data.propertyAddress],
+      ["Address", enderecoOuNada(data.propertyAddress)],
+      ["Scope of work", escopoInteiro(data.scope)],
     ],
-    nota: partnerNotes ? `Important, before you start: ${partnerNotes}` : null,
-    cta: data.reportUrl ? { label: "Submit job report", url: data.reportUrl } : null,
-    letraPequena: [notaLimpa(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE), "You're receiving this email because you're registered as a partner with Fixfy."],
+    antesDoBotao: fotos ?? semFotosDoParceiro(),
+    cta: data.reportUrl ? { label: "Submit job report", url: data.reportUrl } : verJob ? { label: "Open job in app", url: verJob } : null,
+    linksSecundarios: data.jobUrl?.trim() && data.reportUrl ? [{ label: "Open job in app", url: data.jobUrl }] : [],
+    letraPequena: notaDoCatalogo(data.partnerNotes),
   });
-  const { html, text } = fotos.html ? comFotos(r, fotos.html, fotos.text) : r;
   return { subject, html, text };
 }
 
@@ -229,42 +259,17 @@ export interface PartnerJobStatusUpdateData {
   supportPhone?: string;
 }
 
-const KIND_HEADLINE: Record<PartnerJobStatusKind, string> = {
+
+/** Título curto de cada tipo genérico (o resto tem builder próprio). */
+const KIND_TITULO: Record<PartnerJobStatusKind, string> = {
   status_changed:       "Job status updated",
   cancelled:            "Job cancelled",
-  on_hold:              "Job placed on hold",
+  on_hold:              "Job on hold",
   resumed:              "Job resumed",
-  completed:            "Job marked complete",
-  rescheduled:          "Job rescheduled",
-  // confirmation_request / booked are handled by their own dedicated builders
-  // and never hit this generic status-update layout, but they still need to
-  // satisfy the Record type (unused values).
-  confirmation_request: "Action required",
-  booked:               "Job booked",
-};
-
-const KIND_INTRO: Record<PartnerJobStatusKind, string> = {
-  status_changed:       "The status of one of your jobs has changed.",
-  cancelled:            "Unfortunately, this job has been cancelled by the office.",
-  on_hold:              "This job has been placed on hold.",
-  resumed:              "This job has been resumed and is active again.",
-  completed:            "This job has been marked as complete.",
-  rescheduled:          "This job has been moved to a new date.",
-  confirmation_request:
-    "Be quicker than others and secure this job before it gets taken.",
-  booked:               "Your job is booked.",
-};
-
-/** Cor do chip: cancelado apagado, concluído/retomado verde, espera laranja. */
-const KIND_COR: Record<PartnerJobStatusKind, Estado["cor"]> = {
-  status_changed:       "navy",
-  cancelled:            "muted",
-  on_hold:              "orange",
-  resumed:              "green",
-  completed:            "green",
-  rescheduled:          "orange",
-  confirmation_request: "navy",
-  booked:               "green",
+  completed:            "Job complete",
+  rescheduled:          "New date for this job",
+  confirmation_request: "New job for you",
+  booked:               "You're booked",
 };
 
 export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateData): {
@@ -272,50 +277,72 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
   html: string;
   text: string;
 } {
-  const headline = KIND_HEADLINE[data.kind];
-  const intro = KIND_INTRO[data.kind];
-  const cancelado = data.kind === "cancelled";
-  const subject = cancelado
-    ? partnerJobCancelledEmailSubject({ jobTitle: data.jobTitle, scheduledDate: data.scheduledDate })
-    : semTravessao(`${headline} · ${data.jobReference}`);
+  const tipo = data.jobTitle.trim() || "Job";
+  const dia = dataDoJob(data.scheduledDate);
 
   // Cancelled nunca leva motivo (dono, 24/08): o mesmo email cobre cancelamento
-  // de verdade, unassign e swap. Do lado do parceiro é tudo "o job saiu", e o
-  // motivo interno não é assunto dele.
-  const reason = !cancelado && data.reason?.trim() ? semTravessao(data.reason.trim()) : null;
-  const data_ = data.scheduledDate?.trim() ? formatPartnerJobEmailSubjectDate(data.scheduledDate) : null;
+  // de verdade, unassign e swap. Do lado do parceiro é tudo "o job saiu". E sem
+  // nome, telefone nem escopo do cliente: o job não é mais dele.
+  if (data.kind === "cancelled") {
+    const { html, text } = emailParceiro({
+      preheader: semTravessao(`Job cancelled · ${data.jobReference}`),
+      estado: CHIP_PARCEIRO.cancelado,
+      titulo: "This job has been cancelled",
+      saudacao: saudacaoDoParceiro(data.partnerFirstName),
+      paragrafos: ["The following job has been cancelled and will no longer be going ahead."],
+      metricas: dia ? [{ rotulo: "Date", valor: dia, riscado: true }] : null,
+      linhas: [
+        ["Job", `#${data.jobReference}`],
+        ["Type of work", tipo],
+        ["Area", areaDoEndereco(data.propertyAddress)],
+      ],
+      avisos: [ajudaDoParceiro("Reply to this email. We'll respond as soon as we can.")],
+    });
+    return { subject: partnerJobCancelledEmailSubject({ jobReference: data.jobReference, jobTitle: tipo, scheduledDate: data.scheduledDate }), html, text };
+  }
 
-  const { html, text } = emailFixfy({
-    zendesk: true,
-    preheader: semTravessao(`${headline} · ${data.jobReference}`),
-    estado: { texto: data.newStatusLabel, cor: KIND_COR[data.kind] },
-    titulo: cancelado ? "This job has been cancelled." : headline,
-    passos: data.kind === "completed" ? passosDoJob(PASSO_PAGO) : null,
-    metricas: data_ ? [{ rotulo: "Date", valor: data_ }] : null,
+  if (data.kind === "completed") {
+    const { html, text } = emailParceiro({
+      preheader: semTravessao(`Job marked complete · ${data.jobReference}`),
+      estado: { texto: "Completed", cor: "green", chip: true },
+      titulo: "Job marked complete",
+      saudacao: saudacaoDoParceiro(data.partnerFirstName),
+      paragrafos: ["This job has been marked as complete."],
+      passos: passosDoJob(PASSO_RELATORIO),
+      metricas: dia ? [{ rotulo: "Date", valor: dia }] : null,
+      linhas: [
+        ["Job", `#${data.jobReference}`],
+        ["Type of work", tipo],
+        ["Address", enderecoOuNada(data.propertyAddress)],
+      ],
+      avisos: [ajudaDoParceiro("Reply to this email. We'll respond as soon as we can.")],
+      cta: { label: "Open job in app", url: data.reportUrl },
+    });
+    return { subject: assunto("Job marked complete", data.jobReference), html, text };
+  }
+
+  const reason = data.reason?.trim() ? semTravessao(data.reason.trim()) : null;
+  const titulo = KIND_TITULO[data.kind];
+  const { html, text } = emailParceiro({
+    preheader: semTravessao(`${titulo} · ${data.jobReference}`),
+    estado: { texto: data.newStatusLabel, cor: data.kind === "resumed" ? "green" : "navy", chip: true },
+    titulo,
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      cancelado ? "The following job has been cancelled and will no longer be going ahead." : intro,
-      ...(reason ? [`Reason: ${reason}`] : []),
-      ...paragrafosDoEscopo(data.scope),
-    ],
+    metricas: dia ? [{ rotulo: "Date", valor: dia }] : null,
     linhas: [
       ["Job", `#${data.jobReference}`],
-      ["Type of work", data.jobTitle],
-      ["Client", data.clientName],
-      ["Phone", data.clientPhone?.trim() || null],
-      ["Address", data.propertyAddress],
-      ["Status", data.newStatusLabel],
+      ["Type of work", tipo],
+      ["Reason", reason],
+      ["Address", enderecoOuNada(data.propertyAddress)],
     ],
-    nota: "Questions? Reply to this email, we'll respond as soon as we can.",
-    // Cancelado não tem botão: não há nada para o parceiro fazer.
-    cta: cancelado ? null : { label: "Open job in app", url: data.reportUrl },
+    cta: { label: "Open job in app", url: data.reportUrl },
   });
-  return { subject, html, text };
+  return { subject: assunto(titulo, data.jobReference), html, text };
 }
 
 /**
  * Booking rescheduled email — sent when a job's scheduled date/window changes.
- * A agenda nova em destaque, a antiga riscada embaixo.
+ * A data nova em destaque, a antiga riscada ao lado.
  */
 export interface PartnerJobRescheduledData {
   /** First name of the recipient (partner first name, or customer first name when sending the customer variant). */
@@ -328,6 +355,8 @@ export interface PartnerJobRescheduledData {
   oldTimeLine?: string | null;
   newDateLine: string;
   newTimeLine?: string | null;
+  /** Onde o parceiro vê o job (portal). Sem ele, sem botão. */
+  jobUrl?: string | null;
   supportEmail?: string;
   supportPhone?: string;
 }
@@ -337,33 +366,30 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
   html: string;
   text: string;
 } {
-  const subject = semTravessao(`Booking rescheduled · ${data.jobReference}`);
   const nova = agendaDaLinha(data.newDateLine, data.newTimeLine);
   const antiga = agendaDaLinha(data.oldDateLine, data.oldTimeLine);
   const novaTexto = [nova.data, nova.chegada].filter(Boolean).join(", ");
-  const antigaTexto = [antiga.data, antiga.chegada].filter(Boolean).join(", ");
+  // Assunto e copy da versão antiga (dono, 23/10/2026).
+  const subject = assunto("Booking rescheduled", data.jobReference);
 
-  const { html, text } = emailFixfy({
-    zendesk: true,
-    preheader: `Your booking ${data.jobReference} has been rescheduled to ${novaTexto || "a new date"}.`,
-    estado: { texto: "Rescheduled", cor: "orange" },
+  const { html, text } = emailParceiro({
+    preheader: semTravessao(`Your booking ${data.jobReference} has been rescheduled to ${novaTexto || "a new date"}.`),
+    estado: CHIP_PARCEIRO.remarcado,
     titulo: "Your booking has been rescheduled",
+    saudacao: saudacaoDoParceiro(data.recipientFirstName),
+    paragrafos: ["Quick heads up: this job has moved. Please update your calendar."],
     passos: passosDoJob(PASSO_NO_DIA),
     metricas: [
-      { rotulo: "New date", valor: nova.data || "TBC" },
-      { rotulo: "Arrival", valor: nova.chegada ?? "" },
-    ],
-    destaque: { linha1: nova.data || "TBC", riscado: antigaTexto || null },
-    saudacao: saudacaoDoParceiro(data.recipientFirstName),
-    paragrafos: [
-      "Quick heads up: this job has moved. The new schedule is above and the old one is crossed out. Please update your calendar.",
+      { rotulo: "New schedule", valor: nova.data || "TBC", sub: nova.chegada ?? null },
+      { rotulo: "Was", valor: antiga.data || "", sub: antiga.data && antiga.chegada ? antiga.chegada : null, riscado: true },
     ],
     linhas: [
       ["Booking", `#${data.jobReference}`],
-      ["Type of work", data.jobTitle],
-      ["Address", data.propertyAddress],
+      ["Type of work", data.jobTitle?.trim() || null],
+      ["Address", enderecoOuNada(data.propertyAddress)],
     ],
-    nota: "The new date doesn't work? Just reply to this email and we'll sort it.",
+    avisos: [ajudaDoParceiro("The new date doesn't work? Just reply to this email and we'll sort it.", "")],
+    cta: data.jobUrl?.trim() ? { label: "Open job in app", url: data.jobUrl } : null,
   });
   return { subject, html, text };
 }
@@ -372,16 +398,17 @@ export function partnerJobOnHoldIsComplaint(presetId: string | null | undefined)
   return (presetId ?? "").trim() === "complaint";
 }
 
-/** Complaint: `Action required · Complaint for 9267`. Other reasons: `Job on hold · 9267`. */
+/** Complaint: `Action required · Complaint for JOB-9267`. Other reasons: `Job on hold · JOB-9267`. */
 export function partnerJobOnHoldEmailSubject(args: {
   jobReference: string;
   presetId: string | null | undefined;
+  jobTitle?: string | null;
+  propertyAddress?: string | null;
 }): string {
-  const shortRef = partnerJobEmailShortRef(args.jobReference);
-  if (partnerJobOnHoldIsComplaint(args.presetId)) {
-    return `Action required · Complaint for ${shortRef}`;
-  }
-  return `Job on hold · ${shortRef}`;
+  // Assuntos antigos (já distintos), com a referência inteira.
+  return partnerJobOnHoldIsComplaint(args.presetId)
+    ? assunto("Action required", `Complaint for ${args.jobReference}`)
+    : assunto("Job on hold", args.jobReference);
 }
 
 /**
@@ -408,65 +435,37 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
   text:    string;
 } {
   const isComplaint = partnerJobOnHoldIsComplaint(data.presetId);
-  const subject = partnerJobOnHoldEmailSubject({ jobReference: data.jobReference, presetId: data.presetId });
-  const rawReason = (data.complaintReason ?? "").trim();
-  const showReason = isComplaint && rawReason.length > 0 && !/^customer complaint/i.test(rawReason);
-  const local = data.propertyAddress?.trim() || null;
+  const subject = partnerJobOnHoldEmailSubject({ jobReference: data.jobReference, presetId: data.presetId, jobTitle: data.jobTitle, propertyAddress: data.propertyAddress });
+  const local = data.propertyAddress?.trim() && data.propertyAddress.trim() !== "—" ? data.propertyAddress.trim() : null;
 
   if (isComplaint) {
-    const { html, text } = emailFixfy({
-      zendesk: true,
-      preheader: `Job ${data.jobReference}: complaint raised. Please reply within 12 hours.`,
-      estado: { texto: "Action required · reply within 12 hours", cor: "orange" },
-      titulo: "A complaint was raised on this job",
-      metricas: [
-        { rotulo: "Reply within", valor: "12 hours" },
-        { rotulo: "Payment", valor: "On hold", sub: "until resolved" },
-      ],
-      saudacao: saudacaoDoParceiro(data.partnerFirstName),
-      paragrafos: [
-        "We need your help to resolve it.",
-        "A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within 12 hours.",
-        "Payment on hold until resolved. Your payment for this job is paused until we receive the evidence and close the case.",
-        "What we need from you. Tap the button below and reply in the complaint journal with:",
-        "· A short written summary of what was done and how you can resolve the issue",
-        "· Photos of the work area / completed work",
-        "· Anything relevant: receipts for materials, certificates (CP12, electrical), etc.",
-      ],
-      linhas: [
-        ["Job", `#${data.jobReference}`],
-        ["Type of work", data.jobTitle],
-        ["Status", "On hold"],
-        ["Location", local],
-      ],
-      nota: showReason ? `What the customer reported: ${semTravessao(rawReason)}` : null,
-      cta: { label: "Reply in the journal", url: data.resolveUrl },
-      letraPequena: [
-        "Opens your partner portal already signed in, on this job. Write what happened and add photos.",
-        "Please respond within 12 hours so we can resolve this for the customer in time.",
-        `Button not working? Paste this link into your browser: ${data.resolveUrl}`,
-        "You're receiving this email because you're registered as a partner with Fixfy.",
-      ],
+    // Exatamente o e-mail antigo (dono, 23/10/2026): ver partner-complaint-email-antigo.ts.
+    const { html, text } = buildPartnerComplaintEmailAntigo({
+      partnerFirstName: data.partnerFirstName,
+      jobReference: data.jobReference,
+      jobTitle: data.jobTitle,
+      propertyAddress: data.propertyAddress,
+      resolveUrl: data.resolveUrl,
+      complaintReason: data.complaintReason,
+      supportEmail: data.supportEmail,
+      supportPhone: data.supportPhone,
     });
     return { subject, html, text };
   }
 
-  const { html, text } = emailFixfy({
-    zendesk: true,
+  const { html, text } = emailParceiro({
     preheader: `Job ${data.jobReference} is on hold, awaiting next stage.`,
-    estado: { texto: "On hold", cor: "orange" },
-    titulo: "This job is on hold, awaiting next stage",
+    estado: CHIP_PARCEIRO.emEspera,
+    titulo: "This job is on hold",
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      "We've placed this job on hold while we coordinate the next step. No action is needed from you right now. We'll be in touch when the job is ready to move forward.",
-    ],
+    paragrafos: ["No action is needed from you right now. We'll be in touch when the job is ready to move forward."],
     linhas: [
       ["Job", `#${data.jobReference}`],
-      ["Type of work", data.jobTitle],
+      ["Type of work", data.jobTitle?.trim() || null],
       ["Status", "Awaiting next stage"],
       ["Location", local],
     ],
-    letraPequena: ["You're receiving this email because you're registered as a partner with Fixfy."],
+    avisos: [ajudaDoParceiro("Call us on +44 20 4538 4668 or reply to this email.", "Need to talk this through?")],
   });
   return { subject, html, text };
 }
@@ -507,37 +506,32 @@ export interface PartnerJobConfirmationRequestData extends PartnerJobEmailSchedu
 export function buildPartnerJobConfirmationRequestEmail(
   data: PartnerJobConfirmationRequestData,
 ): { subject: string; html: string; text: string } {
-  const subject = partnerJobEmailSubject({
-    kind: "offer",
-    jobTitle: data.jobTitle,
-    scheduledDate: data.scheduledDate,
-    propertyAddress: data.propertyAddress,
-  });
-  const postcode = extractUkPostcode(data.propertyAddress);
-  const partnerNotes = notaLimpa(data.partnerNotes);
+  const tipo = data.jobTitle.trim() || "Job";
+  const ag = agendaDoJob(data);
+  // Assunto antigo ("Job offer", já distinto) e copy antiga (dono, 23/10/2026).
+  const subject = assunto("Job offer", tipo, ag.data ?? "Date TBC", extractUkPostcode(data.propertyAddress));
 
-  const { html, text } = emailFixfy({
-    zendesk: true,
+  const { html, text } = emailParceiro({
     preheader: "Be quicker than others and secure this job before it gets taken.",
-    estado: { texto: "Action required", cor: "navy" },
-    titulo: semTravessao(`Job offer · ${data.jobTitle.trim() || "Job"}`),
-    passos: passosDoJob(PASSO_OFERTA),
-    metricas: [metricaDeGanho(data.priceDisplay), ...metricasDaAgenda(data)],
+    estado: { texto: "Action required", cor: "orange", chip: true },
+    titulo: "New job for you",
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      "Be quicker than others and secure this job before it gets taken.",
-      "We've allocated the live job below for you. Tap Accept Job Now so we can immediately confirm the booking with the customer.",
-      "The faster you accept, the higher your chances of securing the work.",
-      ...paragrafosDoEscopo(data.scope),
+    paragrafos: ["Be quicker than others and secure this job before it gets taken.", "Tap Accept Job Now so we can confirm the booking with the customer."],
+    passos: passosDoJob(PASSO_OFERTA),
+    metricas: [
+      { rotulo: "Date", valor: ag.data ?? "TBC", sub: ag.chegada ?? null },
+      metricaDaPaga(data.priceDisplay),
     ],
     linhas: [
       ["Job", `#${data.jobReference}`],
-      ["Area", postcode ?? "TBC"],
+      ["Type of work", tipo],
+      ["Area", areaDoEndereco(data.propertyAddress) ?? "TBC"],
+      ["Scope of work", escopoInteiro(data.scope)],
     ],
-    nota: partnerNotes ? `Important, before you start: ${partnerNotes}` : null,
     cta: { label: "Accept Job Now", url: data.acceptUrl },
     linksSecundarios: data.portalUrl ? [{ label: "See it in your partner portal", url: data.portalUrl }] : [],
-    letraPequena: [notaLimpa(PARTNER_JOB_EMAIL_NOTES_REPORT_DEADLINE), "Can't take it? Reply to this email and we'll reallocate."],
+    letraPequena: [...notaDoCatalogo(data.partnerNotes), "Can't take it? Reply to this email and we'll reallocate."],
   });
   return { subject, html, text };
 }
+

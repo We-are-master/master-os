@@ -21,8 +21,8 @@
  *    procure". Cada card leva ao report daquele job, com o mesmo token por
  *    (job, parceiro) que o escritório copia na lista de Final checks.
  */
-import { emailFixfy, dataLonga } from "./fixfy-shell";
-import { PASSO_RELATORIO, passosDoJob, saudacaoDoParceiro, semTravessao } from "./partner-shell";
+import { dataLonga } from "./fixfy-shell";
+import { PASSO_RELATORIO, emailParceiro, pagaDoParceiro, passosDoJob, saudacaoDoParceiro, semTravessao } from "./partner-shell";
 
 export type MissingReportJob = {
   /** "JOB-9536" — o parceiro reconhece o job por ela quando responde. */
@@ -52,10 +52,18 @@ export type PartnerMissingReportsEmailData = {
   supportPhone?: string;
 };
 
-function tarjaDeEspera(dias: number): { texto: string } {
-  if (dias <= 0) return { texto: "Done today" };
-  if (dias === 1) return { texto: "1 day waiting" };
-  return { texto: `${dias} days waiting` };
+function tarjaDeEspera(dias: number): string {
+  if (dias <= 0) return "Done today";
+  if (dias === 1) return "1 day waiting";
+  return `${dias} days waiting`;
+}
+
+/** Assunto antigo (já distinto): `Submit your job report · JOB-9536`; vários: `3 job reports awaiting submission`. */
+export function partnerMissingReportsSubject(jobs: readonly MissingReportJob[]): string {
+  const ordem = [...jobs].sort((a, b) => b.daysWaiting - a.daysWaiting);
+  const n = ordem.length;
+  if (n === 1) return semTravessao(`Submit your job report · ${ordem[0]!.reference}`);
+  return `${n} job reports awaiting submission`;
 }
 
 export function buildPartnerMissingReportsEmail(data: PartnerMissingReportsEmailData): {
@@ -66,60 +74,43 @@ export function buildPartnerMissingReportsEmail(data: PartnerMissingReportsEmail
   // Mais velho primeiro: a ordem é a da dívida, não a do dia.
   const jobs = [...data.jobs].sort((a, b) => b.daysWaiting - a.daysWaiting);
   const n = jobs.length;
-  const maisVelho = jobs[0]?.daysWaiting ?? 0;
-
-  // Lead with the required action; payment context belongs in the preview.
-  const subject =
-    n === 1
-      ? `Submit your job report · ${jobs[0]!.reference}`
-      : `${n} job reports awaiting submission`;
-
-  const linhaDoJob = (j: MissingReportJob) => {
-    const tarja = tarjaDeEspera(j.daysWaiting);
-    const dia = dataLonga(j.dateYmd ?? null) ?? j.dateLabel;
-    const partes = [
-      tarja.texto,
-      dia,
-      j.reference,
-      j.title,
-      j.address,
-      j.clientFirstName,
-      j.payDisplay,
-    ].filter((p): p is string => Boolean(p && String(p).trim()));
-    return semTravessao(partes.join(" · "));
-  };
-
-  const abertura =
-    n === 1
-      ? "There's 1 job waiting on its work report."
-      : `There are ${n} jobs waiting on their work reports.`;
-
-  // Um link por job, direto no formulário daquele job. Com um job só, ele é o botão.
+  const subject = partnerMissingReportsSubject(jobs);
   const unico = n === 1 ? jobs[0]! : null;
+  const diaDe = (j: MissingReportJob) => dataLonga(j.dateYmd ?? null) ?? semTravessao(j.dateLabel);
+  const emEspera = data.onHoldDisplay ? `${pagaDoParceiro(data.onHoldDisplay)?.valor ?? data.onHoldDisplay} on hold` : null;
 
-  const { html, text } = emailFixfy({
+  const { html, text } = emailParceiro({
+    zendesk: false,
     preheader: `${n} report${n === 1 ? "" : "s"} waiting${data.onHoldDisplay ? ` · ${data.onHoldDisplay} on hold` : ""}`,
-    estado: { texto: "Action required", cor: "orange" },
-    titulo: n === 1 ? "1 job report waiting" : `${n} job reports waiting`,
+    estado: { texto: "Action required", cor: "orange", chip: true },
+    titulo: unico ? "1 job report waiting" : `${n} job reports waiting`,
+    saudacao: saudacaoDoParceiro(data.partnerFirstName),
+    paragrafos: [unico ? "There's 1 job waiting on its work report." : `There are ${n} jobs waiting on their work reports.`],
     passos: passosDoJob(PASSO_RELATORIO),
     metricas: [
       { rotulo: n === 1 ? "Report" : "Reports", valor: String(n) },
-      { rotulo: "Oldest", valor: maisVelho <= 0 ? "Today" : `${maisVelho}d` },
-      ...(data.onHoldDisplay ? [{ rotulo: "On hold", valor: data.onHoldDisplay }] : []),
+      { rotulo: "Oldest", valor: (jobs[0]?.daysWaiting ?? 0) <= 0 ? "Today" : `${jobs[0]!.daysWaiting}d` },
+      ...(data.onHoldDisplay ? [{ rotulo: "On hold", valor: pagaDoParceiro(data.onHoldDisplay)?.valor ?? data.onHoldDisplay }] : []),
     ],
-    saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      `${abertura} Each one below opens straight on its own form.`,
-      "Oldest first",
-      ...jobs.map(linhaDoJob),
-    ],
-    nota: `Avoid any payment delay. A job with no report can't be invoiced, so it doesn't enter the next payment run. Send ${n === 1 ? "it" : "them"} tonight and ${n === 1 ? "this job clears" : "these jobs clear"} with the rest.`,
-    cta: unico
-      ? { label: "Submit report", url: unico.reportUrl }
-      : { label: "Open my jobs in Fixfy Trade", url: data.portalUrl },
-    linksSecundarios: unico
-      ? [{ label: "Open my jobs in Fixfy Trade", url: data.portalUrl }]
-      : jobs.map((j) => ({ label: `Submit ${j.reference}`, url: j.reportUrl })),
+    // Um job: o quadro de sempre. Vários: uma linha por job, mais velho primeiro.
+    linhas: unico
+      ? [
+          ["Job", `#${unico.reference}`],
+          ["Type of work", unico.title || null],
+          ["Date", diaDe(unico)],
+          ["Address", unico.address || null],
+        ]
+      : jobs.map((j): [string, string] => [
+          semTravessao(`${j.reference} · ${diaDe(j)} · ${tarjaDeEspera(j.daysWaiting)}`),
+          semTravessao([j.title, j.address].filter((p) => p?.trim()).join(" · ")),
+        ]),
+    // O quadro vermelho só quando já está atrasado: sem relatório, o job não entra no pagamento.
+    avisos:
+      (jobs[0]?.daysWaiting ?? 0) > 0
+        ? [{ tom: "red", icone: "⚡", titulo: "Avoid any payment delay", texto: "A job with no report can't be invoiced, so it doesn't enter the next payment run." }]
+        : [],
+    cta: unico ? { label: "Submit report", url: unico.reportUrl } : { label: "Open my jobs in Fixfy Trade", url: data.portalUrl },
+    linksSecundarios: unico ? [{ label: "Open my jobs in Fixfy Trade", url: data.portalUrl }] : jobs.map((j) => ({ label: `Submit ${j.reference}`, url: j.reportUrl })),
     letraPequena: ["Already sent one of these? Reply to this email and we'll chase it on our side."],
   });
   return { subject, html, text };
