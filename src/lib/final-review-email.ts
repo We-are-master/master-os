@@ -25,7 +25,9 @@ import { jobReportPdfPathFromStoredUrl } from "@/services/job-reports";
 import { renderJobReportV2PdfBuffer } from "@/lib/pdf/render-job-report-v2";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, ticketDoWhatsApp, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
-import type { Account, Invoice } from "@/types/database";
+import type { Account, Invoice, Job } from "@/types/database";
+import { faturasDoJobQueContam, linkedInvoiceTargetAmount } from "@/lib/invoice-target-amount";
+import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
 import { acharTicketDoPedido, type AchadoDoPedido } from "@/lib/um-ticket/achar";
 import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
@@ -288,6 +290,16 @@ export async function sendFinalReviewEmail(
       .maybeSingle();
     if (saldo) invoiceRow = saldo as Invoice;
   }
+  /**
+   * A fatura com o valor do job ANTES do e-mail (dono, 23/10/2026). Job por hora nasce com a
+   * fatura em £0 (o preço sai no fim) e ninguém a atualizava: o JOB-9754 pagou £144 e o
+   * cliente recebeu "Total paid: £0.00". Mesma regra do bump do OS (fatura única = job
+   * inteiro), e o status (paga / parcial) recalculado pelos pagamentos do job.
+   */
+  if (includeInvoice && invoiceRow) {
+    invoiceRow = await alinharFaturaAoJob(admin, jobId, invoiceRow);
+  }
+
   // Fatura com saldo sem link gravado: grava o /pay dela, para o botão "Pay" sempre aparecer.
   if (invoiceRow && invoiceRow.status !== "paid" && !invoiceRow.stripe_payment_link_url?.trim() && invoiceRow.reference) {
     const { invoicePayLinkUrl } = await import("@/lib/pay-link-url");
@@ -618,4 +630,32 @@ async function visualDoFinal(
     fotos: lista.length || link ? { lista, link: link ? { label: "See the full report", url: link } : null } : null,
     resumo: descricao ? { titulo: "What we did.", texto: descricao } : null,
   };
+}
+
+/** Grava na fatura o valor do job (quando diferente) e devolve a linha atualizada. Nunca lança. */
+async function alinharFaturaAoJob(admin: SupabaseClient, jobId: string, inv: Invoice): Promise<Invoice> {
+  try {
+    if (inv.status === "cancelled" || inv.invoice_kind === "weekly_batch") return inv;
+    const { data: jobRow } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
+    if (!jobRow) return inv;
+    const job = jobRow as Job;
+    const { data: ligadas } = await admin
+      .from("invoices")
+      .select("status, invoice_kind")
+      .eq("job_reference", String(job.reference ?? ""))
+      .is("deleted_at", null);
+    const alvo = linkedInvoiceTargetAmount(job, inv, { faturaUnicaDoJob: faturasDoJobQueContam((ligadas ?? []) as Invoice[]) <= 1 });
+    if (alvo == null || Math.abs(alvo - Number(inv.amount ?? 0)) <= 0.02) return inv;
+    const { error } = await admin.from("invoices").update({ amount: alvo }).eq("id", inv.id);
+    if (error) {
+      console.warn("[final-review-email] valor da fatura:", error.message);
+      return inv;
+    }
+    await syncInvoicesFromJobCustomerPayments(admin, jobId).catch((e) => console.warn("[final-review-email] pagamentos da fatura:", e));
+    const { data: atual } = await admin.from("invoices").select("*").eq("id", inv.id).maybeSingle();
+    return ((atual ?? { ...inv, amount: alvo }) as Invoice);
+  } catch (e) {
+    console.warn("[final-review-email] alinhar fatura:", e);
+    return inv;
+  }
 }
