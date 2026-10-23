@@ -926,11 +926,25 @@ export async function cotarComParceirosB2B(
       convite = await calcularOuMandarConvites(ticket, pedido, resultado, criada.reference);
     }
   }
+  // A macro também avisa o cliente que estamos cotando (dono, 23/10/2026), com
+  // as mesmas travas do fluxo normal: uma vez por ticket, assinada por quem
+  // responde pela cotação, e só com convite saído.
+  const aviso = quoteRef
+    ? await avisarNoTicket({
+        ticketId,
+        tags: ticket.tags,
+        temEndereco: Boolean(pedido.propertyAddress ?? pedido.postcode),
+        convitesEnviados: convite?.enviados ?? 0,
+        orgReconhecida: org.ok,
+        postar,
+      }).catch((e) => `── Customer reply ──\nNOT sent: ${e instanceof Error ? e.message : String(e)}.`)
+    : null;
   const nota = [
     "🤖 Partner quotes requested (Get partner quotes macro).",
     quoteRef ? `Quote: ${quoteRef}` : "No quote in the OS: nothing was sent to partners.",
     ...(fotosLinha ? [fotosLinha] : []),
     ...(convite ? ["", convite.nota] : []),
+    ...(aviso ? ["", aviso] : []),
     "",
     "The quote stops at Quote Ready when bids arrive: the team reviews and sends it to the customer.",
   ].join("\n");
