@@ -28,7 +28,7 @@ export const EXPRESS_BOAS_VINDAS_HTML = [
 export const TEXTO_A_CONFIRMAR = "to be confirmed";
 
 /**
- * Housekeep: 36h depois do primeiro convite sem lance viável e sem resposta da
+ * Housekeep: 48h depois do primeiro convite sem lance viável e sem resposta da
  * equipe. Vai como resposta pública no ticket da quote (a Housekeep é quem pediu).
  */
 export const HOUSEKEEP_SEM_DISPONIBILIDADE_HTML = [
@@ -40,7 +40,7 @@ export const HOUSEKEEP_SEM_DISPONIBILIDADE_HTML = [
 ].join("\n");
 
 /** Motivo gravado em quotes.rejection_reason (interno, mas fica legível na tela de Quotes). */
-export const HOUSEKEEP_SEM_DISPONIBILIDADE_MOTIVO = "No partner availability: no viable bid within 36h of the first invite";
+export const HOUSEKEEP_SEM_DISPONIBILIDADE_MOTIVO = "No partner availability: no viable bid within 48h of the first invite";
 
 export function preencherTexto(
   modelo: string,

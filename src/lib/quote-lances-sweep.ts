@@ -159,7 +159,7 @@ export async function varrerLancesParaRascunho(
       .limit(1);
     const primeiro = (convites ?? [])[0] as { invited_at?: string } | undefined;
     if (!primeiro?.invited_at) continue;
-    // Housekeep v2: sem janela de 2h (lance viável sai na hora), 8h e 36h no lugar das 26h.
+    // Housekeep v2: sem janela de 2h (lance viável sai na hora), 8h e 48h no lugar das 26h.
     const hkV2 = await housekeepV2(supabase, bruta, regrasPorConta);
     if (!hkV2 && horasDesde(primeiro.invited_at) < JANELA_HORAS) {
       r.janelaAberta++;
@@ -439,7 +439,7 @@ async function passoHousekeepV2(
     return false;
   }
 
-  // processar | fechar_36h: antes de qualquer coisa automática, o ticket.
+  // processar | fechar_48h: antes de qualquer coisa automática, o ticket.
   let historico: { respostaManual: boolean; respostaManualComPreco: boolean };
   try {
     historico = await historicoDaQuote(q.external_ref, q.created_at);
