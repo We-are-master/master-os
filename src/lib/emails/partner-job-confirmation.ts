@@ -17,7 +17,6 @@ import {
   CHIP_PARCEIRO,
   PASSO_ACEITO,
   PASSO_NO_DIA,
-  PASSO_OFERTA,
   PASSO_RELATORIO,
   agendaDaLinha,
   ajudaDoParceiro,
@@ -511,26 +510,22 @@ export function buildPartnerJobConfirmationRequestEmail(
   // Assunto antigo ("Job offer", já distinto) e copy antiga (dono, 23/10/2026).
   const subject = assunto("Job offer", tipo, ag.data ?? "Date TBC", extractUkPostcode(data.propertyAddress));
 
+  // Oferta enxuta e diferente do job booked (dono, 23/10/2026): sem saudação,
+  // régua, escopo nem tabela. Só onde, quando, quanto e o botão de aceitar.
+  const postcode = extractUkPostcode(data.propertyAddress) ?? areaDoEndereco(data.propertyAddress) ?? "TBC";
   const { html, text } = emailParceiro({
-    preheader: "Be quicker than others and secure this job before it gets taken.",
-    estado: { texto: "Action required", cor: "orange", chip: true },
-    titulo: "New job for you",
-    saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: ["Be quicker than others and secure this job before it gets taken.", "Tap Accept Job Now so we can confirm the booking with the customer."],
-    passos: passosDoJob(PASSO_OFERTA),
+    preheader: semTravessao(`${tipo} · ${postcode} · ${ag.data ?? "Date TBC"}${ag.chegada ? `, ${ag.chegada}` : ""}. Tap to accept.`),
+    estado: CHIP_PARCEIRO.oferta,
+    titulo: "Can you take this job?",
+    paragrafos: [tipo],
     metricas: [
+      { rotulo: "Postcode", valor: postcode },
       { rotulo: "Date", valor: ag.data ?? "TBC", sub: ag.chegada ?? null },
       metricaDaPaga(data.priceDisplay),
     ],
-    linhas: [
-      ["Job", `#${data.jobReference}`],
-      ["Type of work", tipo],
-      ["Area", areaDoEndereco(data.propertyAddress) ?? "TBC"],
-      ["Scope of work", escopoInteiro(data.scope)],
-    ],
-    cta: { label: "Accept Job Now", url: data.acceptUrl },
-    linksSecundarios: data.portalUrl ? [{ label: "See it in your partner portal", url: data.portalUrl }] : [],
-    letraPequena: [...notaDoCatalogo(data.partnerNotes), "Can't take it? Reply to this email and we'll reallocate."],
+    cta: { label: "Accept job", url: data.acceptUrl },
+    linksSecundarios: data.portalUrl ? [{ label: "See full details", url: data.portalUrl }] : [],
+    letraPequena: ["First to accept gets it. Can't take it? Just ignore this email."],
   });
   return { subject, html, text };
 }
