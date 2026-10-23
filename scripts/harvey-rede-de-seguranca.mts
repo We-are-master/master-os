@@ -6,6 +6,10 @@
  * ⚡ Action Required já mostra quem está esperando; a nota diz por quê, no ticket. Quando
  * o cliente é respondido, a tag sai e a próxima espera ganha nota de novo.
  *
+ * A view esconde as conversas com `lead_mirrored` (dono, 23/10/2026: 17 conversas do
+ * Harvey sem nada pendente poluíam a fila). Cliente esperando há mais de 20 min nunca
+ * fica escondido: a rede tira essa tag da conversa e ela aparece na fila.
+ *
  *   npx tsx scripts/harvey-rede-de-seguranca.mts            ensaio: lista
  *   npx tsx scripts/harvey-rede-de-seguranca.mts --aplicar  escreve
  *
@@ -37,6 +41,11 @@ const esperando = conversasParadas(await buscar(`type:ticket status<solved tags:
 let anotados = 0;
 for (const c of esperando) {
   const t = (await zendeskApi<{ ticket: T }>(`tickets/${c.ticketId}.json`)).ticket;
+  // Esperando e escondido da fila pela tag do espelho: tira a tag, a conversa aparece.
+  if (t.tags.includes("lead_mirrored")) {
+    console.log(`#${c.ticketId}: waiting ${tempo(c.minutos)}, lead_mirrored ${aplicar ? "removed" : "would be removed"} (back in the queue)`);
+    if (aplicar) await zendeskApi(`tickets/${c.ticketId}/tags.json`, { method: "DELETE", body: { tags: ["lead_mirrored"] } });
+  }
   if (t.tags.includes(TAG)) continue;
   // Com o Harvey, a conversa diz quem falou por último; o ticket não sabe (#51653).
   if (c.comHarvey) {
