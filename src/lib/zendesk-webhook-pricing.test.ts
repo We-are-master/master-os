@@ -68,14 +68,14 @@ describe("validateServiceBand", () => {
     assert.equal(r.ok, false);
   });
 
-  it("a taxa da Housekeep (£60/h, parceiro £40/h) ganha da faixa de £72", () => {
+  it("booking da Housekeep: cliente pelo e-mail (£60/h), parceiro provisório da faixa (£40/h, não £20)", () => {
     const r = validateServiceBand(generalMaintenance, null, { fallbackPricingMode: "hourly" });
     assert.ok(r.ok && r.hasBands);
     const rates = resolveSmartPriceRates({
       hourlyClientRateFromBody: 60,
       hourlyClientRateSent: true,
-      hourlyPartnerRateFromBody: 40,
-      hourlyPartnerRateSent: true,
+      hourlyPartnerRateFromBody: 0,
+      hourlyPartnerRateSent: false,
       catalog: { ...generalMaintenance, hourly_rate: 72 } as never,
       accountOverride: null,
       band: r.ok && r.hasBands ? r.band : null,

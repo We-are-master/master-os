@@ -242,9 +242,18 @@ export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
         const hourlyClientRate = input.hourlyClientRateSent
           ? input.hourlyClientRateFromBody
           : resolveAccountSell(floorH, customClient, accountAllowsBelowStandard(input.accountOverride));
+        /**
+         * Faixa POR HORA: o partner_cost dela já é £/h (General Maintenance "Hourly
+         * (min 1 hour)": £72/h cliente, £40/h parceiro). Dividir pelas horas
+         * mínimas de cobrança (2) dava £20/h de provisória ao parceiro (23/10/2026).
+         * É só a provisória: alocado, vale o rate card do parceiro.
+         */
+        const parceiroDaFaixa = Number(input.band.partner_cost) || 0;
         let hourlyPartnerRate = input.hourlyPartnerRateSent
           ? input.hourlyPartnerRateFromBody
-          : resolved.partnerTotal / hours;
+          : parceiroDaFaixa > 0
+            ? parceiroDaFaixa
+            : resolved.partnerTotal / hours;
         if (!(hourlyPartnerRate > 0) && hourlyClientRate > 0) {
           hourlyPartnerRate = autoMarginFromPct(hourlyClientRate, input.setupMarginPct);
         }

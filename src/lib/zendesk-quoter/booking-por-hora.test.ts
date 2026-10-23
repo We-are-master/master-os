@@ -11,9 +11,15 @@ test("lê as horas da linha do e-mail", () => {
   assert.equal(horasDoBooking("sem horas aqui"), null);
 });
 
-test("booking da Housekeep sem quote nasce por hora: taxa = total ÷ horas", () => {
+test("booking da Housekeep sem quote nasce por hora: taxa do cliente = total ÷ horas do e-mail", () => {
   const c = cobrancaDoBookingHousekeep({ ehHousekeep: true, temQuote: false, totalGbp: 135, texto: "2.0 hrs £135.00", servico: "Handyman" });
-  assert.deepEqual(c, { rate_type: "hourly", hourly_client_rate: 67.5, hourly_partner_rate: 40, billed_hours: 2 });
+  assert.deepEqual(c, { rate_type: "hourly", hourly_client_rate: 67.5, billed_hours: 2 });
+});
+
+test("a taxa do parceiro nunca sai do booking: é o rate card do parceiro no OS", () => {
+  const c = cobrancaDoBookingHousekeep({ ehHousekeep: true, temQuote: false, totalGbp: 60, texto: emailLocksmith, servico: "General Maintenance" });
+  assert.ok(c);
+  assert.equal("hourly_partner_rate" in (c as object), false);
 });
 
 test("booking que veio de quote nossa continua fixo", () => {
