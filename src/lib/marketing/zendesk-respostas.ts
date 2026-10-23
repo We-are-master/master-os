@@ -62,7 +62,8 @@ export async function varrerRespostasDoZendesk(opcoes: { minutos?: number; aplic
       await tirarDaLista({ phone }, `zendesk_${t.id}`);
       if (!t.tags.includes("marketing-stop")) {
         await addTicketTags(t.id, ["marketing-stop"]);
-        await zd(`tickets/${t.id}.json`, { method: "PUT", body: JSON.stringify({ ticket: { status: "solved" } }) });
+        // Solved exige "What Happened" no formulário Job (422 sem ele, 23/10/2026).
+        await zd(`tickets/${t.id}.json`, { method: "PUT", body: JSON.stringify({ ticket: { status: "solved", custom_fields: [{ id: Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343"), value: "other" }, { id: Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231"), value: "Marketing STOP: removed from the list." }] } }) });
       }
       continue;
     }

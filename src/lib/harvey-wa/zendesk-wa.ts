@@ -634,7 +634,8 @@ export async function encerrarLeadPerdido(telefone: string, texto: string): Prom
   for (const id of editavel) {
     await zendeskApi(`tickets/${id}.json`, {
       method: "PUT",
-      body: { ticket: { status: "solved", custom_fields: [{ id: 5872761703199, value: "res_cancelled" }], comment: { body: texto, public: false } } },
+      // Solved exige "What Happened" no formulário Job (422 sem ele, 23/10/2026).
+      body: { ticket: { status: "solved", custom_fields: [{ id: 5872761703199, value: "res_cancelled" }, { id: Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343"), value: "other" }, { id: Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231"), value: "Lead lost on WhatsApp (closed by Harvey)." }], comment: { body: texto, public: false } } },
     });
     await zendeskApi(`tickets/${id}/tags.json`, { method: "PUT", body: { tags: ["lead_lost", "harvey_wa"] } });
   }
