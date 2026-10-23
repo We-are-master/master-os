@@ -268,7 +268,15 @@ export async function tratarResumoDiario(
         method: "PUT",
         headers,
         body: JSON.stringify({
-          ticket: { status: "solved", comment: { public: false, body: corpo } },
+          ticket: {
+            status: "solved",
+            comment: { public: false, body: corpo },
+            // Solved exige "What Happened" (422 sem ele: o #51744 ficou aberto o dia todo, 23/10/2026).
+            custom_fields: [
+              { id: Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343"), value: "other" },
+              { id: Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231"), value: `Housekeep daily summary for ${data}: every job is booked in the OS with a partner.` },
+            ],
+          },
         }),
       });
       if (!r.ok) throw new Error(`Zendesk resolve ${ticket.id}: HTTP ${r.status}`);

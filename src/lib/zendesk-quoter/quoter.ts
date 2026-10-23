@@ -1386,6 +1386,11 @@ async function carimbarConfirmacao(
       body: JSON.stringify({
         ticket: {
           status: "solved",
+          // Solved exige "What Happened" no formulário Job (422 sem ele, 23/10/2026).
+          custom_fields: [
+            { id: Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343"), value: "other" },
+            { id: Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231"), value: `Partner confirmed the booking of ${job.reference}.` },
+          ],
           comment: {
             public: false,
             body: `🤖 HARVEY — ${parceiro.nome} confirmou o agendamento de ${job.reference} (${job.client_name}${job.scheduled_date ? `, ${job.scheduled_date}` : ""}). Marquei o parceiro como confirmado no OS e fechei este ticket.`,
