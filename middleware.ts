@@ -41,6 +41,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/quote/") ||
     pathname.startsWith("/job/report") ||   // partner work-report submission (rewrites to /quote/respond)
     pathname.startsWith("/r/") ||           // short-link resolver
+    pathname.startsWith("/report/") ||      // web report for the client (signed link, read only)
     pathname.startsWith("/portal/login") ||
     pathname.startsWith("/portal/auth/") ||
     pathname.startsWith("/trade/login") ||
