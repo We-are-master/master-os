@@ -42,6 +42,15 @@ export type BandValidationResult =
 export function validateServiceBand(
   service: Pick<CatalogService, "name" | "pricing_presets">,
   bandId: string | null,
+  opts?: {
+    /**
+     * Sem `band_id`, usa a primeira faixa deste modo em vez de recusar (23/10/2026).
+     * O General Maintenance ganhou faixas em 22/10 e todo booking por hora da
+     * Housekeep (Harvey, ticket 51740) passou a voltar 400. Taxa que veio no
+     * pedido continua ganhando da faixa (resolveSmartPriceRates).
+     */
+    fallbackPricingMode?: "hourly" | "fixed";
+  },
 ): BandValidationResult {
   const presets = sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets));
   const hasBands = presets.length > 0;
@@ -53,6 +62,11 @@ export function validateServiceBand(
       );
     }
     return { ok: true, hasBands: false, band: null };
+  }
+
+  if (!bandId && opts?.fallbackPricingMode) {
+    const padrao = presets.find((p) => presetPricingMode(p) === opts.fallbackPricingMode);
+    if (padrao) return { ok: true, hasBands: true, band: padrao };
   }
 
   if (!bandId) {
