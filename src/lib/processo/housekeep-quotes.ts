@@ -82,7 +82,7 @@ export async function avisarSemDisponibilidade(
   });
   if (!reserva.reservado) return { enviado: false, linha: `not sent: ${reserva.motivo ?? "already reserved"}` };
   try {
-    const html = preencherTexto(HOUSEKEEP_SEM_DISPONIBILIDADE_HTML, { referenciaEntreParenteses: "" });
+    const html = preencherTexto(HOUSEKEEP_SEM_DISPONIBILIDADE_HTML, {});
     await deps.postarPublico(ticketId, html);
     await confirmarEnvio(sb, chave, `zendesk:${ticketId}`);
   } catch (e) {

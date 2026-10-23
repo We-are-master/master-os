@@ -32,10 +32,10 @@ export const TEXTO_A_CONFIRMAR = "to be confirmed";
  * equipe. Vai como resposta pública no ticket da quote (a Housekeep é quem pediu).
  */
 export const HOUSEKEEP_SEM_DISPONIBILIDADE_HTML = [
-  "<p>Hi there,</p>",
-  "<p>Thank you for sending us this request{{referenciaEntreParenteses}}.</p>",
-  "<p>Unfortunately we do not have a professional available to take on this job at the moment, so we are unable to quote for it this time.</p>",
-  "<p>Please keep sending us future requests. We will be happy to help.</p>",
+  // Texto do dono, 23/10/2026.
+  "<p>Hi team,</p>",
+  "<p>Unfortunately we’re not able to quote for this job at the moment. We’d rather tell you now than keep you waiting.</p>",
+  "<p>If anything changes we will get back to you.</p>",
   "<p>Kind regards,<br>Fixfy Team</p>",
 ].join("\n");
 
