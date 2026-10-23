@@ -59,6 +59,11 @@ export type Espelho = {
   proximaAcao: string | null;
   /** null = ticket encerrado: ninguém precisa ser dono. */
   papel: PapelDoTicket | null;
+  /**
+   * Ticket que o OS resolve: o Zendesk só aceita Solved com "What Happened" e
+   * "Closing Summary" preenchidos (422 sem eles). Só entra onde o campo está vazio.
+   */
+  fechamento?: { whatHappened: string; resumo: string };
 };
 
 const VENDAS = new Set<number>([
@@ -112,12 +117,19 @@ export type EntradaDoJob = {
   reclamacao: boolean;
   /** O motivo do on hold, para a nota. */
   motivoDoOnHold?: string | null;
+  /** JOB-1234, para o resumo de fechamento. */
+  referencia?: string | null;
 };
 
 export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   const etapa = statusDaEtapa(j.status);
   if (etapa == null) return null;
-  if (ENCERRADO.has(j.status)) return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null };
+  if (ENCERRADO.has(j.status)) {
+    const fechamento = j.status === "completed"
+      ? { whatHappened: "job_completed", resumo: `Closed by the OS: ${j.referencia ?? "the job"} is completed.` }
+      : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
+    return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null, fechamento };
+  }
 
   let customStatusId = etapa;
   if (j.motivos.some((m) => CARTAO.has(m))) customStatusId = ZD_STATUS_PAYMENT_FAILED;
@@ -139,7 +151,7 @@ export function espelhoDaQuote(status: QuoteStatus): Espelho | null {
     case "quote_ready": return { customStatusId: ZD_STATUS_QUOTE_READY, actionRequired: null, proximaAcao: null, papel: "vendas" };
     case "awaiting_customer": return { customStatusId: ZD_STATUS_AWAITING_APPROVAL, actionRequired: null, proximaAcao: null, papel: "vendas" };
     case "awaiting_payment": return { customStatusId: ZD_STATUS_DEPOSIT_PENDING, actionRequired: null, proximaAcao: null, papel: "vendas" };
-    case "rejected": return { customStatusId: ZD_STATUS_COMPLETED, actionRequired: null, proximaAcao: null, papel: null };
+    case "rejected": return { customStatusId: ZD_STATUS_COMPLETED, actionRequired: null, proximaAcao: null, papel: null, fechamento: { whatHappened: "quote_rejected", resumo: "Closed by the OS: the quote was marked as lost." } };
     default: return null; // draft e converted_to_job não falam com o ticket
   }
 }
@@ -186,4 +198,28 @@ export function mudancasNoTicket(alvo: Espelho, atual: TicketAtual, donoDoPapel:
   const saiuDoPaymentFailed = atual.customStatusId === ZD_STATUS_PAYMENT_FAILED && alvo.customStatusId !== ZD_STATUS_PAYMENT_FAILED;
   if (alvo.actionRequired == null && ligado && saiuDoPaymentFailed) m.actionRequired = false;
   return m;
+}
+
+// ─── Ticket ainda sem job nem quote ─────────────────────────────────────────
+
+/** As plataformas que mandam o trabalho pronto (preço delas): o pedido já vem vendido. */
+const PLATAFORMA = /housekeep|express|fantastic/i;
+const PEDE_COTACAO = /\b(quot(e|es|ation|ing)|estimates?)\b/i;
+const COBRANCA = /\b(invoices?|payments?|receipts?|overdue|remittance)\b/i;
+
+/**
+ * Dono de ticket aberto SEM dono e sem job nem quote (dono, 23/10/2026). Nunca troca
+ * dono de ninguém, só preenche o vazio:
+ *
+ *   plataforma pedindo quote             vendas
+ *   plataforma, qualquer outra coisa     operacao (disponibilidade, job de amanhã, remarcação, problema)
+ *   🟢 Partner / 🚨 Complaint            operacao
+ *   fatura, pagamento, recibo            financeiro
+ *   o resto (lead, cliente direto)       vendas
+ */
+export function donoDeTicketSemPedido(t: { organizacao: string | null; assunto: string | null; customStatusId: number | null }): PapelDoTicket {
+  if (t.customStatusId === ZD_STATUS_PARTNER || t.customStatusId === ZD_STATUS_COMPLAINT) return "operacao";
+  if (COBRANCA.test(t.assunto ?? "")) return "financeiro";
+  if (PLATAFORMA.test(t.organizacao ?? "")) return PEDE_COTACAO.test(t.assunto ?? "") ? "vendas" : "operacao";
+  return "vendas";
 }
