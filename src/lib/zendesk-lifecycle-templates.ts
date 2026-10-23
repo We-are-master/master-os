@@ -101,10 +101,11 @@ export function buildJobCancelled(args: Base & { propertyAddress?: string | null
   const { html, text } = emailFixfy({
     zendesk: true,
     preheader,
-    estado: { texto: "Cancelled", cor: "muted" },
+    // Chip vermelho e a data riscada (dono, 23/10/2026).
+    estado: { texto: "Cancelled", cor: "red" },
     titulo: "Your booking has been cancelled",
     metricas: [
-      { rotulo: "Cancelled visit", valor: dia ?? "" },
+      { rotulo: "Cancelled visit", valor: dia ?? "", riscado: true },
       { rotulo: "Booking", valor: ref },
     ],
     saudacao: saudacao(args.publico),
