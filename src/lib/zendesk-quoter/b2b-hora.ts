@@ -265,3 +265,8 @@ export async function aceitarHoraB2B(args: {
   await addTicketTags(args.ticketId, [TAG_B2B_HORA]).catch(() => null);
   return `${titulo}\nCreated ${job.reference} (unassigned) and confirmed to ${args.conta.nome}.\n${resumo.join("\n")}`;
 }
+
+/** O e-mail pede cotação ("quote", "quotation", "estimate")? Aí é cotação, nunca por hora. */
+export function pedeCotacao(texto: string | null | undefined): boolean {
+  return /\b(quot(e|es|ation|ing)|estimates?)\b/i.test(String(texto ?? ""));
+}

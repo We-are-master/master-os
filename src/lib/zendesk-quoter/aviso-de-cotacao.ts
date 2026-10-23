@@ -88,7 +88,9 @@ export type DecisaoDoAviso =
  */
 const CORPO_COTANDO =
   "<p>Hi Team,</p>" +
-  "<p>Thanks for sending this over. We're working on a quote now and will come back to you shortly.</p>";
+  "<p>Thanks for sending this over.</p>" +
+  "<p>We’re working on a quote now and will come back to you shortly.</p>" +
+  "<p>Thank you</p>";
 
 /**
  * A terceira cara: ele respondeu o que faltava.

@@ -29,7 +29,7 @@ import { guardarFotosDoTicket } from "./guardar-fotos";
 import { tipoDoPedido, classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
-import { aceitarHoraB2B } from "./b2b-hora";
+import { aceitarHoraB2B, pedeCotacao } from "./b2b-hora";
 import { pedirInfoQueFalta } from "./pedir-info";
 import { postcodesNoTexto } from "./achar-job";
 import { avisarNoTicket } from "./aviso-de-cotacao";
@@ -730,7 +730,11 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
    * Em ensaio só escreve "eu faria" e o fluxo de cotação segue como antes.
    */
   let notaHora: string | null = null;
-  if (plano.aceitarHora && org.ok && !isDirectConsumerAccount(org.id)) {
+  // Pediu quote, é quote (dono, 23/10/2026): o #51694 da Housekeep pediu
+  // "painting quote", caiu aqui como "small job, sold by the hour", parou sem
+  // taxa e nenhum parceiro foi convidado. Por hora só quando ninguém pediu cotação.
+  const pediuCotacao = pedeCotacao(`${ticket.subject}\n${ticket.threadNova || ticket.thread}`);
+  if (plano.aceitarHora && org.ok && !isDirectConsumerAccount(org.id) && !pediuCotacao) {
     const catalogo = await catalogoAtivo(createServiceClient()).catch(() => []);
     const classe = classificarPedido({ servico: resultado.quote.services[0]?.trade ?? null, descricao: pedido.scopeOfWork || pedido.quoteRequest }, catalogo);
     if (classe.modo === "hora") {
@@ -750,7 +754,9 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
           postar,
           apiKey,
         }).catch((e) => `── B2B hourly ──\nFailed: ${e instanceof Error ? e.message : String(e)}`);
-        if (modo === "on" && postar) {
+        // Sem taxa para cobrar por hora, vira cotação normal em vez de parar.
+        const semTaxa = notaHora.includes("Passed to the team:") && !notaHora.includes("Job NOT created");
+        if (modo === "on" && postar && !semTaxa) {
           await postarNotaInterna(ticketId, notaHora);
           return { ticketId, nota: notaHora, pedido, resultado, quoteRef: null };
         }
@@ -920,11 +926,25 @@ export async function cotarComParceirosB2B(
       convite = await calcularOuMandarConvites(ticket, pedido, resultado, criada.reference);
     }
   }
+  // A macro também avisa o cliente que estamos cotando (dono, 23/10/2026), com
+  // as mesmas travas do fluxo normal: uma vez por ticket, assinada por quem
+  // responde pela cotação, e só com convite saído.
+  const aviso = quoteRef
+    ? await avisarNoTicket({
+        ticketId,
+        tags: ticket.tags,
+        temEndereco: Boolean(pedido.propertyAddress ?? pedido.postcode),
+        convitesEnviados: convite?.enviados ?? 0,
+        orgReconhecida: org.ok,
+        postar,
+      }).catch((e) => `── Customer reply ──\nNOT sent: ${e instanceof Error ? e.message : String(e)}.`)
+    : null;
   const nota = [
     "🤖 Partner quotes requested (Get partner quotes macro).",
     quoteRef ? `Quote: ${quoteRef}` : "No quote in the OS: nothing was sent to partners.",
     ...(fotosLinha ? [fotosLinha] : []),
     ...(convite ? ["", convite.nota] : []),
+    ...(aviso ? ["", aviso] : []),
     "",
     "The quote stops at Quote Ready when bids arrive: the team reviews and sends it to the customer.",
   ].join("\n");
@@ -1650,6 +1670,20 @@ export async function subirJobBooked(
     }
   }
 
+  // Housekeep cobra por hora: "1.0 hrs · £60.00" é a taxa deles, não preço
+  // fechado. Fixo só quando veio de uma quote nossa (ou é limpeza).
+  const porHora = await (async () => {
+    const { ehHousekeep } = await import("@/lib/processo/plataformas");
+    const { cobrancaDoBookingHousekeep } = await import("./booking-por-hora");
+    return cobrancaDoBookingHousekeep({
+      ehHousekeep: ehHousekeep(conta!.id),
+      temQuote: Boolean(planoV2?.quoteId),
+      totalGbp: ex.priceGbp,
+      texto: ticket.threadNova || ticket.thread,
+      servico: tituloDoJob,
+    });
+  })();
+
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
@@ -1658,6 +1692,7 @@ export async function subirJobBooked(
     },
     body: JSON.stringify({
       account_id: conta!.id,
+      ...(porHora ?? {}),
       date: ex.date,
       arrival_time: arrivalTime,
       client_name: ex.clientName,

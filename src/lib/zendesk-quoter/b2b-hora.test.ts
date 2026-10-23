@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decidirPrecoHoraB2B, type ValorDoEmail } from "./b2b-hora";
+import { decidirPrecoHoraB2B, pedeCotacao, type ValorDoEmail } from "./b2b-hora";
 
 const vazio: ValorDoEmail = {
   totalGbp: null, taxaHoraGbp: null, horas: null, extras: [],
@@ -37,4 +37,10 @@ test("taxa escrita no e-mail vai explícita", () => {
 
 test("conta sem taxa e e-mail sem valor: equipe", () => {
   assert.equal(decidirPrecoHoraB2B({ ...vazio }, null, 2).modo, "ajuda");
+});
+
+test("pedido de quote nunca vai por hora", () => {
+  assert.equal(pedeCotacao("[Housekeep] Painting quote request- SE3 9EY"), true);
+  assert.equal(pedeCotacao("Can you please send us a painting quote"), true);
+  assert.equal(pedeCotacao("Please send a handyman for 2 hours on Monday"), false);
 });
