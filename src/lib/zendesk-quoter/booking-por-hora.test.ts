@@ -13,7 +13,7 @@ test("lê as horas da linha do e-mail", () => {
 
 test("booking da Housekeep sem quote nasce por hora: taxa = total ÷ horas", () => {
   const c = cobrancaDoBookingHousekeep({ ehHousekeep: true, temQuote: false, totalGbp: 135, texto: "2.0 hrs £135.00", servico: "Handyman" });
-  assert.deepEqual(c, { rate_type: "hourly", hourly_client_rate: 67.5, billed_hours: 2 });
+  assert.deepEqual(c, { rate_type: "hourly", hourly_client_rate: 67.5, hourly_partner_rate: 40, billed_hours: 2 });
 });
 
 test("booking que veio de quote nossa continua fixo", () => {

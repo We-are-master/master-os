@@ -6,11 +6,17 @@
  * Hourly com a taxa = total ÷ horas. Só nasce Fixed quando o booking veio de
  * uma quote nossa (aí o preço é o da quote) ou quando é limpeza (EoT e deep
  * clean têm preço de tabela).
+ *
+ * O parceiro ganha £40/h fixo nesses jobs (dono, 23/10/2026), seja qual for a
+ * taxa da Housekeep.
  */
+
+export const TAXA_PARCEIRO_HOUSEKEEP_GBP = 40;
 
 export type CobrancaPorHora = {
   rate_type: "hourly";
   hourly_client_rate: number;
+  hourly_partner_rate: number;
   billed_hours: number;
 };
 
@@ -39,6 +45,7 @@ export function cobrancaDoBookingHousekeep(i: {
   return {
     rate_type: "hourly",
     hourly_client_rate: Math.round((i.totalGbp / horas) * 100) / 100,
+    hourly_partner_rate: TAXA_PARCEIRO_HOUSEKEEP_GBP,
     billed_hours: horas,
   };
 }
