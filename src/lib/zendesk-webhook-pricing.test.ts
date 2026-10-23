@@ -47,6 +47,42 @@ describe("validateServiceBand", () => {
     assert.equal(r.ok, true);
     if (r.ok && r.hasBands) assert.equal(r.band?.label, "3 Bed House");
   });
+
+  // General Maintenance desde 22/10/2026: booking da Housekeep (ticket 51740) por hora, sem band_id.
+  const generalMaintenance: Pick<CatalogService, "name" | "pricing_presets"> = {
+    name: "General Maintenance",
+    pricing_presets: [
+      { id: "gm-hora", label: "Hourly (min 1 hour)", sort_order: 0, hourly_rate: 72, partner_cost: 40, pricing_mode: "hourly", default_hours: 1 },
+      { id: "gm-meia", label: "Half day (up to 3.5 hours)", sort_order: 10, fixed_price: 180, partner_cost: 105, pricing_mode: "fixed" },
+    ],
+  };
+
+  it("hourly sem band_id usa a faixa Hourly do serviço em vez de recusar", () => {
+    const r = validateServiceBand(generalMaintenance, null, { fallbackPricingMode: "hourly" });
+    assert.equal(r.ok, true);
+    if (r.ok && r.hasBands) assert.equal(r.band?.id, "gm-hora");
+  });
+
+  it("sem faixa daquele modo, continua recusando", () => {
+    const r = validateServiceBand(svcWithBands, null, { fallbackPricingMode: "hourly" });
+    assert.equal(r.ok, false);
+  });
+
+  it("booking da Housekeep: cliente pelo e-mail (£60/h), parceiro provisório da faixa (£40/h, não £20)", () => {
+    const r = validateServiceBand(generalMaintenance, null, { fallbackPricingMode: "hourly" });
+    assert.ok(r.ok && r.hasBands);
+    const rates = resolveSmartPriceRates({
+      hourlyClientRateFromBody: 60,
+      hourlyClientRateSent: true,
+      hourlyPartnerRateFromBody: 0,
+      hourlyPartnerRateSent: false,
+      catalog: { ...generalMaintenance, hourly_rate: 72 } as never,
+      accountOverride: null,
+      band: r.ok && r.hasBands ? r.band : null,
+      setupMarginPct: 40,
+    });
+    assert.deepEqual(rates, { hourlyClientRate: 60, hourlyPartnerRate: 40 });
+  });
 });
 
 describe("normalizeWebhookRateType", () => {

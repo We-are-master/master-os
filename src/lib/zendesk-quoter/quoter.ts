@@ -1286,8 +1286,14 @@ function tituloCanonico(...partes: Array<string | null | undefined>): string {
    * que estava duas linhas abaixo, nunca era lida.
    */
   const achado = acharTypeOfWorkNoTexto(partes.filter(Boolean).join(" \n "));
+  // Por dentro, ofício de manutenção é General Maintenance (dono, 23/10/2026:
+  // locksmith, handyman, plumber, electrician "entra tudo como general
+  // maintenance"). Pintura, limpeza e certificados mantêm o serviço deles.
+  if (achado && OFICIOS_DE_MANUTENCAO.has(achado)) return GENERAL_MAINTENANCE_LABEL;
   return achado ?? GENERAL_MAINTENANCE_LABEL;
 }
+
+const OFICIOS_DE_MANUTENCAO = new Set(["Carpenter", "Plumber", "Electrician", "Builder", "Handyman", "Locksmith"]);
 
 /**
  * Confirmação de PARCEIRO: ele avisa que agendou, e o job já existe.
