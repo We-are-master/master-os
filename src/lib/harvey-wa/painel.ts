@@ -119,6 +119,31 @@ export function conversasParadas(tickets: TicketDoWhatsApp[], agora: Date, limit
     .sort((a, b) => b.minutos - a.minutos);
 }
 
+/**
+ * Com o Harvey na conversa, quem falou por último está na tabela da conversa, não no
+ * ticket (dono, 23/10/2026, #51653). As respostas dele saem pelo WhatsApp e não viram
+ * comentário público, então o Reply Status fica 🔴 e o `updated_at` do ticket muda com
+ * qualquer nota ou espelho: o Frede foi respondido às 11:58 e às 15:44 o ticket ganhou
+ * "Harvey didn't answer, waiting 24 min".
+ *
+ * Devolve os minutos de espera de verdade, ou null se o Harvey já respondeu depois da
+ * última mensagem do cliente (ou a espera ainda não chegou no limite). Sem dados da
+ * conversa, vale o que o ticket diz.
+ */
+export function esperaDeVerdade(
+  conversa: { cliente_em: string | null; harvey_em: string | null } | null,
+  minutosDoTicket: number,
+  agora: Date,
+  limite = MINUTOS_PARA_PARADA,
+): number | null {
+  const cliente = conversa?.cliente_em ? Date.parse(conversa.cliente_em) : NaN;
+  if (!Number.isFinite(cliente)) return minutosDoTicket >= limite ? minutosDoTicket : null;
+  const harvey = conversa?.harvey_em ? Date.parse(conversa.harvey_em) : NaN;
+  if (Number.isFinite(harvey) && harvey >= cliente) return null;
+  const minutos = Math.max(0, Math.round((agora.getTime() - cliente) / 60_000));
+  return minutos >= limite ? minutos : null;
+}
+
 export type PendenteDoHarvey = { ticketId: number | null; quando: string; decisao: string; pendente: string };
 
 export type PainelDoHarvey = {

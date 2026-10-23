@@ -55,3 +55,30 @@ export async function registrarDecisao(d: Decisao, sb?: SupabaseClient): Promise
     console.error("[harvey-diario]", e instanceof Error ? e.message : e);
   }
 }
+
+/**
+ * Pendências de uma quote que deixaram de existir (dono, 23/10/2026, JOB-9790): a
+ * quote virou job e "Team: review the draft and send the quote" ficava no brief e no
+ * painel para sempre. Devolve quantas fechou. Nunca lança.
+ */
+export async function resolverPendenciasDaQuote(quoteRef: string, sb?: SupabaseClient): Promise<number> {
+  if (semTabela || !quoteRef.trim()) return 0;
+  try {
+    const cliente = sb ?? createServiceClient();
+    const { data, error } = await cliente
+      .from("harvey_diario")
+      .update({ resolvido_em: new Date().toISOString() })
+      .eq("quote_ref", quoteRef.trim())
+      .is("resolvido_em", null)
+      .not("pendente", "is", null)
+      .select("id");
+    if (error) {
+      console.error("[harvey-diario] resolver", error.message);
+      return 0;
+    }
+    return (data ?? []).length;
+  } catch (e) {
+    console.error("[harvey-diario] resolver", e instanceof Error ? e.message : e);
+    return 0;
+  }
+}

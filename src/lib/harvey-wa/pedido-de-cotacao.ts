@@ -76,3 +76,26 @@ export function textoDaSituacao(s: SituacaoDaCotacao, a: { convidados: number; l
       return "This quote is closed.";
   }
 }
+
+/**
+ * Hora do catálogo OU cotação de parceiro, nunca as duas (dono, 23/10/2026, QT-2026-1256).
+ *
+ * O suporte de bicicleta do Frede: o Harvey disse "a handyman hour is £72" e na
+ * mensagem seguinte "I've sent it over for a fixed price", abriu a quote e convidou
+ * 6 parceiros. O cliente ficou com dois preços na mão e a WHistyle cotou à toa.
+ *
+ * Já deu o preço do catálogo (nesta resposta, ou numa fala dele com £ e hora/dia):
+ * o request_quote recusa. Volta a valer se o cliente pedir uma quote depois disso.
+ */
+const PRECO_POR_TEMPO = /£\s?\d[\d,.]*[^\n]{0,80}\b(hour|hourly|half[- ]day|full day|day rate)\b|\b(hour|hourly|half[- ]day|full day|day rate)\b[^\n]{0,80}£\s?\d/i;
+const CLIENTE_PEDE_QUOTE = /\b(quote|fixed price|written price|estimate)\b/i;
+
+export function precoDoCatalogoJaDado(conversa: ReadonlyArray<{ papel: string; texto: string }>, precoNestaResposta: boolean): boolean {
+  if (precoNestaResposta) return true;
+  let oferecido = false;
+  for (const f of conversa) {
+    if (f.papel === "harvey" && PRECO_POR_TEMPO.test(f.texto)) oferecido = true;
+    else if (f.papel === "cliente" && oferecido && CLIENTE_PEDE_QUOTE.test(f.texto)) oferecido = false;
+  }
+  return oferecido;
+}

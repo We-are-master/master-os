@@ -1295,6 +1295,14 @@ export async function POST(req: NextRequest) {
       .eq("id", convertingFromQuote.id);
     if (convErr) {
       console.error("[api/jobs] quote conversion status update failed:", convErr.message);
+    } else {
+      // Lances de outros parceiros, pendência "send the quote" e Action Required fecham junto.
+      const { fecharQuoteConvertida } = await import("@/lib/quotes/fechar-quote-convertida");
+      await fecharQuoteConvertida(supabase, {
+        quoteId: convertingFromQuote.id,
+        partnerIdDoJob: (jobRow as { partner_id?: string | null }).partner_id ?? null,
+        jobReference: (inserted as { reference?: string | null }).reference ?? null,
+      });
     }
   }
 
