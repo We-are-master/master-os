@@ -66,3 +66,10 @@ test("sem travessão, sem placeholder, sem emoji e com escape", () => {
   assert.ok(!x.html.includes("<script>") && !x.html.includes("<b>Evil"));
   assert.match(x.html, /a &amp; b/);
 });
+
+test("cancelado: chip vermelho e a data da visita riscada", async () => {
+  const { buildJobCancelled } = await import("./zendesk-lifecycle-templates");
+  const a = buildJobCancelled({ publico: { tipo: "b2c", primeiroNome: "Sarah" } as never, reference: "JOB-9800", service: "General Maintenance", visitDate: "2026-10-28" } as never);
+  assert.match(a.html, /background:#FDECEC;color:#C62828[^>]*>Cancelled</);
+  assert.match(a.html, /text-decoration:line-through[^>]*>Wed 28 Oct 26</);
+});

@@ -61,6 +61,8 @@ export type AgentReceiptView = {
   paymentNote: string;
   /** "Com quem você contratou": o texto de plataforma divulgada dos termos novos. */
   bookingNote: string;
+  /** Termos da reserva, direito de cancelar e prazo de 48h: o que o e-mail de confirmação manda ler aqui. */
+  termsNote: string;
 };
 
 function round2(n: number): number {
@@ -85,6 +87,15 @@ export function agentBookingNote(professionalName: string | null): string {
     `Your rights under the Consumer Rights Act 2015 are against ${name} as the trader, and we will help you resolve any problem.`
   );
 }
+
+/**
+ * Os termos que antes iam na letra pequena do e-mail de confirmação (dono, 23/10/2026:
+ * o e-mail aponta para o statement anexado). Mesmo texto, uma fonte só.
+ */
+export const AGENT_TERMS_NOTE =
+  "Your booking is under our booking terms (version of 6 October 2026), getfixfy.com/terms, which also explain your legal right to cancel within 14 days. " +
+  "You asked for the work to be done on the day you picked, so once it is done it can no longer be cancelled. " +
+  "Changes and cancellation are free up to 48 hours before your slot.";
 
 export function buildAgentReceiptView(args: {
   party: AgentReceiptParty;
@@ -155,5 +166,6 @@ export function buildAgentReceiptView(args: {
     partOfPrice,
     paymentNote,
     bookingNote: agentBookingNote(name),
+    termsNote: AGENT_TERMS_NOTE,
   };
 }

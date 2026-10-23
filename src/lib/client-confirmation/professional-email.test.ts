@@ -1,5 +1,6 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { AGENT_TERMS_NOTE } from "@/lib/agent-model/receipt-view";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildProfessionalConfirmedEmail,
@@ -33,21 +34,18 @@ describe("buildProfessionalConfirmedEmail (04-booking-copy C2)", () => {
     assert.match(m.html, /Hi Jane,/);
     assert.match(m.html, /Your professional is confirmed/);
     assert.match(m.text, /Your booking with Sparkle Clean Ltd is confirmed\. They’ll arrive on Thu 8 Oct 26, between 9am and midday/);
-    assert.match(m.html, /Paid to GETFIXFY LTD \(Fixfy\), as agent for Sparkle Clean Ltd/);
-    assert.match(m.html, /Not VAT registered, so no VAT is charged/);
     assert.match(m.html, /Free re-clean within 7 days\./);
-    assert.match(m.text, /Your contract for this job is with Sparkle Clean Ltd/);
-    assert.match(m.text, /Consumer Rights Act 2015/);
-    assert.match(m.text, /version of 6 October 2026/);
-    assert.match(m.text, /cancel within 14 days/);
-    assert.match(m.text, /business address 12 Mare Street/);
-    assert.match(m.text, /Your statement is attached, issued in Sparkle Clean Ltd's name\./);
+    // O texto do modelo de agente mora no statement anexado (dono, 23/10/2026): uma linha aqui.
+    assert.match(m.text, /Paid to Fixfy as agent for Sparkle Clean Ltd\. Your rights, VAT and cancellation terms are in the attached statement/);
+    assert.match(m.text, /getfixfy\.com\/terms/);
+    assert.match(m.html, /Booking terms/);
+    assert.doesNotMatch(m.text, /Consumer Rights Act 2015/);
   });
 
-  it("Fixfy promotion is its own line, paid by Fixfy on the customer's behalf", () => {
-    const m = buildProfessionalConfirmedEmail({ ...input, promotion: 26.6 });
-    assert.match(m.html, /Fixfy promotion, paid by Fixfy on your behalf/);
-    assert.match(m.text, /Fixfy promotion, paid by Fixfy on your behalf: -£26\.60/);
+  it("the statement carries the booking terms the email points to", () => {
+    assert.match(AGENT_TERMS_NOTE, /version of 6 October 2026/);
+    assert.match(AGENT_TERMS_NOTE, /cancel within 14 days/);
+    assert.match(AGENT_TERMS_NOTE, /48 hours before your slot/);
   });
 
   it("no em or en dashes, no placeholders, and no Fixfy VAT number", () => {

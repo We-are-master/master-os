@@ -244,6 +244,7 @@ export async function sendInvoiceEmail(
       amountDueNow: request.amountDueNow,
       percent: pct,
       payLink: invoicePayLinkUrl(inv.reference, pct < 100 ? pct : undefined),
+      daCotacao: Boolean((job as { quote_id?: string | null }).quote_id),
       publico: billing.mode === "account" ? { tipo: "b2b", empresa: billing.companyName ?? null } : { tipo: "b2c", primeiroNome: billing.displayName },
     };
     subject = buildBookingPaymentSubject(booking);

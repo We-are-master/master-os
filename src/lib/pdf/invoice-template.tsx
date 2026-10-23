@@ -986,6 +986,7 @@ function AgentReceiptPDF({ data, agent }: { data: InvoicePdfData; agent: AgentRe
             <Text style={styles.vatEyebrow}>Who you are booking with</Text>
             <Text style={styles.vatText}>{agent.paymentNote}</Text>
             <Text style={[styles.vatText, { marginTop: 4 }]}>{agent.bookingNote}</Text>
+            {agent.termsNote ? <Text style={[styles.vatText, { marginTop: 4 }]}>{agent.termsNote}</Text> : null}
           </KeepTogetherBlock>
         </View>
 
