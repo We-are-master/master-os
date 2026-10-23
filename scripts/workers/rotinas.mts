@@ -21,6 +21,7 @@
  *   pendencias                (sem janela; só grava motivos)   a cada 10 min
  *   cobranca-cartao           (só conta direct v2)             10h
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
+ *   espelho-zendesk           (sem janela; status, dono, cobrança) a cada 10 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -139,6 +140,18 @@ export const ROTINAS: Rotina[] = [
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 20,
+  },
+  {
+    // O Zendesk espelha o OS (dono, 23/10/2026): status, dono por papel e Action Required
+    // de cobrança. Desfaz o que mudaram à mão no ticket e abre follow-up de ticket closed
+    // com job aberto. Regras em src/lib/zendesk-espelho.ts.
+    nome: "espelho-zendesk",
+    rotulo: "com.fixfy.espelho-zendesk",
+    agenda: { tipo: "intervalo", minutos: 10 },
+    script: "scripts/espelho-zendesk.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 9,
   },
   {
     // Pagamento recebido (dono, 22/10/2026): job que fechou com saldo recebe o recibo com a

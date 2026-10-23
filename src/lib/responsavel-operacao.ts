@@ -5,6 +5,11 @@
  *   operacao             dono de reclamação e de assunto de operação (Needs Attention)
  *   autor_emails         quem assina os e-mails de chase (quote e lead); o Zendesk põe a assinatura dele
  *   autor_aviso_cotacao  quem assina o aviso "we're working on a quote" e a cotação automática por e-mail
+ *   vendas               dono do ticket de lead e cotação (Lead, Bidding, Quote Ready, Approval, Deposit Pending)
+ *   financeiro           dono do ticket de cobrança (Awaiting Payment, Payment Failed, Finance)
+ *
+ * O dono do ticket por etapa (zendesk-espelho.ts, dono 23/10/2026): vendas até virar
+ * job, operacao do job e da reclamação, financeiro da cobrança.
  *
  * Moram em harvey_wa_config, chave "equipe:papeis", valor { papel: { zendesk_user_id, nome } }.
  * Sem a linha, vale a variável de ambiente de antes e depois o usuário de sempre: nada
@@ -14,21 +19,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 
-export type PapelDaEquipe = "operacao" | "autor_emails" | "autor_aviso_cotacao";
+export type PapelDaEquipe = "operacao" | "autor_emails" | "autor_aviso_cotacao" | "vendas" | "financeiro";
 export type Responsavel = { zendesk_user_id: number; nome: string };
 export type PapeisDaEquipe = Record<PapelDaEquipe, Responsavel>;
 
 export const CHAVE_DOS_PAPEIS = "equipe:papeis";
-export const PAPEIS: PapelDaEquipe[] = ["operacao", "autor_emails", "autor_aviso_cotacao"];
+export const PAPEIS: PapelDaEquipe[] = ["operacao", "autor_emails", "autor_aviso_cotacao", "vendas", "financeiro"];
 
 /** O usuário do Zendesk que já fazia os três papéis antes deste ajuste. */
 const USUARIO_DE_SEMPRE: Responsavel = { zendesk_user_id: 6227542863391, nome: "Leonardo Piovesan" };
+
+/** Vendas e financeiro nasceram com o dono (23/10/2026): os triggers antigos do Zendesk já davam Finance a ele. */
+const DONO_DA_CASA: Responsavel = { zendesk_user_id: 5679223041823, nome: "Victor Braz" };
 
 /** A variável de ambiente que cada papel lia antes. */
 const ENV_DO_PAPEL: Record<PapelDaEquipe, string> = {
   operacao: "ZENDESK_OPS_AGENT_ID",
   autor_emails: "HARVEY_EMAIL_AUTHOR_ID",
   autor_aviso_cotacao: "HARVEY_AVISO_AUTOR_ID",
+  vendas: "ZENDESK_SALES_AGENT_ID",
+  financeiro: "ZENDESK_FINANCE_AGENT_ID",
+};
+
+/** De quem é o papel quando nada foi configurado. */
+const PADRAO_DO_PAPEL: Record<PapelDaEquipe, Responsavel> = {
+  operacao: USUARIO_DE_SEMPRE,
+  autor_emails: USUARIO_DE_SEMPRE,
+  autor_aviso_cotacao: USUARIO_DE_SEMPRE,
+  vendas: DONO_DA_CASA,
+  financeiro: DONO_DA_CASA,
 };
 
 const idValido = (v: unknown): number | null => {
@@ -39,11 +58,12 @@ const idValido = (v: unknown): number | null => {
 /** O padrão de cada papel: env, depois o usuário de sempre. Com id de env diferente, o nome fica genérico. */
 export function papeisPadrao(env: Record<string, string | undefined> = process.env): PapeisDaEquipe {
   const um = (papel: PapelDaEquipe): Responsavel => {
+    const padrao = PADRAO_DO_PAPEL[papel];
     const id = idValido(env[ENV_DO_PAPEL[papel]]);
-    if (!id || id === USUARIO_DE_SEMPRE.zendesk_user_id) return { ...USUARIO_DE_SEMPRE };
+    if (!id || id === padrao.zendesk_user_id) return { ...padrao };
     return { zendesk_user_id: id, nome: "Fixfy Team" };
   };
-  return { operacao: um("operacao"), autor_emails: um("autor_emails"), autor_aviso_cotacao: um("autor_aviso_cotacao") };
+  return Object.fromEntries(PAPEIS.map((p) => [p, um(p)])) as PapeisDaEquipe;
 }
 
 /** Normaliza o que veio do banco ou da tela; papel sem id válido fica no padrão. */

@@ -4,8 +4,10 @@ import { papeisPadrao, validarPapeis } from "./responsavel-operacao";
 
 const SEMPRE = { zendesk_user_id: 6227542863391, nome: "Leonardo Piovesan" };
 
-test("sem linha nem env: os três papéis ficam com o usuário de sempre (nada muda)", () => {
-  assert.deepEqual(papeisPadrao({}), { operacao: SEMPRE, autor_emails: SEMPRE, autor_aviso_cotacao: SEMPRE });
+const DONO = { zendesk_user_id: 5679223041823, nome: "Victor Braz" };
+
+test("sem linha nem env: os papéis de antes ficam com o usuário de sempre; vendas e financeiro com o dono", () => {
+  assert.deepEqual(papeisPadrao({}), { operacao: SEMPRE, autor_emails: SEMPRE, autor_aviso_cotacao: SEMPRE, vendas: DONO, financeiro: DONO });
 });
 
 test("env de antes ainda vale como padrão", () => {
