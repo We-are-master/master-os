@@ -18,8 +18,9 @@ import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
  *    ativos cuja visita cai no período. Com "All", contam todos os ativos.
  *  - In Progress é só o que está sendo executado. Final check tem o card dele, com o
  *    valor parado esperando aprovação.
- *  - No Partner: jobs do período ainda sem parceiro.
- *  - Daily Sales continua sendo o que foi lançado hoje (dia de Londres).
+ *  - Sales today e Sales this week (dono, 23/10/2026) abrem a linha, antes do Active
+ *    jobs: o que foi lançado hoje e de segunda até hoje (dia de Londres). Saíram o
+ *    "Unassigned" (a aba Action required já mostra) e o "Daily Sales" (virou Sales today).
  *  - "Cancelled" saiu daqui: com "All" mostrava todos os cancelados desde sempre.
  */
 const SCHEDULED_STATUSES = new Set(["unassigned", "auto_assigning", "scheduled", "late"]);
@@ -31,8 +32,8 @@ type Stats = {
   in_progress: Bucket;
   final_check: Bucket;
   on_hold: Bucket;
-  no_partner: Bucket;
-  daily_sales: Bucket;
+  sales_today: Bucket;
+  sales_week: Bucket;
 };
 
 const vazio = (): Bucket => ({ count: 0, revenue: 0 });
@@ -42,8 +43,8 @@ const initial: Stats = {
   in_progress: vazio(),
   final_check: vazio(),
   on_hold: vazio(),
-  no_partner: vazio(),
-  daily_sales: vazio(),
+  sales_today: vazio(),
+  sales_week: vazio(),
 };
 
 function jobValue(clientPrice: number | null, extrasAmount: number | null): number {
@@ -111,19 +112,23 @@ export function LiveOperations() {
       const todayUk = ukTodayYmd();
       const todayStartIso = ukWallClockToUtcIso(todayUk, "00:00");
       const tomorrowStartIso = ukWallClockToUtcIso(addDaysYmd(todayUk, 1), "00:00");
+      // Semana de segunda a hoje, no calendário de Londres.
+      const diaDaSemana = new Date(`${todayUk}T12:00:00Z`).getUTCDay();
+      const mondayStartIso = ukWallClockToUtcIso(addDaysYmd(todayUk, -((diaDaSemana + 6) % 7)), "00:00");
 
-      let dailySalesQuery = supabase.from("jobs").select("client_price, extras_amount").is("deleted_at", null);
-      if (todayStartIso && tomorrowStartIso) {
-        dailySalesQuery = dailySalesQuery.gte("created_at", todayStartIso).lt("created_at", tomorrowStartIso);
+      // Vendas da semana: jobs lançados de segunda até agora; o de hoje sai daqui também.
+      let weekSalesQuery = supabase.from("jobs").select("client_price, extras_amount, created_at").is("deleted_at", null);
+      if (mondayStartIso && tomorrowStartIso) {
+        weekSalesQuery = weekSalesQuery.gte("created_at", mondayStartIso).lt("created_at", tomorrowStartIso);
       }
 
-      const [activeRes, dailySalesRes] = await Promise.all([
+      const [activeRes, weekSalesRes] = await Promise.all([
         supabase
           .from("jobs")
           .select("status, partner_id, client_price, extras_amount, scheduled_date, scheduled_start_at")
           .in("status", [...JOB_LIST_ALL_TAB_STATUSES])
           .is("deleted_at", null),
-        dailySalesQuery,
+        weekSalesQuery,
       ]);
 
       if (cancelled) return;
@@ -142,8 +147,8 @@ export function LiveOperations() {
         in_progress: vazio(),
         final_check: vazio(),
         on_hold: vazio(),
-        no_partner: vazio(),
-        daily_sales: vazio(),
+        sales_today: vazio(),
+        sales_week: vazio(),
       };
       const soma = (b: Bucket, v: number) => {
         b.count += 1;
@@ -162,14 +167,15 @@ export function LiveOperations() {
         else if (r.status === "in_progress") soma(next.in_progress, value);
         else if (r.status === "final_check") soma(next.final_check, value);
         else if (r.status === "on_hold") soma(next.on_hold, value);
-
-        if (!r.partner_id && SCHEDULED_STATUSES.has(r.status)) soma(next.no_partner, value);
       }
 
-      type DailySaleRow = { client_price: number | null; extras_amount: number | null };
-      const dailyRows = (dailySalesRes.data ?? []) as DailySaleRow[];
-      next.daily_sales.count = dailyRows.length;
-      next.daily_sales.revenue = dailyRows.reduce((sum, r) => sum + jobValue(r.client_price, r.extras_amount), 0);
+      type SaleRow = { client_price: number | null; extras_amount: number | null; created_at: string };
+      const hojeDesde = todayStartIso ? Date.parse(todayStartIso) : null;
+      for (const r of (weekSalesRes.data ?? []) as SaleRow[]) {
+        const value = jobValue(r.client_price, r.extras_amount);
+        soma(next.sales_week, value);
+        if (hojeDesde != null && Date.parse(r.created_at) >= hojeDesde) soma(next.sales_today, value);
+      }
 
       setStats(next);
       setLoading(false);
@@ -201,6 +207,20 @@ export function LiveOperations() {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 [&>*]:min-w-0">
       <KpiCard
+        label="Sales today"
+        hint={kpiHint("Jobs added to the OS today (UK calendar day): client price plus extras.")}
+        countBesideHint={loading ? null : stats.sales_today.count}
+        value={loading ? "—" : formatGbp(stats.sales_today.revenue)}
+        topRight={<StatusDot color="bg-fx-green" />}
+      />
+      <KpiCard
+        label="Sales this week"
+        hint={kpiHint("Jobs added to the OS since Monday (UK calendar): client price plus extras.")}
+        countBesideHint={loading ? null : stats.sales_week.count}
+        value={loading ? "—" : formatGbp(stats.sales_week.revenue)}
+        topRight={<StatusDot color="bg-fx-green" />}
+      />
+      <KpiCard
         label="Active jobs"
         hint={kpiHint(`Every active job with a visit ${periodo}: unassigned, scheduled, in progress, on hold and final check.`, liveBreakdownHint)}
         variant="coral"
@@ -226,20 +246,6 @@ export function LiveOperations() {
         countBesideHint={loading ? null : stats.final_check.count}
         value={loading ? "—" : formatGbp(stats.final_check.revenue)}
         topRight={<StatusDot color="bg-fx-coral" />}
-      />
-      <KpiCard
-        label="Unassigned"
-        hint={kpiHint(`Jobs ${periodo} that still have nobody assigned.`, loading ? null : kpiMoneyLine(stats.no_partner.revenue, "revenue"))}
-        variant={stats.no_partner.count > 0 ? "alert" : "default"}
-        value={loading ? "—" : stats.no_partner.count}
-        topRight={<StatusDot color="bg-fx-red" />}
-      />
-      <KpiCard
-        label="Daily Sales"
-        hint={kpiHint("Jobs added to the OS today (UK calendar day).")}
-        countBesideHint={loading ? null : stats.daily_sales.count}
-        value={loading ? "—" : formatGbp(stats.daily_sales.revenue)}
-        topRight={<StatusDot color="bg-fx-green" />}
       />
     </div>
   );
