@@ -1,24 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBookingPaymentEmailHTML, buildBookingPaymentSubject } from './booking-payment-email';
-import { buildSelfBillEmailHtml } from './emails/self-bill-statement';
+import { buildSelfBillEmailHtml, selfBillEmailSubject } from './emails/self-bill-statement';
 import { buildNewQuoteEmail } from './portal-email-templates';
 import type { SelfBill } from '@/types/database';
 
 const bill = { reference: 'SB-TEST', net_payout: 125, partner_name: 'A & B', week_start: '2026-10-01', week_end: '2026-10-14' } as SelfBill;
 for (const payoutStatement of [null, { commissionInvoiceRef: 'COM-1', hasClientWork: true }]) {
   test(`statement distinguishes pending, scheduled and sent (${payoutStatement ? 'agent' : 'self-bill'})`, () => {
+    const doc = payoutStatement ? 'Payout statement' : 'Self-bill';
     const pending = buildSelfBillEmailHtml(bill, null, { payoutStatement });
-    assert.match(pending, /PAYOUT PENDING/i);
-    assert.doesNotMatch(pending, /PAYOUT SCHEDULED|PAYOUT SENT/i);
+    assert.match(pending, />Payout pending</);
     assert.match(pending, /A &amp; B/);
     const scheduled = buildSelfBillEmailHtml(bill, '2026-10-20', { payoutStatement });
-    assert.match(scheduled, /PAYOUT SCHEDULED/i);
-    assert.doesNotMatch(scheduled, /PAYOUT SENT/i);
+    assert.match(scheduled, />Payout scheduled</);
+    assert.match(scheduled, />Tue 20 Oct 26</);
+    assert.match(scheduled, new RegExp(`>${doc} issued<`));
     const paid = buildSelfBillEmailHtml({ ...bill, paid_at: '2026-10-20' }, '2026-10-20', { payoutStatement });
-    assert.match(paid, /PAYOUT SENT/i);
-    assert.doesNotMatch(paid, /PAYOUT PENDING|PAYOUT SCHEDULED/i);
-    if (payoutStatement) assert.match(paid, /COM-1/);
+    assert.match(paid, />Payout sent</);
+    assert.match(paid, />Approved</);
+    assert.match(paid, /#22C55E/);
+    assert.equal(selfBillEmailSubject(bill, null, { payoutStatement }), `${doc} SB-TEST · Thu 1 Oct 26 to Wed 14 Oct 26`);
+    assert.equal(selfBillEmailSubject(bill, '2026-10-20', { payoutStatement }), `${doc} SB-TEST · Thu 1 Oct 26 to Wed 14 Oct 26`);
+    assert.equal(selfBillEmailSubject({ ...bill, paid_at: '2026-10-20' }, '2026-10-20', { payoutStatement }), `${doc} SB-TEST · Thu 1 Oct 26 to Wed 14 Oct 26`);
   });
 }
 test('booking copy preserves deposit, balance and safe personalised content', () => {

@@ -1,20 +1,23 @@
 /**
  * Partner quote bid invitation email (Zendesk side conversation or Resend).
  *
- * Moldura única (`emailFixfy`, variante `zendesk: true`): prazo de 12 horas em
- * métrica, detalhes em duas colunas, miniaturas que abrem a galeria da página
- * de bid, um botão para dar o preço.
+ * O conteúdo do convite antigo (dono, 23/10/2026: o time gostava dele) na
+ * moldura nova: saudação, o prazo num quadro âmbar, os detalhes com o escopo
+ * inteiro (postcode e área, sem nome nem endereço do cliente até o job ser
+ * dele), a lista do que o lance pede, as fotos, um botão e o quadro de dúvidas.
  */
 
-import { emailFixfy, dataLonga, horaCurta } from "@/lib/emails/fixfy-shell";
+import { dataLonga, hora24 } from "@/lib/emails/fixfy-shell";
 import {
-  MARCA_FOTOS,
+  CHIP_PARCEIRO,
   PASSO_OFERTA,
+  ajudaDoParceiro,
+  areaDoEndereco,
   blocoDeFotosHtml,
-  comFotos,
-  paragrafosDoEscopo,
+  emailParceiro,
   passosDoJob,
   saudacaoDoParceiro,
+  semFotosDoParceiro,
   semTravessao,
 } from "@/lib/emails/partner-shell";
 import { extractUkPostcode } from "@/lib/uk-postcode";
@@ -42,7 +45,7 @@ export interface PartnerQuoteBidInviteEmailData {
 
 function formatBidDeadline(invitedAt: Date): string {
   const deadline = new Date(invitedAt.getTime() + PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS * 60 * 60 * 1000);
-  return [dataLonga(deadline), horaCurta(deadline)].filter(Boolean).join(", ");
+  return [dataLonga(deadline), hora24(deadline)].filter(Boolean).join(", ");
 }
 
 /**
@@ -78,54 +81,59 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
   const deadlineDisplay = formatBidDeadline(invitedAt);
   const postcode = extractUkPostcode(data.propertyAddress) ?? "";
   const typeLabel = data.typeOfWork.trim() || "Quote";
+  // Copy da versão antiga (dono, 23/10/2026: "usa a copy dos emails antigos").
   const subject = semTravessao(["Quote request", typeLabel, postcode].filter(Boolean).join(" · "));
-  const preheader = semTravessao(`New opportunity: ${data.typeOfWork} at ${data.propertyAddress || postcode || "your area"}. Bid within 12 hours.`);
+  const preheader = semTravessao(`New opportunity: ${typeLabel}${postcode ? ` in ${postcode}` : ""}. Bid within ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours.`);
   const fotos = fotosDoConvite(data.photoUrls, data.bidUrl);
+  const escopo = String(data.scope ?? "")
+    .split(/\n+/)
+    .map((l) => semTravessao(l.trim()))
+    .filter(Boolean)
+    .join("\n");
 
   const lojas = [
     data.iosStoreUrl?.trim() ? { label: "App Store", url: data.iosStoreUrl.trim() } : null,
     data.androidStoreUrl?.trim() ? { label: "Google Play", url: data.androidStoreUrl.trim() } : null,
   ].filter((l): l is { label: string; url: string } => Boolean(l));
 
-  const r = emailFixfy({
-    zendesk: true,
+  const { html, text } = emailParceiro({
     preheader,
-    estado: { texto: "New opportunity", cor: "navy" },
-    titulo: "You have been invited to bid on this opportunity",
-    passos: passosDoJob(PASSO_OFERTA),
-    metricas: [
-      { rotulo: "Bid deadline", valor: deadlineDisplay, sub: "UK time" },
-      { rotulo: "Bid window", valor: "12 hours" },
-    ],
+    estado: { texto: "New opportunity", cor: "navy", chip: true },
+    titulo: "You have been invited to bid",
     saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [
-      "Review the details below and submit your quote before the deadline.",
-      `This quote expires in 12 hours. Submit your bid by ${deadlineDisplay} (UK time).`,
-      "Required to submit your bid:",
-      "· Labour: fixed price or hourly (hours × rate)",
-      "· Materials: cost (enter £0 if none) and pricing type",
-      "· Two start date options: when you could begin the job",
-      "Use the button below. Incomplete bids cannot be submitted.",
-      ...paragrafosDoEscopo(data.scope, "Scope"),
-      fotos.html ? MARCA_FOTOS : "No site photos were attached to this request.",
+    paragrafos: ["Review the details below and submit your quote before the deadline."],
+    passos: passosDoJob(PASSO_OFERTA),
+    avisos: [
+      {
+        tom: "amber",
+        icone: "⏱",
+        titulo: "Bid deadline",
+        texto: `This quote expires in ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours. Submit your bid by ${deadlineDisplay} (UK time).`,
+        lugar: "topo",
+      },
+      {
+        tom: "neutral",
+        titulo: "Required to submit your bid",
+        itens: [
+          "Labour: fixed price or hourly (hours × rate)",
+          "Materials: cost (enter £0 if none) and pricing type",
+          "Two start date options: when you could begin the job",
+        ],
+        nota: "Use the button below. Incomplete bids cannot be submitted.",
+      },
+      ajudaDoParceiro(),
     ],
+    // Postcode e área só: nome e endereço do cliente entram quando o job é dele.
     linhas: [
       ["Reference", data.quoteReference],
+      ["Area", areaDoEndereco(data.propertyAddress)],
       ["Type of work", typeLabel],
-      ["Client", data.clientName.trim() || null],
-      ["Postcode", postcode || null],
-      ["Address", data.propertyAddress.trim() || null],
+      ["Bid window", `Expires in ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours`],
+      ["Scope", escopo || null],
     ],
+    antesDoBotao: fotos.html ? fotos : semFotosDoParceiro(),
     cta: { label: "Submit your bid", url: data.bidUrl },
-    linksSecundarios: [...lojas, { label: "View quote in Fixfy OS (office, login required)", url: data.officeQuoteUrl }],
-    letraPequena: [
-      `Or open in the Fixfy partner app: ${data.deepLinkUrl}`,
-      ...(lojas.length
-        ? []
-        : ["Install Fixfy from the App Store or Google Play, sign in, then open Invites to view this request and submit your bid."]),
-      "Questions? Reply to this email.",
-    ],
+    linksSecundarios: [...lojas, { label: "View quote in Fixfy OS", url: data.officeQuoteUrl }],
   });
-  const { html, text } = fotos.html ? comFotos(r, fotos.html, fotos.text) : r;
   return { subject, html, text };
 }

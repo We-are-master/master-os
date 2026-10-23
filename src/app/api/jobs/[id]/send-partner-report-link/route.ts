@@ -54,7 +54,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const admin = createServiceClient();
   const { data: job, error: jobErr } = await admin
     .from("jobs")
-    .select("id, reference, title, property_address, partner_id, client_name, client_email, scope, external_source, external_ref, zendesk_side_conversation_id")
+    .select("id, reference, title, property_address, scheduled_date, partner_id, client_name, client_email, scope, external_source, external_ref, zendesk_side_conversation_id")
     .eq("id", jobId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -93,13 +93,18 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   // Sempre o link curto por job (15/10/2026): o longo quebrava quando saía de outro ambiente.
   const reportUrl = await buildPartnerJobReportUrl(String(job.id), String(job.partner_id));
 
-  const subject = partnerReportRequestSubject(String(job.reference ?? ""));
+  const subject = partnerReportRequestSubject(
+    String(job.reference ?? ""),
+    String(job.title ?? ""),
+    (job as { scheduled_date?: string | null }).scheduled_date ?? null,
+  );
   const { html, text } = buildPartnerReportRequestEmail({
     partnerName,
     jobReference: String(job.reference ?? ""),
     jobTitle: String(job.title ?? ""),
     propertyAddress: String(job.property_address ?? ""),
     reportUrl,
+    jobDate: (job as { scheduled_date?: string | null }).scheduled_date ?? null,
   });
 
   let ticketId = getZendeskTicketId(job);

@@ -4,13 +4,16 @@
  * Só monta os dados; o desenho mora em fixfy-shell.ts. Cada e-mail ao cliente
  * escolhe os passos da sua jornada e marca qual é o atual.
  */
-import type { Metrica, Passo } from "./fixfy-shell";
+import { janelaDeTexto, type Metrica, type Passo } from "./fixfy-shell";
 
-/** `between 9am and midday` vira `9am to midday` (cabe numa célula de métrica). */
+/**
+ * A janela na célula de métrica, no formato único `09:00-12:00` (dono,
+ * 23/10/2026). Texto antigo (`between 9am and midday`) é convertido.
+ */
 export function janelaCurta(janela: string | null | undefined): string | null {
   const t = String(janela ?? "").trim();
   if (!t) return null;
-  return t.replace(/^between\s+/i, "").replace(/\s+and\s+/i, " to ");
+  return janelaDeTexto(t) ?? t;
 }
 
 /** Passos com o de índice `atual` marcado; os anteriores feitos, os seguintes futuros. */

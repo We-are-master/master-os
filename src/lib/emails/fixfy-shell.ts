@@ -136,34 +136,54 @@ export function horaCurta(iso: string | Date | null | undefined): string | null 
   return `${h12}${min === "00" ? "" : `:${min}`}${h < 12 ? "am" : "pm"}`;
 }
 
-/** `between 9am and midday`. Null sem as duas pontas. */
-export function janelaTexto(inicio: string | Date | null | undefined, fim: string | Date | null | undefined): string | null {
-  const a = horaCurta(inicio);
-  const b = horaCurta(fim);
-  return a && b ? `between ${a} and ${b}` : null;
+/** Uma hora em Londres no relógio de 24h: `09:00`, `13:30`. */
+export function hora24(iso: string | Date | null | undefined): string | null {
+  if (!iso) return null;
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const partes = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/London" }).formatToParts(d);
+  const h = partes.find((x) => x.type === "hour")?.value ?? "00";
+  const min = partes.find((x) => x.type === "minute")?.value ?? "00";
+  return `${h.padStart(2, "0")}:${min}`;
 }
 
 /**
+ * Janela de chegada no formato único dos e-mails (dono, 23/10/2026): 24h,
+ * compacta, com hífen: `09:00-12:00`. Null sem as duas pontas.
+ */
+export function janelaTexto(inicio: string | Date | null | undefined, fim: string | Date | null | undefined): string | null {
+  const a = hora24(inicio);
+  const b = hora24(fim);
+  return a && b ? `${a}-${b}` : null;
+}
+
+/** "9", "30", "pm" (ou "midday"/"noon"/"midnight") viram `21:30`. Null se não for hora. */
+export function horaDeTextoPara24(h: string, mm?: string | null, ap?: string | null): string | null {
+  const palavra = h.toLowerCase();
+  if (palavra === "midday" || palavra === "noon") return "12:00";
+  if (palavra === "midnight") return "00:00";
+  let n = Number(h);
+  if (!Number.isFinite(n) || n > 24) return null;
+  const p = ap?.toLowerCase();
+  if (p === "pm" && n < 12) n += 12;
+  if (p === "am" && n === 12) n = 0;
+  return `${String(n % 24).padStart(2, "0")}:${mm && /^\d{2}$/.test(mm) ? mm : "00"}`;
+}
+
+const HORA_RE = "(\\d{1,2}|midday|noon|midnight)(?:[:.](\\d{2}))?\\s*(am|pm)?";
+
+/**
  * Janela que já chegou como texto (`9AM – 12PM`, `09:00-12:00`, `between 9am
- * and 12pm`) no mesmo formato: `between 9am and midday`.
+ * and midday`) no mesmo formato: `09:00-12:00`.
  */
 export function janelaDeTexto(texto: string | null | undefined): string | null {
   const t = String(texto ?? "").trim();
   if (!t || /^to be confirmed$/i.test(t)) return null;
-  const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:[–—-]|to|and)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  const m = t.match(new RegExp(`${HORA_RE}\\s*(?:[–—-]|to|and)\\s*${HORA_RE}`, "i"));
   if (!m) return t;
-  const hora = (h: string, mm: string | undefined, ap: string | undefined) => {
-    let n = Number(h);
-    const p = ap?.toLowerCase();
-    if (p === "pm" && n < 12) n += 12;
-    if (p === "am" && n === 12) n = 0;
-    const min = mm && mm !== "00" ? `:${mm}` : "";
-    if (!min && n === 12) return "midday";
-    if (!min && n === 0) return "midnight";
-    const h12 = n % 12 === 0 ? 12 : n % 12;
-    return `${h12}${min}${n < 12 ? "am" : "pm"}`;
-  };
-  return `between ${hora(m[1]!, m[2], m[3])} and ${hora(m[4]!, m[5], m[6])}`;
+  const a = horaDeTextoPara24(m[1]!, m[2], m[3] ?? (m[6] && !/^(midday|noon|midnight)$/i.test(m[1]!) && Number(m[1]) < Number(m[4]) && Number(m[4]) !== 12 ? m[6] : null));
+  const b = horaDeTextoPara24(m[4]!, m[5], m[6]);
+  return a && b ? `${a}-${b}` : t;
 }
 
 /** £1,234.50 */
@@ -199,7 +219,12 @@ export function preencherOuNada(modelo: string, vars: Record<string, string | nu
 
 // ─── Moldura ────────────────────────────────────────────────────────────
 
-export type Estado = { texto: string; cor?: "navy" | "orange" | "green" | "muted" | "red" };
+/**
+ * `chip: true` desenha o estado como pílula na cor pedida (e-mails ao parceiro,
+ * 23/10/2026). Vermelho é sempre pílula; sem `chip`, as outras cores seguem o
+ * texto laranja/verde de sempre (e-mails ao cliente intocados).
+ */
+export type Estado = { texto: string; cor?: "navy" | "orange" | "green" | "muted" | "red"; chip?: boolean };
 
 export type Transferencia = {
   /** Linhas da conta bancária verificada, da configuração (nunca de exemplo). */
@@ -218,7 +243,26 @@ export type Metrica = {
   riscado?: boolean;
 };
 /** Um passo da faixa de progresso do job. */
-export type Passo = { nome: string; estado: "feito" | "atual" | "futuro" };
+/** `aprovado`: régua verde (passo final alcançado nos e-mails ao parceiro); opt-in. */
+export type Passo = { nome: string; estado: "feito" | "atual" | "futuro" | "aprovado" };
+
+/**
+ * Quadro colorido suave (dono, 23/10/2026, design system UNO): âmbar = informação
+ * que pede atenção (o que o cliente relatou, o prazo), vermelho = alerta (dinheiro
+ * parado, relatório atrasado), azul = ajuda ("Questions? Reply…"), neutro = lista.
+ * `lugar`: "topo" logo depois do texto, "meio" (padrão) depois dos detalhes,
+ * "fim" depois do botão.
+ */
+export type Aviso = {
+  tom: "amber" | "red" | "blue" | "neutral";
+  icone?: string | null;
+  titulo?: string | null;
+  texto?: string | null;
+  itens?: string[] | null;
+  /** Linha pequena depois da lista. */
+  nota?: string | null;
+  lugar?: "topo" | "meio" | "fim";
+};
 
 export type EmailFixfy = {
   preheader: string;
@@ -230,6 +274,7 @@ export type EmailFixfy = {
   metricas?: Metrica[] | null;
   /** Faixa de progresso do job; o passo "atual" leva a régua coral. */
   passos?: Passo[] | null;
+  /** Vazia (""), a linha some (e-mails ao parceiro não têm saudação). */
   saudacao: string;
   /** Parágrafos em texto puro (escapados aqui). */
   paragrafos: string[];
@@ -250,9 +295,28 @@ export type EmailFixfy = {
    * Fotos do trabalho (e-mail final, dono 22/10/2026): até 3 lado a lado e, embaixo,
    * o link do report completo (o PDF). URLs públicas e duráveis (assinadas por semanas).
    */
-  fotos?: { lista: Array<{ url: string; alt?: string | null }>; link?: { label: string; url: string | null | undefined } | null } | null;
+  fotos?: {
+    lista: Array<{ url: string; alt?: string | null }>;
+    link?: { label: string; url: string | null | undefined } | null;
+    /** Sem foto nenhuma, esta linha neutra no lugar da grade ("No photos available"); opt-in. */
+    vazio?: string | null;
+  } | null;
   /** Bloco "What we did." com o texto do parceiro e linhas curtas. */
   resumo?: { titulo: string; texto?: string | null; linhas?: Array<[string, string | null | undefined]> } | null;
+  /**
+   * HTML pronto (já escapado por quem monta) logo antes do botão, depois dos
+   * detalhes: as fotos do local nos e-mails ao parceiro. `text` entra antes do link.
+   */
+  antesDoBotao?: { html: string; text: string } | null;
+  /** Esconde o quadro "Need a hand?" (e-mails ao parceiro: só as infos). */
+  semAjuda?: boolean;
+  /** Quadros coloridos (âmbar, vermelho, azul, neutro). */
+  avisos?: Aviso[] | null;
+  /**
+   * Valores do quadro de detalhes em peso médio, cor de texto e quebra de linha
+   * preservada (e-mails ao parceiro: "menos negrito"). Sem ele, o de sempre.
+   */
+  detalhesLeves?: boolean;
   /** Comentário público do Zendesk: sem tabela interna. */
   zendesk?: boolean;
 };
@@ -277,7 +341,23 @@ const W = {
   orangeSoft: "#FF7A3D",
 } as const;
 
+const TOM_DO_AVISO: Record<Aviso["tom"], { bg: string; borda: string; titulo: string; texto: string }> = {
+  amber: { bg: "#FFF8EB", borda: "#F6E0B5", titulo: "#8A5300", texto: "#5B4A26" },
+  red: { bg: "#FDF0F0", borda: "#F4CDCD", titulo: "#B42318", texto: "#6E2B2B" },
+  blue: { bg: "#EFF4FF", borda: "#D9E3FB", titulo: "#1E3A8A", texto: "#36446E" },
+  neutral: { bg: "#F7F7FA", borda: "#EEEEF2", titulo: "#020040", texto: "#505268" },
+};
+
 const corDoEstado = (c: Estado["cor"]) => (c === "green" ? FX.green : c === "muted" ? W.ink3 : FX.orange);
+
+/** Fundo, texto e borda de cada pílula de estado. */
+const CHIP: Record<NonNullable<Estado["cor"]>, { bg: string; fg: string; borda: string }> = {
+  red: { bg: "#FDECEC", fg: "#C62828", borda: "#F5C2C2" },
+  orange: { bg: "#FFF1EA", fg: "#C2410C", borda: "#FBD3BF" },
+  green: { bg: "#E8F5EC", fg: "#15803D", borda: "#BFE3CB" },
+  navy: { bg: "#EEEEF8", fg: "#020040", borda: "#D6D6EA" },
+  muted: { bg: "#F1F1F4", fg: "#606078", borda: "#E0E0E6" },
+};
 
 function blocoTransferenciaHtml(t: Transferencia): string {
   const linhas = t.dadosBancarios.filter(([, v]) => String(v ?? "").trim());
@@ -293,6 +373,14 @@ function blocoTransferenciaHtml(t: Transferencia): string {
  * HTML e texto do mesmo conteúdo (handoff: "Generate HTML and plain text from the same copy").
  * `zendesk: true` monta tudo em `div` (o visualizador do Zendesk desenha borda em toda célula).
  */
+/**
+ * A linha neutra quando o job não tem foto (dono, 23/10/2026): texto pequeno e
+ * cinza, como a legenda das fotos, num quadro tracejado claro.
+ */
+export function semFotosHtml(texto: string): string {
+  return `<div style="border:1px dashed #D6D6E0;border-radius:10px;background:#FAFAFC;padding:12px 14px;"><p style="margin:0;font-family:${SANS};font-size:12px;line-height:18px;color:#6B6B85;">${esc(texto)}</p></div>`;
+}
+
 export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const z = Boolean(e.zendesk);
   const linhas = (e.linhas ?? []).filter((l): l is [string, string] => Boolean(l[1] && String(l[1]).trim()));
@@ -321,14 +409,15 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
 
   // ─── abertura: estado laranja, título grande, saudação e texto ───
   // Vermelho = dinheiro em aberto (dono, 22/10/2026): vira chip, para saltar aos olhos.
+  const chip = e.estado && (e.estado.cor === "red" || e.estado.chip) ? CHIP[e.estado.cor ?? "navy"] : null;
   const estado = !e.estado
     ? ""
-    : e.estado.cor === "red"
-      ? `<p style="margin:0 0 10px 0;"><span style="display:inline-block;background:#FDECEC;color:#C62828;border:1px solid #F5C2C2;font-family:${SANS};font-size:13px;line-height:18px;font-weight:700;padding:4px 12px;border-radius:999px;">${esc(e.estado.texto)}</span></p>`
+    : chip
+      ? `<p style="margin:0 0 10px 0;"><span style="display:inline-block;background:${chip.bg};color:${chip.fg};border:1px solid ${chip.borda};font-family:${SANS};font-size:13px;line-height:18px;font-weight:700;padding:4px 12px;border-radius:999px;">${esc(e.estado.texto)}</span></p>`
       : `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;letter-spacing:0.01em;color:${corDoEstado(e.estado.cor)};">${esc(e.estado.texto)}</p>`;
   const titulo = `<h1 class="fx-h1" style="margin:0 0 18px 0;font-family:${SANS};font-size:36px;line-height:40px;font-weight:800;letter-spacing:-0.02em;color:${FX.navy};">${esc(e.titulo)}</h1>`;
   const texto =
-    `<p style="margin:0 0 10px 0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(e.saudacao)}</p>` +
+    (e.saudacao.trim() ? `<p style="margin:0 0 10px 0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(e.saudacao)}</p>` : "") +
     e.paragrafos.map((p) => `<p style="margin:0 0 12px 0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(p)}</p>`).join("");
   const abertura = bloco(`${estado}${titulo}${texto}`, 26);
 
@@ -338,9 +427,10 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const colunasMetricas = z
     ? metricas.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / metricas.length)}%;box-sizing:border-box;padding:0 ${i < metricas.length - 1 ? 14 : 0}px 0 0;">${metricaHtml(m)}</div>`).join("")
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
-  const corPasso = (p: Passo) => (p.estado === "atual" ? FX.orange : p.estado === "feito" ? "#FFFFFF" : "rgba(255,255,255,0.18)");
+  const corPasso = (p: Passo) =>
+    p.estado === "aprovado" ? "#22C55E" : p.estado === "atual" ? FX.orange : p.estado === "feito" ? "#FFFFFF" : "rgba(255,255,255,0.18)";
   const passoHtml = (p: Passo) =>
-    `<div style="height:4px;border-radius:2px;background:${corPasso(p)};font-size:0;line-height:0;">&nbsp;</div><p style="margin:7px 0 0 0;font-family:${SANS};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" ? 700 : 500};color:${p.estado === "futuro" ? W.onNavy : "#FFFFFF"};">${esc(p.nome)}</p>`;
+    `<div style="height:4px;border-radius:2px;background:${corPasso(p)};font-size:0;line-height:0;">&nbsp;</div><p style="margin:7px 0 0 0;font-family:${SANS};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" || p.estado === "aprovado" ? 700 : 500};color:${p.estado === "futuro" ? W.onNavy : p.estado === "aprovado" ? "#4ADE80" : "#FFFFFF"};">${esc(p.nome)}</p>`;
   const largura = passos.length ? Math.floor(100 / passos.length) : 0;
   const progresso = !passos.length
     ? ""
@@ -361,7 +451,9 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
         `<div style="border:1px solid ${W.line};border-radius:12px;">${linhas
           .map(
             ([r, v], i) =>
-              `<div style="padding:12px 16px;${i < linhas.length - 1 ? `border-bottom:1px solid ${W.line};` : ""}"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.ink3};">${esc(r)}</p><p style="margin:2px 0 0 0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">${esc(v)}</p></div>`,
+              e.detalhesLeves
+                ? `<div style="padding:12px 16px;${i < linhas.length - 1 ? `border-bottom:1px solid ${W.line};` : ""}"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.ink3};">${esc(r)}</p><p style="margin:3px 0 0 0;font-family:${SANS};font-size:15px;line-height:22px;font-weight:500;color:${W.ink};">${esc(v).replace(/\n/g, "<br>")}</p></div>`
+                : `<div style="padding:12px 16px;${i < linhas.length - 1 ? `border-bottom:1px solid ${W.line};` : ""}"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.ink3};">${esc(r)}</p><p style="margin:2px 0 0 0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">${esc(v)}</p></div>`,
           )
           .join("")}</div>`,
         18,
@@ -377,6 +469,33 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     ? `<p style="margin:12px 0 0 0;font-family:${SANS};font-size:14px;line-height:20px;text-align:center;color:${W.ink3};">${secundarios.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:700;">${esc(l.label)}</a>`).join(" &middot; ")}</p>`
     : "";
   const acao = botao || links ? bloco(`${botao}${links}`, 22, 24) : "";
+  const antes = e.antesDoBotao?.html ? bloco(e.antesDoBotao.html, 18, 24) : "";
+
+  // ─── quadros coloridos ───
+  const avisos = (e.avisos ?? []).filter((a) => a.titulo?.trim() || a.texto?.trim() || a.nota?.trim() || (a.itens ?? []).some((x) => x.trim()));
+  const avisoHtml = (a: Aviso) => {
+    const t = TOM_DO_AVISO[a.tom];
+    const titulo = a.titulo?.trim()
+      ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:14px;line-height:20px;font-weight:700;color:${t.titulo};">${a.icone ? `${esc(a.icone)}&nbsp; ` : ""}${esc(a.titulo)}</p>`
+      : "";
+    const texto = a.texto?.trim()
+      ? `<p style="margin:0;font-family:${SANS};font-size:14px;line-height:21px;color:${t.texto};">${!a.titulo?.trim() && a.icone ? `${esc(a.icone)}&nbsp; ` : ""}${esc(a.texto)}</p>`
+      : "";
+    const itens = (a.itens ?? []).filter((x) => x.trim())
+      .map((x) => `<p style="margin:4px 0 0 0;padding-left:14px;text-indent:-14px;font-family:${SANS};font-size:14px;line-height:21px;color:${t.texto};">&bull;&nbsp; ${esc(x)}</p>`)
+      .join("");
+    const nota = a.nota?.trim() ? `<p style="margin:8px 0 0 0;font-family:${SANS};font-size:13px;line-height:19px;color:${W.ink3};">${esc(a.nota)}</p>` : "";
+    return `<div style="background:${t.bg};border:1px solid ${t.borda};border-radius:12px;padding:14px 16px;margin:0 0 10px 0;">${titulo}${texto}${itens}${nota}</div>`;
+  };
+  const avisosEm = (lugar: NonNullable<Aviso["lugar"]>) => {
+    const lista = avisos.filter((a) => (a.lugar ?? "meio") === lugar);
+    return lista.length ? bloco(lista.map(avisoHtml).join(""), lugar === "topo" ? 6 : 16, 24) : "";
+  };
+  const avisoTexto = (lugar: NonNullable<Aviso["lugar"]>) =>
+    avisos
+      .filter((a) => (a.lugar ?? "meio") === lugar)
+      .map((a) => [a.titulo ? `${a.icone ? `${a.icone} ` : ""}${a.titulo}` : "", a.texto ?? "", ...(a.itens ?? []).map((x) => `- ${x}`), a.nota ?? ""].filter(Boolean).join("\n"))
+      .join("\n\n");
 
   // ─── fotos do trabalho e o report completo ───
   const fotosLista = (e.fotos?.lista ?? []).filter((f) => urlSegura(f.url)).slice(0, 3);
@@ -384,7 +503,9 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const fotoHtml = (f: { url: string; alt?: string | null }, i: number) =>
     `<img src="${esc(urlSegura(f.url)!)}" width="176" alt="${esc(f.alt || `Photo ${i + 1} of the finished work`)}" style="display:block;width:100%;height:150px;object-fit:cover;border:0;border-radius:10px;">`;
   const gradeFotos = !fotosLista.length
-    ? ""
+    ? e.fotos?.vazio?.trim()
+      ? semFotosHtml(e.fotos.vazio.trim())
+      : ""
     : z
       ? `<div style="font-size:0;">${fotosLista.map((f, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / fotosLista.length)}%;box-sizing:border-box;padding:0 ${i < fotosLista.length - 1 ? 6 : 0}px 0 0;">${fotoHtml(f, i)}</div>`).join("")}</div>`
       : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${fotosLista.map((f, i) => `<td width="${Math.floor(100 / fotosLista.length)}%" valign="top" style="padding:0 ${i < fotosLista.length - 1 ? 6 : 0}px 0 0;">${fotoHtml(f, i)}</td>`).join("")}</tr></table>`;
@@ -413,7 +534,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const assina = assinatura ? bloco(`<p style="margin:0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(assinatura)}</p>`, 16) : "";
 
   // ─── ajuda, letra pequena e rodapé claro ───
-  const ajuda = bloco(
+  const ajuda = e.semAjuda ? "" : bloco(
     `<div style="background:${W.canvas};border-radius:12px;padding:16px 18px;"><p style="margin:0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">Need a hand?</p><p style="margin:3px 0 0 0;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">Reply to this email or message us on WhatsApp at ${FIXFY_CONTACT.phone}. We’re happy to help.</p></div>`,
     22,
     24,
@@ -435,7 +556,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     : `<tr><td align="center" style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</td></tr>`;
 
   // Com fotos (e-mail final): fotos e "What we did." vêm antes do resumo do pagamento.
-  const miolo = topo + abertura + fotos + resumo + destaque + detalhes + acao + transferencia + nota + assina + ajuda + finoHtml + rodape;
+  const miolo = topo + abertura + fotos + resumo + avisosEm("topo") + destaque + detalhes + avisosEm("meio") + antes + acao + avisosEm("fim") + transferencia + nota + assina + ajuda + finoHtml + rodape;
 
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${W.canvas};">${esc(e.preheader)}</div>` +
@@ -461,14 +582,19 @@ ${miolo}
         : "",
     e.destaque?.riscado ? `Previously: ${e.destaque.riscado}` : "",
     "",
-    e.saudacao,
+    e.saudacao.trim() ? e.saudacao : "",
     "",
     ...e.paragrafos.flatMap((p) => [p, ""]),
+    avisoTexto("topo") ? `${avisoTexto("topo")}\n` : "",
+    !fotosLista.length && e.fotos?.vazio?.trim() ? `${e.fotos.vazio.trim()}\n` : "",
     linkDoReport ? `${linkDoReport.label}: ${linkDoReport.url}\n` : "",
     e.resumo?.texto?.trim() ? `${e.resumo.titulo}\n${e.resumo.texto.trim()}\n` : "",
     ...linhas.map(([r, v]) => `${r}: ${v}`),
+    avisoTexto("meio") ? `\n${avisoTexto("meio")}` : "",
+    e.antesDoBotao?.text ? `\n${e.antesDoBotao.text}` : "",
     cta ? `\n${cta.label}: ${cta.url}` : "",
     ...secundarios.map((l) => `${l.label}: ${urlSegura(l.url)}`),
+    avisoTexto("fim") ? `\n${avisoTexto("fim")}` : "",
     e.transferencia && e.transferencia.dadosBancarios.length
       ? [
           "",

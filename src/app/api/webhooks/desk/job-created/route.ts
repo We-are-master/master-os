@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
@@ -437,6 +438,7 @@ async function sendZendeskAssignmentEmail(params: ZendeskAssignmentEmailParams):
     partnerNotes,
     reportUrl,
     photoUrls: fotos.urls,
+    jobUrl: resolvePartnerTradePortalBaseUrl(),
   });
 
   await createSideConversation({
