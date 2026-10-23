@@ -8,9 +8,11 @@ import {
   nomesCompativeis, origemDoJob, padraoDoTelefone, precoFixoDoJob, telefoneNormalizado, type ClienteCandidato,
 } from "./plataformas";
 import { respostaManualDepoisDe, idsDaEquipe } from "./historico";
+import { passoDepoisDoHistorico } from "./housekeep-quotes";
 import {
-  HK_MARCA_8H, HK_MARCA_EQUIPE_RESPONDEU, HK_MARCA_SEM_DISPONIBILIDADE, avisarSemDisponibilidade, passoDaQuoteHousekeep, passoDepoisDoHistorico,
-} from "./housekeep-quotes";
+  MARCA_EQUIPE_AGIU, MARCA_FECHADA_SEM_LANCE, MARCA_NO_BIDS, canalSemLance, fecharQuoteSemLance, passoSemLance,
+  saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano,
+} from "./quote-sem-lance";
 import { escolherQuoteDoBooking, planoDoJobDoBooking, type QuoteDoBooking } from "./booking-housekeep";
 import { mandarBoasVindasDoExpress, montarBoasVindasDoExpress, motivoParaNaoMandarBoasVindas, type DependenciasDaBoasVindas } from "./express-boas-vindas";
 import * as textos from "./textos";
@@ -204,44 +206,78 @@ describe("Housekeep v2: o mesmo booking em dois tickets é um job", () => {
 
 /* --------------------------- Housekeep quotes --------------------------- */
 
-describe("Housekeep v2: quotes 8h / 48h", () => {
-  it("proposta viável antes das 8h é processada na hora", () => {
-    const p = passoDaQuoteHousekeep({ horasDesdeConvite: 1.5, temLanceViavel: true, marca: null });
-    assert.equal(p, "processar");
-    assert.equal(passoDepoisDoHistorico("processar", { respostaManual: false, respostaManualComPreco: false }), "processar");
+describe("Housekeep v2: lance viável", () => {
+  it("processa na hora; só para se a equipe já mandou preço à mão", () => {
+    assert.equal(passoDepoisDoHistorico({ respostaManual: false, respostaManualComPreco: false }), "processar");
+    assert.equal(passoDepoisDoHistorico({ respostaManual: true, respostaManualComPreco: false }), "processar");
+    assert.equal(passoDepoisDoHistorico({ respostaManual: true, respostaManualComPreco: true }), "equipe_respondeu");
   });
-  it("equipe já mandou preço à mão: nada automático", () => {
-    assert.equal(passoDepoisDoHistorico("processar", { respostaManual: true, respostaManualComPreco: true }), "equipe_respondeu");
-    // resposta sem preço não segura o rascunho
-    assert.equal(passoDepoisDoHistorico("processar", { respostaManual: true, respostaManualComPreco: false }), "processar");
+});
+
+describe("quote sem lance: 24h No Bids, 48h fecha (dono, 23/10/2026)", () => {
+  const p = (primeiro: number, ultimo: number, marca: string | null = null) =>
+    passoSemLance({ horasDesdePrimeiroConvite: primeiro, horasDesdeUltimoConvite: ultimo, marca });
+  it("espera até 24h, vai para No Bids uma vez, fecha às 48h", () => {
+    assert.equal(p(7, 7), "esperar");
+    assert.equal(p(23.9, 23.9), "esperar");
+    assert.equal(p(24, 24), "no_bids");
+    assert.equal(p(30, 30, MARCA_NO_BIDS), "esperar");
+    assert.equal(p(47.9, 47.9, MARCA_NO_BIDS), "esperar");
+    assert.equal(p(48, 48, MARCA_NO_BIDS), "fechar");
   });
-  it("sem lance: espera, avisa às 8h uma vez, fecha às 48h (dono, 23/10/2026; era 36h)", () => {
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 3, temLanceViavel: false, marca: null }), "esperar");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 9, temLanceViavel: false, marca: null }), "avisar_8h");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 20, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 37, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 47.9, temLanceViavel: false, marca: HK_MARCA_8H }), "esperar");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 48, temLanceViavel: false, marca: HK_MARCA_8H }), "fechar_48h");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 50, temLanceViavel: false, marca: HK_MARCA_SEM_DISPONIBILIDADE }), "nada");
-    assert.equal(passoDaQuoteHousekeep({ horasDesdeConvite: 50, temLanceViavel: true, marca: HK_MARCA_EQUIPE_RESPONDEU }), "nada");
+  it("convidar mais parceiros conta como agir: as 48h contam do último convite", () => {
+    assert.equal(p(50, 20, MARCA_NO_BIDS), "esperar");
+    assert.equal(p(76, 48, MARCA_NO_BIDS), "fechar");
   });
-  it("48h sem proposta e sem resposta humana: sem disponibilidade; com resposta humana: não", () => {
-    assert.equal(passoDepoisDoHistorico("fechar_48h", { respostaManual: false, respostaManualComPreco: false }), "sem_disponibilidade");
-    assert.equal(passoDepoisDoHistorico("fechar_48h", { respostaManual: true, respostaManualComPreco: false }), "equipe_respondeu");
+  it("marca antiga das 8h da Housekeep entra na régua nova", () => {
+    assert.equal(p(30, 30, "housekeep_no_bid_8h"), "no_bids");
   });
-  it("o 'no availability' sai uma vez e fecha a quote", async () => {
+  it("fechada, equipe agiu ou caso de gente: nada mais", () => {
+    for (const m of [MARCA_FECHADA_SEM_LANCE, MARCA_EQUIPE_AGIU, "no_bids_needs_person", "no_bids_ticket_closed", "housekeep_no_availability_sent", "housekeep_team_replied"]) {
+      assert.equal(p(60, 60, m), "nada", m);
+    }
+  });
+  it("Hi team para conta, primeiro nome para cliente direto", () => {
+    assert.equal(saudacaoSemLance({ b2b: true, primeiroNome: "Yosheeta" }), "Hi team,");
+    assert.equal(saudacaoSemLance({ b2b: false, primeiroNome: "Joan" }), "Hi Joan,");
+    assert.equal(saudacaoSemLance({ b2b: false, primeiroNome: null }), "Hi there,");
+  });
+  it("o texto do dono, sem travessão, assinado Fixfy Team", () => {
+    for (const t of [textoSemLanceHtml("Hi team,"), textoSemLancePlano("Hi team,")]) {
+      assert.match(t, /Hi team,/);
+      assert.match(t, /not able to quote for this job at the moment/);
+      assert.match(t, /If anything changes we will get back to you/);
+      assert.match(t, /Fixfy Team/);
+      assert.ok(!/[—–]/.test(t));
+    }
+  });
+  it("canal: ticket de e-mail responde no ticket; WhatsApp só com a janela aberta; senão e-mail; senão gente", () => {
+    assert.deepEqual(canalSemLance({ daConversa: false, janelaAberta: false, harveyNaConversa: false, emailDoCliente: null }), { via: "ticket" });
+    assert.deepEqual(canalSemLance({ daConversa: true, janelaAberta: true, harveyNaConversa: true, emailDoCliente: null }), { via: "whatsapp" });
+    assert.deepEqual(canalSemLance({ daConversa: true, janelaAberta: false, harveyNaConversa: true, emailDoCliente: "joan@example.com" }), { via: "email", para: "joan@example.com" });
+    assert.deepEqual(canalSemLance({ daConversa: true, janelaAberta: true, harveyNaConversa: false, emailDoCliente: "joan@example.com" }), { via: "email", para: "joan@example.com" });
+    assert.equal(canalSemLance({ daConversa: true, janelaAberta: false, harveyNaConversa: true, emailDoCliente: "hello@getfixfy.com" }).via, "nenhum");
+    assert.equal(canalSemLance({ daConversa: true, janelaAberta: false, harveyNaConversa: true, emailDoCliente: null }).via, "nenhum");
+  });
+  it("o 'not able to quote' sai uma vez e fecha a quote", async () => {
     const { sb, t } = bancoFalso({ quotes: [{ id: "q1", reference: "QT-1", status: "bidding", external_ref: "777" }] });
-    const postados: number[] = [];
-    const deps = { postarPublico: async (id: number, html: string) => { postados.push(id); assert.ok(!/[—–]/.test(html)); } };
-    const a = await avisarSemDisponibilidade(sb, { id: "q1", reference: "QT-1", external_ref: "777" }, deps);
-    const b = await avisarSemDisponibilidade(sb, { id: "q1", reference: "QT-1", external_ref: "777" }, deps);
+    const enviados: number[] = [];
+    const deps = { canal: "email" as const, enviar: async (id: number) => { enviados.push(id); return `zendesk:${id}`; } };
+    const a = await fecharQuoteSemLance(sb, { id: "q1", reference: "QT-1", external_ref: "777" }, deps);
+    const b = await fecharQuoteSemLance(sb, { id: "q1", reference: "QT-1", external_ref: "777" }, deps);
     assert.equal(a.enviado, true);
     assert.equal(b.enviado, false);
-    assert.deepEqual(postados, [777]);
+    assert.deepEqual(enviados, [777]);
     assert.equal(t.quotes![0]!.status, "rejected");
-    assert.equal(t.quotes![0]!.automation_status, HK_MARCA_SEM_DISPONIBILIDADE);
+    assert.equal(t.quotes![0]!.automation_status, MARCA_FECHADA_SEM_LANCE);
     assert.ok(String(t.quotes![0]!.rejection_reason).length > 0);
-    assert.equal(t.outbound_messages![0]!.dedupe_key, "housekeep-sem-disponibilidade:q1");
+    assert.equal(t.outbound_messages![0]!.dedupe_key, "quote-sem-lance:q1");
+  });
+  it("envio que falhou não fecha a quote", async () => {
+    const { sb, t } = bancoFalso({ quotes: [{ id: "q2", reference: "QT-2", status: "bidding", external_ref: "778" }] });
+    const r = await fecharQuoteSemLance(sb, { id: "q2", reference: "QT-2", external_ref: "778" }, { canal: "email", enviar: async () => { throw new Error("Zendesk 500"); } });
+    assert.equal(r.enviado, false);
+    assert.equal(t.quotes![0]!.status, "bidding");
   });
 });
 

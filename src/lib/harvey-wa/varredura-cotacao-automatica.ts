@@ -18,7 +18,7 @@
  *   3. Só 8h às 20h de Londres para qualquer coisa que fala com alguém.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { zendeskApi, addTicketTags, removeTicketTags, updateTicket, replyToSideConversation } from "@/lib/zendesk";
+import { zendeskApi, addTicketTags, updateTicket, replyToSideConversation } from "@/lib/zendesk";
 import { ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE } from "@/lib/zendesk-statuses";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { extractUkPostcode } from "@/lib/uk-postcode";
@@ -32,13 +32,12 @@ import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
-import { syncQuoteZendeskStatus } from "@/lib/zendesk-status-sync";
 import { foraDaCotacaoAutomatica } from "@/lib/processo/b2b-humano";
 import { processoDaConta } from "@/lib/processo/conta";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PEDIU_CONTEXTO, TAG_SEM_LANCE,
   enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres,
-  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoPedeContexto, type Destinatario,
+  proximoPassoDoLeilao, servicoDoAssunto, textoPedeContexto, type Destinatario,
   type ContextoDaCotacao,
 } from "./cotacao-automatica";
 
@@ -49,8 +48,6 @@ const CAMPO_ENDERECO = 5693026186527;
 const CAMPO_TELEFONE = 5811689527071;
 /** Teto de ações por ciclo: a primeira rodada não pode despejar o backlog. */
 const MAX_ACOES = 5;
-/** Marca na quote que cala o aviso de 26h do quote-lances-sweep (já avisamos). */
-const AVISEI_SEM_LANCE = "no_bids_reported";
 
 export type ResultadoCotacaoAutomatica = { ensaio: boolean; foraDoHorario: boolean; olhados: number; acoes: string[]; pulados: string[] };
 
@@ -498,28 +495,6 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
     await nota(t.id, `🤖 Auto-quote: ${Math.round(horas)}h without a bid on ${q.reference}, ${r}.`);
     await addTicketTags(t.id, [TAG_LEMBROU_PARCEIROS]);
     out.acoes.push(`${quem}: ${r}`);
-    return true;
-  }
-
-  const { user } = await zendeskApi<{ user: Usuario }>(`users/${t.requester_id}.json`);
-  const nome = firstName(user.name ?? null) ?? "there";
-  const conv = await lerConversa(sb, t, user, null, agora);
-
-  if (passo === "avisar_cliente") {
-    const texto = textoAindaCotando(destinatarioDoTicket(t, nome), q.service_type);
-    // Preço não cabe em template, e "ainda cotando" também não: fora da janela, só a equipe sabe.
-    const podeFalar = conv.canal === "email" || (conv.janelaAberta && !!conv.conversa);
-    if (!aplicar) { out.acoes.push(`${quem}: ${Math.round(horas)}h, no bid: would ${podeFalar ? `tell the customer (${conv.canal}): "${texto}"` : "NOT message the customer (WhatsApp window closed)"} + note + harvey_no_bids → 🔎 No Bids`); return true; }
-    const via = podeFalar ? await falarComCliente(t, user, conv, texto, q.service_type) : null;
-    await nota(t.id, `🤖 Auto-quote: 24h and no partner bid on ${q.reference}. ${via ? `Customer told we're still working on it (${via}), no time promised.` : "Customer NOT messaged: the WhatsApp 24h window is closed."}\n\nThis needs a person: call a partner, widen the area, or price it in-house.`);
-    await addTicketTags(t.id, [TAG_SEM_LANCE]);
-    // lead_gen tira o ticket do Action Required (a view exclui); passada a cotação ele já não é lead.
-    if (t.tags.includes("lead_gen")) await removeTicketTags(t.id, ["lead_gen"]);
-    await sb.from("quotes").update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() }).eq("id", q.id);
-    // 🔎 No Bids (dono, 23/10/2026): o status leva à fila, no lugar do campo Action Required,
-    // que ficava ligado mesmo depois de o lance chegar. Espelho na hora; a rotina garante.
-    await syncQuoteZendeskStatus(q.id, sb).catch((e) => console.error(`[cotacao-automatica] No Bids no #${t.id}:`, e));
-    out.acoes.push(`${quem}: 24h without bids, ${via ? `customer told (${via})` : "customer not messaged (window closed)"}, sent to 🔎 No Bids`);
     return true;
   }
 

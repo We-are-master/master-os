@@ -42,29 +42,14 @@ import { updateTicket } from "@/lib/zendesk";
 import { processoDaConta, type RegrasDoProcesso } from "@/lib/processo/conta";
 import { ehHousekeep } from "@/lib/processo/plataformas";
 import { idsDaEquipe, respostaManualDepoisDe, type ComentarioDoTicket } from "@/lib/processo/historico";
+import { HK_MARCA_EQUIPE_RESPONDEU, passoDepoisDoHistorico } from "@/lib/processo/housekeep-quotes";
 import {
-  HK_CHECAGEM_HORAS, HK_MARCA_8H, HK_MARCA_EQUIPE_RESPONDEU, HK_SEM_DISPONIBILIDADE_HORAS,
-  avisarSemDisponibilidade, passoDaQuoteHousekeep, passoDepoisDoHistorico,
-} from "@/lib/processo/housekeep-quotes";
+  HORAS_ATE_FECHAR, HORAS_ATE_NO_BIDS, MARCA_EQUIPE_AGIU, MARCA_NO_BIDS, MARCA_PRECISA_DE_GENTE, MARCA_TICKET_FECHADO,
+  canalSemLance, fecharQuoteSemLance, passoSemLance, saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano,
+} from "@/lib/processo/quote-sem-lance";
 
 /** O leilão fecha 2h depois do primeiro convite. */
 export const JANELA_HORAS = 2;
-/**
- * Até quando ele insiste antes de desistir e chamar gente.
- *
- * Fechada a janela sem nenhum lance, ele NÃO desiste: continua olhando a cada
- * ciclo por mais 24 horas, porque parceiro responde tarde e um lance que chega
- * às 19h de sexta ainda vale. Passado o prazo sem nada, o silêncio vira nota
- * interna: 26h caladas é resposta, e alguém precisa decidir o que fazer.
- *
- * O dono pediu "de 30 em 30 minutos". O ciclo do Harvey é de 5, e olhar mais
- * vezes só acha o lance mais cedo — a conta que importa é o prazo, não o passo.
- */
-export const PRAZO_SEM_LANCE_HORAS = JANELA_HORAS + 24;
-/** Marca de "já avisei que ninguém cotou", no banco para não repetir a nota. */
-const AVISEI_SEM_LANCE = "no_bids_reported";
-/** Mesma coisa quando não há onde avisar: o ticket já estava fechado. */
-const TICKET_FECHADO_SEM_LANCE = "no_bids_ticket_closed";
 /** Tag no ticket para o silêncio aparecer no Action Required. */
 export const TAG_SEM_LANCE = "harvey_no_bids";
 /** Teto por ciclo: sem ele a primeira rodada despeja o backlog inteiro. */
@@ -150,93 +135,36 @@ export async function varrerLancesParaRascunho(
     };
     r.analisados++;
 
-    // A janela conta do primeiro convite. Sem convite não há leilão para fechar.
+    // A janela conta do primeiro convite; as 48h sem lance, do último. Sem convite não há leilão.
     const { data: convites } = await supabase
       .from("quote_partner_invitations")
       .select("invited_at")
       .eq("quote_id", q.id)
-      .order("invited_at", { ascending: true })
-      .limit(1);
-    const primeiro = (convites ?? [])[0] as { invited_at?: string } | undefined;
-    if (!primeiro?.invited_at) continue;
-    // Housekeep v2: sem janela de 2h (lance viável sai na hora), 8h e 48h no lugar das 26h.
+      .order("invited_at", { ascending: true });
+    const datasDosConvites = ((convites ?? []) as Array<{ invited_at?: string | null }>).map((c) => c.invited_at).filter((d): d is string => !!d);
+    const primeiro = { invited_at: datasDosConvites[0] };
+    const ultimoConvite = datasDosConvites[datasDosConvites.length - 1];
+    if (!primeiro.invited_at || !ultimoConvite) continue;
+    // Housekeep v2: sem janela de 2h (lance viável sai na hora).
     const hkV2 = await housekeepV2(supabase, bruta, regrasPorConta);
-    if (!hkV2 && horasDesde(primeiro.invited_at) < JANELA_HORAS) {
-      r.janelaAberta++;
-      continue;
-    }
 
     const { data: lancesBrutos } = await supabase
       .from("quote_bids")
       .select("id, partner_id, partner_name, bid_amount, status, created_at, notes")
       .eq("quote_id", q.id);
     const escolha = escolherMelhorLance((lancesBrutos ?? []) as unknown as Lance[], { margem: MARGEM_PADRAO });
-    if (hkV2) {
-      const seguir = await passoHousekeepV2(supabase, q, bruta.automation_status as string | null, primeiro.invited_at, !!escolha, armado, r, postarNotaInterna);
-      if (!seguir) continue;
-    }
     if (!escolha) {
-      r.semLance++;
-      /**
-       * Ninguém cotou. Ele segue olhando até o prazo, e só então chama gente.
-       *
-       * Sem este ramo a quote ficava em `bidding` para sempre, calada: o
-       * escritório não tinha como saber a diferença entre "os parceiros ainda
-       * vão responder" e "não vem lance nenhum". As duas coisas eram um número
-       * parado na tela.
-       */
-      const horas = horasDesde(primeiro.invited_at);
-      if (horas < PRAZO_SEM_LANCE_HORAS) continue;
-      const marca = bruta.automation_status as string | null;
-      if (marca === AVISEI_SEM_LANCE || marca === TICKET_FECHADO_SEM_LANCE) continue;
-
-      const convidados = (await supabase
-        .from("quote_partner_invitations")
-        .select("partner_id", { count: "exact", head: true })
-        .eq("quote_id", q.id)).count ?? 0;
-      const nota = [
-        `🤖 HARVEY — nobody bid on ${q.reference}`,
-        "",
-        `${convidados} partner(s) invited, first invite ${Math.round(horas)}h ago. No valid bid came back.`,
-        "",
-        "This needs a person: widen the trade or postcode, call a partner, or tell the customer we cannot cover it.",
-      ].join("\n");
-
-      if (!armado) {
-        r.detalhes.push(`[ensaio] ${q.reference}: ${Math.round(horas)}h sem lance de ${convidados} convidado(s)`);
-        continue;
-      }
-      /**
-       * Ticket fechado não aceita nota: o Zendesk devolve 422 e, sem a marca,
-       * ele tentava de novo a cada ciclo (QT-2026-1150 no #50536, 24/09/2026).
-       * Conversa encerrada não precisa de aviso, então marca e segue.
-       */
-      const snap = await getZendeskTicketSnapshot(q.external_ref);
-      if (snap.ok && snap.ticket?.status === "closed") {
-        await supabase
-          .from("quotes")
-          .update({ automation_status: TICKET_FECHADO_SEM_LANCE, updated_at: new Date().toISOString() })
-          .eq("id", q.id);
-        r.detalhes.push(`${q.reference}: sem lance, mas o ticket #${q.external_ref} está fechado — não aviso`);
-        continue;
-      }
-      try {
-        await postarNotaInterna(Number(q.external_ref), nota);
-        await addTicketTags(q.external_ref, [TAG_SEM_LANCE]);
-      } catch (err) {
-        r.detalhes.push(`${q.reference}: aviso de silêncio falhou, não marco — ${String(err)}`);
-        continue;
-      }
-      const fila = await precisaDeAcao(q.external_ref, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners or call`);
-      if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
-      await supabase
-        .from("quotes")
-        .update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() })
-        .eq("id", q.id);
-      r.silenciosas++;
-      r.detalhes.push(`${q.reference}: ${Math.round(horas)}h sem lance — nota pro humano`);
-      await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No bids on ${q.reference} after ${Math.round(horas)}h from ${convidados} invited partner(s): asked the team to step in`, regra: `no bid within ${PRAZO_SEM_LANCE_HORAS}h of the first invite`, pendente: "Team: widen the trade, call a partner or tell the customer" }, supabase);
+      // Sem lance: a mesma régua para toda quote (processo/quote-sem-lance.ts).
+      await tratarSemLance(supabase, q, bruta, primeiro.invited_at, ultimoConvite, armado, r, postarNotaInterna);
       continue;
+    }
+    if (!hkV2 && horasDesde(primeiro.invited_at) < JANELA_HORAS) {
+      r.janelaAberta++;
+      continue;
+    }
+    if (hkV2) {
+      const seguir = await passoHousekeepV2(supabase, q, bruta.automation_status as string | null, armado, r);
+      if (!seguir) continue;
     }
 
     /**
@@ -400,46 +328,18 @@ async function historicoDaQuote(ticketId: string, desde: string): Promise<{ resp
 }
 
 /**
- * Housekeep v2 (processo/housekeep-quotes.ts). Devolve true quando a quote
- * segue para o caminho de sempre do lance (rascunho, escopo, envio).
+ * Housekeep v2 com lance viável (processo/housekeep-quotes.ts). Devolve true quando
+ * a quote segue para o caminho de sempre do lance (rascunho, escopo, envio).
  */
 async function passoHousekeepV2(
   supabase: SupabaseClient,
   q: { id: string; reference: string; external_ref: string; created_at: string },
   marca: string | null,
-  primeiroConvite: string,
-  temLanceViavel: boolean,
   armado: boolean,
   r: ResultadoDaVarredura,
-  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
 ): Promise<boolean> {
-  const horas = horasDesde(primeiroConvite);
-  const passo = passoDaQuoteHousekeep({ horasDesdeConvite: horas, temLanceViavel, marca });
-  if (passo === "nada") return false;
-  if (passo === "esperar") {
-    r.janelaAberta++;
-    return false;
-  }
-  if (passo === "avisar_8h") {
-    r.semLance++;
-    if (!armado) {
-      r.detalhes.push(`[ensaio] ${q.reference} (Housekeep): ${Math.round(horas)}h sem lance viável`);
-      return false;
-    }
-    try {
-      await postarNotaInterna(Number(q.external_ref), [
-        `🤖 HARVEY — ${q.reference}: no viable bid ${HK_CHECAGEM_HORAS}h after the first invite (Housekeep).`,
-        "",
-        `If nothing comes in and nobody replies on this ticket, the no-availability email goes to Housekeep at ${HK_SEM_DISPONIBILIDADE_HORAS}h and the quote closes. Reply on the ticket to keep it with the team.`,
-      ].join("\n"));
-      await supabase.from("quotes").update({ automation_status: HK_MARCA_8H, updated_at: new Date().toISOString() }).eq("id", q.id);
-    } catch (err) {
-      r.detalhes.push(`${q.reference}: aviso das ${HK_CHECAGEM_HORAS}h falhou, tento de novo (${String(err).slice(0, 100)})`);
-    }
-    return false;
-  }
-
-  // processar | fechar_48h: antes de qualquer coisa automática, o ticket.
+  if (marca === HK_MARCA_EQUIPE_RESPONDEU) return false;
+  // Antes de qualquer coisa automática, o ticket.
   let historico: { respostaManual: boolean; respostaManualComPreco: boolean };
   try {
     historico = await historicoDaQuote(q.external_ref, q.created_at);
@@ -447,31 +347,168 @@ async function passoHousekeepV2(
     r.detalhes.push(`${q.reference}: não li o ticket #${q.external_ref}, não faço nada sozinho nesta rodada (${String(err).slice(0, 100)})`);
     return false;
   }
-  const depois = passoDepoisDoHistorico(passo, historico);
-  if (depois === "processar") return true;
-  if (depois === "equipe_respondeu") {
-    r.detalhes.push(`${q.reference} (Housekeep): a equipe respondeu à mão no ticket, nada automático`);
-    if (armado) {
-      await supabase.from("quotes").update({ automation_status: HK_MARCA_EQUIPE_RESPONDEU, updated_at: new Date().toISOString() }).eq("id", q.id);
-    }
-    return false;
-  }
-  // sem_disponibilidade
-  r.semLance++;
-  if (!armado) {
-    r.detalhes.push(`[ensaio] ${q.reference} (Housekeep): ${Math.round(horas)}h sem lance, mandaria o "no availability"`);
-    return false;
-  }
-  const aviso = await avisarSemDisponibilidade(supabase, q, {
-    postarPublico: (ticketId, html) => updateTicket({ ticketId, htmlBody: html, publicComment: true }),
-    sincronizarStatus: (quoteId) => syncQuoteZendeskStatus(quoteId, supabase),
-  });
-  r.detalhes.push(`${q.reference} (Housekeep): ${aviso.linha}`);
-  if (aviso.enviado) {
-    r.silenciosas++;
-    await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No viable bid on ${q.reference} after ${Math.round(horas)}h and no manual reply: sent the no-availability email to Housekeep and closed the quote`, regra: `Housekeep v2: ${HK_SEM_DISPONIBILIDADE_HORAS}h without a viable bid`, pendente: "Nothing: the quote is closed" }, supabase).catch(() => undefined);
+  if (passoDepoisDoHistorico(historico) === "processar") return true;
+  r.detalhes.push(`${q.reference} (Housekeep): a equipe mandou preço à mão no ticket, nada automático`);
+  if (armado) {
+    await supabase.from("quotes").update({ automation_status: HK_MARCA_EQUIPE_RESPONDEU, updated_at: new Date().toISOString() }).eq("id", q.id);
   }
   return false;
+}
+
+/**
+ * Quote sem lance (dono, 23/10/2026), para toda conta e todo canal:
+ *   24h do primeiro convite: nota, tag, 🔎 No Bids e Action Required, uma vez;
+ *   48h do último convite sem a equipe agir: "not able to quote" ao cliente e a quote fecha.
+ */
+async function tratarSemLance(
+  supabase: SupabaseClient,
+  q: { id: string; reference: string; external_ref: string; created_at: string },
+  bruta: Record<string, unknown>,
+  primeiroConvite: string,
+  ultimoConvite: string,
+  armado: boolean,
+  r: ResultadoDaVarredura,
+  postarNotaInterna: (ticketId: number, corpo: string) => Promise<void>,
+): Promise<void> {
+  r.semLance++;
+  const marca = bruta.automation_status as string | null;
+  const horas = horasDesde(primeiroConvite);
+  const passo = passoSemLance({ horasDesdePrimeiroConvite: horas, horasDesdeUltimoConvite: horasDesde(ultimoConvite), marca });
+  if (passo === "nada" || passo === "esperar") return;
+
+  const convidados = (await supabase
+    .from("quote_partner_invitations")
+    .select("partner_id", { count: "exact", head: true })
+    .eq("quote_id", q.id)).count ?? 0;
+  if (!armado) {
+    r.detalhes.push(`[ensaio] ${q.reference}: ${Math.round(horas)}h sem lance de ${convidados} convidado(s), ${passo === "no_bids" ? "iria para No Bids" : "mandaria o not able to quote e fecharia"}`);
+    return;
+  }
+  /**
+   * Ticket fechado não aceita nota nem resposta: o Zendesk devolve 422 e, sem a
+   * marca, ele tentava de novo a cada ciclo (QT-2026-1150 no #50536, 24/09/2026).
+   */
+  const snap = await getZendeskTicketSnapshot(q.external_ref);
+  if (snap.ok && snap.ticket?.status === "closed") {
+    await supabase.from("quotes").update({ automation_status: MARCA_TICKET_FECHADO, updated_at: new Date().toISOString() }).eq("id", q.id);
+    r.detalhes.push(`${q.reference}: sem lance, mas o ticket #${q.external_ref} está fechado, não aviso`);
+    return;
+  }
+
+  if (passo === "no_bids") {
+    const nota = [
+      `🤖 HARVEY: nobody bid on ${q.reference}`,
+      "",
+      `${convidados} partner(s) invited, first invite ${Math.round(horas)}h ago. No valid bid came back.`,
+      "",
+      `This needs a person: widen the trade or postcode, call a partner, or reply to the customer. If nobody acts, at ${HORAS_ATE_FECHAR}h after the last invite the customer gets "we're not able to quote for this job at the moment" and the quote closes.`,
+    ].join("\n");
+    try {
+      await postarNotaInterna(Number(q.external_ref), nota);
+      await addTicketTags(q.external_ref, [TAG_SEM_LANCE]);
+    } catch (err) {
+      r.detalhes.push(`${q.reference}: aviso de silêncio falhou, não marco (${String(err)})`);
+      return;
+    }
+    await supabase.from("quotes").update({ automation_status: MARCA_NO_BIDS, updated_at: new Date().toISOString() }).eq("id", q.id);
+    // 🔎 No Bids: o espelho lê a marca de 24h (zendesk-espelho.ts).
+    await syncQuoteZendeskStatus(q.id, supabase).catch(() => undefined);
+    const fila = await precisaDeAcao(q.external_ref, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners, call one or reply to the customer`);
+    if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
+    r.silenciosas++;
+    r.detalhes.push(`${q.reference}: ${Math.round(horas)}h sem lance, No Bids e Action Required`);
+    await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No bids on ${q.reference} after ${Math.round(horas)}h from ${convidados} invited partner(s): moved to No Bids`, regra: `no bid within ${HORAS_ATE_NO_BIDS}h of the first invite`, pendente: `Team: widen the trade, call a partner or reply to the customer before ${HORAS_ATE_FECHAR}h` }, supabase).catch(() => undefined);
+    return;
+  }
+
+  // fechar: a equipe agiu no ticket? (qualquer resposta pública à mão depois do primeiro convite)
+  let historico: { respostaManual: boolean; respostaManualComPreco: boolean };
+  try {
+    historico = await historicoDaQuote(q.external_ref, primeiroConvite);
+  } catch (err) {
+    r.detalhes.push(`${q.reference}: não li o ticket #${q.external_ref}, não fecho nesta rodada (${String(err).slice(0, 100)})`);
+    return;
+  }
+  if (historico.respostaManual) {
+    await supabase.from("quotes").update({ automation_status: MARCA_EQUIPE_AGIU, updated_at: new Date().toISOString() }).eq("id", q.id);
+    r.detalhes.push(`${q.reference}: ${HORAS_ATE_FECHAR}h sem lance, mas a equipe respondeu à mão: fica com ela`);
+    return;
+  }
+
+  // Conta e canal.
+  const { data: qq } = await supabase.from("quotes").select("client_id, client_name, client_email, source_account_id").eq("id", q.id).maybeSingle();
+  const quote = (qq ?? {}) as { client_id?: string | null; client_name?: string | null; client_email?: string | null; source_account_id?: string | null };
+  let conta: string | null = quote.source_account_id ?? null;
+  if (!conta && quote.client_id) {
+    const { data: c } = await supabase.from("clients").select("source_account_id").eq("id", quote.client_id).maybeSingle();
+    conta = ((c as { source_account_id?: string | null } | null)?.source_account_id ?? null) || null;
+  }
+  const regras = conta ? await processoDaConta(supabase, conta).catch(() => null) : null;
+  const ticketId = Number(q.external_ref);
+  const precisaDeGente = async (motivo: string) => {
+    await supabase.from("quotes").update({ automation_status: MARCA_PRECISA_DE_GENTE, updated_at: new Date().toISOString() }).eq("id", q.id);
+    const fila = await precisaDeAcao(q.external_ref, `No bids for ${HORAS_ATE_FECHAR}h on ${q.reference} (${motivo}): tell the customer we cannot quote and close the quote`);
+    if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
+    r.detalhes.push(`${q.reference}: ${HORAS_ATE_FECHAR}h sem lance, ${motivo}: Action Required`);
+  };
+  if (ehB2bSoHumano(regras)) {
+    await precisaDeGente("this account is handled by people only");
+    return;
+  }
+  const { tryGetFixfyAccountId } = await import("@/lib/fixfy-account");
+  const contaFixfy = await tryGetFixfyAccountId(supabase).catch(() => null);
+  const conversa = await conversaDoTicket(supabase, ticketId).catch(() => null);
+  const b2b = !!conta && !contaEhDireta({ contaDeOrigem: conta, contaFixfy, daConversaDoHarvey: !!conversa });
+  const { firstName } = await import("@/lib/agent/sales/lead-brief");
+  const saudacao = saudacaoSemLance({ b2b, primeiroNome: firstName(conversa?.name ?? quote.client_name ?? null) });
+
+  const { historico: historicoDaConversa, enviarTexto, vozDaConversa } = await import("@/lib/harvey-wa/sunshine");
+  const msgs = conversa ? await historicoDaConversa(conversa.conversation_id, 50).catch(() => []) : [];
+  const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
+  const canal = canalSemLance({
+    daConversa: !!conversa,
+    janelaAberta: !!ultimaDoCliente && Date.now() - Date.parse(ultimaDoCliente.received) < 23 * 36e5,
+    harveyNaConversa: conversa?.estado === "harvey",
+    emailDoCliente: quote.client_email,
+  });
+  if (canal.via === "nenhum") {
+    await precisaDeGente(canal.motivo);
+    return;
+  }
+  const fechamento = await fecharQuoteSemLance(supabase, q, {
+    canal: canal.via === "whatsapp" ? "whatsapp" : "email",
+    destinatario: canal.via === "email" ? canal.para : null,
+    enviar: async (id) => {
+      if (canal.via === "ticket") {
+        await updateTicket({ ticketId: id, htmlBody: textoSemLanceHtml(saudacao), publicComment: true });
+        return `zendesk:${id}`;
+      }
+      if (canal.via === "whatsapp" && conversa) {
+        await enviarTexto(conversa.conversation_id, textoSemLancePlano(saudacao), vozDaConversa(msgs));
+        return `whatsapp:${conversa.conversation_id}`;
+      }
+      const para = canal.via === "email" ? canal.para : "";
+      const { Resend } = await import("resend");
+      const res = await new Resend(process.env.RESEND_API_KEY?.trim()).emails.send({
+        from: process.env.RESEND_FROM_EMAIL?.trim() || "Fixfy Team <hello@getfixfy.com>",
+        to: para,
+        replyTo: "hello@getfixfy.com",
+        subject: "Your quote request",
+        html: textoSemLanceHtml(saudacao),
+        text: textoSemLancePlano(saudacao),
+      });
+      if (res.error) throw new Error(res.error.message);
+      await postarNotaInterna(id, `🤖 HARVEY: e-mailed ${para} that we cannot quote ${q.reference} (no bids in ${HORAS_ATE_FECHAR}h).`).catch(() => undefined);
+      return `resend:${res.data?.id ?? para}`;
+    },
+    sincronizarStatus: (quoteId) => syncQuoteZendeskStatus(quoteId, supabase),
+  });
+  r.detalhes.push(`${q.reference}: ${fechamento.linha}`);
+  if (fechamento.enviado) {
+    r.silenciosas++;
+    await acaoFeita(q.external_ref, `Closed ${q.reference}: no bids in ${HORAS_ATE_FECHAR}h, customer told we cannot quote`).catch(() => undefined);
+    await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `No bid on ${q.reference} ${HORAS_ATE_FECHAR}h after the last invite and nobody acted: told the customer (${canal.via}) we cannot quote and closed the quote`, regra: `no bid within ${HORAS_ATE_FECHAR}h of the last invite`, pendente: "Nothing: the quote is closed" }, supabase).catch(() => undefined);
+  }
 }
 
 /**

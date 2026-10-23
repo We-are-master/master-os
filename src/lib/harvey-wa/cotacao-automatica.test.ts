@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
   decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, margemDe, precoDoLance,
-  proximoPassoDoLeilao, servicoDoAssunto, textoAindaCotando, textoDaQuote, textoPedeContexto,
+  proximoPassoDoLeilao, servicoDoAssunto, textoDaQuote, textoPedeContexto,
 } from "./cotacao-automatica";
 import { ranquearParceiros } from "./melhores-parceiros";
 
@@ -62,11 +62,11 @@ describe("auto-quote: invites every matching partner, best first", () => {
 });
 
 describe("auto-quote: the bidding clock", () => {
-  it("reminds partners once at 6h and tells the customer at 24h", () => {
+  it("reminds partners once at 6h; 24h and 48h belong to the bids sweep", () => {
     assert.equal(proximoPassoDoLeilao({ tags: [], horasDesdeConvite: 5.9, temLance: false }), null);
     assert.equal(proximoPassoDoLeilao({ tags: [], horasDesdeConvite: 6, temLance: false }), "lembrar_parceiros");
     assert.equal(proximoPassoDoLeilao({ tags: [TAG_LEMBROU_PARCEIROS], horasDesdeConvite: 12, temLance: false }), null);
-    assert.equal(proximoPassoDoLeilao({ tags: [TAG_LEMBROU_PARCEIROS], horasDesdeConvite: 24, temLance: false }), "avisar_cliente");
+    assert.equal(proximoPassoDoLeilao({ tags: [TAG_LEMBROU_PARCEIROS], horasDesdeConvite: 24, temLance: false }), null);
     assert.equal(proximoPassoDoLeilao({ tags: [TAG_LEMBROU_PARCEIROS, TAG_SEM_LANCE], horasDesdeConvite: 40, temLance: false }), null);
   });
   it("a bid wins over any clock, even after the 24h notice", () => {
@@ -77,13 +77,6 @@ describe("auto-quote: the bidding clock", () => {
     for (const tag of [TAG_FIM, TAG_QUOTE_ENVIADA, TAG_PARA_REVISAR]) {
       assert.equal(proximoPassoDoLeilao({ tags: [tag], horasDesdeConvite: 30, temLance: true }), null);
     }
-  });
-  it("the 24h message never promises a time or a date", () => {
-    const t = textoAindaCotando("Chloe", "Carpentry");
-    assert.equal(t, "Hi Chloe, A quick update on your carpentry enquiry: we’re still checking the pricing with our professionals. We’ll send your quote once the details are confirmed. Thank you for your patience.");
-    assert.doesNotMatch(t, /very soon|same day/i);
-    assert.doesNotMatch(t, /\b(today|tomorrow|hours?|minutes?|by \d|monday|tuesday|wednesday|thursday|friday|weekend|\d{1,2}(am|pm|:\d\d))\b/i);
-    assert.doesNotMatch(t, /—/);
   });
 });
 
