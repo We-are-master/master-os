@@ -42,3 +42,10 @@ test("conta só as faturas que dividem o total do job", () => {
     1,
   );
 });
+
+test("job por hora com a fatura única em £0: o alvo é o total do job (JOB-9754)", async () => {
+  const { linkedInvoiceTargetAmount } = await import("./invoice-target-amount");
+  const job = { client_price: 144, extras_amount: 0, customer_deposit: 72, customer_final_payment: 72, job_type: "hourly", status: "awaiting_payment" } as never;
+  const inv = { amount: 0, status: "paid", invoice_kind: "final" } as never;
+  assert.equal(linkedInvoiceTargetAmount(job, inv, { faturaUnicaDoJob: true }), 144);
+});
