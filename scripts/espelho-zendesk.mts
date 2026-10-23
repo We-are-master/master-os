@@ -52,7 +52,7 @@ const jobsValidos = jobs.filter((j) => numero(j.external_ref) && (!so || so.incl
 // Quotes: as que ainda falam com o ticket, e as perdidas na janela.
 const { data: quotesLidas, error: qErr } = await sb
   .from("quotes")
-  .select("id, reference, status, external_ref, updated_at")
+  .select("id, reference, status, automation_status, external_ref, updated_at")
   .eq("external_source", "zendesk")
   .or(`status.in.(in_survey,bidding,quote_ready,awaiting_customer,awaiting_payment),and(status.eq.rejected,updated_at.gte.${desde})`)
   .limit(3000);
@@ -119,7 +119,7 @@ for (const j of jobsValidos) {
 for (const q of so ? [] : quotesLidas ?? []) {
   const ref = String(q.external_ref ?? "");
   if (!numero(ref) || ticketsComJob.has(ref)) continue; // o job manda no ticket
-  await passar(`${q.reference} ${q.status}`, ref, espelhoDaQuote(q.status));
+  await passar(`${q.reference} ${q.status}`, ref, espelhoDaQuote(q.status, q.automation_status));
 }
 
 // Ticket aberto sem dono e sem job nem quote: dono pela regra (só preenche o vazio).

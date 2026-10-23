@@ -42,6 +42,15 @@ export type BandValidationResult =
 export function validateServiceBand(
   service: Pick<CatalogService, "name" | "pricing_presets">,
   bandId: string | null,
+  opts?: {
+    /**
+     * Sem `band_id`, usa a primeira faixa deste modo em vez de recusar (23/10/2026).
+     * O General Maintenance ganhou faixas em 22/10 e todo booking por hora da
+     * Housekeep (Harvey, ticket 51740) passou a voltar 400. Taxa que veio no
+     * pedido continua ganhando da faixa (resolveSmartPriceRates).
+     */
+    fallbackPricingMode?: "hourly" | "fixed";
+  },
 ): BandValidationResult {
   const presets = sortPricingPresetsDisplay(parsePricingPresets(service.pricing_presets));
   const hasBands = presets.length > 0;
@@ -53,6 +62,11 @@ export function validateServiceBand(
       );
     }
     return { ok: true, hasBands: false, band: null };
+  }
+
+  if (!bandId && opts?.fallbackPricingMode) {
+    const padrao = presets.find((p) => presetPricingMode(p) === opts.fallbackPricingMode);
+    if (padrao) return { ok: true, hasBands: true, band: padrao };
   }
 
   if (!bandId) {
@@ -228,9 +242,18 @@ export function resolveSmartPriceRates(input: SmartPriceRatesInput): {
         const hourlyClientRate = input.hourlyClientRateSent
           ? input.hourlyClientRateFromBody
           : resolveAccountSell(floorH, customClient, accountAllowsBelowStandard(input.accountOverride));
+        /**
+         * Faixa POR HORA: o partner_cost dela já é £/h (General Maintenance "Hourly
+         * (min 1 hour)": £72/h cliente, £40/h parceiro). Dividir pelas horas
+         * mínimas de cobrança (2) dava £20/h de provisória ao parceiro (23/10/2026).
+         * É só a provisória: alocado, vale o rate card do parceiro.
+         */
+        const parceiroDaFaixa = Number(input.band.partner_cost) || 0;
         let hourlyPartnerRate = input.hourlyPartnerRateSent
           ? input.hourlyPartnerRateFromBody
-          : resolved.partnerTotal / hours;
+          : parceiroDaFaixa > 0
+            ? parceiroDaFaixa
+            : resolved.partnerTotal / hours;
         if (!(hourlyPartnerRate > 0) && hourlyClientRate > 0) {
           hourlyPartnerRate = autoMarginFromPct(hourlyClientRate, input.setupMarginPct);
         }

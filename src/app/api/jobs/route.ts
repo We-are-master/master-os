@@ -961,7 +961,8 @@ export async function POST(req: NextRequest) {
     }
     resolvedCatalogServiceId = catalog.row.id;
 
-    const bandResult = validateServiceBand(catalog.row, bandId);
+    // Job por hora sem band_id usa a faixa "Hourly" do serviço (booking da Housekeep, 23/10/2026).
+    const bandResult = validateServiceBand(catalog.row, bandId, { fallbackPricingMode: "hourly" });
     if (!bandResult.ok) {
       return NextResponse.json({ error: bandResult.error }, { status: bandResult.status });
     }

@@ -87,6 +87,12 @@ export const ZD_STATUS_DEPOSIT_PENDING = Number(process.env.ZENDESK_STATUS_DEPOS
 /** ⚠️ Payment Failed: cartão recusado ou pedindo confirmação do banco (criado 23/10/2026). Categoria open. */
 export const ZD_STATUS_PAYMENT_FAILED = Number(process.env.ZENDESK_STATUS_PAYMENT_FAILED_ID?.trim() || "6472739663647");
 
+/**
+ * 🔎 No Bids: 24h em Bidding sem lance de parceiro (criado 23/10/2026). Categoria open,
+ * entra na view ⚡ Action Required pelo status. Antes disso o Bidding fica fora da fila.
+ */
+export const ZD_STATUS_NO_BIDS = Number(process.env.ZENDESK_STATUS_NO_BIDS_ID?.trim() || "6473488771487");
+
 /** 🟣 Finance: fila manual do financeiro. */
 export const ZD_STATUS_FINANCE = 5826336578463;
 
@@ -153,6 +159,7 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_AWAITING_PAYMENT]:  "pending",
   [ZD_STATUS_DEPOSIT_PENDING]:   "pending",
   [ZD_STATUS_PAYMENT_FAILED]:    "open",
+  [ZD_STATUS_NO_BIDS]:           "open",
   [ZD_STATUS_COMPLAINT]:         "open",
   [ZD_STATUS_COMPLETED]:         "solved",
 };

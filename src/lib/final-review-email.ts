@@ -26,6 +26,7 @@ import { renderJobReportV2PdfBuffer } from "@/lib/pdf/render-job-report-v2";
 import { getZendeskTicketId, isZendeskConfigured, sendCustomerCommentWithAttachments as zdSendCustomerComment, ticketDoWhatsApp, zendeskApi } from "@/lib/zendesk";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import type { Account, Invoice, Job } from "@/types/database";
+import { linkDoReportWeb } from "@/lib/fatura-semanal";
 import { faturasDoJobQueContam, linkedInvoiceTargetAmount } from "@/lib/invoice-target-amount";
 import { syncInvoicesFromJobCustomerPayments } from "@/lib/sync-invoices-from-job-payments";
 import { umTicketEmail } from "@/lib/um-ticket/flags";
@@ -613,8 +614,14 @@ async function visualDoFinal(
     if (data?.signedUrl) lista.push({ url: data.signedUrl });
   }
 
-  let link: string | null = null;
-  const pdf = anexos.find((a) => /-report(-\d+)?\.pdf$/i.test(a.filename));
+  /**
+   * O report na web (dono, 23/10/2026): todas as fotos por cômodo e o PDF como download,
+   * num link que não expira (assinado com o id do job). O PDF solto fica só para o job sem
+   * report V2, que a página não mostra.
+   */
+  const temReport = Boolean(j.final_report || j.start_report);
+  let link: string | null = temReport ? linkDoReportWeb(jobId) : null;
+  const pdf = link ? undefined : anexos.find((a) => /-report(-\d+)?\.pdf$/i.test(a.filename));
   if (pdf) {
     const caminho = `email-final/${jobId}/${pdf.filename}`;
     const { error } = await admin.storage.from("job-reports").upload(caminho, pdf.content, { contentType: "application/pdf", upsert: true });

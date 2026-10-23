@@ -269,6 +269,7 @@ import { JobOnHoldSubmissionCard } from "@/components/jobs/job-on-hold-submissio
 import { invoicePayLinkForAmount } from "@/lib/pay-link-url";
 import { jobOnHoldPorReclamacao } from "@/lib/job-on-hold-reasons";
 import { PartnerReportLinkPanel } from "@/components/jobs/partner-report-link-panel";
+import { ClientWebReportLink } from "@/components/jobs/client-web-report-link";
 import { FillReportModal } from "@/components/jobs/fill-report-modal";
 import { LogComplaintModal } from "@/components/jobs/log-complaint-modal";
 import { StefaneReportButton } from "@/components/job-card/StefaneReportButton";
@@ -9274,6 +9275,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 hasPartner={!!job.partner_id}
                 isZendeskLinked={job.external_source === "zendesk" && !!job.external_ref}
                 bothReportsSubmitted={v2FinalSubmitted}
+              />
+              <ClientWebReportLink
+                jobId={job.id}
+                hasReport={v2FinalSubmitted || !!(job.start_report && Object.keys(job.start_report).length > 0)}
               />
               {/* Partner who never opens the app: the office types the report
                   here so the PDF and Stefane get the same payload as always.

@@ -132,6 +132,13 @@ export async function GET(req: NextRequest) {
     } catch (e) {
       console.error("daily-brief atenção:", e);
     }
+    // O Harvey de ontem (dono, 23/10/2026): vendas e quem está esperando no WhatsApp.
+    try {
+      const { lerPainelDoHarvey, resumoDoHarveyHtml } = await import("@/lib/harvey-wa/painel");
+      atencaoHtml += resumoDoHarveyHtml(await lerPainelDoHarvey(admin, now));
+    } catch (e) {
+      console.error("daily-brief Harvey:", e);
+    }
   }
 
   for (const kind of kinds) {

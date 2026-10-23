@@ -61,6 +61,9 @@ export function jobDoTokenDoRelatorio(token: string): string | null {
 
 export const linkDoRelatorio = (jobId: string) => `${appBaseUrl()}/api/public/job-report/${tokenDoRelatorio(jobId)}`;
 
+/** O report na web, com todas as fotos (/report/[token]); o PDF vira download dentro dele. */
+export const linkDoReportWeb = (jobId: string) => `${appBaseUrl()}/report/${tokenDoRelatorio(jobId)}`;
+
 /* ----------------------------- as linhas da fatura ---------------------------- */
 
 export type LinhaDaFaturaSemanal = {

@@ -16,6 +16,7 @@ import { PageTransition } from "@/components/layout/page-transition";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/tabs";
+import { PainelDoHarvey } from "./painel-do-harvey";
 import type { SecaoDoPrompt, PerfilDoHarvey } from "@/lib/harvey-wa/prompt";
 import type { EdicaoSalva } from "@/lib/harvey-wa/conhecimento";
 import type { AjustesDoHarvey } from "@/lib/harvey-wa/ajustes";
@@ -114,6 +115,8 @@ export function AgenteHarvey({
             </Button>
           </div>
         </PageHeader>
+
+        <PainelDoHarvey />
 
         <CartaoDeAutonomia inicial={autonomia} regras={regras} onSalvo={() => router.refresh()} />
 

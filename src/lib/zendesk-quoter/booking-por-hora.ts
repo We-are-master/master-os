@@ -7,16 +7,15 @@
  * uma quote nossa (aí o preço é o da quote) ou quando é limpeza (EoT e deep
  * clean têm preço de tabela).
  *
- * O parceiro ganha £40/h fixo nesses jobs (dono, 23/10/2026), seja qual for a
- * taxa da Housekeep.
+ * A taxa do CLIENTE sai do e-mail (total ÷ horas): às vezes vem acima dos £60 da
+ * conta porque o cliente pagou algo a mais. A do PARCEIRO nunca sai daqui: é o
+ * rate card de cada parceiro, aplicado quando ele é alocado; até lá o OS usa a
+ * faixa Hourly do serviço como provisória (dono, 23/10/2026).
  */
-
-export const TAXA_PARCEIRO_HOUSEKEEP_GBP = 40;
 
 export type CobrancaPorHora = {
   rate_type: "hourly";
   hourly_client_rate: number;
-  hourly_partner_rate: number;
   billed_hours: number;
 };
 
@@ -45,7 +44,6 @@ export function cobrancaDoBookingHousekeep(i: {
   return {
     rate_type: "hourly",
     hourly_client_rate: Math.round((i.totalGbp / horas) * 100) / 100,
-    hourly_partner_rate: TAXA_PARCEIRO_HOUSEKEEP_GBP,
     billed_hours: horas,
   };
 }
