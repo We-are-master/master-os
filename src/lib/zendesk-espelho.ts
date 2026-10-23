@@ -39,6 +39,7 @@ import {
   ZD_STATUS_LEAD,
   ZD_STATUS_NEEDS_QUOTE,
   ZD_STATUS_NEW,
+  ZD_STATUS_NO_BIDS,
   ZD_STATUS_ON_HOLD,
   ZD_STATUS_OPEN,
   ZD_STATUS_PARTNER,
@@ -68,7 +69,7 @@ export type Espelho = {
 
 const VENDAS = new Set<number>([
   ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE,
-  ZD_STATUS_BIDDING, ZD_STATUS_QUOTE_READY, ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_DEPOSIT_PENDING,
+  ZD_STATUS_BIDDING, ZD_STATUS_NO_BIDS, ZD_STATUS_QUOTE_READY, ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_DEPOSIT_PENDING,
 ]);
 const FINANCEIRO = new Set<number>([ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_FINANCE]);
 const OPERACAO = new Set<number>([
@@ -143,11 +144,23 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   return { customStatusId, actionRequired, proximaAcao, papel: papelDoStatus(customStatusId) };
 }
 
-/** Quote: só status e dono. O Action Required da quote é do Harvey (lances, perguntas). */
-export function espelhoDaQuote(status: QuoteStatus): Espelho | null {
+/** A marca que o Harvey grava na quote quando passam 24h em Bidding sem lance. */
+export const QUOTE_SEM_LANCE_24H = "no_bids_reported";
+
+/**
+ * Quote: só status e dono. O Action Required da quote é do Harvey (lances, perguntas).
+ *
+ * Bidding fica fora da fila nas primeiras 24h (dono, 23/10/2026): os parceiros estão
+ * cotando. Passadas 24h sem lance (`automation_status = no_bids_reported`), o ticket
+ * vira 🔎 No Bids, que é status da view ⚡ Action Required.
+ */
+export function espelhoDaQuote(status: QuoteStatus, automationStatus?: string | null): Espelho | null {
   switch (status) {
     case "in_survey":
-    case "bidding": return { customStatusId: ZD_STATUS_BIDDING, actionRequired: null, proximaAcao: null, papel: "vendas" };
+    case "bidding": {
+      const semLance = status === "bidding" && automationStatus === QUOTE_SEM_LANCE_24H;
+      return { customStatusId: semLance ? ZD_STATUS_NO_BIDS : ZD_STATUS_BIDDING, actionRequired: null, proximaAcao: null, papel: "vendas" };
+    }
     case "quote_ready": return { customStatusId: ZD_STATUS_QUOTE_READY, actionRequired: null, proximaAcao: null, papel: "vendas" };
     case "awaiting_customer": return { customStatusId: ZD_STATUS_AWAITING_APPROVAL, actionRequired: null, proximaAcao: null, papel: "vendas" };
     case "awaiting_payment": return { customStatusId: ZD_STATUS_DEPOSIT_PENDING, actionRequired: null, proximaAcao: null, papel: "vendas" };
