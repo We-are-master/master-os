@@ -25,8 +25,9 @@ for (const arq of [".env.local", ".env"]) {
   } catch {}
 }
 const { alvoDoJob, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
-const { espelhoDaQuote, donoDeTicketSemPedido } = await import("../src/lib/zendesk-espelho");
-const { zendeskApi } = await import("../src/lib/zendesk");
+const { espelhoDaQuote, donoDeTicketSemPedido, formularioDoJobFaltando } = await import("../src/lib/zendesk-espelho");
+const { zendeskApi, ZENDESK_JOB_ID_FIELD_ID } = await import("../src/lib/zendesk");
+const { syncJobZendeskFormFields } = await import("../src/lib/zendesk-ticket-form-sync");
 const { papeisDaEquipe } = await import("../src/lib/responsavel-operacao");
 
 const aplicar = process.argv.includes("--aplicar");
@@ -115,6 +116,33 @@ async function passar(rotulo: string, ticketId: string, alvo: Parameters<typeof 
 for (const j of jobsValidos) {
   const alvo = alvoDoJob(j as never, motivosDoJob.get(j.id) ?? [], j.quote_id ? statusDaQuote.get(j.quote_id) ?? null : null);
   await passar(`job ${j.status}`, String(j.external_ref), alvo, j);
+}
+
+// Formulário do job vazio no ticket (Job ID, cliente, endereço): preenche (JOB-9790, 23/10/2026).
+// Teto por passada: a primeira rodada pode achar muitos, e cada um são algumas chamadas ao Zendesk.
+const MAX_FORMULARIOS = 20;
+let formularios = 0;
+for (const j of jobsValidos) {
+  const ticketId = String(j.external_ref);
+  const cru = tickets.get(ticketId);
+  if (!cru) continue;
+  const faltando = formularioDoJobFaltando({
+    status: cru.status,
+    supportType: cru.support_type,
+    jobIdNoTicket: cru.custom_fields?.find((f) => Number(f.id) === ZENDESK_JOB_ID_FIELD_ID)?.value,
+    referencia: (j as { reference?: string }).reference,
+  });
+  if (!faltando) continue;
+  if (formularios >= MAX_FORMULARIOS) { somar("formulário: fica para a próxima passada"); continue; }
+  formularios++;
+  if (!aplicar) {
+    somar("formulário vazio: preencheria");
+    if (detalhe) linhas.push(`${(j as { reference?: string }).reference} #${ticketId}: preencheria o formulário do job`);
+    continue;
+  }
+  const r = await syncJobZendeskFormFields(j.id, sb as never).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+  somar(r.ok ? "formulário preenchido" : "formulário: erro");
+  if (detalhe || !r.ok) linhas.push(`${(j as { reference?: string }).reference} #${ticketId}: formulário ${r.ok ? "preenchido" : `ERRO ${"error" in r ? r.error : ""}`}`);
 }
 for (const q of so ? [] : quotesLidas ?? []) {
   const ref = String(q.external_ref ?? "");

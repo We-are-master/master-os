@@ -14,7 +14,7 @@ import { edicoesDoHarvey } from "./conhecimento";
 import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 import { decidirDesconto } from "./desconto";
-import { faltandoParaCotar, postcodeDaCotacao } from "./pedido-de-cotacao";
+import { faltandoParaCotar, postcodeDaCotacao, precoDoCatalogoJaDado } from "./pedido-de-cotacao";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -314,6 +314,7 @@ const FERRAMENTAS_CLIENTE = [
           occupancy: { type: "string", description: "empty, furnished, or lived in, only if you know" },
           timing: { type: "string", description: "when they want it done, only if you know" },
           no_photos_reason: { type: "string", description: "only if they cannot send photos: why" },
+          different_job: { type: "boolean", description: "true only when this is a different job from the one you already priced by the hour in this chat" },
           name: { type: "string" },
           email: { type: "string" },
         },
@@ -692,6 +693,10 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   }
   if (nome === "request_quote") {
     if (!ctx.contas?.pedirCotacao) return { error: "not available" };
+    // Hora do catálogo ou cotação de parceiro, nunca as duas (QT-2026-1256).
+    if (a.different_job !== true && precoDoCatalogoJaDado(ctx.conversa ?? [], /handyman|hour|day/i.test(r.cotacao?.servico ?? ""))) {
+      return { error: "You already gave the catalogue price for this job (the hour). Stay on that price and book it: do not ask professionals for a fixed price as well, and do not tell the customer a fixed price is coming. Call request_quote only if the customer asks for a written quote, or with different_job: true for a separate job." };
+    }
     // O postcode vem do cliente (chat) ou do cadastro do lead, nunca da imaginação do modelo.
     const postcode = postcodeDaCotacao(a.postcode, ctx.textoDoCliente, ctx.postcodesConhecidos ?? []);
     // O mínimo para chamar parceiro (dono, 15/10/2026): descrição + postcode + fotos (ou o motivo).

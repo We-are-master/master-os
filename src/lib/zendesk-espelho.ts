@@ -236,3 +236,25 @@ export function donoDeTicketSemPedido(t: { organizacao: string | null; assunto: 
   if (PLATAFORMA.test(t.organizacao ?? "")) return PEDE_COTACAO.test(t.assunto ?? "") ? "vendas" : "operacao";
   return "vendas";
 }
+
+/**
+ * O formulário do job no ticket (Job ID, cliente, endereço, tipo de trabalho) ficou vazio?
+ *
+ * Caso JOB-9790 (dono, 23/10/2026): o job nasceu do pagamento no WhatsApp no ticket
+ * da conversa enquanto ele ainda era "AI agent" (só leitura). O Zendesk recusou o
+ * formulário, e quando o ticket virou ticket normal ninguém tentou de novo: o espelho
+ * só mexia em status, dono e Action Required. Agora o espelho preenche o que ficou
+ * vazio. Só o VAZIO: ticket com dois jobs já tem um Job ID, e trocar faria o campo
+ * pular de um para o outro a cada passada.
+ */
+export function formularioDoJobFaltando(t: {
+  status: string | null | undefined;
+  supportType: string | null | undefined;
+  jobIdNoTicket: unknown;
+  referencia: string | null | undefined;
+}): boolean {
+  if (!String(t.referencia ?? "").trim()) return false;
+  if (t.status === "closed") return false;
+  if (t.supportType === "ai_agent") return false;
+  return !String(t.jobIdNoTicket ?? "").trim();
+}

@@ -90,6 +90,8 @@ type TicketCru = {
   custom_status_id: number | null;
   assignee_id: number | null;
   custom_fields?: Array<{ id: number; value: unknown }>;
+  /** "ai_agent" enquanto o Harvey do WhatsApp segura o ticket (só leitura). */
+  support_type?: string | null;
 };
 
 export function ticketAtualDe(t: TicketCru): TicketAtual {
