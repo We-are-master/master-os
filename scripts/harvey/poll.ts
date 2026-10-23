@@ -17,6 +17,8 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+// Estático de propósito: módulo puro, sem env (o loader abaixo não importa para ele).
+import * as saude from "../../src/lib/harvey/saude-do-ciclo";
 
 // ── env: scripts standalone não têm o Next para carregar .env ───────────────
 // .env.local PRIMEIRO: no Next ele ganha do .env, e aqui o primeiro a setar
@@ -84,31 +86,100 @@ const CARD_FALHAS_PATH = join(STATE_DIR, ".card-falhas.json");
  * e-mail na hora, no máximo uma vez por dia.
  */
 const SEM_SALDO_PATH = join(STATE_DIR, ".sem-saldo-avisado.txt");
-async function avisarSemSaldo(): Promise<void> {
-  const hoje = new Date().toISOString().slice(0, 10);
-  try { if (readFileSync(SEM_SALDO_PATH, "utf8").trim() === hoje) return; } catch { /* primeiro aviso */ }
+
+/**
+ * Quem recebe os avisos do Harvey: a lista do brief diário (Setup), que é papel e
+ * não pessoa. Se o Supabase estiver fora (e pode ser exatamente esse o alerta),
+ * vale `HARVEY_ALERT_EMAILS`.
+ */
+async function destinatariosDoAviso(): Promise<string[]> {
+  const separar = (s: string | null | undefined) => String(s ?? "").split(/[,;\s]+/).filter((e) => e.includes("@"));
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SERVICE_ROLE_KEY!);
+    const { data, error } = await sb.from("company_settings").select("daily_brief_emails").limit(1).maybeSingle();
+    if (error) throw error;
+    const lista = separar((data as { daily_brief_emails?: string } | null)?.daily_brief_emails);
+    if (lista.length) return lista;
+  } catch {
+    /* cai na variável */
+  }
+  return separar(process.env.HARVEY_ALERT_EMAILS);
+}
+
+/** E-mail do Harvey para a equipe (Resend). true = saiu. */
+async function avisarEquipe(subject: string, text: string): Promise<boolean> {
   const key = process.env.RESEND_API_KEY?.trim();
   const from = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!key || !from) return;
-  const { createClient } = await import("@supabase/supabase-js");
-  const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SERVICE_ROLE_KEY!);
-  const { data } = await sb.from("company_settings").select("daily_brief_emails").limit(1).maybeSingle();
-  const para = String((data as { daily_brief_emails?: string } | null)?.daily_brief_emails ?? "").split(/[,;\s]+/).filter((e) => e.includes("@"));
-  if (!para.length) return;
+  if (!key || !from) return false;
+  const para = await destinatariosDoAviso();
+  if (!para.length) return false;
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      from,
-      to: para,
-      subject: "Harvey is blind: OpenAI is out of credit",
-      text: "Harvey could not read any ticket in this cycle because the OpenAI account has no credit left.\n\nTop up here: https://platform.openai.com/settings/organization/billing\n\nHe picks the tickets up by himself on the next cycle (5 minutes) after the top-up. You get this email at most once a day.",
-    }),
+    body: JSON.stringify({ from, to: para, subject, text }),
   });
-  if (res.ok) {
+  return res.ok;
+}
+
+async function avisarSemSaldo(): Promise<void> {
+  const hoje = new Date().toISOString().slice(0, 10);
+  try { if (readFileSync(SEM_SALDO_PATH, "utf8").trim() === hoje) return; } catch { /* primeiro aviso */ }
+  const ok = await avisarEquipe(
+    "Harvey is blind: OpenAI is out of credit",
+    "Harvey could not read any ticket in this cycle because the OpenAI account has no credit left.\n\nTop up here: https://platform.openai.com/settings/organization/billing\n\nHe picks the tickets up by himself on the next cycle (5 minutes) after the top-up. You get this email at most once a day.",
+  );
+  if (ok) {
     if (!existsSync(dirname(SEM_SALDO_PATH))) mkdirSync(dirname(SEM_SALDO_PATH), { recursive: true });
     writeFileSync(SEM_SALDO_PATH, hoje);
     console.log("[harvey] aviso de OpenAI sem saldo enviado por e-mail");
+  }
+}
+
+/**
+ * Saúde do ciclo e falhas por ticket (dono, 23/10/2026): Harvey parado manda
+ * e-mail, ticket que falha sempre igual ganha nota e Action Required. As regras
+ * estão em src/lib/harvey/saude-do-ciclo.ts.
+ */
+const SAUDE_PATH = join(STATE_DIR, ".saude-do-ciclo.json");
+const FALHAS_TICKET_PATH = join(STATE_DIR, ".falhas-por-ticket.json");
+
+/** Ticket falhou no booking ou na quote: conta, e na segunda vez igual anota. */
+async function registrarFalhaDoTicket(
+  ticketId: number,
+  etapa: "booking" | "quote",
+  err: unknown,
+  postarNota: (id: number, corpo: string) => Promise<void>,
+): Promise<void> {
+  try {
+    const s = saude;
+    let mapa: Record<string, { falhas: number; erro: string; anotado: string | null }> = {};
+    try { mapa = JSON.parse(readFileSync(FALHAS_TICKET_PATH, "utf8")); } catch { /* primeiro uso */ }
+    const r = s.depoisDaFalha(mapa, ticketId, err);
+    mapa = r.mapa;
+    if (r.anotar) {
+      await postarNota(ticketId, s.notaDaFalha(etapa, mapa[String(ticketId)]!.falhas, r.erro));
+      mapa = s.marcarAnotado(mapa, ticketId);
+      const { precisaDeAcao } = await import("../../src/lib/fila-de-acao");
+      await precisaDeAcao(ticketId, s.acaoDaFalha(etapa));
+      console.log(`[harvey] ⚠ #${ticketId}: ${etapa} falhou ${mapa[String(ticketId)]!.falhas}x, nota e Action Required`);
+    }
+    gravarMapa(FALHAS_TICKET_PATH, mapa as unknown as Record<string, string>);
+  } catch (e) {
+    console.error(`[harvey] registro de falha do #${ticketId} falhou: ${e}`);
+  }
+}
+
+/** Deu certo: o ticket sai da conta de falhas. */
+async function esquecerFalhaDoTicket(ticketId: number): Promise<void> {
+  try {
+    const { esquecerFalha } = saude;
+    let mapa: Record<string, { falhas: number; erro: string; anotado: string | null }> = {};
+    try { mapa = JSON.parse(readFileSync(FALHAS_TICKET_PATH, "utf8")); } catch { return; }
+    if (!(String(ticketId) in mapa)) return;
+    gravarMapa(FALHAS_TICKET_PATH, esquecerFalha(mapa, ticketId) as unknown as Record<string, string>);
+  } catch {
+    /* só limpeza */
   }
 }
 
@@ -346,6 +417,9 @@ async function sincronizarAwaitingPayment(): Promise<void> {
   );
 }
 
+/** Ciclo pausado não conta como bom nem como ruim para a saúde. */
+let pausadoNesteCiclo = false;
+
 async function ciclo(): Promise<void> {
   /**
    * A chave de pausa, e ela existe por causa de um custo já pago.
@@ -368,12 +442,14 @@ async function ciclo(): Promise<void> {
    */
   if (process.env.HARVEY_PAUSADO?.trim() === "1") {
     console.log("[harvey] PAUSADO por HARVEY_PAUSADO=1 — nada lido, nada escrito.");
+    pausadoNesteCiclo = true;
     return;
   }
   // O mesmo, pela tela: /agents/harvey → Pause everything (harvey_wa_config.autonomia.geral).
   const { harveyLigado } = await import("../../src/lib/harvey/autonomia");
   if (!(await harveyLigado())) {
     console.log("[harvey] PAUSADO pela tela (Pause everything) — nada lido, nada escrito.");
+    pausadoNesteCiclo = true;
     return;
   }
 
@@ -716,6 +792,7 @@ async function ciclo(): Promise<void> {
           vistos.add(t.id); gravarVistos(vistos);
           try { await adicionarTagNomeada(t.id, TAG_JOB); } catch (err) { console.error(`[harvey] tag job falhou no ${t.id}: ${err}`); }
           esquecerCard();
+          await esquecerFalhaDoTicket(t.id);
           criados++;
           console.log(`[harvey] ✔ job ${r.reference} criado no OS a partir do #${t.id}`);
           continue;
@@ -747,6 +824,7 @@ async function ciclo(): Promise<void> {
           continue;
         }
         console.error(`[harvey] booking falhou no ${t.id}: ${err}`);
+        await registrarFalhaDoTicket(t.id, "booking", err, postarNotaInterna);
         continue;
       }
     }
@@ -795,12 +873,14 @@ async function ciclo(): Promise<void> {
         console.error(`[harvey] nota postada mas a tag falhou no ${t.id} (o .seen segura): ${err}`);
       }
       cotados++;
+      await esquecerFalhaDoTicket(t.id);
       console.log(
         `[harvey] ✔ ${rascunhoDePrecoLigado() ? `rascunho interno no #${t.id}: £${r.resultado.quote.total.toFixed(2)}` : `pedido de quote registrado no #${t.id} (sem rascunho de preco)`} · ` +
           `${r.pedido.missingInfo.length} pergunta(s) pendente(s) · ${r.resultado.quote.gaps.length} gap(s)`,
       );
     } catch (err) {
       console.error(`[harvey] cotacao falhou no ${t.id}: ${err}`);
+      await registrarFalhaDoTicket(t.id, "quote", err, postarNotaInterna);
     }
   }
   if (classificadosMudou) {
@@ -948,7 +1028,54 @@ async function ciclo(): Promise<void> {
   }
 }
 
-ciclo().catch((err) => {
-  console.error(`[harvey] ciclo morreu: ${err}`);
-  process.exit(1);
-});
+/**
+ * Erros de infraestrutura que os passos engolem (cada um tem o seu try/catch e o
+ * ciclo "fecha" mesmo com o Zendesk recusando tudo). O console.error é por onde
+ * todos passam, então a escuta é aqui: o primeiro com cara de chave recusada,
+ * serviço fora ou rede caída faz o ciclo contar como ruim.
+ */
+let erroDeInfra: string | null = null;
+const errorOriginal = console.error.bind(console);
+console.error = (...args: unknown[]) => {
+  errorOriginal(...args);
+  if (erroDeInfra) return;
+  const linha = args.map((a) => (a instanceof Error ? a.message : String(a))).join(" ");
+  if (saude.ehFalhaDeInfra(linha)) erroDeInfra = saude.resumoDoErro(linha);
+};
+
+/** Depois do ciclo: 2 ruins seguidos = e-mail de alerta; o primeiro bom depois = e-mail de volta. */
+async function cuidarDaSaude(erroDoCiclo: string | null): Promise<void> {
+  if (pausadoNesteCiclo) return;
+  try {
+    const s = saude;
+    let bruto: unknown = null;
+    try { bruto = JSON.parse(readFileSync(SAUDE_PATH, "utf8")); } catch { /* primeiro uso */ }
+    const { estado, acao } = s.depoisDoCiclo(s.lerSaude(bruto), erroDoCiclo);
+    let final = estado;
+    if (acao === "alertar") {
+      const m = s.emailDeAlerta(estado);
+      if (await avisarEquipe(m.subject, m.text)) {
+        final = s.marcarAlertado(estado);
+        errorOriginal(`[harvey] ALERTA enviado: ${estado.falhasSeguidas} ciclos seguidos falhando (${estado.ultimoErro})`);
+      }
+    } else if (acao === "voltou") {
+      const m = s.emailDeVolta(estado);
+      if (await avisarEquipe(m.subject, m.text)) {
+        final = s.marcarVoltou();
+        console.log("[harvey] voltou a funcionar, e-mail de volta enviado");
+      }
+    }
+    if (!existsSync(dirname(SAUDE_PATH))) mkdirSync(dirname(SAUDE_PATH), { recursive: true });
+    writeFileSync(SAUDE_PATH, JSON.stringify(final));
+  } catch (e) {
+    errorOriginal(`[harvey] saúde do ciclo falhou: ${e}`);
+  }
+}
+
+ciclo()
+  .then(() => cuidarDaSaude(erroDeInfra))
+  .catch(async (err) => {
+    errorOriginal(`[harvey] ciclo morreu: ${err}`);
+    await cuidarDaSaude(saude.resumoDoErro(err));
+    process.exit(1);
+  });
