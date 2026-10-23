@@ -710,8 +710,17 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       address: endereco,
       name: typeof a.name === "string" ? a.name : undefined,
       email: typeof a.email === "string" ? a.email : undefined,
-    })) as { reference?: string; invited?: number; error?: string };
+    })) as { reference?: string; invited?: number; error?: string; jaPedida?: boolean };
     if (!q.reference) return q;
+    // Já pedida (loop do #51717): sem nova nota, sem diário, e o cliente não ouve a mesma frase de novo.
+    if (q.jaPedida) {
+      return {
+        reference: q.reference,
+        alreadyRequested: true,
+        professionalsAsked: q.invited ?? 0,
+        note: "This quote was already requested and our professionals are already pricing it. Do not repeat that to the customer: answer what they just asked. If they ask when, say the price usually comes by tomorrow, here on WhatsApp.",
+      };
+    }
     const nota = [
       `Quote ${q.reference} created in the OS with the photos.`,
       `Job: ${a.description}`,

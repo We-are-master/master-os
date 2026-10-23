@@ -21,6 +21,7 @@
  *   pendencias                (sem janela; só grava motivos)   a cada 10 min
  *   cobranca-cartao           (só conta direct v2)             10h
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
+ *   harvey-rede               (sem janela; só nota interna)    a cada 10 min
  *   espelho-zendesk           (sem janela; status, dono, cobrança) a cada 10 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
@@ -149,6 +150,17 @@ export const ROTINAS: Rotina[] = [
     rotulo: "com.fixfy.espelho-zendesk",
     agenda: { tipo: "intervalo", minutos: 10 },
     script: "scripts/espelho-zendesk.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 9,
+  },
+  {
+    // Rede de segurança do Harvey (dono, 23/10/2026): cliente esperando no WhatsApp há mais
+    // de 20 min ganha nota interna "Harvey didn't answer". Nunca fala com o cliente.
+    nome: "harvey-rede",
+    rotulo: "com.fixfy.harvey-rede",
+    agenda: { tipo: "intervalo", minutos: 10 },
+    script: "scripts/harvey-rede-de-seguranca.mts",
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 9,
