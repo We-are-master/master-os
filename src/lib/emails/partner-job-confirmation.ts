@@ -515,17 +515,17 @@ export function buildPartnerJobConfirmationRequestEmail(
   const postcode = extractUkPostcode(data.propertyAddress) ?? areaDoEndereco(data.propertyAddress) ?? "TBC";
   const { html, text } = emailParceiro({
     preheader: semTravessao(`${tipo} · ${postcode} · ${ag.data ?? "Date TBC"}${ag.chegada ? `, ${ag.chegada}` : ""}. Tap to accept.`),
-    estado: CHIP_PARCEIRO.oferta,
-    titulo: "Can you take this job?",
-    paragrafos: [tipo],
+    estado: { texto: "New job available", cor: "green", chip: true },
+    titulo: "A new job is available. Interested?",
+    paragrafos: [`A ${tipo} job is available in your area. Review the details below and accept if you're available.`],
     metricas: [
-      { rotulo: "Postcode", valor: postcode },
-      { rotulo: "Date", valor: ag.data ?? "TBC", sub: ag.chegada ?? null },
-      metricaDaPaga(data.priceDisplay),
+      { rotulo: "Location", valor: postcode },
+      { ...metricaDaPaga(data.priceDisplay), rotulo: "Your rate" },
+      { rotulo: "Date & time", valor: ag.data ?? "TBC", sub: ag.chegada ?? null },
     ],
-    cta: { label: "Accept job", url: data.acceptUrl },
-    linksSecundarios: data.portalUrl ? [{ label: "See full details", url: data.portalUrl }] : [],
-    letraPequena: ["First to accept gets it. Can't take it? Just ignore this email."],
+    cta: { label: "Accept this job →", url: data.acceptUrl },
+    linksSecundarios: data.portalUrl ? [{ label: "View full job details", url: data.portalUrl }] : [],
+    letraPequena: ["This job is offered on a first-come, first-served basis. Once accepted, it will no longer be available to other professionals."],
   });
   return { subject, html, text };
 }

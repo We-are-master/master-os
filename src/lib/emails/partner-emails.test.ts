@@ -80,13 +80,13 @@ describe("e-mails ao parceiro", () => {
     });
     regrasComuns(e);
     assert.equal(e.subject, "Job offer · General Maintenance · Wed 28 Oct 26 · E1 6AN");
-    assert.deepEqual(cabeca(e.html), { chip: "Job to accept", titulo: "Can you take this job?", passo: null });
-    assert.match(e.html, />Postcode<[\s\S]*>E1 6AN</);
+    assert.deepEqual(cabeca(e.html), { chip: "New job available", titulo: "A new job is available. Interested?", passo: null });
+    assert.match(e.html, />Location<[\s\S]*>E1 6AN</);
     assert.doesNotMatch(e.html, /Scope of work|Rehang|Hi TM/);
     assert.match(e.html, />£35\.00\/h</);
     assert.doesNotMatch(e.html, /Hourly/);
     assert.doesNotMatch(e.html + e.text, /Sarah|Note:/);
-    assert.match(e.html, />Accept job</);
+    assert.match(e.html, />Accept this job →</);
   });
 
   test("job booked e visita extra: cliente, telefone, View job, Accepted", () => {
