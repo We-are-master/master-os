@@ -77,6 +77,10 @@ export interface ZendeskSyncResult {
 
 // ─── Leitura e escrita do ticket ────────────────────────────────────────────
 
+/** Campos que o Zendesk exige para Solved. */
+const WHAT_HAPPENED_FIELD_ID = Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343");
+const CLOSING_SUMMARY_FIELD_ID = Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231");
+
 /** Campo Reply Status (🔴 reply_awaiting / 🟢 reply_replied). */
 const REPLY_STATUS_FIELD_ID = Number(process.env.ZENDESK_REPLY_STATUS_FIELD_ID?.trim() || "5698641403423");
 
@@ -123,7 +127,12 @@ async function donoDoPapel(): Promise<(p: PapelDoTicket) => number> {
  * Escreve a diferença. Dono fora do grupo do ticket faz o Zendesk recusar o PUT
  * inteiro: aí tenta de novo sem o dono, para o status nunca ficar para trás.
  */
-export async function escreverEspelho(ticketId: string, alvo: Espelho, m: Mudanca): Promise<void> {
+export async function escreverEspelho(ticketId: string, alvo: Espelho, m: Mudanca, cru?: TicketCru | null): Promise<void> {
+  const campos: Array<{ id: number; value: string }> = [];
+  if (m.customStatusId != null && alvo.fechamento) {
+    if (!valorDoCampo(cru?.custom_fields, WHAT_HAPPENED_FIELD_ID)) campos.push({ id: WHAT_HAPPENED_FIELD_ID, value: alvo.fechamento.whatHappened });
+    if (!valorDoCampo(cru?.custom_fields, CLOSING_SUMMARY_FIELD_ID)) campos.push({ id: CLOSING_SUMMARY_FIELD_ID, value: alvo.fechamento.resumo });
+  }
   const montar = (comDono: boolean) => {
     const ticket: Record<string, unknown> = {};
     if (m.customStatusId != null) {
@@ -132,10 +141,12 @@ export async function escreverEspelho(ticketId: string, alvo: Espelho, m: Mudanc
       if (base) ticket.status = base;
     }
     if (comDono && m.assigneeId != null) ticket.assignee_id = m.assigneeId;
+    const todos = [...campos];
     if (m.actionRequired != null) {
-      ticket.custom_fields = [{ id: ACTION_REQUIRED_FIELD_ID, value: m.actionRequired ? ACTION_REQUIRED_YES : ACTION_REQUIRED_NO }];
+      todos.push({ id: ACTION_REQUIRED_FIELD_ID, value: m.actionRequired ? ACTION_REQUIRED_YES : ACTION_REQUIRED_NO });
       if (m.actionRequired && alvo.proximaAcao) ticket.comment = { public: false, body: notaDaAcao(alvo.proximaAcao) };
     }
+    if (todos.length) ticket.custom_fields = todos;
     return { ticket };
   };
   try {
@@ -158,7 +169,7 @@ export async function aplicarEspelho(
   const m = mudancasNoTicket(alvo, ticketAtualDe(cru), opcoes.dono ?? (await donoDoPapel()));
   if (Object.keys(m).length === 0) return { ok: true, synced: false, ticketId, customStatusId: alvo.customStatusId, skip: "already_mirrored" };
   if (opcoes.aplicar === false) return { ok: true, synced: false, ticketId, customStatusId: alvo.customStatusId, changes: m };
-  await escreverEspelho(ticketId, alvo, m);
+  await escreverEspelho(ticketId, alvo, m, cru);
   return { ok: true, synced: true, ticketId, customStatusId: alvo.customStatusId, changes: m };
 }
 
@@ -169,6 +180,7 @@ export const CAMPOS_DO_JOB_NO_ESPELHO =
 
 export type JobDoEspelho = {
   id: string;
+  reference?: string | null;
   status: JobStatus;
   quote_id?: string | null;
   partner_id?: string | null;
@@ -188,6 +200,7 @@ export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: s
     motivos: motivos.filter((m): m is Motivo => (MOTIVOS as readonly string[]).includes(m)),
     reclamacao: jobOnHoldPorReclamacao(job),
     motivoDoOnHold: job.on_hold_reason ?? null,
+    referencia: job.reference ?? null,
   });
 }
 

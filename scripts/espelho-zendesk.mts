@@ -25,7 +25,8 @@ for (const arq of [".env.local", ".env"]) {
   } catch {}
 }
 const { alvoDoJob, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
-const { espelhoDaQuote } = await import("../src/lib/zendesk-espelho");
+const { espelhoDaQuote, donoDeTicketSemPedido } = await import("../src/lib/zendesk-espelho");
+const { zendeskApi } = await import("../src/lib/zendesk");
 const { papeisDaEquipe } = await import("../src/lib/responsavel-operacao");
 
 const aplicar = process.argv.includes("--aplicar");
@@ -119,6 +120,32 @@ for (const q of so ? [] : quotesLidas ?? []) {
   const ref = String(q.external_ref ?? "");
   if (!numero(ref) || ticketsComJob.has(ref)) continue; // o job manda no ticket
   await passar(`${q.reference} ${q.status}`, ref, espelhoDaQuote(q.status));
+}
+
+// Ticket aberto sem dono e sem job nem quote: dono pela regra (só preenche o vazio).
+if (!so) {
+  const ticketsComPedido = new Set([...ticketsComJob, ...(quotesLidas ?? []).map((q) => String(q.external_ref ?? ""))]);
+  type Achado = { id: number; subject: string | null; custom_status_id: number | null; organization_id: number | null; assignee_id: number | null };
+  const { results } = await zendeskApi<{ results?: Achado[] }>(`search.json?query=${encodeURIComponent("type:ticket status<solved assignee:none")}&per_page=100`);
+  const semDono = (results ?? []).filter((t) => t.assignee_id == null && !ticketsComPedido.has(String(t.id)));
+  const orgIds = [...new Set(semDono.map((t) => t.organization_id).filter(Boolean))] as number[];
+  const nomeDaOrg = new Map<number, string>();
+  if (orgIds.length) {
+    const { organizations } = await zendeskApi<{ organizations?: Array<{ id: number; name: string }> }>(`organizations/show_many.json?ids=${orgIds.join(",")}`);
+    for (const o of organizations ?? []) nomeDaOrg.set(o.id, o.name);
+  }
+  for (const t of semDono) {
+    const papel = donoDeTicketSemPedido({ organizacao: t.organization_id ? nomeDaOrg.get(t.organization_id) ?? null : null, assunto: t.subject, customStatusId: t.custom_status_id });
+    somar(aplicar ? `sem pedido: dono ${papel}` : `sem pedido: daria dono ${papel}`);
+    if (detalhe) linhas.push(`#${t.id} ${t.subject?.slice(0, 60)} → ${papel}`);
+    if (!aplicar) continue;
+    try {
+      await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { assignee_id: dono(papel) } } });
+    } catch (e) {
+      somar("erro");
+      linhas.push(`#${t.id}: ERRO dono ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
+    }
+  }
 }
 
 console.log(`${aplicar ? "Aplicado" : "Ensaio"}: ${jobsValidos.length} jobs, ${(quotesLidas ?? []).length} quotes, janela de ${dias} dias.`);

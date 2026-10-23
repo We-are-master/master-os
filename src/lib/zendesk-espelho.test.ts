@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus } from "./zendesk-espelho";
+import { donoDeTicketSemPedido, espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus } from "./zendesk-espelho";
 import {
   ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_COMPLAINT, ZD_STATUS_COMPLETED, ZD_STATUS_DEPOSIT_PENDING, ZD_STATUS_FINAL_CHECKS,
-  ZD_STATUS_ON_HOLD, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING,
+  ZD_STATUS_ON_HOLD, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER,
 } from "./zendesk-statuses";
 
 const base: { esperandoEntrada: boolean; motivos: never[]; reclamacao: boolean } = { esperandoEntrada: false, motivos: [], reclamacao: false };
@@ -114,4 +114,21 @@ test("job encerrado com o cliente esperando resposta: o espelho não resolve o t
   assert.equal(espera.customStatusId, undefined);
   const respondido = mudancasNoTicket(alvo, { status: "open", customStatusId: ZD_STATUS_SCHEDULED, assigneeId: LEO, actionRequired: null, replyStatus: "reply_replied" }, dono);
   assert.equal(respondido.customStatusId, ZD_STATUS_COMPLETED);
+});
+
+test("o OS fecha o ticket com What Happened e Closing Summary (o Zendesk exige)", () => {
+  const e = espelhoDoJob({ ...base, status: "completed", referencia: "JOB-1" })!;
+  assert.deepEqual(e.fechamento, { whatHappened: "job_completed", resumo: "Closed by the OS: JOB-1 is completed." });
+  assert.equal(espelhoDoJob({ ...base, status: "cancelled" })!.fechamento!.whatHappened, "customer_cancelled");
+  assert.equal(espelhoDaQuote("rejected")!.fechamento!.whatHappened, "quote_rejected");
+  assert.equal(espelhoDoJob({ ...base, status: "scheduled" })!.fechamento, undefined);
+});
+
+test("ticket sem job nem quote: plataforma pedindo quote é vendas, o resto da plataforma é operação", () => {
+  assert.equal(donoDeTicketSemPedido({ organizacao: "🏢 Housekeep", assunto: "[Housekeep] Painting quote request- SE3 9EY", customStatusId: ZD_STATUS_NEW }), "vendas");
+  assert.equal(donoDeTicketSemPedido({ organizacao: "🏢 Housekeep", assunto: "[Housekeep] Job for tomorrow- IG1 2TE", customStatusId: ZD_STATUS_NEW }), "operacao");
+  assert.equal(donoDeTicketSemPedido({ organizacao: "🏢 Housekeep", assunto: "[Housekeep] Handyman tomorrow: NW9 4DX", customStatusId: ZD_STATUS_NEW }), "operacao");
+  assert.equal(donoDeTicketSemPedido({ organizacao: "Fixfy Customers", assunto: "Lead · Carpentry · Jo", customStatusId: ZD_STATUS_LEAD }), "vendas");
+  assert.equal(donoDeTicketSemPedido({ organizacao: null, assunto: "Hi", customStatusId: ZD_STATUS_PARTNER }), "operacao");
+  assert.equal(donoDeTicketSemPedido({ organizacao: "Li & Fung", assunto: "Your invoice INV-2026-904 is ready", customStatusId: ZD_STATUS_NEW }), "financeiro");
 });
