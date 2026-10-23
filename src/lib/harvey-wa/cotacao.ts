@@ -26,7 +26,7 @@ export type PedidoDeCotacao = { serviceType: string; description: string; postco
 export async function pedirCotacao(
   sb: SupabaseClient,
   a: { telefone: string | null; quem: Identidade; nomeNoWhatsApp: string | null; fotos: string[]; pedido: PedidoDeCotacao },
-): Promise<{ reference?: string; invited?: number; ticket?: string | null; error?: string }> {
+): Promise<{ reference?: string; invited?: number; ticket?: string | null; error?: string; jaPedida?: boolean }> {
   // O tipo sempre do catálogo (dono, 19/10/2026): o nome livre do LLM não casa parceiro nenhum.
   const classe = classificarPedido({ servico: a.pedido.serviceType, descricao: a.pedido.description }, await catalogoAtivo(sb));
   a = { ...a, pedido: { ...a.pedido, serviceType: classe.tipo } };
@@ -37,7 +37,7 @@ export async function pedirCotacao(
   if (ref) {
     const { data: lista } = await sb
       .from("quotes")
-      .select("id, reference, title, images, status, property_address, catalog_service_id")
+      .select("id, reference, title, images, status, property_address, catalog_service_id, scope")
       .eq("external_source", "zendesk")
       .eq("external_ref", ref)
       .in("status", ["draft", "bidding"])
@@ -45,6 +45,16 @@ export async function pedirCotacao(
       .order("created_at", { ascending: false })
       .limit(1);
     const ja = (lista ?? [])[0] as Record<string, unknown> | undefined;
+    /**
+     * Já em leilão (dono, 23/10/2026, loop do #51717): o modelo chamava request_quote a cada
+     * mensagem nova do cliente, e cada chamada anexava TODAS as fotos da conversa de novo
+     * (o parceiro via as mesmas fotos repetidas), escrevia outra nota e outra linha no diário.
+     * Os parceiros já estão cotando: devolve a referência e diz que já foi pedida.
+     */
+    if (ja && ja.status === "bidding") {
+      const convidados = (await sb.from("quote_partner_invitations").select("id", { count: "exact", head: true }).eq("quote_id", ja.id as string)).count ?? 0;
+      return { reference: ja.reference as string, invited: convidados, ticket: ref, jaPedida: true };
+    }
     if (ja) {
       const novas = await guardarFotosDoTicket(ref, a.fotos.map((dataUrl, i) => ({ filename: `whatsapp-${Date.now()}-${i}.jpg`, dataUrl })), sb);
       const scope = `${a.pedido.description}\n\nRequested on WhatsApp with Harvey${a.telefone ? ` (${a.telefone})` : ""}.`;
