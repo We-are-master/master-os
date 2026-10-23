@@ -656,6 +656,8 @@ const PAPEIS_NA_TELA: Array<[PapelDaEquipe, string, string]> = [
   ["operacao", "Operations owner", "Complaints and operations hand-offs are assigned to them (Needs Attention)."],
   ["autor_emails", "Sender of chase emails", "Quote and lead follow-up emails go out in their name, with their Zendesk signature."],
   ["autor_aviso_cotacao", "Sender of quote notices", "Signs the \"we're working on a quote\" reply and quotes sent by email."],
+  ["vendas", "Sales owner", "Owns tickets until they become a job: Lead, Needs Quote, Bidding, Quote Ready, Approval, Deposit Pending."],
+  ["financeiro", "Finance owner", "Owns payment tickets: Awaiting Payment, Payment Failed, Finance."],
 ];
 
 /** Papéis da equipe: quem faz cada coisa é ajuste, não pessoa no código (dono, 15/10/2026). Só admin edita. */

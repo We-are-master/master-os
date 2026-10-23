@@ -31,7 +31,11 @@ export const ZD_STATUS_BIDDING = 5688282472223;
 export const ZD_STATUS_AWAITING_APPROVAL = 5688280626847;
 
 /** 🔴 Lost — quote was rejected or did not convert after follow-up. Solved category. */
-export const ZD_STATUS_LOST = 5709657746335;
+/**
+ * 🔴 Lost está DESATIVADO no Zendesk (levantamento de 23/10/2026): o PUT com ele não
+ * pega e a quote perdida ficava sem espelho. Vai para Solved, como o Leo já fecha à mão.
+ */
+export const ZD_STATUS_LOST = 5679178036383;
 
 // ─── Job lifecycle ───────────────────────────────────────────────────────────
 
@@ -74,7 +78,17 @@ export const ZD_STATUS_AWAITING_PAYMENT = 6165486711711;
 export const ZD_STATUS_COMPLETED = 5679178036383;
 
 /** Cancelled — job was cancelled. Solved category (auto-closes the ticket). */
-export const ZD_STATUS_CANCELLED = 5697338496671;
+/** ❌ Cancelled também está desativado no Zendesk (23/10/2026): cancelado vai para Solved. */
+export const ZD_STATUS_CANCELLED = 5679178036383;
+
+/** 💳 Deposit Pending: cotação aceita, job esperando a entrada (criado 23/10/2026). Categoria pending. */
+export const ZD_STATUS_DEPOSIT_PENDING = Number(process.env.ZENDESK_STATUS_DEPOSIT_PENDING_ID?.trim() || "6472739656351");
+
+/** ⚠️ Payment Failed: cartão recusado ou pedindo confirmação do banco (criado 23/10/2026). Categoria open. */
+export const ZD_STATUS_PAYMENT_FAILED = Number(process.env.ZENDESK_STATUS_PAYMENT_FAILED_ID?.trim() || "6472739663647");
+
+/** 🟣 Finance: fila manual do financeiro. */
+export const ZD_STATUS_FINANCE = 5826336578463;
 
 /** 🚨 Complaint — reclamação aberta (macro "Move to Complaint", que também põe a
  *  tag `in_complaint` e o formulário de reclamação). O OS não grava este status;
@@ -137,9 +151,10 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_FINAL_CHECKS]:      "open",
   [ZD_STATUS_ON_HOLD]:           "pending",
   [ZD_STATUS_AWAITING_PAYMENT]:  "pending",
+  [ZD_STATUS_DEPOSIT_PENDING]:   "pending",
+  [ZD_STATUS_PAYMENT_FAILED]:    "open",
+  [ZD_STATUS_COMPLAINT]:         "open",
   [ZD_STATUS_COMPLETED]:         "solved",
-  [ZD_STATUS_CANCELLED]:         "solved",
-  [ZD_STATUS_LOST]:              "solved",
 };
 
 /** Returns the Zendesk base-status (`open`/`pending`/`solved`/etc.) for a
