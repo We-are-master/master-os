@@ -24,6 +24,10 @@ import { assinarFotos, urlsDeFoto } from "@/lib/stefane/run-external-report";
 import { baixarFotosDoJob } from "@/lib/emails/fotos-anexadas";
 import { avisarNoTicketDoJob } from "@/lib/um-ticket/aviso-do-job";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
+import { accountFinalEmailPolicyFromRow } from "@/lib/account-final-email-policy";
+import { avisoDeConclusaoFicaComOFinal } from "@/lib/aviso-de-conclusao-regra";
+import { contaDoJob } from "@/lib/processo/conta";
+import type { Account } from "@/types/database";
 import {
   getZendeskTicketId,
   getTicketRequester,
@@ -375,7 +379,7 @@ async function dispatchJobTerminalNotice(args: {
       id, reference, title, status,
       external_source, external_ref, partner_id, zendesk_side_conversation_id,
       cancellation_reason, cancellation_notice_sent_at, completion_notice_sent_at,
-      client_id, client_name, final_report, partner_timer_ended_at, completed_date,
+      client_id, account_id, client_name, final_report, partner_timer_ended_at, completed_date,
       scheduled_date, scheduled_start_at, property_address, catalog_service_id,
       clients ( full_name, source_account_id )
     `)
@@ -446,6 +450,7 @@ type JobDaConclusao = {
   reference: string | null;
   title: string | null;
   client_id: string | null;
+  account_id?: string | null;
   client_name: string | null;
   final_report: unknown;
   partner_timer_ended_at: string | null;
@@ -478,6 +483,17 @@ async function enviarAvisoDeConclusao(
 ): Promise<{ ok: boolean; posted?: boolean; skipped?: string; error?: string }> {
   if (process.env.JOB_COMPLETION_NOTICE_ENABLED?.trim() === "0") return { ok: true, skipped: "off" };
   if (!Number.isFinite(ticketId) || ticketId <= 0) return { ok: true, skipped: "no_ticket" };
+
+  /**
+   * Um e-mail por acontecimento (dono, 23/10/2026). Conta que recebe o e-mail final (report
+   * e/ou fatura) já tem nele o "trabalho concluído": este aviso saía junto, no mesmo minuto,
+   * e o cliente recebia dois (JOB-9754, 9720, 9731). Ele fica só para quem não recebe o final.
+   */
+  const contaId = await contaDoJob(supabase, { account_id: job.account_id ?? null, client_id: job.client_id ?? null });
+  const { data: conta } = contaId ? await supabase.from("accounts").select("*").eq("id", contaId).maybeSingle() : { data: null };
+  if (avisoDeConclusaoFicaComOFinal(accountFinalEmailPolicyFromRow((conta ?? null) as Account | null))) {
+    return { ok: true, skipped: "final_email_sends_it" };
+  }
 
   const fim = resolveJobCompletionInstant(job as never);
   if (fim && Date.now() - fim.getTime() > CONCLUSAO_JANELA_DIAS * 86_400_000) {

@@ -214,7 +214,9 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
   const ref = d.referencia?.trim() || "";
   const prop = imovelCurto(d.endereco);
   const endereco = d.endereco?.replace(/\s+/g, " ").trim() || "";
-  const cta = d.link ? { label: "Review your quote", url: d.link } : null;
+  // Sem botão nos lembretes (dono, 23/10/2026): a cotação, com o link para aceitar, já foi
+  // no e-mail da quote. O lembrete só pergunta e pede resposta.
+  const cta = null;
   const saud = saudacao(d.publico);
   if (b2b) {
     if (passo === 1) {
@@ -245,11 +247,11 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
   if (passo === 1) {
     return {
       assunto: `Your ${s || "Fixfy"} quote · Ready to proceed?`,
-      preheader: "Review your quote or let us know what you need.",
+      preheader: "Let us know if you’d like to go ahead or need anything changed.",
       saudacao: saud,
       paragrafos: [
         `Have you had a chance to look through your quote${s ? ` for ${s}` : ""}?`,
-        `If you’d like to go ahead, ${d.link ? "you can review and accept it below" : "just reply and let us know"}. If you have a preferred date, let us know and we’ll check availability.`,
+        "If you’d like to go ahead, just reply and let us know. If you have a preferred date, tell us and we’ll check availability.",
         "Any questions before you decide? Just reply. We’re happy to help.",
       ],
       cta,
@@ -263,7 +265,6 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
       paragrafos: [
         `If anything in your ${s ? `${s} ` : ""}quote needs adjusting, we’re happy to take another look.`,
         "Perhaps the work has changed, or you have a different date in mind. Just reply with what you need and we’ll check the options.",
-        ...(d.link ? ["You can also review the current quote below."] : []),
       ],
       cta,
     };
@@ -273,7 +274,7 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
     preheader: "Please let us know if you would still like to go ahead.",
     saudacao: saud,
     paragrafos: [
-      `One last follow-up on your quote${s ? ` for ${s}` : ""}. If you’d still like to go ahead, please ${d.link ? "review the quote or reply with any questions" : "reply and let us know, or ask us any questions"}.`,
+      `One last follow-up on your quote${s ? ` for ${s}` : ""}. If you’d still like to go ahead, please reply and let us know, or ask us any questions.`,
       `${d.fechaEm ? `If we don’t hear from you by ${d.fechaEm}, we’ll close this enquiry for now. ` : ""}You’re welcome to get back in touch whenever you need us.`,
       "Thank you for considering Fixfy.",
     ],

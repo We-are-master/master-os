@@ -108,20 +108,10 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
   const preheader = i.addressLine
     ? `${i.summary} at ${i.addressLine}, arriving ${i.windowLabel}.`
     : `${i.summary}, arriving ${i.windowLabel}.`;
-  const vatText = i.professionalVatNumber
-    ? `VAT registered, VAT number ${i.professionalVatNumber}`
-    : "Not VAT registered, so no VAT is charged";
   const guarantee = i.isEndOfTenancy
     ? `Free re-clean within 7 days. If your letting agent or landlord flags anything on our checklist, reply with their note and we arrange for ${pro} to come back at no cost.`
     : `7-day guarantee. If anything is not right, reply within 7 days of the job and we arrange for ${pro} to come back at no cost.`;
 
-  const valores = [
-    ...i.lines.map((l) => `${l.label}: ${gbp(l.amount)}`),
-    ...((i.promotion ?? 0) > 0.02 ? [`Fixfy promotion, paid by Fixfy on your behalf: -${gbp(i.promotion ?? 0)}`] : []),
-    ...(i.amountPaid > 0.02 ? [`Paid to GETFIXFY LTD (Fixfy), as agent for ${pro}: ${gbp(i.amountPaid)}`] : []),
-    ...(i.balance > 0.02 ? [`The other ${gbp(i.balance)} is due when the work is done, through Fixfy.`] : []),
-    ...(i.attachmentKind ? [`Your ${i.attachmentKind} is attached, issued in ${pro}'s name.`] : []),
-  ];
 
   return {
     subject,
@@ -146,14 +136,15 @@ export function buildProfessionalConfirmedEmail(i: ConfirmedEmailInput): { subje
         ["Property", i.addressLine],
         ["Booking", i.ref],
       ],
-      linksSecundarios: i.calendarUrl ? [{ label: "Add to calendar", url: i.calendarUrl }] : [],
+      linksSecundarios: [
+        ...(i.calendarUrl ? [{ label: "Add to calendar", url: i.calendarUrl }] : []),
+        { label: "Booking terms", url: "https://getfixfy.com/terms" },
+      ],
       nota: guarantee,
+      // Uma linha só (dono, 23/10/2026): o texto do modelo de agente inteiro (contrato, VAT,
+      // Consumer Rights Act, termos, 14 dias, 48h) está no statement anexado, em nome do profissional.
       letraPequena: [
-        ...valores,
-        `${pro} is an independent trader${i.professionalAddress ? `, business address ${i.professionalAddress}` : ""}. VAT: ${vatText}.`,
-        `Your contract for this job is with ${pro}. GETFIXFY LTD (Fixfy) arranged the booking as their agent and received your payment on their behalf, so paying Fixfy counts as paying them. Your rights under the Consumer Rights Act 2015 are against ${pro} as the trader, and we will help you resolve any problem.`,
-        "Your booking is under our booking terms (version of 6 October 2026), getfixfy.com/terms, which also explain your legal right to cancel within 14 days. You asked for the work to be done on the day you picked, so once it is done it can no longer be cancelled.",
-        "Changes and cancellation are free up to 48 hours before your slot.",
+        `Paid to Fixfy as agent for ${pro}. Your rights, VAT and cancellation terms are in the attached ${i.attachmentKind ?? "statement"}, and in our booking terms at getfixfy.com/terms.`,
       ],
     }),
   };

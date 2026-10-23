@@ -37,6 +37,11 @@ export type BookingPaymentEmailInput = {
    * `clientName`. Conta B2B deve passar `{ tipo: "b2b", empresa }`.
    */
   publico?: Publico;
+  /**
+   * O job nasceu de uma cotação aceita (copy do dono, 23/10/2026: "Quote accepted").
+   * Sem cotação (booking direto) fica o texto de sempre: não se agradece um aceite que não houve.
+   */
+  daCotacao?: boolean;
   /** Conta para transferência. Sem ele, a conta verificada da configuração; lista vazia some com o bloco. */
   bankDetails?: ReadonlyArray<{ label: string; value: string }>;
 };
@@ -74,8 +79,9 @@ function valores(i: Pick<BookingPaymentEmailInput, "total" | "amountDueNow" | "p
   return { sinal, total, agora, saldo: Math.max(0, r2(total - agora)) };
 }
 
-export function buildBookingPaymentSubject(i: Pick<BookingPaymentEmailInput, "total" | "amountDueNow" | "percent">): string {
+export function buildBookingPaymentSubject(i: Pick<BookingPaymentEmailInput, "total" | "amountDueNow" | "percent" | "daCotacao">): string {
   const v = valores(i);
+  if (v.sinal && i.daCotacao) return "Your quote is accepted: confirm your booking";
   return v.sinal ? `Confirm your booking with a ${gbp(v.agora)} deposit` : `Confirm your Fixfy booking · ${gbp(v.agora)}`;
 }
 
@@ -103,7 +109,30 @@ export function buildBookingPaymentEmail(i: BookingPaymentEmailInput): { subject
     transferencia: banco.length ? { dadosBancarios: banco, referencia, booking: true } : null,
   };
 
-  const corpo = v.sinal
+  const corpo = v.sinal && i.daCotacao
+    ? emailFixfy({
+        ...comuns,
+        estado: { texto: "Quote accepted", cor: "green" },
+        preheader: `Pay your ${gbp(v.agora)} deposit to confirm your booking.`,
+        titulo: "Let’s get your booking confirmed",
+        paragrafos: [
+          `Thanks for accepting your quote. Please pay your ${gbp(v.agora)} deposit to confirm your booking.`,
+          `Your deposit goes towards the ${gbp(v.total)} total, with the remaining ${gbp(v.saldo)} due once the agreed work is complete.`,
+        ],
+        resumo: {
+          titulo: "Your booking at a glance",
+          texto: escopo ? `Work included: ${escopo}` : null,
+          linhas: [
+            ["Service", i.serviceTitle],
+            ["Proposed visit", quando],
+            ["Property", i.address?.trim()],
+          ],
+        },
+        cta: { label: `Pay ${gbp(v.agora)} deposit`, url: i.payLink },
+        nota: "We’ll send your booking confirmation once we’ve received your deposit. Need to change any details? Reply to this email before paying and we’ll be happy to help.",
+        assinatura: "The Fixfy team",
+      })
+    : v.sinal
     ? emailFixfy({
         ...comuns,
         preheader: `${gbp(v.agora)} now, with ${gbp(v.saldo)} due after the work is complete.`,

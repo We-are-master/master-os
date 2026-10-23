@@ -210,7 +210,13 @@ export type Transferencia = {
 };
 
 /** Uma métrica da faixa de métricas (como a do OS): rótulo pequeno, valor grande, linha embaixo. */
-export type Metrica = { rotulo: string; valor: string; sub?: string | null };
+export type Metrica = {
+  rotulo: string;
+  valor: string;
+  sub?: string | null;
+  /** Valor riscado (data de visita cancelada, por exemplo). */
+  riscado?: boolean;
+};
 /** Um passo da faixa de progresso do job. */
 export type Passo = { nome: string; estado: "feito" | "atual" | "futuro" };
 
@@ -328,7 +334,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
 
   // ─── destaque navy: métricas (data e janela, valor e vencimento) e progresso ───
   const metricaHtml = (m: Metrica) =>
-    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.onNavy};">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${SANS};font-size:24px;line-height:30px;font-weight:800;letter-spacing:-0.01em;color:#FFFFFF;">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;color:${W.orangeSoft};">${esc(m.sub)}</p>` : ""}`;
+    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:13px;line-height:16px;color:${W.onNavy};">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${SANS};font-size:24px;line-height:30px;font-weight:800;letter-spacing:-0.01em;color:#FFFFFF;${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${SANS};font-size:15px;line-height:20px;font-weight:700;color:${W.orangeSoft};">${esc(m.sub)}</p>` : ""}`;
   const colunasMetricas = z
     ? metricas.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / metricas.length)}%;box-sizing:border-box;padding:0 ${i < metricas.length - 1 ? 14 : 0}px 0 0;">${metricaHtml(m)}</div>`).join("")
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
