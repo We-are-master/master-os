@@ -10,8 +10,8 @@ import {
 import { respostaManualDepoisDe, idsDaEquipe } from "./historico";
 import { passoDepoisDoHistorico } from "./housekeep-quotes";
 import {
-  MARCA_EQUIPE_AGIU, MARCA_FECHADA_SEM_LANCE, MARCA_NO_BIDS, canalSemLance, fecharQuoteSemLance, passoSemLance,
-  saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano,
+  MARCA_EQUIPE_AGIU, MARCA_FECHADA_SEM_LANCE, MARCA_NO_BIDS, MARCA_PRECO_A_MAO, canalSemLance, fecharQuoteSemLance, passoComPrecoAMao, passoSemLance,
+  precoMandadoAMao, saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano, valorEmLibras,
 } from "./quote-sem-lance";
 import { escolherQuoteDoBooking, planoDoJobDoBooking, type QuoteDoBooking } from "./booking-housekeep";
 import { mandarBoasVindasDoExpress, montarBoasVindasDoExpress, motivoParaNaoMandarBoasVindas, type DependenciasDaBoasVindas } from "./express-boas-vindas";
@@ -278,6 +278,78 @@ describe("quote sem lance: 24h No Bids, 48h fecha (dono, 23/10/2026)", () => {
     const r = await fecharQuoteSemLance(sb, { id: "q2", reference: "QT-2", external_ref: "778" }, { canal: "email", enviar: async () => { throw new Error("Zendesk 500"); } });
     assert.equal(r.enviado, false);
     assert.equal(t.quotes![0]!.status, "bidding");
+  });
+});
+
+describe("preço mandado à mão não é 'sem lance' (dono, 23/10/2026)", () => {
+  // QT-2026-1174, #51397: primeiro convite 15/10 07:23; Joan cotada à mão em 16/10 14:05.
+  const desde = "2026-10-15T07:23:00Z";
+  const parceiros = ["contact@tm-handyman.co.uk", "andre.vicente@mfs-ltd.com"];
+  const convite = {
+    participantes: ["contact@tm-handyman.co.uk", "leonardo@getfixfy.com"],
+    mensagens: [{ em: "2026-10-15T07:23:10Z", deEmail: "leonardo@getfixfy.com", texto: "New opportunity, bid within 12 hours. Typical job £150" }],
+  };
+  const notasDoHarvey = [
+    { public: false, created_at: "2026-10-16T09:27:00Z", via: { channel: "api" }, plain_body: "🤖 HARVEY — nobody bid on QT-2026-1174 5 partner(s) invited" },
+    { public: false, created_at: "2026-10-23T12:01:00Z", via: { channel: "api" }, plain_body: "⚡ Action Required: No bids after 197h on QT-2026-1174: invite more partners or call" },
+  ];
+  const base = { desde, emailsDeParceiros: parceiros, equipeIds: [5], solicitanteId: 9 };
+
+  it("side conversation nossa com o cliente citando £: Approval com o valor", () => {
+    const quote = {
+      participantes: ["victor@getfixfy.com", "joan.munro@btopenworld.com"],
+      mensagens: [
+        { em: "2026-10-16T14:05:00Z", deEmail: "victor@getfixfy.com", texto: "Hi Joan, Thanks for the photos. ... our fixed day rate: £329 covers up to 7 hours" },
+        { em: "2026-10-16T14:45:00Z", deEmail: "joan.munro@btinternet.com", texto: "Thanks for the quote. Does the day rate include VAT?" },
+      ],
+    };
+    const p = precoMandadoAMao({ ...base, comentarios: notasDoHarvey, sideConversations: [convite, quote] });
+    assert.deepEqual(p, { comValor: true, valor: 329, onde: "side conversation with the customer" });
+    assert.equal(passoComPrecoAMao(p, "bidding"), "approval");
+  });
+
+  it("nota interna com o preço: Approval com o valor", () => {
+    const nota = { public: false, created_at: "2026-10-16T14:05:30Z", via: { channel: "api" }, plain_body: "Owner, 16 Oct: no partner bid; quoted ourselves as handyman day rate £329 (up to 7h). Sent by email." };
+    const p = precoMandadoAMao({ ...base, comentarios: [...notasDoHarvey, nota], sideConversations: [convite] });
+    assert.deepEqual(p, { comValor: true, valor: 329, onde: "internal note" });
+    assert.equal(passoComPrecoAMao(p, "bidding"), "approval");
+  });
+
+  it("resposta pública à mão com £ também conta; a do Harvey (api) não", () => {
+    const daEquipe = { public: true, created_at: "2026-10-17T10:00:00Z", author_id: 5, via: { channel: "web" }, plain_body: "Hi Joan, we can do it for £329." };
+    assert.equal(precoMandadoAMao({ ...base, comentarios: [daEquipe], sideConversations: [] })?.onde, "public reply on the ticket");
+    const doHarvey = { ...daEquipe, via: { channel: "api" } };
+    assert.equal(precoMandadoAMao({ ...base, comentarios: [doHarvey], sideConversations: [] }), null);
+  });
+
+  it("nada à mão (QT-2026-1255, #51642: só convites e notas do Harvey): segue a régua e fecha", () => {
+    const lembrete = { ...convite, mensagens: [...convite.mensagens, { em: "2026-10-21T14:01:00Z", deEmail: "leonardo@getfixfy.com", texto: "Just a reminder that we're still waiting for your price" }] };
+    const p = precoMandadoAMao({ ...base, comentarios: notasDoHarvey, sideConversations: [lembrete] });
+    assert.equal(p, null);
+    assert.equal(passoComPrecoAMao(p, "bidding"), "seguir");
+  });
+
+  it("side conversation com o cliente sem £ (PDF anexo): gente, não fecha", () => {
+    const pdf = { participantes: ["victor@getfixfy.com", "joan.munro@btopenworld.com"], mensagens: [{ em: "2026-10-16T14:05:00Z", deEmail: "victor@getfixfy.com", texto: "Hi Joan, please find our quote attached." }] };
+    const p = precoMandadoAMao({ ...base, comentarios: [], sideConversations: [pdf] });
+    assert.deepEqual(p, { comValor: false, onde: "side conversation with the customer" });
+    assert.equal(passoComPrecoAMao(p, "bidding"), "gente");
+  });
+
+  it("antes do primeiro convite não conta; quote que já saiu de Bidding não muda", () => {
+    const velha = { public: false, created_at: "2026-10-14T10:00:00Z", via: { channel: "web" }, plain_body: "Priced at £329" };
+    assert.equal(precoMandadoAMao({ ...base, comentarios: [velha], sideConversations: [] }), null);
+    assert.equal(passoComPrecoAMao({ comValor: true, valor: 329, onde: "internal note" }, "awaiting_customer"), "nada");
+  });
+
+  it("valor em libras", () => {
+    assert.equal(valorEmLibras("day rate £329 covers"), 329);
+    assert.equal(valorEmLibras("£ 1,250.50 total"), 1250.5);
+    assert.equal(valorEmLibras("no price"), null);
+  });
+
+  it("a marca de preço à mão encerra a régua", () => {
+    assert.equal(passoSemLance({ horasDesdePrimeiroConvite: 60, horasDesdeUltimoConvite: 60, marca: MARCA_PRECO_A_MAO }), "nada");
   });
 });
 

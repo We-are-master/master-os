@@ -8,7 +8,9 @@
  *
  * "Agir" é a equipe responder à mão no ticket (resposta pública depois do primeiro
  * convite) ou convidar mais parceiros: as 48h contam do ÚLTIMO convite, então
- * alargar a busca dá às pessoas o tempo de responder. Conta que é só com gente
+ * alargar a busca dá às pessoas o tempo de responder. Preço mandado à mão (side
+ * conversation com o cliente, nota com o preço, resposta com £) nunca é "sem
+ * lance": a quote vai para Approval (`precoMandadoAMao`). Conta que é só com gente
  * (B2B humano) não recebe nada sozinha: no lugar do envio, Action Required.
  *
  * Substitui o 8h/36h-48h da Housekeep, o aviso de 26h das outras quotes e o
@@ -31,7 +33,7 @@ export const MARCA_TICKET_FECHADO = "no_bids_ticket_closed";
 /** Marcas antigas da Housekeep (até 23/10/2026): a de 8h volta para a régua, as finais continuam finais. */
 const MARCA_HK_8H_ANTIGA = "housekeep_no_bid_8h";
 const MARCAS_FINAIS = new Set([
-  MARCA_FECHADA_SEM_LANCE, MARCA_EQUIPE_AGIU, MARCA_PRECISA_DE_GENTE, MARCA_TICKET_FECHADO,
+  MARCA_FECHADA_SEM_LANCE, MARCA_EQUIPE_AGIU, MARCA_PRECISA_DE_GENTE, MARCA_TICKET_FECHADO, "manual_price_sent",
   "housekeep_no_availability_sent", "housekeep_team_replied",
 ]);
 
@@ -45,6 +47,104 @@ export function passoSemLance(i: { horasDesdePrimeiroConvite: number; horasDesde
   if (i.horasDesdeUltimoConvite >= HORAS_ATE_FECHAR) return "fechar";
   if (i.horasDesdePrimeiroConvite >= HORAS_ATE_NO_BIDS && marca !== MARCA_NO_BIDS) return "no_bids";
   return "esperar";
+}
+
+// ─── Preço mandado à mão (dono, 23/10/2026) ──────────────────────────────────
+
+/**
+ * "Se o Harvey vê que mandamos a quote à mão, passa para Approval; só quem está
+ * mesmo em Bidding sem preço recebe o not able to quote." O dono manda quote de
+ * três jeitos, e os três contam depois do primeiro convite:
+ *   - side conversation nossa com o cliente (não com parceiro) citando £
+ *     (QT-2026-1174, Joan: "Your quote from Fixfy", £329 day rate, 16/10);
+ *   - nota interna dizendo o preço ("quoted ourselves ... £329");
+ *   - resposta pública à mão com £.
+ * Side conversation nossa com o cliente sem £ (PDF anexo, "see attached") é
+ * preço à mão sem valor legível: não fecha, chama gente.
+ */
+export const MARCA_PRECO_A_MAO = "manual_price_sent";
+
+export type MensagemDeSideConversation = { em: string; deEmail: string; texto: string };
+export type SideConversationLida = { participantes: string[]; mensagens: MensagemDeSideConversation[] };
+export type NotaOuComentario = {
+  public?: boolean | null;
+  created_at?: string | null;
+  author_id?: number | string | null;
+  plain_body?: string | null;
+  body?: string | null;
+  via?: { channel?: string | null } | null;
+};
+
+export type PrecoAMao = { comValor: true; valor: number; onde: string } | { comValor: false; onde: string };
+
+/** O primeiro valor em libras do texto ("£329", "£ 1,250.50"), ou null. */
+export function valorEmLibras(texto: string | null | undefined): number | null {
+  const m = String(texto ?? "").match(/£\s?(\d[\d,]*(?:\.\d{1,2})?)/);
+  if (!m) return null;
+  const v = Number(m[1]!.replace(/,/g, ""));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+const NOSSO = /@getfixfy\.com$/i;
+/** Nota automática nossa (Harvey, OS): fala de preço sem ser a quote que saiu. */
+const NOTA_AUTOMATICA = /^\s*(🤖|⚡|📨|📧|✅|⚠️)/u;
+
+export function precoMandadoAMao(a: {
+  desde: string;
+  comentarios: NotaOuComentario[];
+  sideConversations: SideConversationLida[];
+  /** E-mails dos parceiros convidados: side conversation com eles é leilão, não quote. */
+  emailsDeParceiros: string[];
+  /** Quem é da equipe no Zendesk (agent/admin): resposta pública só conta deles. */
+  equipeIds: Array<number | string>;
+  solicitanteId?: number | string | null;
+}): PrecoAMao | null {
+  const limite = Date.parse(a.desde);
+  const depois = (iso: string | null | undefined) => Number.isFinite(limite) && Date.parse(iso ?? "") > limite;
+  const parceiros = new Set(a.emailsDeParceiros.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const equipe = new Set(a.equipeIds.map(String));
+  let semValor: PrecoAMao | null = null;
+
+  for (const sc of a.sideConversations) {
+    const externos = sc.participantes.map((p) => p.trim().toLowerCase()).filter((p) => p && !NOSSO.test(p));
+    if (!externos.length || externos.some((p) => parceiros.has(p))) continue;
+    for (const m of sc.mensagens) {
+      if (!NOSSO.test(m.deEmail.trim()) || !depois(m.em)) continue;
+      const valor = valorEmLibras(m.texto);
+      if (valor) return { comValor: true, valor, onde: "side conversation with the customer" };
+      semValor ??= { comValor: false, onde: "side conversation with the customer" };
+    }
+  }
+  for (const c of a.comentarios) {
+    if (!depois(c.created_at)) continue;
+    const texto = String(c.plain_body ?? c.body ?? "");
+    const valor = valorEmLibras(texto);
+    if (!valor) continue;
+    if (c.public) {
+      const autor = c.author_id != null ? String(c.author_id) : "";
+      const canal = String(c.via?.channel ?? "").toLowerCase();
+      if (!autor || autor === String(a.solicitanteId ?? "") || !equipe.has(autor)) continue;
+      if (["api", "rule", "system", "automation"].includes(canal)) continue;
+      return { comValor: true, valor, onde: "public reply on the ticket" };
+    }
+    if (NOTA_AUTOMATICA.test(texto)) continue;
+    if (!/quot|price|priced|sent|day rate|hourly/i.test(texto)) continue;
+    return { comValor: true, valor, onde: "internal note" };
+  }
+  return semValor;
+}
+
+export type PassoComPrecoAMao = "seguir" | "approval" | "gente" | "nada";
+
+/**
+ * O que fazer depois de ler o ticket. Sem preço à mão a régua segue (24h No
+ * Bids, 48h fecha); com valor e quote ainda em Bidding/Draft, Approval; sem
+ * valor legível, gente; quote que já saiu de Bidding, nada.
+ */
+export function passoComPrecoAMao(preco: PrecoAMao | null, statusDaQuote: string | null | undefined): PassoComPrecoAMao {
+  if (!preco) return "seguir";
+  if (!preco.comValor) return "gente";
+  return statusDaQuote === "bidding" || statusDaQuote === "draft" ? "approval" : "nada";
 }
 
 // ─── O texto (do dono, 23/10/2026) ───────────────────────────────────────────

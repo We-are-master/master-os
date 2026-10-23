@@ -44,8 +44,9 @@ import { ehHousekeep } from "@/lib/processo/plataformas";
 import { idsDaEquipe, respostaManualDepoisDe, type ComentarioDoTicket } from "@/lib/processo/historico";
 import { HK_MARCA_EQUIPE_RESPONDEU, passoDepoisDoHistorico } from "@/lib/processo/housekeep-quotes";
 import {
-  HORAS_ATE_FECHAR, HORAS_ATE_NO_BIDS, MARCA_EQUIPE_AGIU, MARCA_NO_BIDS, MARCA_PRECISA_DE_GENTE, MARCA_TICKET_FECHADO,
-  canalSemLance, fecharQuoteSemLance, passoSemLance, saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano,
+  HORAS_ATE_FECHAR, HORAS_ATE_NO_BIDS, MARCA_EQUIPE_AGIU, MARCA_NO_BIDS, MARCA_PRECISA_DE_GENTE, MARCA_PRECO_A_MAO, MARCA_TICKET_FECHADO,
+  canalSemLance, fecharQuoteSemLance, passoComPrecoAMao, passoSemLance, precoMandadoAMao, saudacaoSemLance, textoSemLanceHtml, textoSemLancePlano,
+  type NotaOuComentario, type PrecoAMao, type SideConversationLida,
 } from "@/lib/processo/quote-sem-lance";
 
 /** O leilão fecha 2h depois do primeiro convite. */
@@ -355,6 +356,85 @@ async function passoHousekeepV2(
   return false;
 }
 
+/** Lê o ticket (comentários e side conversations) atrás de preço mandado à mão. */
+export async function lerPrecoAMao(supabase: SupabaseClient, quoteId: string, ticketId: string, desde: string): Promise<PrecoAMao | null> {
+  const [t, c, s] = await Promise.all([
+    zendeskApi<{ ticket: { requester_id?: number } }>(`tickets/${ticketId}.json`),
+    zendeskApi<{ comments?: NotaOuComentario[]; users?: Array<{ id?: number; role?: string }> }>(
+      `tickets/${ticketId}/comments.json?include=users&sort_order=asc&per_page=100`,
+    ),
+    zendeskApi<{ side_conversations?: Array<{ id: string; participants?: Array<{ email?: string | null }> }> }>(`tickets/${ticketId}/side_conversations.json`),
+  ]);
+  const { data: convites } = await supabase.from("quote_partner_invitations").select("partner_id").eq("quote_id", quoteId);
+  const ids = [...new Set(((convites ?? []) as Array<{ partner_id?: string | null }>).map((x) => x.partner_id).filter((x): x is string => !!x))];
+  const { data: ps } = ids.length ? await supabase.from("partners").select("email, job_cc_emails").in("id", ids) : { data: [] };
+  const emailsDeParceiros = ((ps ?? []) as Array<{ email?: string | null; job_cc_emails?: unknown }>).flatMap((p) => [
+    p.email ?? "",
+    ...(Array.isArray(p.job_cc_emails) ? (p.job_cc_emails as unknown[]).map(String) : String(p.job_cc_emails ?? "").split(/[,;\s]+/)),
+  ]);
+  const limite = Date.parse(desde);
+  const sideConversations: SideConversationLida[] = [];
+  for (const sc of (s.side_conversations ?? []).slice(0, 30)) {
+    const participantes = (sc.participants ?? []).map((p) => String(p.email ?? "")).filter(Boolean);
+    const externos = participantes.filter((p) => !/@getfixfy\.com$/i.test(p));
+    // Só lê eventos de quem pode ser o cliente: com parceiro é o leilão.
+    if (!externos.length || externos.some((p) => emailsDeParceiros.some((e) => e.trim().toLowerCase() === p.toLowerCase()))) continue;
+    const { events } = await zendeskApi<{ events?: Array<{ created_at?: string; message?: { body?: string | null; from?: { email?: string | null } | null } | null }> }>(
+      `tickets/${ticketId}/side_conversations/${sc.id}/events.json`,
+    );
+    const mensagens = (events ?? [])
+      .filter((e) => e.message && Date.parse(e.created_at ?? "") > limite)
+      .map((e) => ({ em: e.created_at ?? "", deEmail: String(e.message?.from?.email ?? ""), texto: String(e.message?.body ?? "") }));
+    sideConversations.push({ participantes, mensagens });
+  }
+  return precoMandadoAMao({
+    desde,
+    comentarios: c.comments ?? [],
+    sideConversations,
+    emailsDeParceiros,
+    equipeIds: idsDaEquipe(c.users),
+    solicitanteId: t.ticket?.requester_id ?? null,
+  });
+}
+
+/** Preço saiu à mão: com valor, Approval (status do ticket acompanha); sem valor, gente. */
+async function passarParaApproval(
+  supabase: SupabaseClient,
+  q: { id: string; reference: string; external_ref: string },
+  preco: PrecoAMao,
+  r: ResultadoDaVarredura,
+): Promise<void> {
+  const { data: atual } = await supabase.from("quotes").select("status, total_value").eq("id", q.id).maybeSingle();
+  const linha = (atual ?? {}) as { status?: string | null; total_value?: number | null };
+  const passo = passoComPrecoAMao(preco, linha.status);
+  if (passo === "nada" || passo === "seguir") return;
+  if (passo === "gente" || !preco.comValor) {
+    await supabase.from("quotes").update({ automation_status: MARCA_PRECISA_DE_GENTE, updated_at: new Date().toISOString() }).eq("id", q.id);
+    const fila = await precisaDeAcao(q.external_ref, `Price sent by hand on ${q.reference}? (${preco.onde}, no amount I can read): set the quote to awaiting customer in the OS`);
+    if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
+    r.detalhes.push(`${q.reference}: quote à mão sem valor legível (${preco.onde}), Action Required`);
+    return;
+  }
+  const { persistQuoteSentToCustomer } = await import("@/lib/quotes/persist-quote-sent-to-customer");
+  const gravado = await persistQuoteSentToCustomer(supabase, q.id, new Date().toISOString());
+  if (gravado.error) {
+    r.detalhes.push(`${q.reference}: preço à mão £${preco.valor}, mas o status não gravou (${gravado.error.message})`);
+    return;
+  }
+  await supabase
+    .from("quotes")
+    .update({
+      automation_status: MARCA_PRECO_A_MAO,
+      ...(Number(linha.total_value ?? 0) > 0 ? {} : { total_value: preco.valor }),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", q.id);
+  await syncQuoteZendeskStatus(q.id, supabase).catch(() => undefined);
+  await acaoFeita(q.external_ref, `${q.reference} was quoted by hand (${libras(preco.valor)}, ${preco.onde}): moved to Approval`).catch(() => undefined);
+  r.detalhes.push(`${q.reference}: preço à mão ${libras(preco.valor)} (${preco.onde}), quote em Approval`);
+  await registrarDecisao({ origem: "lances", ticketId: q.external_ref, quoteRef: q.reference, decisao: `Found ${q.reference} quoted by hand at ${libras(preco.valor)} (${preco.onde}) with no partner bid: moved the quote to Approval instead of closing it`, regra: "a price sent by hand is not a missing bid", pendente: "Customer: accept the quote" }, supabase).catch(() => undefined);
+}
+
 /**
  * Quote sem lance (dono, 23/10/2026), para toda conta e todo canal:
  *   24h do primeiro convite: nota, tag, 🔎 No Bids e Action Required, uma vez;
@@ -392,6 +472,22 @@ async function tratarSemLance(
   if (snap.ok && snap.ticket?.status === "closed") {
     await supabase.from("quotes").update({ automation_status: MARCA_TICKET_FECHADO, updated_at: new Date().toISOString() }).eq("id", q.id);
     r.detalhes.push(`${q.reference}: sem lance, mas o ticket #${q.external_ref} está fechado, não aviso`);
+    return;
+  }
+
+  /**
+   * Preço mandado à mão (dono, 23/10/2026): não é "sem lance". Com valor, a quote
+   * vai para Approval; sem valor legível, chama gente e não fecha.
+   */
+  let precoAMao: PrecoAMao | null;
+  try {
+    precoAMao = await lerPrecoAMao(supabase, q.id, q.external_ref, primeiroConvite);
+  } catch (err) {
+    r.detalhes.push(`${q.reference}: não li o ticket #${q.external_ref} (preço à mão?), nada nesta rodada (${String(err).slice(0, 100)})`);
+    return;
+  }
+  if (precoAMao) {
+    await passarParaApproval(supabase, q, precoAMao, r);
     return;
   }
 
