@@ -1650,6 +1650,20 @@ export async function subirJobBooked(
     }
   }
 
+  // Housekeep cobra por hora: "1.0 hrs · £60.00" é a taxa deles, não preço
+  // fechado. Fixo só quando veio de uma quote nossa (ou é limpeza).
+  const porHora = await (async () => {
+    const { ehHousekeep } = await import("@/lib/processo/plataformas");
+    const { cobrancaDoBookingHousekeep } = await import("./booking-por-hora");
+    return cobrancaDoBookingHousekeep({
+      ehHousekeep: ehHousekeep(conta!.id),
+      temQuote: Boolean(planoV2?.quoteId),
+      totalGbp: ex.priceGbp,
+      texto: ticket.threadNova || ticket.thread,
+      servico: tituloDoJob,
+    });
+  })();
+
   const res = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
@@ -1658,6 +1672,7 @@ export async function subirJobBooked(
     },
     body: JSON.stringify({
       account_id: conta!.id,
+      ...(porHora ?? {}),
       date: ex.date,
       arrival_time: arrivalTime,
       client_name: ex.clientName,
