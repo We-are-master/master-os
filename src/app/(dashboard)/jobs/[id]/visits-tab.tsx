@@ -101,6 +101,9 @@ export function VisitsTab({
   completePrimaryLabel,
   onFinishJob,
   onJobChanged,
+  onEditPrimarySchedule,
+  onChangePrimaryPartner,
+  onEditPrimaryValues,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
@@ -123,6 +126,14 @@ export function VisitsTab({
   onFinishJob?: () => void;
   /** O job mudou no servidor (seguiu para a próxima visita): o card recarrega. */
   onJobChanged?: () => void;
+  /**
+   * Editar a visita 1, que é o próprio job (dono, 24/10/2026). Ainda não feita:
+   * "Reschedule & confirm" (data, parceiro, serviço e valores). Já feita: só
+   * trocar o parceiro ou os valores, pelos modais do job, sem mexer na data.
+   */
+  onEditPrimarySchedule?: () => void;
+  onChangePrimaryPartner?: () => void;
+  onEditPrimaryValues?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -437,6 +448,18 @@ export function VisitsTab({
               notified={jobHasPartner ? "Client and partner got the job confirmation" : null}
               onComplete={!primaryDone && job.status !== "cancelled" && (onCompletePrimary || vivas.length) ? () => void handleCompletePrimary() : undefined}
               completeTitle={completePrimaryLabel ?? "Mark visit 1 done"}
+              editMenu={
+                vivas.length > 0 && job.status !== "cancelled"
+                  ? primaryDone
+                    ? [
+                        ...(onChangePrimaryPartner ? [{ label: "Change partner", onSelect: onChangePrimaryPartner }] : []),
+                        ...(onEditPrimaryValues ? [{ label: "Edit values", onSelect: onEditPrimaryValues }] : []),
+                      ]
+                    : onEditPrimarySchedule
+                      ? [{ label: "Edit visit 1", onSelect: onEditPrimarySchedule }]
+                      : []
+                  : []
+              }
             />
             {vivas.map((v) => (
               <VisitCard
@@ -578,7 +601,7 @@ function diaCurto(ymd: string | null | undefined): string {
 /** Uma visita = um cartão. Feita fica riscada e apagada, mas fica: é o histórico do job. */
 function VisitCard({
   domId, focused, index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
-  statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle,
+  statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle, editMenu,
 }: {
   domId?: string;
   focused?: boolean;
@@ -606,7 +629,10 @@ function VisitCard({
   onDelete?: () => void;
   onComplete?: () => void;
   completeTitle?: string;
+  /** Lápis com opções (visita 1): uma opção abre direto, mais de uma vira menu. */
+  editMenu?: { label: string; onSelect: () => void }[];
 }) {
+  const [menuAberto, setMenuAberto] = useState(false);
   const janela = startAt && endAt ? formatArrivalTimeRange(startAt, endAt) : startAt ? startAt.slice(11, 16) : null;
   useEffect(() => {
     if (!focused || !domId) return;
@@ -696,6 +722,38 @@ function VisitCard({
             className="text-text-tertiary transition-colors hover:text-text-primary">
             <Pencil className="h-3.5 w-3.5" />
           </button>
+        ) : editMenu && editMenu.length > 0 ? (
+          <span className="relative">
+            <button
+              type="button"
+              title={editMenu.length === 1 ? editMenu[0]!.label : "Edit visit"}
+              aria-label="Edit visit"
+              aria-haspopup={editMenu.length > 1 ? "menu" : undefined}
+              aria-expanded={editMenu.length > 1 ? menuAberto : undefined}
+              onClick={() => (editMenu.length === 1 ? editMenu[0]!.onSelect() : setMenuAberto((v) => !v))}
+              className="text-text-tertiary transition-colors hover:text-text-primary"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            {menuAberto && editMenu.length > 1 ? (
+              <>
+                <span className="fixed inset-0 z-40" onClick={() => setMenuAberto(false)} aria-hidden />
+                <span role="menu" className="absolute right-0 top-5 z-50 flex min-w-[9.5rem] flex-col rounded-lg border border-border-light bg-card p-1 shadow-lg">
+                  {editMenu.map((o) => (
+                    <button
+                      key={o.label}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setMenuAberto(false); o.onSelect(); }}
+                      className="rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium text-text-primary hover:bg-surface-hover"
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </span>
+              </>
+            ) : null}
+          </span>
         ) : null}
         {onDelete ? (
           <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"

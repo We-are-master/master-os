@@ -9198,6 +9198,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   <VisitsTab
                     job={job}
                     openCreateSignal={visitOpenCreateSignal}
+                    onEditPrimarySchedule={canOpenQuickReschedule ? openQuickReschedule : undefined}
+                    onChangePrimaryPartner={() => setPartnerModalOpen(true)}
+                    onEditPrimaryValues={() => openFinanceHub("client")}
                     onVisitsChanged={() => setVisitsRefreshKey((n) => n + 1)}
                     onCompletePrimary={
                       primaryVisitDoneTarget
