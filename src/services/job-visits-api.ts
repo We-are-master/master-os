@@ -28,6 +28,8 @@ export type JobFollowedVisit = { ok: boolean; followed?: boolean; status?: strin
 /** Cria e diz quem foi avisado: o parceiro da visita e o cliente, no ticket do job. */
 export async function apiCreateJobVisit(
   input: CreateJobVisitInput,
+  /** Quem recebe o e-mail no ticket do job. Desmarcado no modal = não envia (padrão: os dois). */
+  notify?: { partner?: boolean; client?: boolean },
 ): Promise<{
   visit: JobVisit;
   partnerNotified: AvisoDaVisita | null;
@@ -41,7 +43,11 @@ export async function apiCreateJobVisit(
   const res = await fetch(`/api/jobs/${jobId}/visits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(rest),
+    body: JSON.stringify({
+      ...rest,
+      notify_partner: notify?.partner !== false,
+      notify_client: notify?.client !== false,
+    }),
   });
   const payload = (await res.json().catch(() => ({}))) as {
     visit?: JobVisit;

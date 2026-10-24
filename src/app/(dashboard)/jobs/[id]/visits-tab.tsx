@@ -294,9 +294,9 @@ export function VisitsTab({
     onJobChanged?.();
   }
 
-  async function handleCreate(input: CreateJobVisitInput) {
+  async function handleCreate(input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }) {
     try {
-      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input);
+      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input, notify);
       // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
       setVisits((rows) => [
         ...rows,
@@ -318,7 +318,7 @@ export function VisitsTab({
         onJobChanged?.();
       }
       avisarJobSeguiu(followed);
-      if (clientNotified && !clientNotified.ok) {
+      if (clientNotified && !clientNotified.ok && clientNotified.skipped !== "not_requested") {
         toast.message(`Client not notified: ${clientNotified.skipped ?? clientNotified.error ?? "unknown"}`);
       }
       onVisitsChanged?.();
@@ -753,9 +753,12 @@ function VisitEditModal({
   jobSlot: { startAt: string | null; endAt: string | null };
   nextIndex: number;
   onClose: () => void;
-  onCreate: (input: CreateJobVisitInput) => void;
+  onCreate: (input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }) => void;
   onUpdate: (id: string, patch: Partial<JobVisit>) => void;
 }) {
+  /** Quem recebe o e-mail no ticket do job. Vem marcado; desmarcado = não envia (dono, 24/10/2026). */
+  const [notifyPartner, setNotifyPartner] = useState(true);
+  const [notifyClient, setNotifyClient] = useState(true);
   const [form, setForm] = useState<FormState>(() => {
     if (target.mode === "edit") {
       const v = target.visit;
@@ -922,7 +925,7 @@ function VisitEditModal({
       if (target.mode === "edit") {
         onUpdate(target.visit.id, payload);
       } else {
-        onCreate(payload);
+        onCreate(payload, { partner: notifyPartner && !!payload.partner_id, client: notifyClient });
       }
     } finally {
       setSaving(false);
@@ -970,43 +973,6 @@ function VisitEditModal({
               arrivalWindowMins={form.arrival_window_mins}
               onPick={(from, mins) => setForm((p) => ({ ...p, arrival_from: from, arrival_window_mins: mins }))}
               rowLayout
-            />
-          </div>
-        </section>
-
-        <section className={BLOCO}>
-          <p className={SECAO}>Who and what</p>
-          <div>
-            <label className={ROTULO}>Partner</label>
-            <select
-              className={CAMPO}
-              value={form.partner_id}
-              onChange={(e) => pickPartner(e.target.value)}
-            >
-              <option value="">No partner yet</option>
-              {parceirosOrdenados.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {nomeDoParceiro(p)}
-                  {p.id === primaryPartner?.id ? " (visit 1)" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <ServiceCatalogSelect
-            label="Service"
-            catalog={catalog}
-            value={form.catalog_service_id}
-            onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
-            compactOptionLabels
-          />
-          <div>
-            <label className={ROTULO}>Scope for the partner (in English)</label>
-            <textarea
-              value={form.scope}
-              onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
-              rows={3}
-              className={cn(CAMPO, "h-auto resize-y py-2 leading-snug")}
-              placeholder="What the partner does on this visit. They see this."
             />
           </div>
         </section>
@@ -1132,18 +1098,95 @@ function VisitEditModal({
         </section>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <p className="m-0 max-w-[18rem] text-[11px] leading-snug text-text-tertiary">
-            {target.mode === "create" ? "The partner gets the job by email on the job's ticket. The client gets a confirmation there too." : ""}
-          </p>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing)}>
-              {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
-            </Button>
+        <section className={BLOCO}>
+          <p className={SECAO}>Who and what</p>
+          <div>
+            <label className={ROTULO}>Partner</label>
+            <select
+              className={CAMPO}
+              value={form.partner_id}
+              onChange={(e) => pickPartner(e.target.value)}
+            >
+              <option value="">No partner yet</option>
+              {parceirosOrdenados.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {nomeDoParceiro(p)}
+                  {p.id === primaryPartner?.id ? " (visit 1)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
+          <ServiceCatalogSelect
+            label="Service"
+            catalog={catalog}
+            value={form.catalog_service_id}
+            onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
+            nameOnlyLabels
+          />
+          <div>
+            <label className={ROTULO}>Scope for the partner (in English)</label>
+            <textarea
+              value={form.scope}
+              onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
+              rows={3}
+              className={cn(CAMPO, "h-auto resize-y py-2 leading-snug")}
+              placeholder="What the partner does on this visit. They see this."
+            />
+          </div>
+        </section>
+
+        {target.mode === "create" ? (
+          <section className={BLOCO}>
+            <p className={SECAO}>Send on the job&apos;s ticket</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {([
+                {
+                  ativo: notifyPartner && !!form.partner_id,
+                  set: setNotifyPartner,
+                  titulo: "Email the partner",
+                  texto: form.partner_id ? "Job details for this visit." : "Pick a partner first.",
+                  desligado: !form.partner_id,
+                },
+                {
+                  ativo: notifyClient,
+                  set: setNotifyClient,
+                  titulo: "Email the client",
+                  texto: "Confirmation with the date and time.",
+                  desligado: false,
+                },
+              ]).map((o) => (
+                <label
+                  key={o.titulo}
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                    o.desligado ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+                    o.ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                    checked={o.ativo}
+                    disabled={o.desligado}
+                    onChange={(e) => o.set(e.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                    <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <div className="-mx-1 flex items-center justify-end gap-2 border-t border-border-light px-1 pt-3">
+          <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing)}>
+            {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
+          </Button>
         </div>
       </form>
     </Modal>
