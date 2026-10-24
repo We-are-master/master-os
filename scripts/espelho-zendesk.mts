@@ -29,6 +29,7 @@ const { espelhoDaQuote, donoDeTicketSemPedido, formularioDoJobFaltando } = await
 const { zendeskApi, ZENDESK_JOB_ID_FIELD_ID } = await import("../src/lib/zendesk");
 const { syncJobZendeskFormFields } = await import("../src/lib/zendesk-ticket-form-sync");
 const { papeisDaEquipe } = await import("../src/lib/responsavel-operacao");
+const { faturasVencidas } = await import("../src/lib/faturas-vencidas");
 
 const aplicar = process.argv.includes("--aplicar");
 const detalhe = process.argv.includes("--detalhe");
@@ -69,6 +70,9 @@ for (let i = 0; i < idsDeQuote.length; i += 200) {
   const { data } = await sb.from("quotes").select("id, status").in("id", idsDeQuote.slice(i, i + 200));
   for (const q of data ?? []) statusDaQuote.set(q.id, q.status);
 }
+
+// Fatura vencida = 🔴 Overdue (24/10/2026). Só os em Awaiting payment.
+const vencidas = await faturasVencidas(sb, jobsValidos.filter((j) => j.status === "awaiting_payment").map((j) => j.invoice_id as string | null));
 
 const ticketsComJob = new Set(jobsValidos.map((j) => String(j.external_ref)));
 const tickets = await lerTicketsCrus([...ticketsComJob, ...(quotesLidas ?? []).map((q) => String(q.external_ref ?? ""))]);
@@ -114,7 +118,7 @@ async function passar(rotulo: string, ticketId: string, alvo: Parameters<typeof 
 }
 
 for (const j of jobsValidos) {
-  const alvo = alvoDoJob(j as never, motivosDoJob.get(j.id) ?? [], j.quote_id ? statusDaQuote.get(j.quote_id) ?? null : null);
+  const alvo = alvoDoJob(j as never, motivosDoJob.get(j.id) ?? [], j.quote_id ? statusDaQuote.get(j.quote_id) ?? null : null, Boolean(j.invoice_id && vencidas.has(j.invoice_id as string)));
   await passar(`job ${j.status}`, String(j.external_ref), alvo, j);
 }
 

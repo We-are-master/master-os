@@ -24,7 +24,7 @@ const TITULO = "Get partner quotes";
 const macro = {
   title: TITULO,
   active: true,
-  description: "B2B: ask Harvey to invite partners to quote this ticket (once). The quote stops at Quote Ready for the team to review and send.",
+  description: "B2B: ask Harvey to invite partners to quote this ticket (once). The quote stops at Ready to send for the team to review and send.",
   actions: [
     { field: "current_tags", value: TAG_B2B_COTAR },
     { field: "comment_mode_is_public", value: "false" },

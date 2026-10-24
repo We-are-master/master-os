@@ -10,9 +10,9 @@ const VARIANT: Record<JobPaymentState, BadgeVariant> = {
   unpaid: "default",
   deposit_pending: "warning",
   overdue: "danger",
-  card_declined: "warning",
+  card_declined: "danger",
   card_failed: "danger",
-  bank_check: "warning",
+  bank_check: "danger",
 };
 
 /**

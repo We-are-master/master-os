@@ -441,7 +441,7 @@ export type ResultadoDoQuoter = {
  *
  * Quem sincroniza é a APLICAÇÃO: `/api/quotes` chama `syncQuoteZendeskStatus`
  * logo depois do insert, e a varredura de lances chama quando grava
- * `quote_ready` — foi ela que moveu o #50448 para 🟢 Quote Ready. O Harvey é o
+ * `quote_ready` — foi ela que moveu o #50448 para 🟢 Ready to send. O Harvey é o
  * único que escreve a quote direto no Supabase, então era o único que passava
  * por fora dessa porta. As QT-2026-1144/1145/1146 nasceram em `bidding` e os
  * três tickets continuavam em 🆕 New.
@@ -880,7 +880,7 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
  * fotos de antes) recebe a união, sem duplicar: o caminho no bucket é fixo por
  * ticket e índice.
  *
- * Nada sai para o cliente aqui. A quote para em Quote Ready quando os lances
+ * Nada sai para o cliente aqui. A quote para em Ready to send quando os lances
  * chegarem; o envio é da equipe.
  */
 export async function cotarComParceirosB2B(
@@ -946,7 +946,7 @@ export async function cotarComParceirosB2B(
     ...(convite ? ["", convite.nota] : []),
     ...(aviso ? ["", aviso] : []),
     "",
-    "The quote stops at Quote Ready when bids arrive: the team reviews and sends it to the customer.",
+    "The quote stops at Ready to send when bids arrive: the team reviews and sends it to the customer.",
   ].join("\n");
   if (postar) await postarNotaInterna(ticketId, nota);
   return { nota, enviados: convite?.enviados ?? 0, quoteRef };

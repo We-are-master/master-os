@@ -31,6 +31,7 @@ import { ACTION_REQUIRED_FIELD_ID, ACTION_REQUIRED_NO, ACTION_REQUIRED_YES, nota
 import { papeisDaEquipe } from "@/lib/responsavel-operacao";
 import { jobOnHoldPorReclamacao } from "@/lib/job-on-hold-reasons";
 import { MOTIVOS, type Motivo } from "@/lib/pendencias/motivos";
+import { faturasVencidas } from "@/lib/faturas-vencidas";
 import { baseStatusForCustomStatusId } from "@/lib/zendesk-statuses";
 
 // ─── Status maps (compatibilidade: quem só quer o número) ───────────────────
@@ -178,7 +179,7 @@ export async function aplicarEspelho(
 // ─── O espelho de um job ────────────────────────────────────────────────────
 
 export const CAMPOS_DO_JOB_NO_ESPELHO =
-  "id, reference, status, quote_id, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at, on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description";
+  "id, reference, status, quote_id, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at, on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description, invoice_id";
 
 export type JobDoEspelho = {
   id: string;
@@ -190,10 +191,11 @@ export type JobDoEspelho = {
   on_hold_reason_preset_id?: string | null;
   on_hold_reason?: string | null;
   on_hold_complaint_description?: string | null;
+  invoice_id?: string | null;
 };
 
-/** O alvo do ticket de um job, com o que já foi lido (motivos e status da quote). */
-export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: string | null): Espelho | null {
+/** O alvo do ticket de um job, com o que já foi lido (motivos, status da quote, fatura vencida). */
+export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: string | null, faturaVencida = false): Espelho | null {
   const status = jobStatusForZendeskSync(job as Parameters<typeof jobStatusForZendeskSync>[0]);
   if (status === "deleted") return null;
   return espelhoDoJob({
@@ -201,6 +203,7 @@ export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: s
     esperandoEntrada: status === "unassigned" && statusDaQuote === "awaiting_payment",
     motivos: motivos.filter((m): m is Motivo => (MOTIVOS as readonly string[]).includes(m)),
     reclamacao: jobOnHoldPorReclamacao(job),
+    faturaVencida,
     motivoDoOnHold: job.on_hold_reason ?? null,
     referencia: job.reference ?? null,
   });
@@ -255,7 +258,10 @@ export async function syncJobZendeskStatus(
     statusDaQuote = (cot as { status?: string } | null)?.status ?? null;
   }
   const { data: abertos } = await supabase.from("job_attention_reasons").select("reason").eq("job_id", jobId).is("resolved_at", null);
-  const alvo = alvoDoJob(job as JobDoEspelho, (abertos ?? []).map((r: { reason: string }) => r.reason), statusDaQuote);
+  const vencida = syncStatus === "awaiting_payment" && job.invoice_id
+    ? (await faturasVencidas(supabase, [job.invoice_id]).catch(() => new Set<string>())).has(job.invoice_id)
+    : false;
+  const alvo = alvoDoJob(job as JobDoEspelho, (abertos ?? []).map((r: { reason: string }) => r.reason), statusDaQuote, vencida);
   if (!alvo) return { ok: true, synced: false, ticketId, skip: "no_status_mapping" };
 
   try {

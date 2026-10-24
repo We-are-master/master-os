@@ -42,7 +42,7 @@
  *
  * Trava (dono, 15/10/2026): antes de qualquer passo, o lead que já tem job ou quote
  * aberta no OS (mesmo cliente, telefone, e-mail ou ticket) sai da régua sem mensagem
- * ao cliente. Quote: o ticket vai para o status dela (Bidding, Quote Ready, Approval).
+ * ao cliente. Quote: o ticket vai para o status dela (Sourcing, Ready to send, Awaiting approval).
  * Job: o ticket do lead fecha como duplicado (What Happened duplicate_ticket) com nota
  * apontando o job. Ticket que já é o do pedido só para a régua. Tag lead_has_order.
  *

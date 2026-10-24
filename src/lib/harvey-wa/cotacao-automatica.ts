@@ -4,15 +4,15 @@
  * varredura-cotacao-automatica.ts e só obedece ao que sai daqui.
  *
  *   📝 Needs Quote   contexto completo?  não → pede ao cliente o que falta (uma vez)
- *                                        sim → convida os 3 a 5 melhores, 🟤 Bidding
+ *                                        sim → convida os 3 a 5 melhores, 🟤 Sourcing
  *   6h sem lance     lembra os convidados uma vez, no mesmo canal do convite
  *   24h sem lance    avisa o cliente que segue cotando (sem prazo nenhum),
  *                    nota interna e tag harvey_no_bids (sobe no ⚡ Action Required)
  *   lance chegou     preço = lance com 30% de margem
- *                    até £600 e contexto completo → manda ao cliente, 🟠 Approval,
+ *                    até £600 e contexto completo → manda ao cliente, 🟠 Awaiting approval,
  *                    tag quote_sent_to_customer (o trigger "Quote Sent — Send to OS"
  *                    leva a quote para awaiting_customer)
- *                    acima disso ou contexto incompleto → 🟢 Quote Ready com nota
+ *                    acima disso ou contexto incompleto → 🟢 Ready to send com nota
  *
  * O estado mora nas tags do ticket (harvey_aq_*), como nas outras réguas daqui.
  * A cobrança da quote enviada é do followup-quotes.ts e não se repete aqui.
@@ -33,7 +33,7 @@ export const TAG_LEMBROU_PARCEIROS = "harvey_aq_partner_chase";
 export const TAG_SEM_LANCE = "harvey_no_bids";
 /** Quote saiu para o cliente sozinha. Dispara o trigger "Quote Sent — Send to OS". */
 export const TAG_QUOTE_ENVIADA = "quote_sent_to_customer";
-/** Preço pronto esperando uma pessoa (🟢 Quote Ready). */
+/** Preço pronto esperando uma pessoa (🟢 Ready to send). */
 export const TAG_PARA_REVISAR = "harvey_aq_review";
 /** Nada mais a fazer nesta régua. */
 export const TAG_FIM = "harvey_aq_done";

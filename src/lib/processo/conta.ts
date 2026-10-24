@@ -51,7 +51,7 @@ export type RegrasDoProcesso = {
 
 const PADRAO: Record<TipoDeProcesso, Omit<RegrasDoProcesso, "tipo" | "v2">> = {
   // Entrada não trava o agendamento (dono, 22/10/2026): a equipe acompanha pela pendência
-  // Deposit Pending. Conta que quiser a trava liga `schedule_requires_deposit: true`.
+  // Awaiting deposit. Conta que quiser a trava liga `schedule_requires_deposit: true`.
   direct: { conducaoDaQuote: "automatica", agendarSoComSinal: false, cobraDoCliente: true, feedback: "depois_da_conclusao", mensagensAoCliente: true, canais: ["email", "whatsapp"] },
   platform: { conducaoDaQuote: "automatica", agendarSoComSinal: false, cobraDoCliente: false, feedback: "depois_do_pagamento_da_plataforma", mensagensAoCliente: true, canais: ["email", "whatsapp"] },
   b2b: { conducaoDaQuote: "humana", agendarSoComSinal: false, cobraDoCliente: false, feedback: "nunca", mensagensAoCliente: false, canais: ["email"] },

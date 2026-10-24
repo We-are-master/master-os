@@ -286,7 +286,7 @@ export function jobRowMatchesJobsManagementTab(
   }
   /**
    * Action Required = trabalho parado: sem parceiro ou em espera (dono, 24/10/2026).
-   * Motivo aberto (Report Incomplete, Deposit Pending, Date TBC...) NÃO puxa o job
+   * Motivo aberto (Report Incomplete, Awaiting deposit, Date TBC...) NÃO puxa o job
    * para cá: ele fica na aba da etapa e o motivo aparece na coluna Alerts.
    */
   if (tabId === "action_required") {

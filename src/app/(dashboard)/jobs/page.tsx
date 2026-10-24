@@ -864,7 +864,7 @@ const JOB_SORT_AMOUNT_DUE: ColumnSortOption[] = [
 
 /** "Show" no menu da coluna Payment, na ordem de quem precisa de ação primeiro. */
 const JOB_PAYMENT_FILTER_OPTIONS = (
-  ["overdue", "card_failed", "bank_check", "card_declined", "deposit_pending", "unpaid", "partial", "paid"] as const
+  ["overdue", "card_failed", "deposit_pending", "unpaid", "partial", "paid"] as const
 ).map((v) => ({ value: v, label: JOB_PAYMENT_LABEL[v] }));
 
 /**
@@ -1504,7 +1504,15 @@ function JobsPageContent() {
   }, [status]);
 
   const sortedDataForTable = useMemo(
-    () => (paymentFilter ? sortedDataAll.filter((j) => estadoDoPagamento(j) === paymentFilter) : sortedDataAll),
+    () => {
+      if (!paymentFilter) return sortedDataAll;
+      // "Payment failed" no filtro pega as três falhas de cartão, que têm o mesmo rótulo.
+      const falhas: readonly JobPaymentState[] = ["card_failed", "card_declined", "bank_check"];
+      return sortedDataAll.filter((j) => {
+        const e = estadoDoPagamento(j);
+        return paymentFilter === "card_failed" ? e != null && falhas.includes(e) : e === paymentFilter;
+      });
+    },
     [sortedDataAll, paymentFilter, estadoDoPagamento],
   );
 

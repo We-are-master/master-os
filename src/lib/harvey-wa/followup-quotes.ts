@@ -1,5 +1,5 @@
 /**
- * Cobrança de quote enviada: ticket em 🟠 Approval esperando o cliente.
+ * Cobrança de quote enviada: ticket em 🟠 Awaiting approval esperando o cliente.
  *
  * Régua do dono (14/10/2026): o Approval é o nosso lugar e não pode virar
  * depósito. Sete dias, três lembretes, e no 7º dia fecha.

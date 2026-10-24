@@ -10,7 +10,7 @@
  *
  * Quem decide cotar com parceiros é a equipe, pela macro "Get partner quotes"
  * do Zendesk (tag `b2b_cotar`, ver b2b-cotar.ts). Mesmo aí a quote para em
- * Quote Ready: o envio ao cliente é decisão de gente.
+ * Ready to send: o envio ao cliente é decisão de gente.
  *
  * Fora do v2 (ou conta sem leitura) tudo segue como antes: `planoDoPedido(null)`
  * devolve o plano de hoje.
@@ -70,7 +70,7 @@ export function foraDaCotacaoAutomatica(tags: readonly string[], regrasDaQuote?:
 
 /**
  * Para o integrador do envio automático (quote-lances-sweep.ts / quote-envio-automatico.ts):
- * a quote desta conta para em Quote Ready e não sai sozinha ao cliente.
+ * a quote desta conta para em Ready to send e não sai sozinha ao cliente.
  */
 export async function quoteSoComGente(sb: SupabaseClient, contaDaQuote: string | null | undefined): Promise<boolean> {
   if (!contaDaQuote) return false;

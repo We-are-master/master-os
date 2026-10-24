@@ -12,7 +12,7 @@
 // ─── Quote lifecycle ─────────────────────────────────────────────────────────
 
 /**
- * 🟢 Quote Ready — os lances chegaram, o preço está calculado e o rascunho está
+ * 🟢 Ready to send — os lances chegaram, o preço está calculado e o rascunho está
  * na thread. Ninguém enviou ao cliente ainda.
  *
  * Era "🟠 Ready to Quote" (pedido chegou, ninguém cotou) e foi renomeado em
@@ -24,7 +24,7 @@
  */
 export const ZD_STATUS_QUOTE_READY = 5688507034015;
 
-/** 🟤 Bidding — partners are being asked for prices. */
+/** 🟤 Sourcing — partners are being asked for prices. */
 export const ZD_STATUS_BIDDING = 5688282472223;
 
 /** 🟠 Awaiting Approval — quote PDF was sent to the customer; we're waiting for accept/reject. */
@@ -42,18 +42,18 @@ export const ZD_STATUS_LOST = 5679178036383;
 /** 🔴 Unassigned — job exists, no partner assigned yet (waiting on auto-assign or manual). */
 export const ZD_STATUS_UNASSIGNED = 5688450872991;
 
-/** 🟡 Auto-Assigning — job is broadcasting to partners for auto-assignment.
+/** 🟡 Assigning — job is broadcasting to partners for auto-assignment.
  *  Distinct from Unassigned. Overridable via env; falls back to Unassigned. */
 export const ZD_STATUS_AUTO_ASSIGNING =
   Number(process.env.ZENDESK_STATUS_AUTO_ASSIGNING_ID?.trim() || "5838176584223") || ZD_STATUS_UNASSIGNED;
 
-/** 🟢 Schedule — job is assigned & scheduled. */
+/** 🟢 Scheduled — job is assigned & scheduled. */
 export const ZD_STATUS_SCHEDULED = 5688453749919;
 
 /** 🔵 In Progress — partner started the job. */
 export const ZD_STATUS_IN_PROGRESS = 5679191543711;
 
-/** 🟣 Final Checks — job is done in the field; awaiting report / final review. */
+/** 🟣 Final review — job is done in the field; awaiting report / final review. */
 export const ZD_STATUS_FINAL_CHECKS = 5688492712607;
 
 /**
@@ -81,17 +81,23 @@ export const ZD_STATUS_COMPLETED = 5679178036383;
 /** ❌ Cancelled também está desativado no Zendesk (23/10/2026): cancelado vai para Solved. */
 export const ZD_STATUS_CANCELLED = 5679178036383;
 
-/** 💳 Deposit Pending: cotação aceita, job esperando a entrada (criado 23/10/2026). Categoria pending. */
+/** 💳 Awaiting deposit: cotação aceita, job esperando a entrada (criado 23/10/2026). Categoria pending. */
 export const ZD_STATUS_DEPOSIT_PENDING = Number(process.env.ZENDESK_STATUS_DEPOSIT_PENDING_ID?.trim() || "6472739656351");
 
-/** ⚠️ Payment Failed: cartão recusado ou pedindo confirmação do banco (criado 23/10/2026). Categoria open. */
+/** ⚠️ Payment failed: cartão recusado ou pedindo confirmação do banco (criado 23/10/2026). Categoria open. */
 export const ZD_STATUS_PAYMENT_FAILED = Number(process.env.ZENDESK_STATUS_PAYMENT_FAILED_ID?.trim() || "6472739663647");
 
 /**
- * 🔎 No Bids: 24h em Bidding sem lance de parceiro (criado 23/10/2026). Categoria open,
+ * 🔎 No bids: 24h em Bidding sem lance de parceiro (criado 23/10/2026). Categoria open,
  * entra na view ⚡ Action Required pelo status. Antes disso o Bidding fica fora da fila.
  */
 export const ZD_STATUS_NO_BIDS = Number(process.env.ZENDESK_STATUS_NO_BIDS_ID?.trim() || "6473488771487");
+
+/**
+ * 🔴 Overdue: job em Awaiting payment com a fatura vencida, pela regra da aba Overdue do
+ * Finance (criado 24/10/2026). Categoria pending, como o Awaiting payment; view 💷 Awaiting payment.
+ */
+export const ZD_STATUS_OVERDUE = Number(process.env.ZENDESK_STATUS_OVERDUE_ID?.trim() || "6476884139423");
 
 /** 🟣 Finance: fila manual do financeiro. */
 export const ZD_STATUS_FINANCE = 5826336578463;
@@ -158,6 +164,7 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_ON_HOLD]:           "pending",
   [ZD_STATUS_AWAITING_PAYMENT]:  "pending",
   [ZD_STATUS_DEPOSIT_PENDING]:   "pending",
+  [ZD_STATUS_OVERDUE]:           "pending",
   [ZD_STATUS_PAYMENT_FAILED]:    "open",
   [ZD_STATUS_NO_BIDS]:           "open",
   [ZD_STATUS_COMPLAINT]:         "open",

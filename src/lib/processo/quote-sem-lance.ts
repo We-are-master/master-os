@@ -2,7 +2,7 @@
  * Quote em Bidding sem lance: a mesma régua para todo mundo (dono, 23/10/2026).
  * Housekeep, lead do WhatsApp, lead por e-mail, conta B2B: tanto faz.
  *
- *   24h sem lance desde o primeiro convite: 🔎 No Bids + Action Required, uma vez.
+ *   24h sem lance desde o primeiro convite: 🔎 No bids + Action Required, uma vez.
  *   48h sem lance e sem ninguém agir: o cliente recebe o "not able to quote" e a
  *   quote fecha (rejected).
  *
@@ -24,7 +24,7 @@ import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/
 export const HORAS_ATE_NO_BIDS = 24;
 export const HORAS_ATE_FECHAR = 48;
 
-/** Marcas em quotes.automation_status. A de 24h é a que o espelho lê para 🔎 No Bids. */
+/** Marcas em quotes.automation_status. A de 24h é a que o espelho lê para 🔎 No bids. */
 export const MARCA_NO_BIDS = "no_bids_reported";
 export const MARCA_FECHADA_SEM_LANCE = "no_bids_closed";
 export const MARCA_EQUIPE_AGIU = "no_bids_team_acted";
