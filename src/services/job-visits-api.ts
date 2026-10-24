@@ -30,6 +30,8 @@ export async function apiCreateJobVisit(
   input: CreateJobVisitInput,
   /** Quem recebe o e-mail no ticket do job. Desmarcado no modal = não envia (padrão: os dois). */
   notify?: { partner?: boolean; client?: boolean },
+  /** A visita anterior já foi feita? true marca Done; false deixa as duas vivas; omitido = regra antiga. */
+  closePrevious?: boolean,
 ): Promise<{
   visit: JobVisit;
   partnerNotified: AvisoDaVisita | null;
@@ -47,6 +49,7 @@ export async function apiCreateJobVisit(
       ...rest,
       notify_partner: notify?.partner !== false,
       notify_client: notify?.client !== false,
+      ...(closePrevious === undefined ? {} : { close_previous: closePrevious }),
     }),
   });
   const payload = (await res.json().catch(() => ({}))) as {

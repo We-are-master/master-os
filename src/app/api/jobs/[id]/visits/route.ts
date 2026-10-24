@@ -43,6 +43,11 @@ type VisitBody = Partial<Record<(typeof WRITABLE)[number], unknown>> & {
   /** Só na criação: false = não manda o e-mail (o modal deixa desmarcar). Ausente = manda. */
   notify_partner?: boolean;
   notify_client?: boolean;
+  /**
+   * Só na criação: a visita anterior já foi feita? true = marca Done agora; false = as
+   * duas ficam vivas (dono, 24/10/2026). Ausente = regra antiga (fecha a que está em campo).
+   */
+  close_previous?: boolean;
 };
 
 /**
@@ -266,9 +271,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
        */
       let advanced: Awaited<ReturnType<typeof avancarVisitas>> | null = null;
       let closedVisitIndex: number | null = null;
-      const extrasEmAndamento = visitasAntes.filter((v) => v.status === "in_progress");
       const jobEmAndamento = job.status === "in_progress" || job.status === "late";
-      if (jobEmAndamento || extrasEmAndamento.length) {
+      // O operador respondeu no modal: true fecha a anterior (a extra aberta mais recente,
+      // ou a visita 1 se ainda não foi feita), false não fecha nada.
+      const anteriorAberta = [...visitasAntes]
+        .filter((v) => v.status === "in_progress" || v.status === "scheduled")
+        .sort((a, b) => b.visit_index - a.visit_index)[0];
+      const extrasEmAndamento =
+        body.close_previous === true
+          ? anteriorAberta ? [anteriorAberta] : []
+          : visitasAntes.filter((v) => v.status === "in_progress");
+      const deveFechar =
+        body.close_previous === true
+          ? Boolean(anteriorAberta) || !job.primary_visit_done
+          : body.close_previous === false
+            ? false
+            : jobEmAndamento || extrasEmAndamento.length > 0;
+      if (deveFechar) {
         try {
           const agora = new Date().toISOString();
           for (const v of extrasEmAndamento) {

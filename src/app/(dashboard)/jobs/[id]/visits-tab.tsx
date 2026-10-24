@@ -294,9 +294,13 @@ export function VisitsTab({
     onJobChanged?.();
   }
 
-  async function handleCreate(input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }) {
+  async function handleCreate(
+    input: CreateJobVisitInput,
+    notify: { partner: boolean; client: boolean },
+    closePrevious?: boolean,
+  ) {
     try {
-      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input, notify);
+      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input, notify, closePrevious);
       // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
       setVisits((rows) => [
         ...rows,
@@ -548,6 +552,14 @@ export function VisitsTab({
           primaryPartner={job.partner_id ? { id: job.partner_id, name: job.partner_name ?? "" } : null}
           jobSlot={{ startAt: job.scheduled_start_at ?? null, endAt: job.scheduled_end_at ?? null }}
           nextIndex={Math.max(1, ...visits.filter((v) => !v.deleted_at).map((v) => v.visit_index)) + 1}
+          previousOpenVisit={(() => {
+            // A anterior que ainda não foi feita: a extra aberta mais recente, ou a visita 1.
+            const aberta = visits
+              .filter((v) => !v.deleted_at && (v.status === "scheduled" || v.status === "in_progress"))
+              .sort((a, b) => b.visit_index - a.visit_index)[0];
+            if (aberta) return { index: aberta.visit_index, date: aberta.scheduled_date ?? null };
+            return primaryDone ? null : { index: 1, date: job.scheduled_date ?? null };
+          })()}
           onClose={() => setEditTarget(null)}
           onCreate={handleCreate}
           onUpdate={handleUpdate}
@@ -740,7 +752,7 @@ function VisitEditModal({
   parentCatalogServiceId,
   parentCatalogPricingPresetId,
   primaryPartner, jobSlot, nextIndex,
-  onClose, onCreate, onUpdate,
+  onClose, onCreate, onUpdate, previousOpenVisit,
 }: {
   target: NonNullable<EditTarget>;
   jobId: string;
@@ -753,9 +765,14 @@ function VisitEditModal({
   jobSlot: { startAt: string | null; endAt: string | null };
   nextIndex: number;
   onClose: () => void;
-  onCreate: (input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }) => void;
+  onCreate: (input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }, closePrevious?: boolean) => void;
   onUpdate: (id: string, patch: Partial<JobVisit>) => void;
+  /** Visita anterior ainda não feita: o modal pergunta se já foi (dono, 24/10/2026). */
+  previousOpenVisit?: { index: number; date: string | null } | null;
 }) {
+  const perguntaAnterior = target.mode === "create" && previousOpenVisit ? previousOpenVisit : null;
+  /** "" = ainda não respondeu; sim = marca Done ao criar; não = as duas ficam vivas. */
+  const [anteriorFeita, setAnteriorFeita] = useState<"" | "yes" | "no">("");
   /** Quem recebe o e-mail no ticket do job. Vem marcado; desmarcado = não envia (dono, 24/10/2026). */
   const [notifyPartner, setNotifyPartner] = useState(true);
   const [notifyClient, setNotifyClient] = useState(true);
@@ -865,6 +882,10 @@ function VisitEditModal({
       toast.error("Set a scheduled date for the visit");
       return;
     }
+    if (perguntaAnterior && !anteriorFeita) {
+      toast.error(`Say if visit ${perguntaAnterior.index} is already done`);
+      return;
+    }
     if (!form.rate_type) {
       toast.error("Choose how this visit is charged: Hourly or Fixed");
       return;
@@ -925,7 +946,11 @@ function VisitEditModal({
       if (target.mode === "edit") {
         onUpdate(target.visit.id, payload);
       } else {
-        onCreate(payload, { partner: notifyPartner && !!payload.partner_id, client: notifyClient });
+        onCreate(
+          payload,
+          { partner: notifyPartner && !!payload.partner_id, client: notifyClient },
+          perguntaAnterior ? anteriorFeita === "yes" : undefined,
+        );
       }
     } finally {
       setSaving(false);
@@ -976,6 +1001,39 @@ function VisitEditModal({
             />
           </div>
         </section>
+
+        {perguntaAnterior ? (
+          <section className={BLOCO}>
+            <p className={SECAO}>
+              Is visit {perguntaAnterior.index} done?
+              {perguntaAnterior.date ? ` · ${diaCurto(perguntaAnterior.date)}` : ""}
+            </p>
+            <div role="radiogroup" aria-label={`Is visit ${perguntaAnterior.index} done`} className="grid grid-cols-2 gap-2">
+              {([
+                { v: "yes", titulo: "Yes, it's done", texto: `Visit ${perguntaAnterior.index} is marked Done now.` },
+                { v: "no", titulo: "No, not yet", texto: "Both visits stay open." },
+              ] as const).map((o) => {
+                const ativo = anteriorFeita === o.v;
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    onClick={() => setAnteriorFeita(o.v)}
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                      ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                    )}
+                  >
+                    <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                    <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         <section className={BLOCO}>
           <p className={SECAO}>How is this visit charged?</p>
@@ -1184,7 +1242,7 @@ function VisitEditModal({
           <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing)}>
+          <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing) || (!!perguntaAnterior && !anteriorFeita)}>
             {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
           </Button>
         </div>
