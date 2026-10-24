@@ -10,6 +10,7 @@
  *
  * As contas são puras (testadas); `lerPainelDoHarvey` só busca.
  */
+import { medidaDosUltimosDias, textoDaMedida, type MedidaDaClasse } from "@/lib/harvey/decisoes";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isZendeskConfigured, zendeskApi } from "@/lib/zendesk";
 
@@ -152,6 +153,8 @@ export type PainelDoHarvey = {
   hoje: DiaDoHarvey;
   paradas: ConversaParada[];
   pendentes: PendenteDoHarvey[];
+  /** O que ele decidiu por classe nos últimos 7 dias (harvey_decisoes, decisoes.ts). */
+  decisoes: MedidaDaClasse[];
   falhas: string[];
   geradoEm: string;
 };
@@ -194,8 +197,16 @@ export async function lerPainelDoHarvey(sb: SupabaseClient, agora = new Date(), 
     }
   }
 
+  let decisoes: MedidaDaClasse[] = [];
+  try {
+    decisoes = await medidaDosUltimosDias(sb, 7);
+  } catch (e) {
+    falhas.push(`decisions (${e instanceof Error ? e.message.slice(0, 80) : String(e)})`);
+  }
+
   return {
     dias: porDia,
+    decisoes,
     semana: somaDoFunil(porDia.slice(-7)),
     hoje: porDia[porDia.length - 1]!,
     paradas,
@@ -217,11 +228,17 @@ export function resumoDoHarveyHtml(p: PainelDoHarvey): string {
     ? `<p style="${fonte};font-size:13px;font-weight:700;color:#0f172a;margin:10px 0 4px">Customers waiting on WhatsApp (${p.paradas.length})</p>
       <ul style="${fonte};font-size:13px;color:#1e293b;margin:0;padding-left:18px">${p.paradas.slice(0, 10).map((c) => `<li style="margin:3px 0">#${c.ticketId} · ${esc(c.assunto)} · ${tempo(c.minutos)}</li>`).join("")}</ul>`
     : "";
+  // Como ele decidiu nos últimos 7 dias: status certo e quanto a equipe corrigiu (decisoes.ts).
+  const medida = p.decisoes?.length
+    ? `<p style="${fonte};font-size:13px;font-weight:700;color:#0f172a;margin:10px 0 4px">How Harvey decided (7 days)</p>
+      <pre style="${fonte};font-size:12px;color:#1e293b;margin:0;white-space:pre-wrap">${esc(textoDaMedida(p.decisoes, 7))}</pre>`
+    : "";
   return `<div style="margin:0 0 20px;padding:16px;background:#f5f3ff;border-radius:12px;border:1px solid #ddd6fe">
       <p style="margin:0 0 4px;${fonte};font-size:12px;font-weight:700;color:#4c1d95;text-transform:uppercase">Harvey yesterday</p>
       <p style="${fonte};font-size:13px;color:#1e293b;margin:0">${esc(linha)}</p>
       <p style="${fonte};font-size:12px;color:#475569;margin:4px 0 0">${esc(semana)}</p>
       ${paradas}
+      ${medida}
     </div>`;
 }
 

@@ -16,9 +16,10 @@ import { esperaHumana, faltaEsperar } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem, textoDaPassagem } from "./etapa-da-passagem";
 import { registrarDecisao } from "./diario";
+import { registrarMedida, STATUS_DA_ETAPA } from "@/lib/harvey/decisoes";
 import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import { precoNaMensagem } from "./preco-da-equipe";
-import { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
+import { ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
 import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
@@ -365,6 +366,7 @@ async function precoDaEquipeNoChat(conversationId: string, telefone: string, msg
   const fila = await acaoFeita(ticket);
   console.log("[harvey-wa] preço da equipe:", linha, "·", fila.linha);
   const sb = createServiceClient();
+  await registrarMedida(sb, { canal: "whatsapp", ticketId: ticket, classe: "preco_da_equipe", acao: "preco_da_equipe", resultado: "ok", detalhe: linha });
   await registrarDecisao({ origem: "whatsapp", ticketId: ticket, decisao: `${quem} gave £${achado.preco} in the WhatsApp chat: ticket moved to Approval`, regra: "team price in chat → Approval (owner, 15/10/2026)", pendente: "Customer: accept the price" }, sb);
   if (process.env.HARVEY_WA_PRECO_DEVOLVE === "0") return;
   const { data: est } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
@@ -573,18 +575,32 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
     // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
     // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
+    let etapaDaMedida: string | null = null;
     if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
+      etapaDaMedida = "quote_requested";
       await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
     } else {
       // Sem `need` (modelo esqueceu, ou prometeu a equipe sem chamar a ferramenta), o que ele disse ao cliente também conta.
       const etapa = etapaDaPassagem(r.precisaDe, r.precisaDe ? r.passarParaEquipe : `${r.passarParaEquipe} ${r.resposta ?? ""}`);
+      etapaDaMedida = etapa;
       if (etapa === "complaint" || etapa === "booking") {
         // Reclamação e operação: do responsável de operação (Needs Attention). Reclamação vira 🚨 Complaint.
         await ticketParaOperacao(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para a operação:", e));
       } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
     }
     // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).
-    const fila = await precisaDeAcao(await ticketPeloTelefone(telefone).catch(() => null), textoDaPassagem(r.precisaDe, r.passarParaEquipe), { esperarAgente: true });
+    const ticketDaPassagem = await ticketPeloTelefone(telefone).catch(() => null);
+    // A medida da passagem: a etapa é a classe, e o status esperado sai dela (decisoes.ts).
+    await registrarMedida(sb, {
+      canal: "whatsapp",
+      ticketId: ticketDaPassagem,
+      classe: etapaDaMedida ?? "handoff",
+      acao: "passou_equipe",
+      resultado: "ok",
+      detalhe: r.passarParaEquipe,
+      statusEsperado: etapaDaMedida === "quote_requested" ? [ZD_STATUS_BIDDING] : (etapaDaMedida && STATUS_DA_ETAPA[etapaDaMedida]) || null,
+    });
+    const fila = await precisaDeAcao(ticketDaPassagem, textoDaPassagem(r.precisaDe, r.passarParaEquipe), { esperarAgente: true });
     console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
@@ -592,6 +608,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   if (r.cotacaoPedida && !r.passarParaEquipe) {
     const feito = await cotacaoPedidaNoTicket(telefone, `🤖 Harvey asked partners to price this on WhatsApp (he stays in the chat).\n\n${r.cotacaoPedida.nota}`).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     console.log("[harvey-wa] cotação pedida:", r.cotacaoPedida.referencia, feito);
+    await registrarMedida(sb, { canal: "whatsapp", ticketId: await ticketPeloTelefone(telefone).catch(() => null), classe: "request_quote", acao: "cotacao_pedida", resultado: String(feito).startsWith("falhou") ? "falhou" : "ok", referencia: r.cotacaoPedida.referencia, detalhe: String(feito) });
     await registrarDecisao({ origem: "whatsapp", ticketId: await ticketPeloTelefone(telefone).catch(() => null), quoteRef: r.cotacaoPedida.referencia, decisao: `Asked partners to price ${r.cotacaoPedida.referencia} and kept the WhatsApp chat`, regra: "request_quote (Fase 1: Harvey stays)", pendente: "Partners: send a bid" }, sb);
   }
   // Diário: passagem e link de pagamento são as decisões que alguém precisa enxergar de manhã.

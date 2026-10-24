@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { DiaDoHarvey, PainelDoHarvey } from "@/lib/harvey-wa/painel";
+import { rotulo, type MedidaDaClasse } from "@/lib/harvey/decisoes";
 
 const TICKET = "https://fixfy.zendesk.com/agent/tickets/";
 
@@ -41,6 +42,43 @@ function Barras({ dias }: { dias: DiaDoHarvey[] }) {
           <span className="text-[10px] text-text-tertiary">{d.dia.slice(8)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "–");
+
+/** Classe, o que ele fez, se o status ficou certo e se a equipe trocou em 24h (dono, 24/10/2026). */
+function Decisoes({ linhas }: { linhas: MedidaDaClasse[] }) {
+  if (!linhas.length) return <p className="text-sm text-text-tertiary">No decisions recorded yet. They start with the next Harvey cycle.</p>;
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border-light bg-surface">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border-light text-left text-xs text-text-tertiary">
+            <th className="px-3 py-2 font-medium">Classified as</th>
+            <th className="px-3 py-2 font-medium">Tickets</th>
+            <th className="px-3 py-2 font-medium">What he did</th>
+            <th className="px-3 py-2 font-medium">Right status</th>
+            <th className="px-3 py-2 font-medium">Team changed status</th>
+            <th className="px-3 py-2 font-medium">Failed</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-light">
+          {linhas.map((c) => (
+            <tr key={c.classe}>
+              <td className="px-3 py-2 text-text-primary">{rotulo(c.classe)}</td>
+              <td className="px-3 py-2 text-text-secondary">{c.total}</td>
+              <td className="px-3 py-2 text-text-secondary">
+                {Object.entries(c.acoes).sort((a, b) => b[1] - a[1]).map(([a, n]) => `${rotulo(a)} ${n}`).join(" · ")}
+              </td>
+              <td className="px-3 py-2 text-text-secondary" title={`${c.statusCerto} of ${c.conferidos} checked`}>{pct(c.statusCerto, c.conferidos)}</td>
+              <td className={`px-3 py-2 ${c.equipeCorrigiu ? "text-amber-700" : "text-text-secondary"}`} title={`${c.equipeCorrigiu} of ${c.conferidos24h} after 24h`}>{pct(c.equipeCorrigiu, c.conferidos24h)}</td>
+              <td className={`px-3 py-2 ${c.falhas ? "text-red-600" : "text-text-secondary"}`}>{c.falhas || "–"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -145,6 +183,11 @@ export function PainelDoHarvey() {
             <p className="text-sm text-text-tertiary">Nothing left open.</p>
           )}
         </div>
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium text-text-primary">How he decided (7 days)</h3>
+        <Decisoes linhas={p.decisoes ?? []} />
       </div>
 
       {p.falhas.length ? <p className="text-xs text-amber-700">Could not read: {p.falhas.join(", ")}.</p> : null}
