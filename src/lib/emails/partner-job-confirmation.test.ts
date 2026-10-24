@@ -34,11 +34,11 @@ test("job offer shows Date and Arrival metrics in the email format", () => {
     acceptUrl: "https://example.com/accept",
   });
 
-  assert.match(html, />Date<\/p>/);
+  assert.match(html, />Date &amp; time<\/p>/);
   assert.match(html, />Thu 18 Jun 26<\/p>/);
   assert.match(html, />11:00-14:00<\/p>/);
-  assert.match(text, /^Date:\s+Thu 18 Jun 26, 11:00-14:00/m);
-  assert.match(text, /^Your earnings:\s+£249\.00, Fixed price/m);
+  assert.match(text, /^Date & time:\s+Thu 18 Jun 26, 11:00-14:00/m);
+  assert.match(text, /^Your rate:\s+£249\.00, Fixed price/m);
   assert.doesNotMatch(html + text, /inc VAT/i);
   assert.match(html, /href="https:\/\/example\.com\/accept"/);
   assert.doesNotMatch(html + text, /[—–]|\{\{/);
@@ -57,5 +57,5 @@ test("job offer HTML shows TBC when no schedule", () => {
   });
 
   assert.match(html, />TBC<\/p>/);
-  assert.match(text, /Date:\s+TBC/);
+  assert.match(text, /Date & time:\s+TBC/);
 });

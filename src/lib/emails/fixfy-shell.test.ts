@@ -95,9 +95,10 @@ describe("emailFixfy", () => {
     assert.ok(m.text.indexOf("Site photos (2)") < m.text.indexOf("Pay now:"));
     assert.doesNotMatch(m.text, /^Hi /m);
   });
-  test("vermelho continua pílula sem pedir chip", () => {
+  test("pagamento vencido vira a faixa vermelha do OS no topo", () => {
     const m = emailFixfy({ ...base, estado: { texto: "Overdue", cor: "red" } });
-    assert.match(m.html, /background:#FDECEC;color:#C62828;border:1px solid #F5C2C2;/);
+    assert.match(m.html, /background:#FDE6EA;padding:12px 24px/);
+    assert.match(m.html, /color:#7D0A1C;vertical-align:middle;">Overdue</);
   });
   test("métrica riscada", () => {
     const m = emailFixfy({ ...base, metricas: [{ rotulo: "Was", valor: "Wed 28 Oct 26", riscado: true }] });

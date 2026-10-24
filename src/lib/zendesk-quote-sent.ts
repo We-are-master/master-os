@@ -128,9 +128,22 @@ export function emailDaCotacao(d: DadosDaCotacao): { assunto: string; preheader:
       ? "Have a look through the details. If everything looks right, you can accept the quote using the button."
       : "Have a look through the details. If everything looks right, just reply to accept the quote.",
     datas ? `The professional can start on ${datas}${temBotao ? ", and you choose the day when you accept" : ""}.` : null,
-    pagamento,
-    "If you’d like to ask a question or adjust the work included, just reply. We’ll be happy to help.",
   ].filter((p): p is string => Boolean(p));
+
+  // Pagamento na tabela, não no texto (dono, 23/10/2026): "Deposit required" e o saldo.
+  const totalNum = Math.round((Number(d.total) || 0) * 100) / 100;
+  const entradaNum = Math.round((Number(d.entrada) || 0) * 100) / 100;
+  const linhasDePagamento: Array<[string, string | null]> =
+    entradaNum > 0.02 && entradaNum < totalNum - 0.02
+      ? [
+          ["Deposit required", `${gbp(entradaNum)} to confirm your booking`],
+          ["Remaining balance", `${gbp(totalNum - entradaNum)} when the job is done`],
+        ]
+      : entradaNum > 0.02
+        ? [["Payment required", `${gbp(entradaNum)} to confirm your booking`]]
+        : pagamento
+          ? [["Payment terms", pagamento]]
+          : [];
 
   const letraPequena = [
     agente ? AVISO_DE_AGENTE : "All prices include VAT.",
@@ -155,6 +168,7 @@ export function emailDaCotacao(d: DadosDaCotacao): { assunto: string; preheader:
       ["Work included", d.escopo],
       ["Itemised pricing", itensRotulo(d.itens)],
       ["Total", total],
+      ...linhasDePagamento,
       ["Available start dates", datas || null],
       ["Valid until", dataLonga(d.validoAte)],
     ],

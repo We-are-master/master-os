@@ -58,7 +58,7 @@ test("job de cotação aceita: copy 'Quote accepted' e o assunto novo; booking d
   const base = { clientName: "Sarah Jones", jobReference: "JOB-9800", invoiceReference: "INV-2026-1188", serviceTitle: "General maintenance", scope: "Rehang bedroom door\nAdjust kitchen cabinet hinges\nReseal bath", dayLabel: "Wednesday 28 October 2026", windowLabel: "between 9am and midday", address: "12 Example Road, London E1 6AN", total: 180, amountDueNow: 90, percent: 50, payLink: "https://app.getfixfy.com/pay/INV-2026-1188" };
   const daCotacao = buildBookingPaymentEmail({ ...base, daCotacao: true });
   assert.equal(daCotacao.subject, "Your quote is accepted: confirm your booking");
-  assert.match(daCotacao.html, /Quote accepted/);
+  assert.match(daCotacao.html, /Deposit required/);
   assert.match(daCotacao.html, /Let’s get your booking confirmed/);
   assert.match(daCotacao.html, /Thanks for accepting your quote/);
   assert.match(daCotacao.html, /Your booking at a glance/);

@@ -39,7 +39,16 @@ function partnerJobOnHoldJobCardHtml(safe: {
   pillLabel: string;
   pillBg: string;
   pillColor: string;
+  reason?: string;
 }): string {
+  // O que o cliente reclamou mora dentro do card do job (dono, 23/10/2026).
+  const reclamacao = safe.reason
+    ? `
+            <div style="margin-top:16px; padding-top:16px; border-top:1px solid #E4E4EC;">
+              <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">What the customer reported</p>
+              <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; white-space:pre-wrap;">${safe.reason}</p>
+            </div>`
+    : "";
   return `      <tr><td style="padding:0 40px;" class="px-mobile">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F7F7FB; border:1px solid #E4E4EC; border-radius:10px;">
           <tr><td style="padding:24px;">
@@ -49,7 +58,7 @@ function partnerJobOnHoldJobCardHtml(safe: {
             <div style="margin-top:18px; padding-top:18px; border-top:1px solid #E4E4EC;">
               <p style="margin:0 0 4px 0; font-size:13px; color:#6B6B85;">Location</p>
               <p style="margin:0; font-size:14px; line-height:21px; color:#3A3A55;">${safe.address}</p>
-            </div>
+            </div>${reclamacao}
           </td></tr>
         </table>
       </td></tr>`;
@@ -112,19 +121,10 @@ export function buildPartnerComplaintEmailAntigo(data: {
     pillLabel: isComplaint ? "⏸ On hold" : "⏸ Awaiting next stage",
     pillBg: isComplaint ? "#FBEFD6" : "#E8F4FD",
     pillColor: isComplaint ? "#C47A00" : "#0B5FFF",
+    reason: showReason ? safe.reason : undefined,
   });
 
-  const reasonBlockHtml = showReason
-    ? `
-      <tr><td style="padding:16px 40px 0 40px;" class="px-mobile">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFF7ED; border:1px solid #F3D9A4; border-radius:10px;">
-          <tr><td style="padding:18px 20px;">
-            <p style="margin:0 0 6px 0; font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; color:#9A6B00;">What the customer reported</p>
-            <p style="margin:0; font-size:14px; line-height:21px; color:#0A0A1F; white-space:pre-wrap;">${safe.reason}</p>
-          </td></tr>
-        </table>
-      </td></tr>`
-    : "";
+  const reasonBlockHtml = "";
 
   const footer = partnerJobOnHoldFooterHtml({
     resolveUrl: safe.resolveUrl,
@@ -145,7 +145,7 @@ export function buildPartnerComplaintEmailAntigo(data: {
         <p style="margin:0; font-size:12px; font-weight:700; letter-spacing:0.6px; text-transform:uppercase; color:#FFFFFF;">⚠ Action required · reply within 12 hours</p>
       </td></tr>
 
-${partnerEmailLogoHeaderRow()}
+${partnerEmailLogoHeaderRow("26px 40px", true)}
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
         ${partnerEmailSplitTitleHtml(

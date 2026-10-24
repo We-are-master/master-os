@@ -72,6 +72,7 @@ export function partnerEmailBaseStyles(extra = ""): string {
     .btn-mobile a { display: block !important; }
     .price-mobile { font-size: 32px !important; }
     .partner-email-header-img { width: 108px !important; max-width: 32% !important; }
+    .partner-email-header-img.grande { width: 104px !important; max-width: 40% !important; }
     .partner-email-header-td { padding-top: 18px !important; padding-bottom: 18px !important; }
   }
   ${extra}
@@ -86,10 +87,12 @@ export function partnerEmailBaseStyles(extra = ""): string {
  * header parecia inacabado. O wordmark em texto fica de alt para imagem
  * bloqueada.
  */
-export function partnerEmailLogoHeaderRow(padding = "20px 40px"): string {
-  const band = escapeHtml(partnerEmailHeaderBandUrl());
+export function partnerEmailLogoHeaderRow(padding = "20px 40px", recortado = false): string {
+  // Recortado: logo branco sem a margem da faixa, 112px como no padrão novo (dono, 23/10/2026).
+  const largura = recortado ? 112 : 132;
+  const band = escapeHtml(recortado ? `${appBaseUrl()}/logos/fixfy-wordmark-white-trim.png` : partnerEmailHeaderBandUrl());
   return `      <tr><td align="center" bgcolor="#020040" class="partner-email-header-td px-mobile" style="background-color:#020040 !important; background-image:linear-gradient(#020040,#020040); padding:${padding}; text-align:center; line-height:0; font-size:0; mso-line-height-rule:exactly;">
-        <img src="${band}" alt="Fixfy" width="132" class="partner-email-header-img" style="display:block; width:132px; max-width:36%; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
+        <img src="${band}" alt="Fixfy" width="${largura}" class="partner-email-header-img${recortado ? " grande" : ""}" style="display:block; width:${largura}px; max-width:${recortado ? 40 : 36}%; height:auto; margin:0 auto; border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic;" />
       </td></tr>`;
 }
 

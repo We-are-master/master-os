@@ -39,6 +39,11 @@ export function buildPartnerReportRequestEmail(args: {
       ["Type of work", args.jobTitle || null],
       ["Address", args.propertyAddress || null],
     ],
+    cartoes: [
+      { icone: "📸", titulo: "Before and after", texto: "One photo per room" },
+      { icone: "🧾", titulo: "Receipts", texto: "For any material" },
+      { icone: "✍️", titulo: "Short summary", texto: "What you did" },
+    ],
     cta: { label: "Open report form", url: args.reportUrl },
     letraPequena: ["No app needed: the form runs in your browser."],
   });
