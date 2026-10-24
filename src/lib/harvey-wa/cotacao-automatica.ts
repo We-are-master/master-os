@@ -39,7 +39,6 @@ export const TAG_PARA_REVISAR = "harvey_aq_review";
 export const TAG_FIM = "harvey_aq_done";
 
 export const HORAS_LEMBRAR_PARCEIROS = 6;
-export const HORAS_AVISAR_CLIENTE = 24;
 export const LIMITE_ENVIO_AUTOMATICO_GBP = 600;
 
 export type Falta = "service" | "postcode" | "address" | "scope" | "photos";
@@ -140,12 +139,6 @@ export function textoPedeContexto(quem: Destinatario, faltando: readonly Falta[]
   return `${saudacaoDe(quem)} ${sobre} Could you send ${juntar(oQuePedir(faltando))}? That will help us put together an accurate quote.`;
 }
 
-/** Copy 22 "Pricing in progress" (24h sem lance). Regra do dono: NUNCA prometer hora ou data. */
-export function textoAindaCotando(quem: Destinatario, servico?: string | null): string {
-  const s = servicoCurto(servico);
-  return `${saudacaoDe(quem)} A quick update on your ${s ? `${s} ` : ""}enquiry: we’re still checking the pricing with our professionals. We’ll send your quote once the details are confirmed. Thank you for your patience.`;
-}
-
 /** Copy 20, WhatsApp "Quote ready": a quote pronta em texto livre, com o link de aceite. */
 export function textoDaQuote(a: {
   nome: Destinatario;
@@ -178,16 +171,17 @@ export function textoDaQuote(a: {
     .join(" ");
 }
 
-export type PassoDoLeilao = "lembrar_parceiros" | "avisar_cliente" | "precificar" | null;
+export type PassoDoLeilao = "lembrar_parceiros" | "precificar" | null;
 
 /**
  * O que fazer num ticket que já teve convite desta régua. Lance chegou ganha
- * de qualquer relógio; sem lance, 6h lembra e 24h avisa o cliente.
+ * de qualquer relógio; sem lance, 6h lembra os parceiros. As 24h (No Bids) e as
+ * 48h ("not able to quote" e fecha) são da varredura de lances, para toda quote
+ * (processo/quote-sem-lance.ts, dono 23/10/2026): o "still checking" ao cliente saiu.
  */
 export function proximoPassoDoLeilao(a: { tags: readonly string[]; horasDesdeConvite: number; temLance: boolean }): PassoDoLeilao {
   if (a.tags.includes(TAG_FIM) || a.tags.includes(TAG_QUOTE_ENVIADA) || a.tags.includes(TAG_PARA_REVISAR)) return null;
   if (a.temLance) return "precificar";
-  if (a.horasDesdeConvite >= HORAS_AVISAR_CLIENTE && !a.tags.includes(TAG_SEM_LANCE)) return "avisar_cliente";
   if (a.horasDesdeConvite >= HORAS_LEMBRAR_PARCEIROS && !a.tags.includes(TAG_LEMBROU_PARCEIROS) && !a.tags.includes(TAG_SEM_LANCE)) return "lembrar_parceiros";
   return null;
 }

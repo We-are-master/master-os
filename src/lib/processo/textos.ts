@@ -27,21 +27,6 @@ export const EXPRESS_BOAS_VINDAS_HTML = [
 /** Quando o dia ou a janela ainda não estão confirmados. */
 export const TEXTO_A_CONFIRMAR = "to be confirmed";
 
-/**
- * Housekeep: 48h depois do primeiro convite sem lance viável e sem resposta da
- * equipe. Vai como resposta pública no ticket da quote (a Housekeep é quem pediu).
- */
-export const HOUSEKEEP_SEM_DISPONIBILIDADE_HTML = [
-  // Texto do dono, 23/10/2026.
-  "<p>Hi team,</p>",
-  "<p>Unfortunately we’re not able to quote for this job at the moment. We’d rather tell you now than keep you waiting.</p>",
-  "<p>If anything changes we will get back to you.</p>",
-  "<p>Kind regards,<br>Fixfy Team</p>",
-].join("\n");
-
-/** Motivo gravado em quotes.rejection_reason (interno, mas fica legível na tela de Quotes). */
-export const HOUSEKEEP_SEM_DISPONIBILIDADE_MOTIVO = "No partner availability: no viable bid within 48h of the first invite";
-
 export function preencherTexto(
   modelo: string,
   valores: Record<string, string | null | undefined>,
