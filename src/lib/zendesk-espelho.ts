@@ -278,3 +278,49 @@ export function formularioDoJobFaltando(t: {
   if (t.supportType === "ai_agent") return false;
   return !String(t.jobIdNoTicket ?? "").trim();
 }
+
+// ─── Title: o nome interno do ticket nas views ──────────────────────────────
+
+/** Campo "Title" do ticket (24/10/2026): coluna das views no lugar do Subject. O cliente nunca vê. */
+export const TITLE_FIELD_ID = Number(process.env.ZENDESK_TITLE_FIELD_ID?.trim() || "6477394504095");
+
+export type EntradaDoTitulo = {
+  /** Assunto atual do ticket. */
+  assunto: string | null;
+  /** Cliente Fixfy (org Fixfy Customers ou sem org). Conta B2B mantém o assunto dela. */
+  fixfy: boolean;
+  /** Etapa pelo que está ligado ao ticket; null = sem quote nem job. */
+  etapa: "Lead" | "Quote" | "Job" | null;
+  servico?: string | null;
+  nome?: string | null;
+  postcode?: string | null;
+  /** Status Lead / To Call ou tag de lead. */
+  ehLead?: boolean;
+  nomeDoRequester?: string | null;
+};
+
+const juntar = (partes: Array<string | null | undefined>) =>
+  partes.map((p) => String(p ?? "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" · ");
+
+/** Assunto que não diz nada sozinho: até 2 palavras, curto, ou o "Conversation with ..." do WhatsApp. */
+export function assuntoSimples(assunto: string | null | undefined): boolean {
+  const a = String(assunto ?? "").trim();
+  if (!a) return true;
+  if (/^conversation with\b/i.test(a)) return true;
+  return a.split(/\s+/).length <= 2 || a.length < 12;
+}
+
+/**
+ * O Title do ticket (dono, 24/10/2026): "Etapa · Serviço · Nome · Postcode" para cliente
+ * Fixfy; conta B2B fica com o assunto que mandou, a não ser que seja simples demais ("EPC").
+ */
+export function tituloDoTicket(e: EntradaDoTitulo): string {
+  const assunto = String(e.assunto ?? "").replace(/\s+/g, " ").trim();
+  const simples = assuntoSimples(assunto);
+  if (!e.fixfy && !simples) return assunto;
+  if (e.etapa) return juntar([e.etapa, e.servico, e.nome, e.postcode]);
+  if (/^Lead · /.test(assunto)) return assunto;
+  if (e.ehLead) return juntar(["Lead", e.nome ?? e.nomeDoRequester]);
+  if (!simples) return assunto;
+  return juntar(["Enquiry", e.nomeDoRequester, /^conversation with\b/i.test(assunto) ? null : assunto]);
+}
