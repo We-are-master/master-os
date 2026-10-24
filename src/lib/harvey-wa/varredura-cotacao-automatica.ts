@@ -6,7 +6,7 @@
  *
  *   entrada   tickets em 📝 Needs Quote. Com contexto completo, cria (ou reaproveita)
  *             a quote do ticket no OS, convida os 3 a 5 melhores parceiros pelo
- *             caminho de sempre (dispatchQuoteBidInvites) e põe o ticket em 🟤 Bidding.
+ *             caminho de sempre (dispatchQuoteBidInvites) e põe o ticket em 🟤 Sourcing.
  *             Faltando algo, pede ao cliente uma vez e espera.
  *   leilão    tickets com harvey_aq_invited: lembra parceiros com 6h, avisa o
  *             cliente com 24h, e precifica quando o lance chega.
@@ -509,17 +509,17 @@ async function tratarLeilao(sb: SupabaseClient, t: Ticket, aplicar: boolean, ago
     const texto = textoAindaCotando(destinatarioDoTicket(t, nome), q.service_type);
     // Preço não cabe em template, e "ainda cotando" também não: fora da janela, só a equipe sabe.
     const podeFalar = conv.canal === "email" || (conv.janelaAberta && !!conv.conversa);
-    if (!aplicar) { out.acoes.push(`${quem}: ${Math.round(horas)}h, no bid: would ${podeFalar ? `tell the customer (${conv.canal}): "${texto}"` : "NOT message the customer (WhatsApp window closed)"} + note + harvey_no_bids → 🔎 No Bids`); return true; }
+    if (!aplicar) { out.acoes.push(`${quem}: ${Math.round(horas)}h, no bid: would ${podeFalar ? `tell the customer (${conv.canal}): "${texto}"` : "NOT message the customer (WhatsApp window closed)"} + note + harvey_no_bids → 🔎 No bids`); return true; }
     const via = podeFalar ? await falarComCliente(t, user, conv, texto, q.service_type) : null;
     await nota(t.id, `🤖 Auto-quote: 24h and no partner bid on ${q.reference}. ${via ? `Customer told we're still working on it (${via}), no time promised.` : "Customer NOT messaged: the WhatsApp 24h window is closed."}\n\nThis needs a person: call a partner, widen the area, or price it in-house.`);
     await addTicketTags(t.id, [TAG_SEM_LANCE]);
     // lead_gen tira o ticket do Action Required (a view exclui); passada a cotação ele já não é lead.
     if (t.tags.includes("lead_gen")) await removeTicketTags(t.id, ["lead_gen"]);
     await sb.from("quotes").update({ automation_status: AVISEI_SEM_LANCE, updated_at: new Date().toISOString() }).eq("id", q.id);
-    // 🔎 No Bids (dono, 23/10/2026): o status leva à fila, no lugar do campo Action Required,
+    // 🔎 No bids (dono, 23/10/2026): o status leva à fila, no lugar do campo Action Required,
     // que ficava ligado mesmo depois de o lance chegar. Espelho na hora; a rotina garante.
     await syncQuoteZendeskStatus(q.id, sb).catch((e) => console.error(`[cotacao-automatica] No Bids no #${t.id}:`, e));
-    out.acoes.push(`${quem}: 24h without bids, ${via ? `customer told (${via})` : "customer not messaged (window closed)"}, sent to 🔎 No Bids`);
+    out.acoes.push(`${quem}: 24h without bids, ${via ? `customer told (${via})` : "customer not messaged (window closed)"}, sent to 🔎 No bids`);
     return true;
   }
 

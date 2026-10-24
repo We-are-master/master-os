@@ -5,8 +5,8 @@
  *   operacao             dono de reclamação e de assunto de operação (Needs Attention)
  *   autor_emails         quem assina os e-mails de chase (quote e lead); o Zendesk põe a assinatura dele
  *   autor_aviso_cotacao  quem assina o aviso "we're working on a quote" e a cotação automática por e-mail
- *   vendas               dono do ticket de lead e cotação (Lead, Bidding, Quote Ready, Approval, Deposit Pending)
- *   financeiro           dono do ticket de cobrança (Awaiting Payment, Payment Failed, Finance)
+ *   vendas               dono do ticket de lead e cotação (Lead, To Call, Needs Quote, Sourcing, No bids, Ready to send, Awaiting approval, Awaiting deposit)
+ *   financeiro           dono do ticket de cobrança (Awaiting payment, Overdue, Payment failed)
  *
  * O dono do ticket por etapa (zendesk-espelho.ts, dono 23/10/2026): vendas até virar
  * job, operacao do job e da reclamação, financeiro da cobrança.

@@ -4,8 +4,8 @@
  * Para cada job ou quote ligado a um ticket, o OS decide três coisas e o Zendesk mostra:
  *
  *   status           a etapa do job (ou da quote), com duas etapas de dinheiro novas:
- *                    💳 Deposit Pending (cotação aceita esperando a entrada) e
- *                    ⚠️ Payment Failed (cartão recusado ou pedindo o banco)
+ *                    💳 Awaiting deposit (cotação aceita esperando a entrada) e
+ *                    ⚠️ Payment failed (cartão recusado ou pedindo o banco)
  *   Action Required  o espelho NÃO liga mais (dono, 24/10/2026). O Action Required do
  *                    Zendesk é a fila de conversa (responder, Harvey, New/Open, No bids,
  *                    Ready to send); ⚠️ Payment failed é status e mora na view
@@ -153,7 +153,7 @@ export const QUOTE_SEM_LANCE_24H = "no_bids_reported";
  *
  * Bidding fica fora da fila nas primeiras 24h (dono, 23/10/2026): os parceiros estão
  * cotando. Passadas 24h sem lance (`automation_status = no_bids_reported`), o ticket
- * vira 🔎 No Bids, que é status da view ⚡ Action Required.
+ * vira 🔎 No bids, que é status da view ⚡ Action Required.
  */
 export function espelhoDaQuote(status: QuoteStatus, automationStatus?: string | null): Espelho | null {
   switch (status) {

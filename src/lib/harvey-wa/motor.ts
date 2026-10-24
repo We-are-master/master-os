@@ -335,7 +335,7 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   }
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
-  // A equipe deu o preço no chat: ticket para 🟠 Approval (e a conversa volta ao Harvey para fechar).
+  // A equipe deu o preço no chat: ticket para 🟠 Awaiting approval (e a conversa volta ao Harvey para fechar).
   if (ehDaEquipe(msg) && est?.phone && est.tipo !== "parceiro") {
     await precoDaEquipeNoChat(conversa.id, est.phone as string, msg).catch((e) => console.error("[harvey-wa] preço da equipe:", e));
   }
@@ -349,7 +349,7 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
  * (`precosDaEquipe` lê só falas da equipe), então o valor que vai para Approval é o
  * que o Harvey aceita reservar.
  *
- * Ticket antes do preço → 🟠 Approval, 🟢, Action Required No, nota interna. Depois a
+ * Ticket antes do preço → 🟠 Awaiting approval, 🟢, Action Required No, nota interna. Depois a
  * conversa volta para o Harvey (`devolverConversa`, o mesmo Give back da tela): com ela
  * na equipe ele fica calado e o "yes" do cliente não viraria reserva. A equipe que
  * escrever de novo reassume sozinha (processarMensagem). HARVEY_WA_PRECO_DEVOLVE=0
@@ -588,7 +588,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
   }
-  // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Bidding e nota para a equipe, conversa continua com ele.
+  // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Sourcing e nota para a equipe, conversa continua com ele.
   if (r.cotacaoPedida && !r.passarParaEquipe) {
     const feito = await cotacaoPedidaNoTicket(telefone, `🤖 Harvey asked partners to price this on WhatsApp (he stays in the chat).\n\n${r.cotacaoPedida.nota}`).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     console.log("[harvey-wa] cotação pedida:", r.cotacaoPedida.referencia, feito);

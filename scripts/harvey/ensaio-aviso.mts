@@ -8,7 +8,7 @@
  *   npx tsx scripts/harvey/ensaio-aviso.mts
  *
  * Quatro provas, nesta ordem:
- *   1. com endereço  → sai "estamos cotando", ticket vai para 🟤 Bidding
+ *   1. com endereço  → sai "estamos cotando", ticket vai para 🟤 Sourcing
  *   2. de novo       → CALADO, porque a tag já está lá
  *   3. sem endereço  → sai "confirme o postcode", ticket vai para 🟠 On Hold
  *   4. gmail de verdade (sem forçar a organização) → CALADO
@@ -67,7 +67,7 @@ async function olhar(id: number) {
   };
 }
 
-const NOMES: Record<number, string> = { 5679191543071: "🆕 New", 5688282472223: "🟤 Bidding", 5679178036127: "🟠 On Hold" };
+const NOMES: Record<number, string> = { 5679191543071: "🆕 New", 5688282472223: "🟤 Sourcing", 5679178036127: "🟠 On Hold" };
 const falhas: string[] = [];
 const conferir = (ok: boolean, o_que: string) => {
   console.log(`   ${ok ? "✔" : "✘"} ${o_que}`);

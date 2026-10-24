@@ -509,7 +509,7 @@ export async function assuntoPadraoNaConversa(telefone: string | null, a: { orig
 
 /**
  * Conversa que espera cotação (o Harvey pediu ou passou por causa dela): o ticket
- * vai para 🟤 Bidding e aparece na view 💰 Quoting (dono, 08/10/2026). Só mexe
+ * vai para 🟤 Sourcing e aparece na view 💰 Quoting (dono, 08/10/2026). Só mexe
  * em ticket ainda em New, Open ou WhatsApp.
  */
 export async function ticketParaCotacao(telefone: string | null): Promise<string> {
@@ -541,7 +541,7 @@ export async function ticketParaEtapa(telefone: string | null, statusId: number)
 
 /**
  * A equipe deu o preço no chat (dono, 15/10/2026): o ticket que ainda estava antes do
- * preço (Lead, Open, New, Needs Quote, In Conversation) vai para 🟠 Approval, Reply
+ * preço (Lead, Open, New, Needs Quote, In Conversation) vai para 🟠 Awaiting approval, Reply
  * Status 🟢 e nota interna. O Action Required sai por fila-de-acao.ts (quem chama).
  * Devolve "" quando não mexeu (ticket já adiante no funil, ou sem ticket editável).
  */
@@ -687,7 +687,7 @@ export async function ticketPeloTelefone(telefone: string | null): Promise<numbe
 
 /**
  * Cotação pedida no WhatsApp com o Harvey FICANDO na conversa (Fase 1, dono
- * 15/10/2026): o ticket vai para 🟤 Bidding e a nota interna conta à equipe o
+ * 15/10/2026): o ticket vai para 🟤 Sourcing e a nota interna conta à equipe o
  * que foi pedido, sem tirar a conversa dele.
  *
  * Com o Harvey atendendo, o ticket da conversa é "AI agent" (só leitura): a

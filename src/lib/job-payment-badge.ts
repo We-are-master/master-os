@@ -52,7 +52,7 @@ export type JobPaymentInput = {
 };
 
 /**
- * `depositPending`: o job tem o motivo Deposit Pending aberto (a entrada combinada na
+ * `depositPending`: o job tem o motivo deposit_pending (Awaiting deposit) aberto (a entrada combinada na
  * criação ainda não entrou). Mora aqui, na coluna Payment, e não em coluna própria
  * (dono, 24/10/2026). Perde só para o cartão: é o motivo mais específico.
  */

@@ -481,7 +481,7 @@ async function passoHousekeepV2(
  *  - WhatsApp com o Harvey na conversa e a janela de 24h aberta: o texto da
  *    quote da cotação automática (textoDaQuote) com o link para aceitar;
  *  - senão, e-mail com o PDF pela mesma rota do botão (send-pdf, segredo interno).
- * Depois: ticket em 🟠 Approval, Reply Status 🟢, nota interna, e a conversa
+ * Depois: ticket em 🟠 Awaiting approval, Reply Status 🟢, nota interna, e a conversa
  * continua com o Harvey. Não deu para mandar: devolve false e a equipe é chamada.
  */
 async function mandarSozinho(
@@ -602,7 +602,7 @@ async function mandarSozinho(
     via = "email (PDF)";
   }
 
-  // Ticket em 🟠 Approval e 🟢 (fomos nós por último). Cada passo falha sozinho: a quote já saiu.
+  // Ticket em 🟠 Awaiting approval e 🟢 (fomos nós por último). Cada passo falha sozinho: a quote já saiu.
   try {
     await zendeskApi(`tickets/${ticketId}.json`, {
       method: "PUT",

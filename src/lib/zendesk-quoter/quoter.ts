@@ -441,7 +441,7 @@ export type ResultadoDoQuoter = {
  *
  * Quem sincroniza é a APLICAÇÃO: `/api/quotes` chama `syncQuoteZendeskStatus`
  * logo depois do insert, e a varredura de lances chama quando grava
- * `quote_ready` — foi ela que moveu o #50448 para 🟢 Quote Ready. O Harvey é o
+ * `quote_ready` — foi ela que moveu o #50448 para 🟢 Ready to send. O Harvey é o
  * único que escreve a quote direto no Supabase, então era o único que passava
  * por fora dessa porta. As QT-2026-1144/1145/1146 nasceram em `bidding` e os
  * três tickets continuavam em 🆕 New.
