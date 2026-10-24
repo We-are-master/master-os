@@ -980,9 +980,13 @@ async function notifyPortalUsersForQuote(
 
   const { data: account } = await supabase
     .from("accounts")
-    .select("company_name")
+    .select("company_name, process_type")
     .eq("id", accountId)
     .maybeSingle();
+  // Cliente direto (conta Fixfy): os usuários do portal dessa conta somos nós, não o
+  // cliente. Desde 22/10/2026 todo lead direto é da conta Fixfy, e a QT-2026-1259
+  // avisou a equipe em vez do cliente (24/10/2026). O cliente já recebe a quote.
+  if ((account as { process_type?: string | null } | null)?.process_type === "direct") return;
   const accountName = (account as { company_name?: string } | null)?.company_name ?? "your account";
 
   const { data: portalUsers } = await supabase

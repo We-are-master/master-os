@@ -32,12 +32,12 @@ export function buildNewQuoteEmail({
   const html = `
     <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#0f172a">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-        <img src="/favicon.png" alt="Fixfy" style="width:40px;height:40px" />
+        <img src="${new URL(portalUrl).origin}/logos/fixfy-primary-navy-trim.png" alt="Fixfy" height="32" style="height:32px;width:auto;display:block" />
         <strong style="font-size:18px;color:#0f172a">Fixfy Portal</strong>
       </div>
       <h1 style="font-size:22px;margin:0 0 8px;color:#0f172a">Your quote is ready</h1>
       <p style="color:#64748b;margin:0 0 24px;line-height:1.5">
-        Hi ${escapeHtml(accountName)} team — the Fixfy team just sent quote
+        Hi ${escapeHtml(accountName)} team, we&rsquo;ve just sent quote
         <strong>${escapeHtml(quoteRef)}</strong> for <strong>${escapeHtml(quoteTitle)}</strong>.
         Review the scope, itemised prices and total in your portal, then accept or decline the quote.
       </p>
@@ -48,7 +48,7 @@ export function buildNewQuoteEmail({
       <p style="color:#94a3b8;font-size:12px;margin:32px 0 0;line-height:1.5">
         This notification was sent from the Fixfy client portal.
         If you weren&rsquo;t expecting this, you can safely ignore it or reply to
-        <a href="mailto:support@getfixfy.com" style="color:#E94A02">support@getfixfy.com</a>.
+        <a href="mailto:hello@getfixfy.com" style="color:#E94A02">hello@getfixfy.com</a>.
       </p>
     </div>
   `;
