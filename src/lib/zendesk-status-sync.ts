@@ -95,6 +95,9 @@ type TicketCru = {
   support_type?: string | null;
 };
 
+/** Campo "Payment" (Unpaid / Part paid): coluna da view 💷 Awaiting payment, só enquanto o job está nela (24/10/2026). */
+export const PAYMENT_FIELD_ID = Number(process.env.ZENDESK_PAYMENT_FIELD_ID?.trim() || "6477235356191");
+
 export function ticketAtualDe(t: TicketCru): TicketAtual {
   return {
     status: t.status,
@@ -102,6 +105,7 @@ export function ticketAtualDe(t: TicketCru): TicketAtual {
     assigneeId: t.assignee_id ?? null,
     actionRequired: valorDoCampo(t.custom_fields, ACTION_REQUIRED_FIELD_ID),
     replyStatus: valorDoCampo(t.custom_fields, REPLY_STATUS_FIELD_ID),
+    pagamento: valorDoCampo(t.custom_fields, PAYMENT_FIELD_ID),
   };
 }
 
@@ -131,7 +135,8 @@ async function donoDoPapel(): Promise<(p: PapelDoTicket) => number> {
  * inteiro: aí tenta de novo sem o dono, para o status nunca ficar para trás.
  */
 export async function escreverEspelho(ticketId: string, alvo: Espelho, m: Mudanca, cru?: TicketCru | null): Promise<void> {
-  const campos: Array<{ id: number; value: string }> = [];
+  const campos: Array<{ id: number; value: string | null }> = [];
+  if (m.pagamento !== undefined) campos.push({ id: PAYMENT_FIELD_ID, value: m.pagamento });
   if (m.customStatusId != null && alvo.fechamento) {
     if (!valorDoCampo(cru?.custom_fields, WHAT_HAPPENED_FIELD_ID)) campos.push({ id: WHAT_HAPPENED_FIELD_ID, value: alvo.fechamento.whatHappened });
     if (!valorDoCampo(cru?.custom_fields, CLOSING_SUMMARY_FIELD_ID)) campos.push({ id: CLOSING_SUMMARY_FIELD_ID, value: alvo.fechamento.resumo });
@@ -179,7 +184,7 @@ export async function aplicarEspelho(
 // ─── O espelho de um job ────────────────────────────────────────────────────
 
 export const CAMPOS_DO_JOB_NO_ESPELHO =
-  "id, reference, status, quote_id, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at, on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description, invoice_id";
+  "id, reference, status, quote_id, external_source, external_ref, partner_id, partner_ids, auto_assign_invited_partner_ids, auto_assign_expires_at, on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description, invoice_id, finance_status, payment_status";
 
 export type JobDoEspelho = {
   id: string;
@@ -192,6 +197,8 @@ export type JobDoEspelho = {
   on_hold_reason?: string | null;
   on_hold_complaint_description?: string | null;
   invoice_id?: string | null;
+  finance_status?: string | null;
+  payment_status?: string | null;
 };
 
 /** O alvo do ticket de um job, com o que já foi lido (motivos, status da quote, fatura vencida). */
@@ -204,6 +211,7 @@ export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: s
     motivos: motivos.filter((m): m is Motivo => (MOTIVOS as readonly string[]).includes(m)),
     reclamacao: jobOnHoldPorReclamacao(job),
     faturaVencida,
+    pagoEmParte: (job.finance_status ?? job.payment_status) === "partial",
     motivoDoOnHold: job.on_hold_reason ?? null,
     referencia: job.reference ?? null,
   });

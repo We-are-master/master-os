@@ -66,7 +66,17 @@ export type Espelho = {
    * "Closing Summary" preenchidos (422 sem eles). Só entra onde o campo está vazio.
    */
   fechamento?: { whatHappened: string; resumo: string };
+  /**
+   * Campo "Payment" do ticket (24/10/2026): só vale enquanto o job está em Awaiting payment
+   * (Unpaid ou Part paid, coluna da view 💷 Awaiting payment). null = apagar; ausente = não mexe.
+   * Não muda status, dono nem Action Required.
+   */
+  pagamento?: ValorDoPagamento | null;
 };
+
+export const PAGAMENTO_NAO_PAGO = "payment_unpaid";
+export const PAGAMENTO_EM_PARTE = "payment_part_paid";
+export type ValorDoPagamento = typeof PAGAMENTO_NAO_PAGO | typeof PAGAMENTO_EM_PARTE;
 
 const VENDAS = new Set<number>([
   ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE,
@@ -118,6 +128,8 @@ export type EntradaDoJob = {
   motivos: Motivo[];
   /** Fatura do job vencida (regra da aba Overdue do Finance). Só conta em Awaiting payment. */
   faturaVencida?: boolean;
+  /** Parte do valor já entrou (finance_status partial). Só preenche o campo Payment. */
+  pagoEmParte?: boolean;
   /** On hold por reclamação (`jobOnHoldPorReclamacao`). */
   reclamacao: boolean;
   /** O motivo do on hold, para a nota. */
@@ -133,7 +145,7 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
     const fechamento = j.status === "completed"
       ? { whatHappened: "job_completed", resumo: `Closed by the OS: ${j.referencia ?? "the job"} is completed.` }
       : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
-    return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null, fechamento };
+    return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null, fechamento, pagamento: null };
   }
 
   let customStatusId = etapa;
@@ -142,7 +154,8 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   else if (j.status === "on_hold" && j.reclamacao) customStatusId = ZD_STATUS_COMPLAINT;
   else if (j.status === "awaiting_payment" && j.faturaVencida) customStatusId = ZD_STATUS_OVERDUE;
 
-  return { customStatusId, actionRequired: null, proximaAcao: null, papel: papelDoStatus(customStatusId) };
+  const pagamento = j.status === "awaiting_payment" ? (j.pagoEmParte ? PAGAMENTO_EM_PARTE : PAGAMENTO_NAO_PAGO) : null;
+  return { customStatusId, actionRequired: null, proximaAcao: null, papel: papelDoStatus(customStatusId), pagamento };
 }
 
 /** A marca que o Harvey grava na quote quando passam 24h em Bidding sem lance. */
@@ -177,6 +190,8 @@ export type TicketAtual = {
   actionRequired: string | null;
   /** Campo Reply Status: "reply_awaiting" = alguém escreveu e espera a nossa resposta. */
   replyStatus?: string | null;
+  /** Campo Payment (payment_unpaid / payment_part_paid) ou null. */
+  pagamento?: string | null;
 };
 
 const ENCERRADOS_NO_ZENDESK = new Set<number>([ZD_STATUS_COMPLETED]);
@@ -186,6 +201,8 @@ export type Mudanca = {
   assigneeId?: number;
   /** true liga (com nota), false desliga (só o que o espelho ligou). */
   actionRequired?: boolean;
+  /** Valor novo do campo Payment; null apaga. */
+  pagamento?: ValorDoPagamento | null;
 };
 
 /**
@@ -212,6 +229,7 @@ export function mudancasNoTicket(alvo: Espelho, atual: TicketAtual, donoDoPapel:
   // Payment failed agora mora na view 💷 Awaiting payment; o campo ligado o prenderia na fila de conversa.
   const tocaPaymentFailed = atual.customStatusId === ZD_STATUS_PAYMENT_FAILED || alvo.customStatusId === ZD_STATUS_PAYMENT_FAILED;
   if (alvo.actionRequired == null && ligado && tocaPaymentFailed) m.actionRequired = false;
+  if (alvo.pagamento !== undefined && (atual.pagamento ?? null) !== alvo.pagamento) m.pagamento = alvo.pagamento;
   return m;
 }
 

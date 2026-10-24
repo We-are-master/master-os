@@ -161,3 +161,15 @@ test("Awaiting payment com fatura vencida: 🔴 Overdue, dono financeiro (24/10/
   assert.equal(espelhoDoJob({ ...base, status: "scheduled", faturaVencida: true })!.customStatusId, ZD_STATUS_SCHEDULED, "só conta em Awaiting payment");
   assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment", faturaVencida: true, motivos: ["card_declined"] as never[] })!.customStatusId, ZD_STATUS_PAYMENT_FAILED, "cartão ganha");
 });
+
+test("campo Payment: só em Awaiting payment, apaga ao sair, não mexe no resto (24/10/2026)", () => {
+  assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment" })!.pagamento, "payment_unpaid");
+  assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment", pagoEmParte: true })!.pagamento, "payment_part_paid");
+  assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment", pagoEmParte: true, faturaVencida: true })!.customStatusId, ZD_STATUS_OVERDUE, "status segue Overdue");
+  assert.equal(espelhoDoJob({ ...base, status: "scheduled", pagoEmParte: true })!.pagamento, null);
+  assert.equal(espelhoDoJob({ ...base, status: "completed" })!.pagamento, null, "pago: apaga e vai a Solved");
+  const parte = espelhoDoJob({ ...base, status: "awaiting_payment", pagoEmParte: true })!;
+  const m = mudancasNoTicket(parte, { status: "pending", customStatusId: ZD_STATUS_AWAITING_PAYMENT, assigneeId: VICTOR, actionRequired: null, pagamento: "payment_unpaid" }, dono);
+  assert.deepEqual(m, { pagamento: "payment_part_paid" }, "só o campo muda");
+  assert.deepEqual(mudancasNoTicket(parte, { status: "pending", customStatusId: ZD_STATUS_AWAITING_PAYMENT, assigneeId: VICTOR, actionRequired: null, pagamento: "payment_part_paid" }, dono), {});
+});
