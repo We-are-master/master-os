@@ -101,7 +101,8 @@ export function acaoDoPasso(passo: number, canal: CanalDoLead, contato: { temEma
   if (canal === "whatsapp") {
     return (passo === 1 || passo === 5) && contato.temTelefone ? "whatsapp" : "pular";
   }
-  if (passo === 2 || passo === 4) return contato.temEmail ? "email" : "pular";
+  // Lead de e-mail não recebe follow-up (dono, 23/10/2026): só o Welcome. A régua
+  // segue contando os passos e fecha como "no response" no fim, sem mandar nada.
   return "pular";
 }
 

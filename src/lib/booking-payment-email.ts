@@ -98,7 +98,7 @@ export function buildBookingPaymentEmail(i: BookingPaymentEmailInput): { subject
     .map((r) => [r.label, r.value] as [string, string]);
 
   const comuns = {
-    estado: { texto: "Payment due", cor: "red" as const },
+    estado: { texto: v.sinal ? "Deposit required" : "Payment due", cor: "red" as const },
     destaque: quando ? { linha1: visita!, linha2: janela } : null,
     metricas: [
       { rotulo: v.sinal ? "Deposit now" : "Pay now", valor: gbp(v.agora), sub: v.sinal ? `of ${gbp(v.total)} total` : null },
@@ -112,7 +112,7 @@ export function buildBookingPaymentEmail(i: BookingPaymentEmailInput): { subject
   const corpo = v.sinal && i.daCotacao
     ? emailFixfy({
         ...comuns,
-        estado: { texto: "Quote accepted", cor: "green" },
+        estado: { texto: "Deposit required", cor: "red" },
         preheader: `Pay your ${gbp(v.agora)} deposit to confirm your booking.`,
         titulo: "Let’s get your booking confirmed",
         paragrafos: [

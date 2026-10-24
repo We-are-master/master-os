@@ -160,7 +160,13 @@ export async function sendFinalReviewEmail(
   const reports = bestPerPhase((reportRows ?? []) as ReportRow[]);
 
   const attachments: { filename: string; content: Buffer; contentType?: string }[] = [];
-  if (includeReport) {
+  /**
+   * Report na web (dono, 24/10/2026: "os reports não são mais PDF, é o link que dá pra
+   * ver tudo"): job com start/final report não leva PDF nem foto solta, só o botão
+   * View report (/report/[token], com o PDF como download lá dentro). Certificado segue anexo.
+   */
+  const reportNaWeb = Boolean(j.final_report || j.start_report);
+  if (includeReport && !reportNaWeb) {
     for (const r of reports) {
       if (!r.pdf_url?.trim()) continue;
       const path = jobReportPdfPathFromStoredUrl(r.pdf_url);
@@ -198,7 +204,7 @@ export async function sendFinalReviewEmail(
   const urlsDoCertificado = new Set(certificateAttachmentUrls(j.final_report));
 
   let pdfV2Anexado = false;
-  if (includeReport && attachments.length === 0) {
+  if (includeReport && !reportNaWeb && attachments.length === 0) {
     try {
       const pdf = await renderJobReportV2PdfBuffer(admin, jobId);
       if (pdf) {
@@ -254,7 +260,7 @@ export async function sendFinalReviewEmail(
       // Certificado = PDF do relatório ou arquivo do slot "certificate" (pode ser foto do papel).
       const ehCertificado = ehPdf || urlsDoCertificado.has(u);
       if (ehCertificado && certificadoRetido) continue;
-      if (pdfV2Anexado && !ehCertificado) continue;
+      if ((pdfV2Anexado || reportNaWeb) && !ehCertificado) continue;
       if (ehCertificado) certificadoAnexado = true;
       attachments.push({
         filename: ehPdf
@@ -348,9 +354,10 @@ export async function sendFinalReviewEmail(
   const ref = String(j.reference ?? "");
   const title = String(j.title ?? "Job");
   // Arquivos do relatório anexados ATÉ AQUI (o PDF da fatura entra depois e não conta como relatório).
-  const reportAttachmentCount = includeReport ? attachments.length : 0;
+  // Report na web conta como report entregue (o link vai no e-mail), mesmo sem anexo.
+  const reportAttachmentCount = includeReport ? (reportNaWeb ? Math.max(1, attachments.length) : attachments.length) : 0;
   const missingReportNote =
-    includeReport && reportAttachmentCount === 0
+    includeReport && !reportNaWeb && reportAttachmentCount === 0
       ? "We could not attach report PDFs (missing files or storage)."
       : "";
   const publico = publicoDaCobranca(billing.mode, billing.displayName, billing.companyName);
@@ -635,7 +642,7 @@ async function visualDoFinal(
   const descricao = typeof campos.description === "string" && campos.description.trim() && !/ticket\s*#?\d+|from the partner|zendesk/i.test(campos.description) ? campos.description.trim() : null;
   return {
     // Sem foto, uma linha neutra no lugar (dono, 23/10/2026), e o link do report se houver.
-    fotos: { lista, link: link ? { label: "See the full report", url: link } : null, vazio: "No photos available" },
+    fotos: { lista, link: link ? { label: "View report", url: link } : null, vazio: "No photos available" },
     resumo: descricao ? { titulo: "What we did.", texto: descricao } : null,
   };
 }

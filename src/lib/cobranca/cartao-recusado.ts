@@ -99,11 +99,16 @@ export function emailDaCobranca(dia: DiaDaCobranca, p: { primeiroNome: string; r
     const { html } = emailFixfy({
       ...base,
       preheader: "Your card payment did not go through. You can pay in a minute with the secure link.",
-      estado: { texto: "Payment due", cor: "red" },
+      estado: { texto: "Payment failed", cor: "red" },
       titulo: "Your payment didn’t go through",
       paragrafos: [
         `We tried to take the balance for ${job} from your saved card, but the payment did not go through. This can happen when the bank asks for a confirmation or the card has changed.`,
         "You can pay the balance in a minute using the secure link below.",
+      ],
+      cartoes: [
+        { icone: "💳", titulo: "Try another card", texto: "Or the same one again" },
+        { icone: "🏦", titulo: "Check with your bank", texto: "Some ask to confirm first" },
+        { icone: "⚡", titulo: "Takes a minute", texto: "Secure Stripe page" },
       ],
     });
     return { assunto: `Your Fixfy payment did not go through (${p.referencia})`, html };

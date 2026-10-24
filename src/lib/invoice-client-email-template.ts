@@ -264,7 +264,7 @@ export function buildInvoiceClientEmail(
     // Copy 12: o e-mail final do job com a fatura (ou o recibo, se já está paga).
     const p1 =
       reportCount > 0
-        ? "The agreed work is complete, and your final report is attached. We hope you’re pleased with the result."
+        ? "The agreed work is complete, and your report is ready to view. We hope you’re pleased with the result."
         : "The agreed work is complete. We hope you’re pleased with the result.";
     const pMissing = reportMissing ? "We couldn’t attach the report files to this email. Just reply and we’ll send you a copy." : null;
     const p2 = paid
@@ -282,10 +282,10 @@ export function buildInvoiceClientEmail(
     shell = {
       preheader: paid
         ? reportCount > 0
-          ? "Your report and payment receipt are attached."
+          ? "Your report is ready to view and your receipt is attached."
           : "Thank you for your payment."
         : reportCount > 0
-          ? `Your report is attached, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
+          ? `Your report is ready to view, with ${gbp(amountDueNow)} due${due ? ` by ${due}` : ""}.`
           : `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
       estado: paid ? { texto: "Payment received", cor: "green" } : { texto: "Payment due", cor: "red" },
       titulo: liberado ? "Your certificate is ready" : "Your work is complete",
@@ -375,7 +375,7 @@ export function buildInvoiceClientEmail(
     subject = `Your ${docName} ${ref} is ready`;
     shell = {
       preheader: `${gbp(amountDueNow)} due${due ? ` by ${due}` : ""} for ${service}.`,
-      estado: { texto: "Payment due", cor: "red" },
+      estado: { texto: String((invoice as { invoice_kind?: string | null }).invoice_kind ?? "") === "deposit" ? "Deposit required" : "Payment due", cor: "red" },
       titulo: `Your ${docName} is ready`,
       destaque: { linha1: `${gbp(amountDueNow)} due`, linha2: due ? `by ${due}` : null },
       metricas: [

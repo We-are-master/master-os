@@ -99,7 +99,7 @@ describe("copy 12: final email with invoice", () => {
     limpo(e);
     assert.equal(e.subject, "Your job report and invoice · JOB-9800");
     assert.match(e.text, /Your work is complete/);
-    assert.match(e.text, /your final report is attached/);
+    assert.match(e.text, /your report is ready to view/);
     assert.match(e.text, /Your invoice is also included\. The remaining amount to pay is £180\.00, due by Wed 21 Oct 26\./);
   });
   it("paid: no pay button, receipt line", () => {

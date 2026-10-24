@@ -35,7 +35,7 @@ export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: stri
   const anexado = d.reportAttachmentCount > 0;
   const onde = property ? `The work at ${property} is complete` : "The work is complete";
   const p1 = anexado
-    ? `${onde}, and your final report is attached for you to look through.`
+    ? `${onde}, and your report is ready to view.`
     : d.reportRequested
       ? `${onde}. We couldn’t attach the report files to this email. Just reply and we’ll send you a copy.`
       : `${onde}.`;

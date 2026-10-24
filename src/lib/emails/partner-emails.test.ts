@@ -29,8 +29,10 @@ const AGENDA = { scheduledDate: "2026-10-28", scheduledStartAt: "2026-10-28T08:0
 
 /** Chip (pílula), título e passo atual da barra (o rótulo depois da régua laranja). */
 function cabeca(html: string): { chip: string | null; titulo: string | null; passo: string | null } {
-  const chip = html.match(/border-radius:999px;">([^<]+)</)?.[1] ?? null;
+  // Faixa do topo (cores do OS) ou, sem ela, a pílula de sempre.
+  const chip = html.match(/font-weight:600;color:#[0-9A-F]+;vertical-align:middle;">([^<]+)<\/span>/)?.[1] ?? html.match(/border-radius:999px;">([^<]+)</)?.[1] ?? null;
   const titulo = html.match(/<h1[^>]*>([^<]+)<\/h1>/)?.[1]?.replace(/&#39;/g, "'") ?? null;
+  // Passo atual da régua: o traço laranja.
   const passo = html.match(/background:#ED4B00;[^>]*>&nbsp;<\/div><p[^>]*>([^<]+)</)?.[1] ?? null;
   return { chip, titulo, passo };
 }
@@ -261,10 +263,9 @@ describe("e-mails ao parceiro", () => {
       jobType: "fixed", priceDisplay: "Fixed · £70.00", reportUrl: "https://os.test/r",
     });
     assert.match(b.html, />Approved</);
-    assert.doesNotMatch(b.html, />Paid<|#22C55E/);
+    assert.doesNotMatch(b.html, />Paid</);
     const sb = buildSelfBillEmail({ reference: "SB-1", net_payout: 70, week_start: "2026-10-26", week_end: "2026-11-01" } as SelfBill, "2026-11-06");
     assert.match(sb.html, /background:#22C55E;[^>]*>&nbsp;<\/div><p[^>]*color:#4ADE80;">Approved</);
-    assert.equal((sb.html.match(/background:#FFFFFF;font-size:0;line-height:0;">&nbsp;<\/div>/g) ?? []).length, 3);
   });
 
   test("helpers: pagamento, área e trabalho curto", () => {

@@ -143,13 +143,13 @@ describe("pelo canal do lead (dono, 22/10/2026)", () => {
   it("lead de WhatsApp sem e-mail: só os dois WhatsApps", () => {
     assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "whatsapp", { temEmail: false, temTelefone: true })), ["whatsapp", "pular", "pular", "pular", "whatsapp"]);
   });
-  it("lead de e-mail: e-mail no dia 2 e no dia 3, fecha sem WhatsApp", () => {
-    assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "email", ambos)), ["pular", "email", "pular", "email", "pular"]);
+  it("lead de e-mail: nenhum follow-up (só o Welcome), fecha como no response no fim", () => {
+    assert.deepEqual([1, 2, 3, 4, 5].map((p) => acaoDoPasso(p, "email", ambos)), ["pular", "pular", "pular", "pular", "pular"]);
   });
   it("a nota interna diz o próximo passo do canal", () => {
     assert.equal(proximaNota(1, "whatsapp", ambos), "Next: last WhatsApp at 6pm on day 3, then solved as no response.");
     assert.equal(proximaNota(2, "whatsapp", ambos), "Next: last WhatsApp at 6pm on day 3, then solved as no response.");
-    assert.equal(proximaNota(2, "email", ambos), "Next: email tomorrow at 10am.");
+    assert.equal(proximaNota(2, "email", ambos), "Next: solved as no response at 6pm on day 3.");
     assert.equal(proximaNota(4, "email", ambos), "Next: solved as no response at 6pm on day 3.");
   });
 });
