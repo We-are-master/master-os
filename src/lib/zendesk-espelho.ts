@@ -110,13 +110,16 @@ export function statusDaEtapa(status: JobStatus): number | null {
     case "final_check": return ZD_STATUS_FINAL_CHECKS;
     case "awaiting_payment": return ZD_STATUS_AWAITING_PAYMENT;
     case "completed":
-    case "cancelled": return ZD_STATUS_COMPLETED;
+    case "cancelled":
+    // Apagado no OS (24/10/2026): o ticket fecha, senão fica preso no último status. Quem chama
+    // garante que nenhum outro job ou quote vivo usa o mesmo ticket.
+    case "deleted": return ZD_STATUS_COMPLETED;
     case "on_hold": return ZD_STATUS_ON_HOLD;
     default: return null;
   }
 }
 
-const ENCERRADO = new Set<JobStatus>(["completed", "cancelled"]);
+const ENCERRADO = new Set<JobStatus>(["completed", "cancelled", "deleted"]);
 const CARTAO = new Set<Motivo>(["card_declined", "payment_unsuccessful"]);
 
 export type EntradaDoJob = {
@@ -144,7 +147,9 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   if (ENCERRADO.has(j.status)) {
     const fechamento = j.status === "completed"
       ? { whatHappened: "job_completed", resumo: `Closed by the OS: ${j.referencia ?? "the job"} is completed.` }
-      : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
+      : j.status === "deleted"
+        ? { whatHappened: "other", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was deleted.` }
+        : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
     return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null, fechamento, pagamento: null };
   }
 
@@ -277,4 +282,50 @@ export function formularioDoJobFaltando(t: {
   if (t.status === "closed") return false;
   if (t.supportType === "ai_agent") return false;
   return !String(t.jobIdNoTicket ?? "").trim();
+}
+
+// ─── Title: o nome interno do ticket nas views ──────────────────────────────
+
+/** Campo "Title" do ticket (24/10/2026): coluna das views no lugar do Subject. O cliente nunca vê. */
+export const TITLE_FIELD_ID = Number(process.env.ZENDESK_TITLE_FIELD_ID?.trim() || "6477394504095");
+
+export type EntradaDoTitulo = {
+  /** Assunto atual do ticket. */
+  assunto: string | null;
+  /** Cliente Fixfy (org Fixfy Customers ou sem org). Conta B2B mantém o assunto dela. */
+  fixfy: boolean;
+  /** Etapa pelo que está ligado ao ticket; null = sem quote nem job. */
+  etapa: "Lead" | "Quote" | "Job" | null;
+  servico?: string | null;
+  nome?: string | null;
+  postcode?: string | null;
+  /** Status Lead / To Call ou tag de lead. */
+  ehLead?: boolean;
+  nomeDoRequester?: string | null;
+};
+
+const juntar = (partes: Array<string | null | undefined>) =>
+  partes.map((p) => String(p ?? "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" · ");
+
+/** Assunto que não diz nada sozinho: até 2 palavras, curto, ou o "Conversation with ..." do WhatsApp. */
+export function assuntoSimples(assunto: string | null | undefined): boolean {
+  const a = String(assunto ?? "").trim();
+  if (!a) return true;
+  if (/^conversation with\b/i.test(a)) return true;
+  return a.split(/\s+/).length <= 2 || a.length < 12;
+}
+
+/**
+ * O Title do ticket (dono, 24/10/2026): "Etapa · Serviço · Nome · Postcode" para cliente
+ * Fixfy; conta B2B fica com o assunto que mandou, a não ser que seja simples demais ("EPC").
+ */
+export function tituloDoTicket(e: EntradaDoTitulo): string {
+  const assunto = String(e.assunto ?? "").replace(/\s+/g, " ").trim();
+  const simples = assuntoSimples(assunto);
+  if (!e.fixfy && !simples) return assunto;
+  if (e.etapa) return juntar([e.etapa, e.servico, e.nome, e.postcode]);
+  if (/^Lead · /.test(assunto)) return assunto;
+  if (e.ehLead) return juntar(["Lead", e.nome ?? e.nomeDoRequester]);
+  if (!simples) return assunto;
+  return juntar(["Enquiry", e.nomeDoRequester, /^conversation with\b/i.test(assunto) ? null : assunto]);
 }

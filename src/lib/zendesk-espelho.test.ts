@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { donoDeTicketSemPedido, espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus } from "./zendesk-espelho";
+import { donoDeTicketSemPedido, espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus, tituloDoTicket, assuntoSimples } from "./zendesk-espelho";
 import {
   ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_COMPLAINT, ZD_STATUS_COMPLETED, ZD_STATUS_DEPOSIT_PENDING, ZD_STATUS_FINAL_CHECKS,
   ZD_STATUS_ON_HOLD, ZD_STATUS_OVERDUE, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER, ZD_STATUS_NO_BIDS,
@@ -172,4 +172,22 @@ test("campo Payment: só em Awaiting payment, apaga ao sair, não mexe no resto 
   const m = mudancasNoTicket(parte, { status: "pending", customStatusId: ZD_STATUS_AWAITING_PAYMENT, assigneeId: VICTOR, actionRequired: null, pagamento: "payment_unpaid" }, dono);
   assert.deepEqual(m, { pagamento: "payment_part_paid" }, "só o campo muda");
   assert.deepEqual(mudancasNoTicket(parte, { status: "pending", customStatusId: ZD_STATUS_AWAITING_PAYMENT, assigneeId: VICTOR, actionRequired: null, pagamento: "payment_part_paid" }, dono), {});
+});
+
+test("Title: padrão para cliente Fixfy, assunto da conta B2B, simples vira padrão (24/10/2026)", () => {
+  assert.equal(tituloDoTicket({ assunto: "Re: something", fixfy: true, etapa: "Job", servico: "Builder", nome: "Luz Howard", postcode: "UB7 7JU" }), "Job · Builder · Luz Howard · UB7 7JU");
+  assert.equal(tituloDoTicket({ assunto: "Job booked - Handyman - N8 8RL - Fri 23 Oct 2026", fixfy: false, etapa: "Job", servico: "Handyman", nome: "Housekeep", postcode: "N8 8RL" }), "Job booked - Handyman - N8 8RL - Fri 23 Oct 2026");
+  assert.equal(tituloDoTicket({ assunto: "EPC", fixfy: false, etapa: "Quote", servico: "EPC", nome: "Landlord Certification", postcode: "SE1 1AA" }), "Quote · EPC · Landlord Certification · SE1 1AA");
+  assert.equal(tituloDoTicket({ assunto: "Lead · Handyman work · Joan Munro · NW6 3ER", fixfy: true, etapa: null }), "Lead · Handyman work · Joan Munro · NW6 3ER");
+  assert.equal(tituloDoTicket({ assunto: "Conversation with Unknown", fixfy: true, etapa: null, nomeDoRequester: "+44 7700 900123" }), "Enquiry · +44 7700 900123");
+  assert.equal(tituloDoTicket({ assunto: "Conversation with Sousa", fixfy: true, etapa: null, ehLead: true, nomeDoRequester: "Sousa" }), "Lead · Sousa");
+  assert.equal(tituloDoTicket({ assunto: "Re: Payment update requested · INV-2026-906", fixfy: true, etapa: null }), "Re: Payment update requested · INV-2026-906");
+  assert.equal(assuntoSimples("[Housekeep] Painting quote request- N4 3HA"), false);
+});
+
+test("job apagado: fecha o ticket com What Happened other (24/10/2026)", () => {
+  const e = espelhoDoJob({ ...base, status: "deleted", referencia: "JOB-9779" })!;
+  assert.equal(e.customStatusId, ZD_STATUS_COMPLETED);
+  assert.equal(e.fechamento?.whatHappened, "other");
+  assert.equal(e.papel, null);
 });

@@ -24,8 +24,10 @@ for (const arq of [".env.local", ".env"]) {
     }
   } catch {}
 }
-const { alvoDoJob, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
-const { espelhoDaQuote, donoDeTicketSemPedido, formularioDoJobFaltando } = await import("../src/lib/zendesk-espelho");
+const { alvoDoJob, alvoDoJobApagado, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
+const { espelhoDaQuote, donoDeTicketSemPedido, formularioDoJobFaltando, tituloDoTicket, TITLE_FIELD_ID } = await import("../src/lib/zendesk-espelho");
+const { normalizeTypeOfWork } = await import("../src/lib/type-of-work");
+const { extractUkPostcode } = await import("../src/lib/uk-postcode");
 const { zendeskApi, ZENDESK_JOB_ID_FIELD_ID } = await import("../src/lib/zendesk");
 const { syncJobZendeskFormFields } = await import("../src/lib/zendesk-ticket-form-sync");
 const { papeisDaEquipe } = await import("../src/lib/responsavel-operacao");
@@ -54,7 +56,7 @@ const jobsValidos = jobs.filter((j) => numero(j.external_ref) && (!so || so.incl
 // Quotes: as que ainda falam com o ticket, e as perdidas na janela.
 const { data: quotesLidas, error: qErr } = await sb
   .from("quotes")
-  .select("id, reference, status, automation_status, external_ref, updated_at")
+  .select("id, reference, status, automation_status, external_ref, updated_at, service_type, title, client_name, postcode, property_address")
   .eq("external_source", "zendesk")
   .or(`status.in.(in_survey,bidding,quote_ready,awaiting_customer,awaiting_payment),and(status.eq.rejected,updated_at.gte.${desde})`)
   .limit(3000);
@@ -148,6 +150,21 @@ for (const j of jobsValidos) {
   somar(r.ok ? "formulário preenchido" : "formulário: erro");
   if (detalhe || !r.ok) linhas.push(`${(j as { reference?: string }).reference} #${ticketId}: formulário ${r.ok ? "preenchido" : `ERRO ${"error" in r ? r.error : ""}`}`);
 }
+// Job apagado no OS na janela (24/10/2026): fecha o ticket, se nada vivo usa o mesmo ticket.
+if (!so) {
+  const { data: apagados } = await sb.from("jobs").select("id, reference, external_ref").eq("external_source", "zendesk").eq("status", "deleted").gte("deleted_at", desde).limit(500);
+  const vivos = new Set([
+    ...jobsValidos.filter((j) => j.status !== "completed" && j.status !== "cancelled").map((j) => String(j.external_ref)),
+    ...(quotesLidas ?? []).filter((q) => q.status !== "rejected").map((q) => String(q.external_ref ?? "")),
+  ]);
+  for (const j of apagados ?? []) {
+    const ref = String(j.external_ref ?? "");
+    if (!numero(ref) || vivos.has(ref) || ticketsComJob.has(ref)) continue;
+    if (!tickets.has(ref)) for (const [k, v] of await lerTicketsCrus([ref])) tickets.set(k, v);
+    await passar(`job deleted ${j.reference}`, ref, alvoDoJobApagado(j));
+  }
+}
+
 for (const q of so ? [] : quotesLidas ?? []) {
   const ref = String(q.external_ref ?? "");
   if (!numero(ref) || ticketsComJob.has(ref)) continue; // o job manda no ticket
@@ -176,6 +193,74 @@ if (!so) {
     } catch (e) {
       somar("erro");
       linhas.push(`#${t.id}: ERRO dono ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
+    }
+  }
+}
+
+// Title (24/10/2026): nome interno do ticket nas views, no lugar do Subject. Cliente Fixfy no
+// padrão "Etapa · Serviço · Nome · Postcode"; conta B2B fica com o assunto, se não for simples demais.
+if (!so) {
+  const ORG_FIXFY = Number(process.env.ZENDESK_ORG_CUSTOMERS?.trim() || "6354308808991");
+  const TAGS_DE_LEAD = ["lead_gen", "harvey_wa_lead", "lead_checkatrade", "lead_meta", "lead_promo"];
+  const STATUS_DE_LEAD = [6417913706527, 6417870637599];
+  type TicketDoTitulo = { id: number; subject: string | null; status: string; organization_id: number | null; requester_id: number | null; custom_status_id: number | null; tags?: string[]; custom_fields?: Array<{ id: number; value: unknown }> };
+  const doTitulo = new Map<string, TicketDoTitulo>();
+  let pagina: string | null = `search.json?query=${encodeURIComponent("type:ticket status<solved")}&per_page=100`;
+  while (pagina) {
+    const r: { results?: TicketDoTitulo[]; next_page?: string | null } = await zendeskApi(pagina);
+    for (const t of r.results ?? []) doTitulo.set(String(t.id), t);
+    pagina = r.next_page ? r.next_page.replace(/^.*\/api\/v2\//, "") : null;
+  }
+  for (const [id, t] of tickets) if (!doTitulo.has(id) && t.status !== "closed") doTitulo.set(id, t as unknown as TicketDoTitulo);
+
+  const idsDosJobs = jobsValidos.map((j) => j.id);
+  const dadosDoJob = new Map<string, { title: string | null; client_name: string | null; property_address: string | null }>();
+  for (let i = 0; i < idsDosJobs.length; i += 200) {
+    const { data } = await sb.from("jobs").select("id, title, client_name, property_address").in("id", idsDosJobs.slice(i, i + 200));
+    for (const d of data ?? []) dadosDoJob.set(d.id, d);
+  }
+  const jobDoTicket = new Map(jobsValidos.map((j) => [String(j.external_ref), dadosDoJob.get(j.id)]));
+  const quoteDoTicket = new Map((quotesLidas ?? []).map((q) => [String(q.external_ref ?? ""), q]));
+
+  const idsDeRequester = [...new Set([...doTitulo.values()].map((t) => t.requester_id).filter(Boolean))] as number[];
+  const nomeDoUsuario = new Map<number, string>();
+  for (let i = 0; i < idsDeRequester.length; i += 100) {
+    const { users } = await zendeskApi<{ users?: Array<{ id: number; name: string }> }>(`users/show_many.json?ids=${idsDeRequester.slice(i, i + 100).join(",")}`);
+    for (const u of users ?? []) nomeDoUsuario.set(u.id, u.name);
+  }
+
+  // Em lote (update_many, 100 por chamada): um PUT por ticket estoura o limite de atualização
+  // do Zendesk (429 "Ticket update API threshold exceeded"), que é da conta inteira.
+  const pendentes: Array<{ id: number; titulo: string }> = [];
+  for (const [id, t] of doTitulo) {
+    const job = jobDoTicket.get(id);
+    const quote = quoteDoTicket.get(id);
+    const tags = t.tags ?? [];
+    const titulo = tituloDoTicket({
+      assunto: t.subject,
+      fixfy: !t.organization_id || t.organization_id === ORG_FIXFY,
+      etapa: job ? "Job" : quote ? "Quote" : null,
+      servico: job ? normalizeTypeOfWork(job.title) || job.title : quote ? normalizeTypeOfWork(quote.service_type ?? quote.title) || quote.service_type || quote.title : null,
+      nome: job?.client_name ?? quote?.client_name ?? null,
+      postcode: job ? extractUkPostcode(job.property_address ?? "") : quote ? extractUkPostcode(`${quote.postcode ?? ""} ${quote.property_address ?? ""}`) : null,
+      ehLead: STATUS_DE_LEAD.includes(Number(t.custom_status_id)) || tags.some((x) => TAGS_DE_LEAD.includes(x)),
+      nomeDoRequester: t.requester_id ? nomeDoUsuario.get(t.requester_id) ?? null : null,
+    });
+    const atual = t.custom_fields?.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value ?? null;
+    if (!titulo || atual === titulo) continue;
+    pendentes.push({ id: Number(id), titulo });
+    if (detalhe) linhas.push(`#${id} title: ${titulo}`);
+  }
+  for (let i = 0; i < pendentes.length; i += 100) {
+    const lote = pendentes.slice(i, i + 100);
+    somar(aplicar ? "title gravado" : "title: gravaria");
+    conta[aplicar ? "title gravado" : "title: gravaria"] += lote.length - 1;
+    if (!aplicar) continue;
+    try {
+      await zendeskApi("tickets/update_many.json", { method: "PUT", body: { tickets: lote.map((p) => ({ id: p.id, custom_fields: [{ id: TITLE_FIELD_ID, value: p.titulo }] })) } });
+    } catch (e) {
+      somar("erro");
+      linhas.push(`title em lote: ERRO ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
     }
   }
 }
