@@ -437,7 +437,7 @@ async function passarParaApproval(
 
 /**
  * Quote sem lance (dono, 23/10/2026), para toda conta e todo canal:
- *   24h do primeiro convite: nota, tag, 🔎 No Bids e Action Required, uma vez;
+ *   24h do primeiro convite: nota, tag, 🔎 No bids e Action Required, uma vez;
  *   48h do último convite sem a equipe agir: "not able to quote" ao cliente e a quote fecha.
  */
 async function tratarSemLance(
@@ -507,7 +507,7 @@ async function tratarSemLance(
       return;
     }
     await supabase.from("quotes").update({ automation_status: MARCA_NO_BIDS, updated_at: new Date().toISOString() }).eq("id", q.id);
-    // 🔎 No Bids: o espelho lê a marca de 24h (zendesk-espelho.ts).
+    // 🔎 No bids: o espelho lê a marca de 24h (zendesk-espelho.ts).
     await syncQuoteZendeskStatus(q.id, supabase).catch(() => undefined);
     const fila = await precisaDeAcao(q.external_ref, `No bids after ${Math.round(horas)}h on ${q.reference}: invite more partners, call one or reply to the customer`);
     if (!fila.ok) r.detalhes.push(`${q.reference}: ${fila.linha}`);
@@ -639,7 +639,7 @@ async function mandarSozinho(
   const contaFixfy = await tryGetFixfyAccountId(supabase).catch(() => null);
   const ticketDaQuote = await zendeskApi<{ ticket: { tags?: string[]; requester_id?: number } }>(`tickets/${ticketId}.json`).then((t) => t.ticket).catch(() => null);
   const tags = ticketDaQuote?.tags ?? [];
-  // Plano de processos (22/10/2026), só contas v2: B2B só com gente para em Quote Ready, e
+  // Plano de processos (22/10/2026), só contas v2: B2B só com gente para em Ready to send, e
   // quote que a equipe já mandou à mão não sai de novo.
   const regrasDaConta = contaDeOrigem ? await processoDaConta(supabase, contaDeOrigem).catch(() => null) : null;
   const contaSoHumana = ehB2bSoHumano(regrasDaConta);

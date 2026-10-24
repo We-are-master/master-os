@@ -6,7 +6,7 @@
  *
  *   entrada   tickets em 📝 Needs Quote. Com contexto completo, cria (ou reaproveita)
  *             a quote do ticket no OS, convida os 3 a 5 melhores parceiros pelo
- *             caminho de sempre (dispatchQuoteBidInvites) e põe o ticket em 🟤 Bidding.
+ *             caminho de sempre (dispatchQuoteBidInvites) e põe o ticket em 🟤 Sourcing.
  *             Faltando algo, pede ao cliente uma vez e espera.
  *   leilão    tickets com harvey_aq_invited: lembra parceiros com 6h, avisa o
  *             cliente com 24h, e precifica quando o lance chega.

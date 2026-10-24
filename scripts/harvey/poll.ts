@@ -893,7 +893,7 @@ async function ciclo(): Promise<void> {
 
   // Macro "Get partner quotes" (tag b2b_cotar) em ticket B2B só com gente: preparo +
   // convites com as fotos do ticket, neste ticket só, uma vez (processo/b2b-cotar.ts).
-  // A quote para em Quote Ready: o envio ao cliente é da equipe.
+  // A quote para em Ready to send: o envio ao cliente é da equipe.
   try {
     const { varrerB2bCotar, dependenciasReais } = await import("../../src/lib/processo/b2b-cotar");
     const { createServiceClient } = await import("../../src/lib/supabase/service");
