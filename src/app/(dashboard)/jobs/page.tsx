@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { Avatar } from "@/components/ui/avatar";
 import { HoverPreview } from "@/components/ui/hover-preview";
-import { DATE_TBC_BADGE, jobDataAConfirmar } from "@/lib/job-data-a-confirmar";
+import { jobDataAConfirmar } from "@/lib/job-data-a-confirmar";
 import { AddressCell } from "@/components/jobs/address-cell";
 
 import { DataTable, type Column, type ColumnSortOption } from "@/components/ui/data-table";
@@ -60,7 +60,6 @@ import {
   jobRowMatchesJobsManagementTab,
   jobsManagementClosedBucket,
   jobsManagementClosedBucketLabel,
-  countActionRequiredJobsByOpenReason,
   type JobsManagementClosedBucket,
 } from "@/services/jobs";
 import { chipsPorJob, lerMotivosAbertos, type ChipDeMotivo } from "@/lib/pendencias/chips";
@@ -212,8 +211,6 @@ import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } fr
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
-import { JobOverdueBadge } from "@/components/shared/job-overdue-badge";
-import { isJobOverdue } from "@/lib/job-overdue";
 import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
 import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, JOB_PAYMENT_LABEL, type JobInvoiceSummary, type JobPaymentState } from "@/lib/job-payment-badge";
@@ -506,8 +503,8 @@ type JobsDefaultTabId = (typeof JOBS_DEFAULT_TAB_IDS)[number];
 const JOBS_DEFAULT_TAB_LABELS: Record<JobsDefaultTabId, string> = {
   action_required: "Action Required",
   scheduled: "Scheduled",
-  in_progress: "In Progress",
-  final_check: "Final Checks",
+  in_progress: "In progress",
+  final_check: "Final review",
   awaiting_payment: "Awaiting Payment",
   closed: "Closed",
 };
@@ -1065,7 +1062,6 @@ function JobsPageContent() {
   const [bulkMarkPaidConfirm, setBulkMarkPaidConfirm] = useState(false);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
   /** Jobs em Action Required só por motivo aberto (job_attention_reasons); 0 com a tabela vazia. */
-  const [actionRequiredByReasonCount, setActionRequiredByReasonCount] = useState(0);
   const [kpiFinancialLoading, setKpiFinancialLoading] = useState(true);
   const [kpiAvgWorkTimeLabel, setKpiAvgWorkTimeLabel] = useState("—");
   const [avgTicket, setAvgTicket] = useState(0);
@@ -1361,7 +1357,7 @@ function JobsPageContent() {
     };
   }, [data]);
 
-  // Motivos abertos (job_attention_reasons) dos jobs da lista: chips na aba Action Required. Só leitura.
+  // Motivos abertos (job_attention_reasons) dos jobs da lista: chips na coluna Alerts. Só leitura.
   const [motivosPorJob, setMotivosPorJob] = useState<ReadonlyMap<string, ChipDeMotivo[]>>(() => new Map());
   useEffect(() => {
     const ids = data.map((j) => j.id);
@@ -1650,7 +1646,7 @@ function JobsPageContent() {
         id: "action_required",
         title: "Action required",
         color: "bg-red-500",
-        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "action_required", { temMotivoAberto: motivosPorJob.has(j.id) })),
+        items: scheduleSortedData.filter((j) => jobRowMatchesJobsManagementTab(j, "action_required")),
       },
       {
         id: "scheduled",
@@ -1688,7 +1684,7 @@ function JobsPageContent() {
       },
     ] as const;
     return defs.map((c) => ({ ...c }));
-  }, [scheduleSortedData, motivosPorJob]);
+  }, [scheduleSortedData]);
 
   const openJobDetail = useCallback(
     (job: Job) => {
@@ -1715,9 +1711,6 @@ function JobsPageContent() {
        * doesn't affect the other, same as before.
        */
       await Promise.all([
-        (async () => {
-          setActionRequiredByReasonCount(await countActionRequiredJobsByOpenReason(scheduleRange).catch(() => 0));
-        })(),
         (async () => {
           try {
             const [counts, deletedHead, visitCounts] = await Promise.all([
@@ -1837,7 +1830,7 @@ function JobsPageContent() {
 
   const unassignedTabCount = (tabCounts.unassigned ?? 0) + (tabCounts.auto_assigning ?? 0);
 
-  const actionRequiredTabCount = unassignedTabCount + onHoldTabCount + actionRequiredByReasonCount;
+  const actionRequiredTabCount = unassignedTabCount + onHoldTabCount;
 
   const awaitingPaymentTabCount = tabCounts.awaiting_payment ?? 0;
 
@@ -3188,7 +3181,7 @@ function JobsPageContent() {
                 className="-ml-1 flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] italic text-text-tertiary transition-colors hover:bg-primary/10 hover:not-italic hover:text-primary"
               >
                 <UserPlus className="h-3 w-3 shrink-0" aria-hidden />
-                Unassigned
+                Assign
               </button>
             )}
           </div>
@@ -3210,30 +3203,6 @@ function JobsPageContent() {
             <Badge variant={c.variant} dot={c.dot} size="sm" className={LIST_CHIP_CLASS}>{c.label}</Badge>
           );
         }
-        if (status === "action_required") {
-          const onHoldBadge = item.status === "on_hold" ? jobOnHoldDisplayBadge(item) : null;
-          const st = effectiveJobStatusForDisplay(item);
-          const c = onHoldBadge ?? (jobDataAConfirmar(item) ? DATE_TBC_BADGE : null) ?? statusConfig[st] ?? { label: st, variant: "default" as const, dot: true };
-          const unico = rotuloUnicoDoStatus(item, st, onHoldBadge != null, motivosPorJob.get(item.id));
-          const resto = [c.label, ...(motivosPorJob.get(item.id) ?? []).map((m) => m.rotulo)].filter((l, i, a) => a.indexOf(l) === i);
-          return (
-            <div
-              className="inline-flex items-center"
-              title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : resto.length > 1 ? resto.join(" · ") : undefined}
-            >
-              {/* Um rótulo só por job (dono, 22/10/2026): o mais urgente ganha, o resto vai no hover. */}
-              {unico.tipo === "cartao" ? (
-                <JobCardRefusedBadge job={item} />
-              ) : unico.tipo === "motivo" ? (
-                <MotivoChips chips={[unico.chip]} />
-              ) : unico.tipo === "atrasado" ? (
-                <JobOverdueBadge job={item} />
-              ) : (
-                <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
-              )}
-            </div>
-          );
-        }
         if (status === "closed") {
           const bucket = jobsManagementClosedBucket(item);
           const lbl = jobsManagementClosedBucketLabel(bucket);
@@ -3249,24 +3218,28 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={variantTag} dot className={LIST_CHIP_CLASS}>{lbl}</Badge>
-              <JobOverdueBadge job={item} />
-                <JobCardRefusedBadge job={item} />
             </div>
           );
         }
+        // Status é só o status do job, com o mesmo nome do Zendesk (dono, 24/10/2026).
+        // Date TBC, cartão, atraso e motivos abertos vão para a coluna Alerts.
         const st = effectiveJobStatusForDisplay(item);
         const onHoldBadge = jobOnHoldDisplayBadge(item);
-        const c = onHoldBadge ?? (jobDataAConfirmar(item) ? DATE_TBC_BADGE : null) ?? statusConfig[st] ?? { label: st, variant: "default" as const };
+        const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex flex-col items-start gap-0.5" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
-            <div className="inline-flex flex-wrap items-center gap-1.5">
-              <Badge variant={c.variant} dot={c.dot} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
-              {st !== "late" ? <JobOverdueBadge job={item} /> : null}
-                <JobCardRefusedBadge job={item} />
-            </div>
+          <div className="inline-flex items-center" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
+            <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
           </div>
         );
       },
+    },
+    {
+      key: "alerts",
+      label: "Alerts",
+      minWidth: "120px",
+      cellClassName: "whitespace-nowrap",
+      headerClassName: "whitespace-nowrap normal-case",
+      render: (item) => (isVisitJobRow(item) ? null : <JobAlerts job={item} motivos={motivosPorJob.get(item.id)} />),
     },
     // Coluna Account saiu (dono, 18/10/2026): o avatar da conta já vai junto do cliente.
     {
@@ -3904,31 +3877,8 @@ function JobsPageContent() {
                           </div>
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <div className="mt-1 flex flex-col items-start gap-0.5 min-w-0">
-                            {(() => {
-                              // Um rótulo só por job (dono, 22/10/2026), igual à coluna Status da lista.
-                              const unico =
-                                status === "action_required"
-                                  ? rotuloUnicoDoStatus(j, disp, onHoldKanbanBadge != null, motivosPorJob.get(j.id))
-                                  : (j as { card_charge_status?: string | null }).card_charge_status === "refused" ||
-                                      (j as { card_charge_status?: string | null }).card_charge_status === "requires_action"
-                                    ? ({ tipo: "cartao" } as const)
-                                    : disp !== "late" && isJobOverdue(j)
-                                      ? ({ tipo: "atrasado" } as const)
-                                      : ({ tipo: "status" } as const);
-                              return (
-                                <div className="flex flex-wrap items-center gap-1 min-w-0">
-                                  {unico.tipo === "cartao" ? (
-                                    <JobCardRefusedBadge job={j} />
-                                  ) : unico.tipo === "motivo" ? (
-                                    <MotivoChips chips={[unico.chip]} />
-                                  ) : unico.tipo === "atrasado" ? (
-                                    <JobOverdueBadge job={j} />
-                                  ) : (
-                                    <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
-                                  )}
-                                </div>
-                              );
-                            })()}
+                            <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
+                            <JobAlerts job={j} motivos={motivosPorJob.get(j.id)} />
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
                             ) : null}
@@ -5842,29 +5792,26 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
   return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
 }
 
-type RotuloUnico =
-  | { tipo: "status" }
-  | { tipo: "cartao" }
-  | { tipo: "motivo"; chip: ChipDeMotivo }
-  | { tipo: "atrasado" };
-
 /**
- * Qual rótulo a coluna Status mostra na Action Required: um só (dono, 22/10/2026).
- * On hold / Complaint ganha de tudo; depois cartão recusado; depois o primeiro motivo
- * aberto (já vem na ordem de MOTIVOS); depois Overdue (Late já diz isso); senão o status.
+ * Coluna Alerts (dono, 24/10/2026): o que pede atenção no job sem mudar a aba dele.
+ * Um chip só por célula, nunca dois: o mais urgente ganha e o resto vai no hover.
+ * Date TBC e atraso (Late) já aparecem na coluna Schedule e não repetem aqui.
+ * Ordem: cartão recusado, depois os motivos abertos na ordem de MOTIVOS.
  */
-function rotuloUnicoDoStatus(
-  job: Job,
-  statusEfetivo: string,
-  temOnHold: boolean,
-  motivos: ChipDeMotivo[] | undefined,
-): RotuloUnico {
-  if (temOnHold) return { tipo: "status" };
+function JobAlerts({ job, motivos }: { job: Job; motivos: ChipDeMotivo[] | undefined }) {
   const cartao = (job as { card_charge_status?: string | null }).card_charge_status;
-  if (cartao === "refused" || cartao === "requires_action") return { tipo: "cartao" };
-  if (motivos?.length) return { tipo: "motivo", chip: motivos[0] };
-  if (statusEfetivo !== "late" && isJobOverdue(job)) return { tipo: "atrasado" };
-  return { tipo: "status" };
+  const temCartao = cartao === "refused" || cartao === "requires_action";
+  const chips = (motivos ?? []).filter(
+    (m) => m.motivo !== "date_tbc" && !(temCartao && (m.motivo === "card_declined" || m.motivo === "payment_unsuccessful")),
+  );
+  if (!temCartao && chips.length === 0) return null;
+  const resto = (temCartao ? chips : chips.slice(1)).map((m) => m.rotulo);
+  return (
+    <div className="inline-flex items-center" title={resto.length ? `Also: ${resto.join(" · ")}` : undefined}>
+      {temCartao ? <JobCardRefusedBadge job={job} /> : <MotivoChips chips={[chips[0]]} />}
+      {resto.length ? <span className="ml-1 text-[10px] tabular-nums text-text-tertiary">+{resto.length}</span> : null}
+    </div>
+  );
 }
 
 /** Os motivos abertos do job (job_attention_reasons), um chip por motivo. Sem motivo, nada. */

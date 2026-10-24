@@ -1,5 +1,4 @@
 import { applyJobsScheduleRangeToQuery, getSupabase, queryList, type ListParams, type ListResult } from "./base";
-import { idsSegurosParaFiltro, lerMotivosAbertos, motivoPoeNaFila } from "@/lib/pendencias/chips";
 import { limparScope } from "@/lib/scope-limpo";
 import { jobCustomerTotal } from "@/lib/job-financials";
 import { jobScheduleStartInYmdRange } from "@/lib/job-period-overlap";
@@ -278,40 +277,22 @@ export function jobsManagementClosedBucketLabel(bucket: JobsManagementClosedBuck
 export function jobRowMatchesJobsManagementTab(
   job: Pick<Job, "status" | "partner_id" | "partner_ids">,
   tabId: string,
-  /** Action Required: the job has an open reason in `job_attention_reasons` (e.g. Date TBC with a partner). */
-  opts?: { temMotivoAberto?: boolean },
 ): boolean {
   if (tabId === "all") {
     return jobMatchesJobsManagementTab(job.status, tabId);
   }
-  if (tabId === "action_required" && motivoPoeNaFila(job, Boolean(opts?.temMotivoAberto))) return true;
   if (jobIsBookedPipelineWithoutPartner(job)) {
     return tabId === "unassigned" || tabId === "action_required";
   }
+  /**
+   * Action Required = trabalho parado: sem parceiro ou em espera (dono, 24/10/2026).
+   * Motivo aberto (Report Incomplete, Deposit Pending, Date TBC...) NÃO puxa o job
+   * para cá: ele fica na aba da etapa e o motivo aparece na coluna Alerts.
+   */
   if (tabId === "action_required") {
     return jobRowMatchesJobsManagementTab(job, "unassigned") || job.status === "on_hold";
   }
   return jobMatchesJobsManagementTab(job.status, tabId);
-}
-
-/**
- * Jobs that are in Action Required only because of an open reason (not already
- * there by status), under the same date window as the list. Read-only; empty
- * table = 0, the tab badge stays as before.
- */
-export async function countActionRequiredJobsByOpenReason(scheduleRange?: { from: string; to: string } | null): Promise<number> {
-  const supabase = getSupabase();
-  const ids = idsSegurosParaFiltro((await lerMotivosAbertos(supabase)).map((l) => l.job_id));
-  if (!ids.length) return 0;
-  let q = supabase
-    .from("jobs")
-    .select("id", { count: "exact", head: true })
-    .in("id", ids)
-    .is("deleted_at", null)
-    .not("status", "in", "(completed,cancelled,deleted,unassigned,auto_assigning,on_hold)");
-  if (scheduleRange) q = applyJobsScheduleRangeToQuery(q, scheduleRange);
-  const { count, error } = await q;
-  return error ? 0 : count ?? 0;
 }
 
 /** Action Required through Final checks — excludes Closed (awaiting payment, completed, cancelled, …). */
@@ -533,14 +514,11 @@ async function listJobsOnly(params: ListParams): Promise<ListResult<Job>> {
   }
   if (params.status === "action_required") {
     const { status: _omit, ...rest } = params;
-    // Jobs com motivo aberto (job_attention_reasons) também entram; tabela vazia = como antes.
-    const comMotivo = idsSegurosParaFiltro((await lerMotivosAbertos(getSupabase())).map((l) => l.job_id));
     return queryList<Job>(
       "jobs",
       {
         ...rest,
         jobsActionRequiredTab: true,
-        ...(comMotivo.length ? { jobsActionRequiredExtraIds: comMotivo } : {}),
       },
       {
         searchColumns: ["reference", "title", "client_name", "partner_name", "property_address"],
