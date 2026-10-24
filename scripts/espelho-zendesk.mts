@@ -214,8 +214,9 @@ if (!so) {
     for (const u of users ?? []) nomeDoUsuario.set(u.id, u.name);
   }
 
-  const MAX_TITULOS = 120;
-  let titulos = 0;
+  // Em lote (update_many, 100 por chamada): um PUT por ticket estoura o limite de atualização
+  // do Zendesk (429 "Ticket update API threshold exceeded"), que é da conta inteira.
+  const pendentes: Array<{ id: number; titulo: string }> = [];
   for (const [id, t] of doTitulo) {
     const job = jobDoTicket.get(id);
     const quote = quoteDoTicket.get(id);
@@ -232,16 +233,19 @@ if (!so) {
     });
     const atual = t.custom_fields?.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value ?? null;
     if (!titulo || atual === titulo) continue;
-    if (titulos >= MAX_TITULOS) { somar("title: fica para a próxima passada"); continue; }
-    titulos++;
-    somar(aplicar ? "title gravado" : "title: gravaria");
+    pendentes.push({ id: Number(id), titulo });
     if (detalhe) linhas.push(`#${id} title: ${titulo}`);
+  }
+  for (let i = 0; i < pendentes.length; i += 100) {
+    const lote = pendentes.slice(i, i + 100);
+    somar(aplicar ? "title gravado" : "title: gravaria");
+    conta[aplicar ? "title gravado" : "title: gravaria"] += lote.length - 1;
     if (!aplicar) continue;
     try {
-      await zendeskApi(`tickets/${id}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: TITLE_FIELD_ID, value: titulo }] } } });
+      await zendeskApi("tickets/update_many.json", { method: "PUT", body: { tickets: lote.map((p) => ({ id: p.id, custom_fields: [{ id: TITLE_FIELD_ID, value: p.titulo }] })) } });
     } catch (e) {
       somar("erro");
-      linhas.push(`#${id}: ERRO title ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
+      linhas.push(`title em lote: ERRO ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
     }
   }
 }
