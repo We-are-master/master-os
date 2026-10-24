@@ -6,12 +6,12 @@
  *   status           a etapa do job (ou da quote), com duas etapas de dinheiro novas:
  *                    💳 Deposit Pending (cotação aceita esperando a entrada) e
  *                    ⚠️ Payment Failed (cartão recusado ou pedindo o banco)
- *   Action Required  SÓ cobrança que falhou (cartão recusado ou pedindo o banco, na
- *                    entrada ou no saldo). O Action Required do Zendesk NÃO é a aba do
- *                    OS (dono, 23/10/2026): Unassigned, On hold e os outros motivos
- *                    ficam no Jobs do OS, e o resto do campo é do Harvey (lances,
- *                    perguntas, revisão). O espelho só liga por pagamento e só desliga
- *                    o que ele mesmo ligou (ticket saindo de ⚠️ Payment Failed).
+ *   Action Required  o espelho NÃO liga mais (dono, 24/10/2026). O Action Required do
+ *                    Zendesk é a fila de conversa (responder, Harvey, New/Open, No bids,
+ *                    Ready to send); ⚠️ Payment failed é status e mora na view
+ *                    💷 Awaiting payment. O campo é do Harvey (lances, perguntas,
+ *                    revisão). O espelho só desliga o que ligava antes: ticket em
+ *                    ⚠️ Payment failed ou saindo dele.
  *   dono             por papel, nunca por pessoa: vendas até virar job, operacao do job
  *                    e da reclamação, financeiro da cobrança. Só troca quando o ticket
  *                    MUDA de papel: quem assumiu à mão dentro da mesma etapa continua.
@@ -23,7 +23,7 @@
  * Este arquivo é a parte pura (decide). Quem lê e escreve é `zendesk-status-sync.ts`.
  */
 import type { JobStatus, QuoteStatus } from "@/types/database";
-import { ROTULO_DO_MOTIVO, type Motivo } from "@/lib/pendencias/motivos";
+import type { Motivo } from "@/lib/pendencias/motivos";
 import type { PapelDaEquipe } from "@/lib/responsavel-operacao";
 import {
   ZD_STATUS_AUTO_ASSIGNING,
@@ -92,8 +92,9 @@ export function statusDaEtapa(status: JobStatus): number | null {
     case "unassigned": return ZD_STATUS_UNASSIGNED;
     case "auto_assigning": return ZD_STATUS_AUTO_ASSIGNING;
     case "scheduled":
-    case "late":
-    case "need_attention": return ZD_STATUS_SCHEDULED;
+    case "late": return ZD_STATUS_SCHEDULED;
+    // O OS mostra Need attention como "Final review" e põe na aba Final review (dono, 24/10/2026).
+    case "need_attention": return ZD_STATUS_FINAL_CHECKS;
     case "in_progress": return ZD_STATUS_IN_PROGRESS;
     case "final_check": return ZD_STATUS_FINAL_CHECKS;
     case "awaiting_payment": return ZD_STATUS_AWAITING_PAYMENT;
@@ -137,11 +138,7 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   else if (j.esperandoEntrada) customStatusId = ZD_STATUS_DEPOSIT_PENDING;
   else if (j.status === "on_hold" && j.reclamacao) customStatusId = ZD_STATUS_COMPLAINT;
 
-  const cartao = j.motivos.filter((m) => CARTAO.has(m));
-  const actionRequired = cartao.length > 0 ? true : null;
-  const proximaAcao = cartao.length > 0 ? `${cartao.map((m) => ROTULO_DO_MOTIVO[m]).join(" · ")}: chase the payment (see the job in the OS)` : null;
-
-  return { customStatusId, actionRequired, proximaAcao, papel: papelDoStatus(customStatusId) };
+  return { customStatusId, actionRequired: null, proximaAcao: null, papel: papelDoStatus(customStatusId) };
 }
 
 /** A marca que o Harvey grava na quote quando passam 24h em Bidding sem lance. */
@@ -207,9 +204,10 @@ export function mudancasNoTicket(alvo: Espelho, atual: TicketAtual, donoDoPapel:
   }
   const ligado = atual.actionRequired === "action_required_yes";
   if (alvo.actionRequired === true && !ligado) m.actionRequired = true;
-  // Desliga só o que ele ligou: o ticket estava em Payment Failed e a cobrança se resolveu.
-  const saiuDoPaymentFailed = atual.customStatusId === ZD_STATUS_PAYMENT_FAILED && alvo.customStatusId !== ZD_STATUS_PAYMENT_FAILED;
-  if (alvo.actionRequired == null && ligado && saiuDoPaymentFailed) m.actionRequired = false;
+  // Desliga só o que ele ligava até 24/10/2026: ticket em Payment failed ou saindo dele.
+  // Payment failed agora mora na view 💷 Awaiting payment; o campo ligado o prenderia na fila de conversa.
+  const tocaPaymentFailed = atual.customStatusId === ZD_STATUS_PAYMENT_FAILED || alvo.customStatusId === ZD_STATUS_PAYMENT_FAILED;
+  if (alvo.actionRequired == null && ligado && tocaPaymentFailed) m.actionRequired = false;
   return m;
 }
 

@@ -28,11 +28,21 @@ test("reclamação: On hold vira 🚨 Complaint", () => {
   assert.equal(espelhoDoJob({ ...base, status: "on_hold", reclamacao: true })!.customStatusId, ZD_STATUS_COMPLAINT);
 });
 
-test("cartão recusado: ⚠️ Payment Failed, Action Required, dono financeiro", () => {
+test("cartão recusado: ⚠️ Payment failed, dono financeiro, sem ligar o Action Required", () => {
   const e = espelhoDoJob({ ...base, status: "awaiting_payment", motivos: ["card_declined"] as never[] })!;
   assert.equal(e.customStatusId, ZD_STATUS_PAYMENT_FAILED);
-  assert.equal(e.actionRequired, true);
+  assert.equal(e.actionRequired, null);
   assert.equal(e.papel, "financeiro");
+});
+
+test("Payment failed com o campo ligado de antes: o espelho desliga", () => {
+  const e = espelhoDoJob({ ...base, status: "awaiting_payment", motivos: ["card_declined"] as never[] })!;
+  const m = mudancasNoTicket(e, { status: "open", customStatusId: ZD_STATUS_PAYMENT_FAILED, assigneeId: VICTOR, actionRequired: "action_required_yes" }, dono);
+  assert.equal(m.actionRequired, false);
+});
+
+test("Need attention vira 🟣 Final review no Zendesk, igual à aba do OS", () => {
+  assert.equal(espelhoDoJob({ ...base, status: "need_attention" })!.customStatusId, ZD_STATUS_FINAL_CHECKS);
 });
 
 test("cotação aceita esperando a entrada: 💳 Deposit Pending, dono vendas", () => {

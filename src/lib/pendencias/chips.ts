@@ -9,9 +9,6 @@ import { MOTIVOS, ROTULO_DO_MOTIVO, type Motivo } from "./motivos";
 export type ChipDeMotivo = { motivo: Motivo; rotulo: string };
 export type LinhaDeMotivo = { job_id: string; reason: string };
 
-/** Status em que motivo aberto não puxa o job para a fila (o cálculo também não abre). */
-const ENCERRADOS = new Set(["completed", "cancelled", "deleted"]);
-
 /** job_id → chips na ordem de MOTIVOS, sem repetir; motivo desconhecido é ignorado. */
 export function chipsPorJob(linhas: readonly LinhaDeMotivo[]): Map<string, ChipDeMotivo[]> {
   const porJob = new Map<string, Set<Motivo>>();
@@ -24,11 +21,6 @@ export function chipsPorJob(linhas: readonly LinhaDeMotivo[]): Map<string, ChipD
   const out = new Map<string, ChipDeMotivo[]>();
   for (const [job, s] of porJob) out.set(job, MOTIVOS.filter((m) => s.has(m)).map((motivo) => ({ motivo, rotulo: ROTULO_DO_MOTIVO[motivo] })));
   return out;
-}
-
-/** Um motivo aberto põe o job na aba, além do filtro de sempre, desde que ele não esteja encerrado. */
-export function motivoPoeNaFila(job: { status: string }, temMotivoAberto: boolean): boolean {
-  return temMotivoAberto && !ENCERRADOS.has(job.status);
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

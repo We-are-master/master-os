@@ -23,6 +23,7 @@ export type JobPaymentState =
   | "paid"
   | "partial"
   | "unpaid"
+  | "deposit_pending"
   | "overdue"
   | "card_declined"
   | "card_failed"
@@ -32,6 +33,7 @@ export const JOB_PAYMENT_LABEL: Record<JobPaymentState, string> = {
   paid: "Paid",
   partial: "Part paid",
   unpaid: "Unpaid",
+  deposit_pending: "Deposit pending",
   overdue: "Overdue",
   card_declined: "Retry scheduled",
   card_failed: "Payment failed",
@@ -46,11 +48,17 @@ export type JobPaymentInput = {
   card_retry_at?: string | null;
 };
 
-export function jobPaymentState(job: JobPaymentInput, overdueInvoiceIds: ReadonlySet<string>): JobPaymentState {
+/**
+ * `depositPending`: o job tem o motivo Deposit Pending aberto (a entrada combinada na
+ * criação ainda não entrou). Mora aqui, na coluna Payment, e não em coluna própria
+ * (dono, 24/10/2026). Perde só para o cartão: é o motivo mais específico.
+ */
+export function jobPaymentState(job: JobPaymentInput, overdueInvoiceIds: ReadonlySet<string>, opts?: { depositPending?: boolean }): JobPaymentState {
   const status = job.finance_status ?? job.payment_status ?? "unpaid";
   if (status === "paid") return "paid";
   if (job.card_charge_status === "refused") return job.card_retry_at ? "card_declined" : "card_failed";
   if (job.card_charge_status === "requires_action") return "bank_check";
+  if (opts?.depositPending) return "deposit_pending";
   if (job.invoice_id && overdueInvoiceIds.has(job.invoice_id)) return "overdue";
   return status === "partial" ? "partial" : "unpaid";
 }
@@ -88,6 +96,7 @@ export const JOB_PAYMENT_TOOLTIP: Record<JobPaymentState, string> = {
   paid: "Payment received in full.",
   partial: "Part payment received. The remaining balance is not yet overdue.",
   unpaid: "No payment received. Payment is not yet overdue.",
+  deposit_pending: "The deposit agreed for this job has not been received yet.",
   overdue: "An outstanding balance is past its due date.",
   card_declined: "Payment was unsuccessful. Another attempt is scheduled.",
   card_failed: "Payment was unsuccessful. Follow up to arrange payment.",

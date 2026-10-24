@@ -9,7 +9,7 @@ import { chaveDoB2bCotar, pedeCotacaoPelaMacro, varrerB2bCotar, type Dependencia
 import { chaveDasBoasVindas, decidirBoasVindas, mandarBoasVindasDoLead, type DependenciasDasBoasVindas, type LeadParaBoasVindas } from "./boas-vindas-lead";
 import { decidirAviso, TAG_AVISO_COTANDO } from "@/lib/zendesk-quoter/aviso-de-cotacao";
 import { notaDaAcao } from "@/lib/fila-de-acao";
-import { chipsPorJob, idsSegurosParaFiltro, motivoPoeNaFila, MAX_IDS_COM_MOTIVO } from "@/lib/pendencias/chips";
+import { chipsPorJob, idsSegurosParaFiltro, MAX_IDS_COM_MOTIVO } from "@/lib/pendencias/chips";
 
 function comV2<T>(fn: () => T): T {
   const antes = process.env.PROCESSOS_V2;
@@ -230,12 +230,6 @@ describe("chips de motivo na aba Action Required", () => {
     assert.equal(m.has("j3"), false);
     assert.equal(chipsPorJob([]).size, 0, "tabela vazia: nenhum chip");
   });
-  it("motivo aberto põe na fila, menos job encerrado", () => {
-    assert.equal(motivoPoeNaFila({ status: "scheduled" }, true), true, "Date TBC com parceiro");
-    assert.equal(motivoPoeNaFila({ status: "scheduled" }, false), false);
-    assert.equal(motivoPoeNaFila({ status: "completed" }, true), false);
-    assert.equal(motivoPoeNaFila({ status: "cancelled" }, true), false);
-  });
   it("ids do filtro: só UUID, sem repetir, com teto", () => {
     const u = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
     assert.deepEqual(idsSegurosParaFiltro([u(1), u(1), "x),status.eq.completed", u(2)]), [u(1), u(2)]);
@@ -243,14 +237,17 @@ describe("chips de motivo na aba Action Required", () => {
   });
 });
 
-describe("aba Action Required com motivo aberto", () => {
-  it("job agendado com parceiro e motivo aberto entra; sem motivo, como antes", async () => {
+describe("aba Action Required: só sem parceiro ou em espera (dono, 24/10/2026)", () => {
+  it("motivo aberto não puxa o job; ele fica na aba da etapa", async () => {
     const { jobRowMatchesJobsManagementTab } = await import("@/services/jobs");
     const agendado = { status: "scheduled", partner_id: "p1", partner_ids: ["p1"] } as never;
-    assert.equal(jobRowMatchesJobsManagementTab(agendado, "action_required"), false);
-    assert.equal(jobRowMatchesJobsManagementTab(agendado, "action_required", { temMotivoAberto: true }), true);
-    assert.equal(jobRowMatchesJobsManagementTab(agendado, "scheduled", { temMotivoAberto: true }), true, "continua na aba dele");
-    assert.equal(jobRowMatchesJobsManagementTab({ status: "completed", partner_id: "p1", partner_ids: [] } as never, "action_required", { temMotivoAberto: true }), false);
+    const finalCheck = { status: "final_check", partner_id: "p1", partner_ids: ["p1"] } as never;
+    assert.equal(jobRowMatchesJobsManagementTab(agendado, "action_required"), false, "Deposit Pending / Date TBC com parceiro: fica em Scheduled");
+    assert.equal(jobRowMatchesJobsManagementTab(agendado, "scheduled"), true);
+    assert.equal(jobRowMatchesJobsManagementTab(finalCheck, "action_required"), false, "Report Incomplete: fica em Final review");
+    assert.equal(jobRowMatchesJobsManagementTab(finalCheck, "final_check"), true);
+    assert.equal(jobRowMatchesJobsManagementTab({ status: "unassigned", partner_id: null, partner_ids: [] } as never, "action_required"), true);
+    assert.equal(jobRowMatchesJobsManagementTab({ status: "scheduled", partner_id: null, partner_ids: [] } as never, "action_required"), true, "agendado sem parceiro");
     assert.equal(jobRowMatchesJobsManagementTab({ status: "on_hold", partner_id: "p1", partner_ids: [] } as never, "action_required"), true);
   });
 });

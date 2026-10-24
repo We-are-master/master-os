@@ -43,11 +43,6 @@ export interface ListParams {
    */
   jobsActionRequiredTab?: boolean;
   /**
-   * Jobs only, with `jobsActionRequiredTab`: jobs with an open row in `job_attention_reasons`
-   * also belong to the tab (unless completed / cancelled / deleted). UUIDs only, capped by the caller.
-   */
-  jobsActionRequiredExtraIds?: string[];
-  /**
    * Jobs only: Closed tab — finished / lost / soft-deleted (`awaiting_payment`, `completed`,
    * `cancelled` with `deleted_at` null, or `deleted` with `deleted_at` set).
    */
@@ -177,9 +172,7 @@ export async function queryList<T>(
     const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
     /** `partner_ids` may be NULL on older rows; treat like empty (no co-assignees). */
     const bookedNoPartner = `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,or(partner_ids.is.null,partner_ids.eq.{}))`;
-    const extra = (params.jobsActionRequiredExtraIds ?? []).filter((id) => /^[0-9a-f-]{36}$/i.test(id));
-    const comMotivo = extra.length ? `,and(id.in.(${extra.join(",")}),status.not.in.(completed,cancelled,deleted))` : "";
-    query = query.or(`status.in.(unassigned,auto_assigning),${bookedNoPartner},status.eq.on_hold${comMotivo}`);
+    query = query.or(`status.in.(unassigned,auto_assigning),${bookedNoPartner},status.eq.on_hold`);
   } else if (table === "jobs" && uTab) {
     const onsites = JOB_ONSITE_PROGRESS_STATUSES.join(",");
     const bookedNoPartner = `and(status.in.(scheduled,late,${onsites}),partner_id.is.null,or(partner_ids.is.null,partner_ids.eq.{}))`;
