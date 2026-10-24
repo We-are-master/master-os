@@ -101,6 +101,9 @@ export function VisitsTab({
   completePrimaryLabel,
   onFinishJob,
   onJobChanged,
+  onEditPrimarySchedule,
+  onChangePrimaryPartner,
+  onEditPrimaryValues,
 }: {
   job: Job;
   /** Called by the tab when changes to visits should trigger a status review on the parent job. */
@@ -123,6 +126,14 @@ export function VisitsTab({
   onFinishJob?: () => void;
   /** O job mudou no servidor (seguiu para a próxima visita): o card recarrega. */
   onJobChanged?: () => void;
+  /**
+   * Editar a visita 1, que é o próprio job (dono, 24/10/2026). Ainda não feita:
+   * "Reschedule & confirm" (data, parceiro, serviço e valores). Já feita: só
+   * trocar o parceiro ou os valores, pelos modais do job, sem mexer na data.
+   */
+  onEditPrimarySchedule?: () => void;
+  onChangePrimaryPartner?: () => void;
+  onEditPrimaryValues?: () => void;
 }) {
   const [visits, setVisits] = useState<JobVisit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -294,9 +305,13 @@ export function VisitsTab({
     onJobChanged?.();
   }
 
-  async function handleCreate(input: CreateJobVisitInput) {
+  async function handleCreate(
+    input: CreateJobVisitInput,
+    notify: { partner: boolean; client: boolean },
+    closePrevious?: boolean,
+  ) {
     try {
-      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input);
+      const { visit: created, partnerNotified, clientNotified, closedVisitIndex, advanced, followed } = await apiCreateJobVisit(input, notify, closePrevious);
       // O carimbo da confirmação sai depois do insert: a linha local já nasce com ele.
       setVisits((rows) => [
         ...rows,
@@ -318,7 +333,7 @@ export function VisitsTab({
         onJobChanged?.();
       }
       avisarJobSeguiu(followed);
-      if (clientNotified && !clientNotified.ok) {
+      if (clientNotified && !clientNotified.ok && clientNotified.skipped !== "not_requested") {
         toast.message(`Client not notified: ${clientNotified.skipped ?? clientNotified.error ?? "unknown"}`);
       }
       onVisitsChanged?.();
@@ -433,6 +448,18 @@ export function VisitsTab({
               notified={jobHasPartner ? "Client and partner got the job confirmation" : null}
               onComplete={!primaryDone && job.status !== "cancelled" && (onCompletePrimary || vivas.length) ? () => void handleCompletePrimary() : undefined}
               completeTitle={completePrimaryLabel ?? "Mark visit 1 done"}
+              editMenu={
+                vivas.length > 0 && job.status !== "cancelled"
+                  ? primaryDone
+                    ? [
+                        ...(onChangePrimaryPartner ? [{ label: "Change partner", onSelect: onChangePrimaryPartner }] : []),
+                        ...(onEditPrimaryValues ? [{ label: "Edit values", onSelect: onEditPrimaryValues }] : []),
+                      ]
+                    : onEditPrimarySchedule
+                      ? [{ label: "Edit visit 1", onSelect: onEditPrimarySchedule }]
+                      : []
+                  : []
+              }
             />
             {vivas.map((v) => (
               <VisitCard
@@ -548,6 +575,14 @@ export function VisitsTab({
           primaryPartner={job.partner_id ? { id: job.partner_id, name: job.partner_name ?? "" } : null}
           jobSlot={{ startAt: job.scheduled_start_at ?? null, endAt: job.scheduled_end_at ?? null }}
           nextIndex={Math.max(1, ...visits.filter((v) => !v.deleted_at).map((v) => v.visit_index)) + 1}
+          previousOpenVisit={(() => {
+            // A anterior que ainda não foi feita: a extra aberta mais recente, ou a visita 1.
+            const aberta = visits
+              .filter((v) => !v.deleted_at && (v.status === "scheduled" || v.status === "in_progress"))
+              .sort((a, b) => b.visit_index - a.visit_index)[0];
+            if (aberta) return { index: aberta.visit_index, date: aberta.scheduled_date ?? null };
+            return primaryDone ? null : { index: 1, date: job.scheduled_date ?? null };
+          })()}
           onClose={() => setEditTarget(null)}
           onCreate={handleCreate}
           onUpdate={handleUpdate}
@@ -566,7 +601,7 @@ function diaCurto(ymd: string | null | undefined): string {
 /** Uma visita = um cartão. Feita fica riscada e apagada, mas fica: é o histórico do job. */
 function VisitCard({
   domId, focused, index, partner, service, date, startAt, endAt, clientPrice, partnerCost,
-  statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle,
+  statusLabel, statusVariant, done, notified, report, onEdit, onDelete, onComplete, completeTitle, editMenu,
 }: {
   domId?: string;
   focused?: boolean;
@@ -594,7 +629,10 @@ function VisitCard({
   onDelete?: () => void;
   onComplete?: () => void;
   completeTitle?: string;
+  /** Lápis com opções (visita 1): uma opção abre direto, mais de uma vira menu. */
+  editMenu?: { label: string; onSelect: () => void }[];
 }) {
+  const [menuAberto, setMenuAberto] = useState(false);
   const janela = startAt && endAt ? formatArrivalTimeRange(startAt, endAt) : startAt ? startAt.slice(11, 16) : null;
   useEffect(() => {
     if (!focused || !domId) return;
@@ -684,6 +722,38 @@ function VisitCard({
             className="text-text-tertiary transition-colors hover:text-text-primary">
             <Pencil className="h-3.5 w-3.5" />
           </button>
+        ) : editMenu && editMenu.length > 0 ? (
+          <span className="relative">
+            <button
+              type="button"
+              title={editMenu.length === 1 ? editMenu[0]!.label : "Edit visit"}
+              aria-label="Edit visit"
+              aria-haspopup={editMenu.length > 1 ? "menu" : undefined}
+              aria-expanded={editMenu.length > 1 ? menuAberto : undefined}
+              onClick={() => (editMenu.length === 1 ? editMenu[0]!.onSelect() : setMenuAberto((v) => !v))}
+              className="text-text-tertiary transition-colors hover:text-text-primary"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+            {menuAberto && editMenu.length > 1 ? (
+              <>
+                <span className="fixed inset-0 z-40" onClick={() => setMenuAberto(false)} aria-hidden />
+                <span role="menu" className="absolute right-0 top-5 z-50 flex min-w-[9.5rem] flex-col rounded-lg border border-border-light bg-card p-1 shadow-lg">
+                  {editMenu.map((o) => (
+                    <button
+                      key={o.label}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setMenuAberto(false); o.onSelect(); }}
+                      className="rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium text-text-primary hover:bg-surface-hover"
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </span>
+              </>
+            ) : null}
+          </span>
         ) : null}
         {onDelete ? (
           <button type="button" onClick={onDelete} title="Remove visit" aria-label="Remove visit"
@@ -740,7 +810,7 @@ function VisitEditModal({
   parentCatalogServiceId,
   parentCatalogPricingPresetId,
   primaryPartner, jobSlot, nextIndex,
-  onClose, onCreate, onUpdate,
+  onClose, onCreate, onUpdate, previousOpenVisit,
 }: {
   target: NonNullable<EditTarget>;
   jobId: string;
@@ -753,9 +823,17 @@ function VisitEditModal({
   jobSlot: { startAt: string | null; endAt: string | null };
   nextIndex: number;
   onClose: () => void;
-  onCreate: (input: CreateJobVisitInput) => void;
+  onCreate: (input: CreateJobVisitInput, notify: { partner: boolean; client: boolean }, closePrevious?: boolean) => void;
   onUpdate: (id: string, patch: Partial<JobVisit>) => void;
+  /** Visita anterior ainda não feita: o modal pergunta se já foi (dono, 24/10/2026). */
+  previousOpenVisit?: { index: number; date: string | null } | null;
 }) {
+  const perguntaAnterior = target.mode === "create" && previousOpenVisit ? previousOpenVisit : null;
+  /** "" = ainda não respondeu; sim = marca Done ao criar; não = as duas ficam vivas. */
+  const [anteriorFeita, setAnteriorFeita] = useState<"" | "yes" | "no">("");
+  /** Quem recebe o e-mail no ticket do job. Vem marcado; desmarcado = não envia (dono, 24/10/2026). */
+  const [notifyPartner, setNotifyPartner] = useState(true);
+  const [notifyClient, setNotifyClient] = useState(true);
   const [form, setForm] = useState<FormState>(() => {
     if (target.mode === "edit") {
       const v = target.visit;
@@ -862,6 +940,10 @@ function VisitEditModal({
       toast.error("Set a scheduled date for the visit");
       return;
     }
+    if (perguntaAnterior && !anteriorFeita) {
+      toast.error(`Say if visit ${perguntaAnterior.index} is already done`);
+      return;
+    }
     if (!form.rate_type) {
       toast.error("Choose how this visit is charged: Hourly or Fixed");
       return;
@@ -922,7 +1004,11 @@ function VisitEditModal({
       if (target.mode === "edit") {
         onUpdate(target.visit.id, payload);
       } else {
-        onCreate(payload);
+        onCreate(
+          payload,
+          { partner: notifyPartner && !!payload.partner_id, client: notifyClient },
+          perguntaAnterior ? anteriorFeita === "yes" : undefined,
+        );
       }
     } finally {
       setSaving(false);
@@ -974,42 +1060,38 @@ function VisitEditModal({
           </div>
         </section>
 
-        <section className={BLOCO}>
-          <p className={SECAO}>Who and what</p>
-          <div>
-            <label className={ROTULO}>Partner</label>
-            <select
-              className={CAMPO}
-              value={form.partner_id}
-              onChange={(e) => pickPartner(e.target.value)}
-            >
-              <option value="">No partner yet</option>
-              {parceirosOrdenados.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {nomeDoParceiro(p)}
-                  {p.id === primaryPartner?.id ? " (visit 1)" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-          <ServiceCatalogSelect
-            label="Service"
-            catalog={catalog}
-            value={form.catalog_service_id}
-            onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
-            compactOptionLabels
-          />
-          <div>
-            <label className={ROTULO}>Scope for the partner (in English)</label>
-            <textarea
-              value={form.scope}
-              onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
-              rows={3}
-              className={cn(CAMPO, "h-auto resize-y py-2 leading-snug")}
-              placeholder="What the partner does on this visit. They see this."
-            />
-          </div>
-        </section>
+        {perguntaAnterior ? (
+          <section className={BLOCO}>
+            <p className={SECAO}>
+              Is visit {perguntaAnterior.index} done?
+              {perguntaAnterior.date ? ` · ${diaCurto(perguntaAnterior.date)}` : ""}
+            </p>
+            <div role="radiogroup" aria-label={`Is visit ${perguntaAnterior.index} done`} className="grid grid-cols-2 gap-2">
+              {([
+                { v: "yes", titulo: "Yes, it's done", texto: `Visit ${perguntaAnterior.index} is marked Done now.` },
+                { v: "no", titulo: "No, not yet", texto: "Both visits stay open." },
+              ] as const).map((o) => {
+                const ativo = anteriorFeita === o.v;
+                return (
+                  <button
+                    key={o.v}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    onClick={() => setAnteriorFeita(o.v)}
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                      ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                    )}
+                  >
+                    <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                    <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         <section className={BLOCO}>
           <p className={SECAO}>How is this visit charged?</p>
@@ -1132,18 +1214,95 @@ function VisitEditModal({
         </section>
         ) : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <p className="m-0 max-w-[18rem] text-[11px] leading-snug text-text-tertiary">
-            {target.mode === "create" ? "The partner gets the job by email on the job's ticket. The client gets a confirmation there too." : ""}
-          </p>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing)}>
-              {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
-            </Button>
+        <section className={BLOCO}>
+          <p className={SECAO}>Who and what</p>
+          <div>
+            <label className={ROTULO}>Partner</label>
+            <select
+              className={CAMPO}
+              value={form.partner_id}
+              onChange={(e) => pickPartner(e.target.value)}
+            >
+              <option value="">No partner yet</option>
+              {parceirosOrdenados.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {nomeDoParceiro(p)}
+                  {p.id === primaryPartner?.id ? " (visit 1)" : ""}
+                </option>
+              ))}
+            </select>
           </div>
+          <ServiceCatalogSelect
+            label="Service"
+            catalog={catalog}
+            value={form.catalog_service_id}
+            onChange={(id) => setForm((p) => ({ ...p, catalog_service_id: id }))}
+            nameOnlyLabels
+          />
+          <div>
+            <label className={ROTULO}>Scope for the partner (in English)</label>
+            <textarea
+              value={form.scope}
+              onChange={(e) => setForm((p) => ({ ...p, scope: e.target.value }))}
+              rows={3}
+              className={cn(CAMPO, "h-auto resize-y py-2 leading-snug")}
+              placeholder="What the partner does on this visit. They see this."
+            />
+          </div>
+        </section>
+
+        {target.mode === "create" ? (
+          <section className={BLOCO}>
+            <p className={SECAO}>Send on the job&apos;s ticket</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {([
+                {
+                  ativo: notifyPartner && !!form.partner_id,
+                  set: setNotifyPartner,
+                  titulo: "Email the partner",
+                  texto: form.partner_id ? "Job details for this visit." : "Pick a partner first.",
+                  desligado: !form.partner_id,
+                },
+                {
+                  ativo: notifyClient,
+                  set: setNotifyClient,
+                  titulo: "Email the client",
+                  texto: "Confirmation with the date and time.",
+                  desligado: false,
+                },
+              ]).map((o) => (
+                <label
+                  key={o.titulo}
+                  className={cn(
+                    "flex items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
+                    o.desligado ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+                    o.ativo ? "border-primary bg-primary/5" : "border-border-light bg-surface hover:border-text-tertiary",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                    checked={o.ativo}
+                    disabled={o.desligado}
+                    onChange={(e) => o.set(e.target.checked)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold text-text-primary">{o.titulo}</span>
+                    <span className="block text-[11px] leading-snug text-text-tertiary">{o.texto}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <div className="-mx-1 flex items-center justify-end gap-2 border-t border-border-light px-1 pt-3">
+          <Button type="button" variant="outline" size="sm" icon={<X className="h-3.5 w-3.5" />} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" icon={<Save className="h-3.5 w-3.5" />} disabled={saving || !form.rate_type || (form.rate_type === "fixed" && !form.billing) || (!!perguntaAnterior && !anteriorFeita)}>
+            {saving ? "Saving…" : target.mode === "edit" ? "Save changes" : `Book visit ${nextIndex}`}
+          </Button>
         </div>
       </form>
     </Modal>

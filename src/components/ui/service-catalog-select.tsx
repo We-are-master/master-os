@@ -14,6 +14,8 @@ type Props = {
    * Same values/onChange — display only.
    */
   compactOptionLabels?: boolean;
+  /** Só o nome do serviço, sem preço: no modal de visita o preço sai do Hourly/Fixed logo acima. */
+  nameOnlyLabels?: boolean;
   catalog: CatalogService[];
   value: string;
   onChange: (catalogId: string, service: CatalogService | null) => void;
@@ -39,6 +41,7 @@ export function ServiceCatalogSelect({
   label = "From catalog (optional)",
   emptyOptionLabel = "Custom only (no template)",
   compactOptionLabels = false,
+  nameOnlyLabels = false,
   catalog,
   value,
   onChange,
@@ -60,7 +63,7 @@ export function ServiceCatalogSelect({
         { value: "", label: emptyOptionLabel },
         ...catalog.map((c) => ({
           value: c.id,
-          label: optionLabelForCatalog(c, compactOptionLabels),
+          label: nameOnlyLabels ? c.name : optionLabelForCatalog(c, compactOptionLabels),
         })),
       ]}
     />

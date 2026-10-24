@@ -38,7 +38,17 @@ const WRITABLE = [
  *  deixava a linha pagável na hora e com `completed_at` nulo para sempre. */
 const WRITABLE_ON_CREATE = WRITABLE.filter((k) => k !== "status");
 
-type VisitBody = Partial<Record<(typeof WRITABLE)[number], unknown>> & { visitId?: string };
+type VisitBody = Partial<Record<(typeof WRITABLE)[number], unknown>> & {
+  visitId?: string;
+  /** Só na criação: false = não manda o e-mail (o modal deixa desmarcar). Ausente = manda. */
+  notify_partner?: boolean;
+  notify_client?: boolean;
+  /**
+   * Só na criação: a visita anterior já foi feita? true = marca Done agora; false = as
+   * duas ficam vivas (dono, 24/10/2026). Ausente = regra antiga (fecha a que está em campo).
+   */
+  close_previous?: boolean;
+};
 
 /**
  * Visitas de um job.
@@ -213,17 +223,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       // Confirmação de trabalho para o parceiro DESTA visita. Não derruba a
       // criação: visita registrada com email falhando é recuperável, o inverso
       // não — o botão de reenviar existe no card.
-      const notified = created.partner_id
-        ? await notifyVisitPartner(supabase, jobId, created.id).catch((e) => ({
-            ok: false,
-            error: e instanceof Error ? e.message : "notify failed",
-          }))
-        : { ok: false, skipped: "no_partner" as const };
-      // E o cliente: a visita nova vai no mesmo ticket do job (dono, 19/10/2026).
-      const clientNotified = await avisarClienteDaVisita(jobId, created.id, supabase).catch((e) => ({
-        ok: false as const,
-        error: e instanceof Error ? e.message : "client notify failed",
-      }));
+      const notified = body.notify_partner === false
+        ? { ok: false, skipped: "not_requested" as const }
+        : created.partner_id
+          ? await notifyVisitPartner(supabase, jobId, created.id).catch((e) => ({
+              ok: false,
+              error: e instanceof Error ? e.message : "notify failed",
+            }))
+          : { ok: false, skipped: "no_partner" as const };
+      // E o cliente: a visita nova vai no mesmo ticket do job (dono, 19/10/2026),
+      // a não ser que o operador desmarque no modal (24/10/2026).
+      const clientNotified = body.notify_client === false
+        ? { ok: false as const, skipped: "not_requested" }
+        : await avisarClienteDaVisita(jobId, created.id, supabase).catch((e) => ({
+            ok: false as const,
+            error: e instanceof Error ? e.message : "client notify failed",
+          }));
 
       /**
        * Self-bill do parceiro desta visita nasce junto com ela.
@@ -256,9 +271,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
        */
       let advanced: Awaited<ReturnType<typeof avancarVisitas>> | null = null;
       let closedVisitIndex: number | null = null;
-      const extrasEmAndamento = visitasAntes.filter((v) => v.status === "in_progress");
       const jobEmAndamento = job.status === "in_progress" || job.status === "late";
-      if (jobEmAndamento || extrasEmAndamento.length) {
+      // O operador respondeu no modal: true fecha a anterior (a extra aberta mais recente,
+      // ou a visita 1 se ainda não foi feita), false não fecha nada.
+      const anteriorAberta = [...visitasAntes]
+        .filter((v) => v.status === "in_progress" || v.status === "scheduled")
+        .sort((a, b) => b.visit_index - a.visit_index)[0];
+      const extrasEmAndamento =
+        body.close_previous === true
+          ? anteriorAberta ? [anteriorAberta] : []
+          : visitasAntes.filter((v) => v.status === "in_progress");
+      const deveFechar =
+        body.close_previous === true
+          ? Boolean(anteriorAberta) || !job.primary_visit_done
+          : body.close_previous === false
+            ? false
+            : jobEmAndamento || extrasEmAndamento.length > 0;
+      if (deveFechar) {
         try {
           const agora = new Date().toISOString();
           for (const v of extrasEmAndamento) {
