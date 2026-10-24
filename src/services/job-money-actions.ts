@@ -2,6 +2,8 @@ import type { Job, JobPayment, JobPaymentMethod } from "@/types/database";
 import { getSupabase } from "./base";
 import { getJob, updateJob } from "./jobs";
 import { createJobPayment } from "./job-payments";
+import { listInvoicesLinkedToJob } from "./invoices";
+import { faturaUnicaDoJob } from "@/lib/fatura-unica-pagamentos";
 import { applyCustomerExtraPatch, applyPartnerExtraPatch, reverseCustomerExtraPatch, reversePartnerExtraPatch } from "@/lib/job-extra-charges";
 import { sumPartnerRecordedPayoutsForCap } from "@/lib/job-payment-ledger";
 import { reconcileJobCustomerPaymentFlags } from "@/lib/reconcile-job-customer-flags";
@@ -179,6 +181,15 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
 
     const applyAs = clientPayApplyAs ?? (depRem > 0.02 ? "deposit" : "final");
     const paymentNote = composeLedgerNote(paymentLedgerLabel, noteTrim);
+    /** Vincula à fatura única do job; com sinal e saldo em faturas separadas fica sem vínculo e o sync reparte. */
+    let linkedInvoiceId: string | undefined;
+    if (job.reference?.trim()) {
+      try {
+        linkedInvoiceId = faturaUnicaDoJob(await listInvoicesLinkedToJob(job.reference, job.invoice_id))?.id;
+      } catch {
+        linkedInvoiceId = undefined;
+      }
+    }
 
     if (applyAs === "deposit") {
       if (depRem <= 0.02) {
@@ -195,6 +206,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         note: paymentNote,
         payment_method: method,
         bank_reference: bankTrim || undefined,
+        linked_invoice_id: linkedInvoiceId,
       });
     } else {
       await createJobPayment({
@@ -205,6 +217,7 @@ export async function executeJobMoneyAction(input: ExecuteJobMoneyActionInput): 
         note: paymentNote,
         payment_method: method,
         bank_reference: bankTrim || undefined,
+        linked_invoice_id: linkedInvoiceId,
       });
     }
     const fresh = await getJob(jobId);

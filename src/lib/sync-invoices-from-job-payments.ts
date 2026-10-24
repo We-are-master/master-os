@@ -9,6 +9,7 @@ import { isSupabaseMissingColumnError, isJobPaymentsDeletedAtMissing } from "@/l
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import { jobCustomerBillableRevenueForCollections, jobCustomerTotal } from "@/lib/job-financials";
 import { syncPaymentPlanFromAmountPaid } from "@/services/invoice-payment-plan";
+import { faturaUnicaDoJob, pagoNaFaturaUnica, type PagamentoDoJob } from "@/lib/fatura-unica-pagamentos";
 
 const EPS = 0.02;
 
@@ -199,10 +200,49 @@ function applyOpts(inv: Invoice) {
   return { preserveCollectionStage: !!inv.collection_stage_locked };
 }
 
-async function syncSingleJobInvoice(client: SupabaseClient, inv: Invoice, job: Job): Promise<void> {
+/** Pagamentos de cliente do job com o vínculo de fatura (para somar os sem vínculo na fatura única). */
+async function customerPaymentsOfJob(client: SupabaseClient, jobId: string): Promise<(PagamentoDoJob & { payment_date?: string })[] | null> {
+  const first = await client
+    .from("job_payments")
+    .select("type, amount, payment_date, note, linked_invoice_id")
+    .eq("job_id", jobId)
+    .in("type", ["customer_deposit", "customer_final"])
+    .is("deleted_at", null);
+  if (first.error) return null;
+  return ((first.data ?? []) as (PagamentoDoJob & { payment_date?: string; note?: string | null })[]).filter(
+    (r) => !isLegacyMisclassifiedCustomerPayment(r),
+  );
+}
+
+async function syncSingleJobInvoice(
+  client: SupabaseClient,
+  inv: Invoice,
+  job: Job,
+  ctx?: { faturaUnica?: boolean },
+): Promise<void> {
   const opts = applyOpts(inv);
   const linkedSum = await sumLinkedCustomerPayments(client, inv.id);
   const amt = Number(inv.amount ?? 0);
+
+  /**
+   * Fatura única do job com parte dos pagamentos vinculados: soma também os do job sem
+   * vínculo (o "Record payment received" da tela não vinculava). Sem isso a fatura parava
+   * no que estava vinculado (JOB-9708, 24/10/2026).
+   */
+  if (linkedSum > EPS && ctx?.faturaUnica) {
+    const pagos = await customerPaymentsOfJob(client, job.id);
+    if (pagos) {
+      const allocated = Math.min(pagoNaFaturaUnica(pagos, inv.id), amt);
+      let latest: string | null = null;
+      for (const p of pagos) {
+        if (p.linked_invoice_id && p.linked_invoice_id !== inv.id) continue;
+        const d = p.payment_date?.slice(0, 10);
+        if (d && (!latest || d > latest)) latest = d;
+      }
+      await applyInvoicePaymentUpdates(client, inv, job, allocated, latest, opts);
+      return;
+    }
+  }
 
   if (linkedSum > EPS) {
     const allocated = Math.min(linkedSum, amt);
@@ -365,13 +405,14 @@ export async function syncInvoicesFromJobCustomerPayments(client: SupabaseClient
   });
   if (!unique.length) return;
 
+  const unica = faturaUnicaDoJob(unique);
   for (const inv of unique) {
     if (inv.status === "cancelled") continue;
 
     if (inv.invoice_kind === "weekly_batch") {
       await syncWeeklyBatchInvoice(client, inv, job);
     } else {
-      await syncSingleJobInvoice(client, inv, job);
+      await syncSingleJobInvoice(client, inv, job, { faturaUnica: unica?.id === inv.id });
     }
   }
 }
