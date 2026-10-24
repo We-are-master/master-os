@@ -3292,7 +3292,7 @@ function PartnerBidMiniDash({
   );
 }
 
-/** Quote funnel — New → Bids → Quote Ready → Approval → Payment (`in_survey` treats as Bidding step). */
+/** Quote funnel — New → Sourcing → Ready to send → Awaiting approval → Awaiting deposit (`in_survey` counts as Sourcing). */
 const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; hint?: string; short: string; icon: typeof ClipboardList }[] = [
   { id: "draft", label: "Drafts", hint: "Quotes being prepared before partner sourcing or customer review.", short: "Draft", icon: ClipboardList },
   { id: "bidding", label: "Sourcing", hint: "Quotes in partner bidding or survey stages.", short: "Sourcing", icon: Gavel },
@@ -3301,7 +3301,7 @@ const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; hint?: string
   { id: "awaiting_payment", label: "Awaiting deposit", hint: "Accepted quotes waiting for the customer deposit.", short: "Deposit", icon: CheckCircle2 },
 ];
 
-/** Segment progress — New → Bids → Quote Ready → Approval → Payment. */
+/** Segment progress — New → Sourcing → Ready to send → Awaiting approval → Awaiting deposit. */
 function QuoteDrawerProgress({ status }: { status: string }) {
   const legacyMap: Record<string, number> = {
     draft: 0,

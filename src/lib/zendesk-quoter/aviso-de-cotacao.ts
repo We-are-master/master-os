@@ -8,7 +8,7 @@
  * O aviso tem duas caras, e qual sai é decidido por UM dado: se sabemos ONDE
  * é o serviço.
  *
- *   tem endereço    os convites saíram, o ticket vai para 🟤 Bidding e a
+ *   tem endereço    os convites saíram, o ticket vai para 🟤 Sourcing e a
  *                   mensagem diz que estamos cotando.
  *   não tem         ninguém foi convidado (o casamento de parceiro é por
  *                   postcode), o ticket vai para 🟠 On Hold e a mensagem pede

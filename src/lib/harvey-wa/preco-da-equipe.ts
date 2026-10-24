@@ -36,7 +36,7 @@ export function precosDaEquipe(conversa: Fala[]): number[] {
 
 /**
  * O preço numa mensagem da equipe (dono, 15/10/2026: preço dado no chat vai para
- * 🟠 Approval). Mais de um valor ("£80 labour + £20 materials = £100", "£100,
+ * 🟠 Awaiting approval). Mais de um valor ("£80 labour + £20 materials = £100", "£100,
  * deposit £50"): vale o maior, que é o total; os outros vão na nota.
  */
 export function precoNaMensagem(texto: string): { preco: number; outros: number[] } | null {

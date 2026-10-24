@@ -38,7 +38,7 @@ export function clearAutoAssignQueuePatch(): Partial<Job> {
 
 /**
  * When the office assigns a partner from the pre-booked queue, bump the job to
- * `scheduled` so Zendesk syncs to Scheduled (not Auto-Assigning / On Hold).
+ * `scheduled` so Zendesk syncs to Scheduled (not Assigning / On hold).
  */
 export function partnerAssignStatusPatch(beforeStatus: JobStatus): Partial<Job> {
   if (!JOB_STATUSES_SCHEDULE_ON_PARTNER_ASSIGN.includes(beforeStatus)) return {};

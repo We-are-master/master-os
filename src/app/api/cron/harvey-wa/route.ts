@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
     const leads = await varrerFollowupDeLeads(sb, { aplicar: !ensaio });
     // Lead que respondeu uma vez e sumiu: fecha sozinho depois de 7 dias quieto, sem mensagem.
     leads.parados = await fecharLeadsParados({ aplicar: !ensaio }).catch((e) => [`falhou: ${e instanceof Error ? e.message : e}`]);
-    // Quote enviada (🟠 Approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
+    // Quote enviada (🟠 Awaiting approval) sem resposta: lembrete com 24h e 72h. Chave HARVEY_QUOTE_CHASE=1.
     const quotes = process.env.HARVEY_QUOTE_CHASE?.trim() === "1" || ensaio ? await varrerCobrancaDeQuotes(sb, { aplicar: !ensaio && process.env.HARVEY_QUOTE_CHASE?.trim() === "1" }) : null;
     // Needs Quote → parceiros → preço → cliente. Chave HARVEY_AUTO_QUOTE=1; no ensaio só lista.
     const autoQuote = process.env.HARVEY_AUTO_QUOTE?.trim() === "1" && (await modoDe("cotacao")) === "on";

@@ -49,7 +49,7 @@ interface RequestBody {
   commentBody?:   string;
   htmlBody?:      string;
   extraTags?:     string[];
-  /** Open the ticket already matching the OS stage (Bidding / Auto-Assigning / …). */
+  /** Open the ticket already matching the OS stage (Sourcing / Assigning / …). */
   customStatusId?: number;
   /** Job / Quote ticket form id. */
   ticketFormId?:  number;
