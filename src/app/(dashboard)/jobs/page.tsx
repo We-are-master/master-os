@@ -3116,7 +3116,8 @@ function JobsPageContent() {
         const isOnsiteInProgress = (JOB_ONSITE_PROGRESS_STATUSES as readonly string[]).includes(item.status);
         if (!ag) {
           return jobDataAConfirmar(item) ? (
-            <span className="text-[11px] font-medium text-[var(--warn-ink)]" title="Waiting for the customer to confirm the date">Date TBC</span>
+            // Chip igual ao Late/Today/Tomorrow da mesma coluna (dono, 24/10/2026).
+            <span className="inline-flex h-[18px] items-center rounded-md bg-[var(--warning-light)] px-1.5 text-[10.5px] font-medium text-[var(--warn-ink)]" title="Waiting for the customer to confirm the date">Date TBC</span>
           ) : (
             <span className="text-[11px] text-text-tertiary">—</span>
           );
