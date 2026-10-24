@@ -193,3 +193,23 @@ export async function tratarReclamacao(
       `(${como}). Find the job and apply the complaint macro.`,
   };
 }
+
+/**
+ * O ticket da reclamação vai para 🚨 Complaint e para o responsável de operação,
+ * igual ao WhatsApp (ticketParaOperacao). Até 24/10/2026 o e-mail só punha o job
+ * em hold e deixava o ticket em Open (ticket 51747). Ticket já fechado não muda.
+ */
+export async function ticketDaReclamacaoParaOperacao(ticketId: number): Promise<string> {
+  const { zendeskApi, addTicketTags } = await import("@/lib/zendesk");
+  const { ZD_STATUS_COMPLAINT, TAG_NEEDS_ATTENTION } = await import("@/lib/zendesk-statuses");
+  const { responsavel } = await import("@/lib/responsavel-operacao");
+  const { ticket } = await zendeskApi<{ ticket: { status: string } }>(`tickets/${ticketId}.json`);
+  if (["solved", "closed"].includes(ticket.status)) return `ticket ${ticketId} already ${ticket.status}`;
+  const dono = await responsavel("operacao");
+  await zendeskApi(`tickets/${ticketId}.json`, {
+    method: "PUT",
+    body: { ticket: { custom_status_id: ZD_STATUS_COMPLAINT, assignee_id: dono.zendesk_user_id } },
+  });
+  await addTicketTags(ticketId, [TAG_NEEDS_ATTENTION]);
+  return `ticket ${ticketId} → Complaint, ${dono.nome}`;
+}

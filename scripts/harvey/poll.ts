@@ -232,7 +232,7 @@ function gravarIds(caminho: string, ids: Set<number>): void {
   writeFileSync(caminho, JSON.stringify([...ids]));
 }
 
-type TicketDaBusca = { id: number; subject: string; description: string; tags: string[]; updated_at?: string; created_at?: string };
+type TicketDaBusca = { id: number; subject: string; description: string; tags: string[]; updated_at?: string; created_at?: string; custom_status_id?: number | null };
 
 async function buscarCandidatos(): Promise<TicketDaBusca[]> {
   const desde = new Date(Date.now() - JANELA_DIAS * 864e5).toISOString().slice(0, 10);
@@ -458,6 +458,12 @@ async function ciclo(): Promise<void> {
   const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD, rascunhoDePrecoLigado } =
     await import("../../src/lib/zendesk-quoter/quoter");
   const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem } = await import("../../src/lib/zendesk-triage");
+  // Cada decisão vira uma linha em harvey_decisoes (decisoes.ts): classe, ação, status antes e esperado.
+  const { registrarMedida } = await import("../../src/lib/harvey/decisoes");
+  const { createServiceClient: servicoDasDecisoes } = await import("../../src/lib/supabase/service");
+  const sbDecisoes = servicoDasDecisoes();
+  type Registro = Omit<Parameters<typeof registrarMedida>[1], "canal" | "ticketId" | "statusAntes">;
+  const decidir = (t: TicketDaBusca, d: Registro) => registrarMedida(sbDecisoes, { canal: "email", ticketId: t.id, statusAntes: t.custom_status_id ?? null, ...d });
 
   const vistos = lerVistos();
   const triados = lerIds(TRIAGEM_SEEN_PATH);
@@ -589,6 +595,7 @@ async function ciclo(): Promise<void> {
       if (!triados.has(t.id)) {
         try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* tag é observabilidade, não pode derrubar o ciclo */ }
         triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+        await decidir(t, { classe: tri.classe, acao: "ignorado", resultado: "ok" });
       }
       console.log(`[harvey] · #${t.id} triado como ${tri.classe} — nada a fazer, nem modelo`);
       continue;
@@ -601,12 +608,15 @@ async function ciclo(): Promise<void> {
      */
     if (tri.classe === "reclamacao" && !triados.has(t.id)) {
       try {
-        const { tratarReclamacao } = await import("../../src/lib/zendesk-quoter/reclamacoes");
+        const { tratarReclamacao, ticketDaReclamacaoParaOperacao } = await import("../../src/lib/zendesk-quoter/reclamacoes");
         const rr = await tratarReclamacao({ id: t.id, subject: t.subject }, apiKey);
         if (rr.acao === "hold") {
           await postarNotaInterna(t.id, rr.nota);
           try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu; a tag é extra */ }
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          // O ticket da reclamação também é da operação: 🚨 Complaint (ticket 51747, 24/10/2026).
+          const op = await ticketDaReclamacaoParaOperacao(t.id).catch((e) => `complaint status failed: ${e}`);
+          await decidir(t, { classe: tri.classe, acao: "reclamacao_hold", resultado: "ok", referencia: rr.reference, detalhe: `${rr.como}; ${op}` });
           console.log(`[harvey] ⛔ #${t.id} reclamacao casou com ${rr.reference} (${rr.como}) — job on hold`);
           continue;
         }
@@ -615,6 +625,8 @@ async function ciclo(): Promise<void> {
           try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* idem */ }
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
           notasTriagem++;
+          const op = await ticketDaReclamacaoParaOperacao(t.id).catch((e) => `complaint status failed: ${e}`);
+          await decidir(t, { classe: tri.classe, acao: "reclamacao_nota", resultado: "nota", detalhe: op });
           console.log(`[harvey] ✎ #${t.id} reclamacao sem match inequivoco — nota interna pro humano`);
           continue;
         }
@@ -642,6 +654,7 @@ async function ciclo(): Promise<void> {
         if (rc.acao === "guardado") {
           await postarNotaInterna(t.id, rc.nota);
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          await decidir(t, { classe: tri.classe, acao: "certificado", resultado: "ok", referencia: rc.reference });
           console.log(`[harvey] 📄 certificado do #${t.id} arquivado em ${rc.reference} (${rc.como})`);
           continue;
         }
@@ -654,6 +667,7 @@ async function ciclo(): Promise<void> {
           await postarNotaInterna(t.id, rc.nota);
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
           notasTriagem++;
+          await decidir(t, { classe: tri.classe, acao: "certificado", resultado: "nota" });
           console.log(`[harvey] ✎ #${t.id}: PDF de certificado sem job certo — nota pro humano`);
           continue;
         }
@@ -698,6 +712,7 @@ async function ciclo(): Promise<void> {
           await postarNotaInterna(t.id, rr.nota);
           try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu */ }
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+          await decidir(t, { classe: tri.classe, acao: "remarcacao", resultado: rr.acao === "aplicada" || rr.acao === "ja_estava" ? "ok" : "nota", referencia: "reference" in rr ? rr.reference : null });
           if (rr.acao === "aplicada") {
             console.log(`[harvey] 📅 ${rr.reference} remarcado: ${rr.de} → ${rr.para} (${rr.como})`);
           } else if (rr.acao === "ja_estava") {
@@ -738,11 +753,13 @@ async function ciclo(): Promise<void> {
         : await confirmarBookingDeParceiro(t.id, true);
       if (conf.status === "confirmado") {
         vistos.add(t.id); gravarVistos(vistos);
+        await decidir(t, { classe: tri.classe, acao: "confirmacao_parceiro", resultado: "ok", referencia: conf.reference });
         console.log(`[harvey] ✔ ${conf.parceiro} confirmou ${conf.reference} a partir do #${t.id} — ticket solved`);
         continue;
       }
       if (conf.status === "sem_job") {
         vistos.add(t.id); gravarVistos(vistos);
+        await decidir(t, { classe: tri.classe, acao: "confirmacao_parceiro", resultado: "nota" });
         console.log(`[harvey] ◐ ${conf.parceiro} confirmou algo no #${t.id} e eu nao achei o job — nota interna pedindo`);
         continue;
       }
@@ -794,6 +811,7 @@ async function ciclo(): Promise<void> {
           esquecerCard();
           await esquecerFalhaDoTicket(t.id);
           criados++;
+          await decidir(t, { classe: tri.classe, acao: "job_criado", resultado: "ok", referencia: r.reference });
           console.log(`[harvey] ✔ job ${r.reference} criado no OS a partir do #${t.id}`);
           continue;
         }
@@ -812,6 +830,7 @@ async function ciclo(): Promise<void> {
           }
           esquecerCard();
           criados++;
+          await decidir(t, { classe: tri.classe, acao: "job_faltando", resultado: "faltando" });
           console.log(`[harvey] ◐ booking no #${t.id} com dado faltando — nota interna pedindo`);
           continue;
         }
@@ -825,6 +844,7 @@ async function ciclo(): Promise<void> {
         }
         console.error(`[harvey] booking falhou no ${t.id}: ${err}`);
         await registrarFalhaDoTicket(t.id, "booking", err, postarNotaInterna);
+        await decidir(t, { classe: tri.classe, acao: "falhou", resultado: "falhou", detalhe: `booking: ${err}` });
         continue;
       }
     }
@@ -843,6 +863,7 @@ async function ciclo(): Promise<void> {
           try { await adicionarTagNomeada(t.id, tagDaClasse(tri.classe)); } catch { /* a nota já saiu; a tag é extra */ }
           triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
           notasTriagem++;
+          await decidir(t, { classe: tri.classe, acao: "nota_de_triagem", resultado: "nota" });
           console.log(`[harvey] ✎ #${t.id} triado como ${tri.classe} — nota interna, sem acao`);
         } catch (err) {
           console.error(`[harvey] nota de triagem falhou no ${t.id}: ${err}`);
@@ -874,6 +895,7 @@ async function ciclo(): Promise<void> {
       }
       cotados++;
       await esquecerFalhaDoTicket(t.id);
+      await decidir(t, { classe: tri.classe, acao: "cotacao", resultado: "ok", detalhe: `${r.pedido.missingInfo.length} question(s) pending` });
       console.log(
         `[harvey] ✔ ${rascunhoDePrecoLigado() ? `rascunho interno no #${t.id}: £${r.resultado.quote.total.toFixed(2)}` : `pedido de quote registrado no #${t.id} (sem rascunho de preco)`} · ` +
           `${r.pedido.missingInfo.length} pergunta(s) pendente(s) · ${r.resultado.quote.gaps.length} gap(s)`,
@@ -881,6 +903,7 @@ async function ciclo(): Promise<void> {
     } catch (err) {
       console.error(`[harvey] cotacao falhou no ${t.id}: ${err}`);
       await registrarFalhaDoTicket(t.id, "quote", err, postarNotaInterna);
+      await decidir(t, { classe: tri.classe, acao: "falhou", resultado: "falhou", detalhe: `quote: ${err}` });
     }
   }
   if (classificadosMudou) {
@@ -1025,6 +1048,19 @@ async function ciclo(): Promise<void> {
     const { postarNotaInterna } = await import("../../src/lib/zendesk-quoter/quoter");
     await reconciliarJobs(postarNotaInterna).catch((err) => console.error(`[harvey] reconciliacao morreu: ${err}`));
     await sincronizarAwaitingPayment().catch((err) => console.error(`[harvey] awaiting payment morreu: ${err}`));
+    // As decisões da última hora: o status que ficou, e se a equipe trocou em 24h (decisoes.ts).
+    try {
+      const { conferirDecisoes } = await import("../../src/lib/harvey/decisoes");
+      const zd = async <T,>(caminho: string): Promise<T> => {
+        const res = await fetch(`${baseUrl()}/${caminho}`, { headers: { Authorization: authHeader() } });
+        if (!res.ok) throw new Error(`Zendesk ${caminho.split("?")[0]}: HTTP ${res.status}`);
+        return (await res.json()) as T;
+      };
+      const rd = await conferirDecisoes(sbDecisoes, zd);
+      if (rd.conferidas || rd.em24h) console.log(`[harvey] decisões conferidas: ${rd.conferidas} status, ${rd.em24h} de 24h`);
+    } catch (err) {
+      console.error(`[harvey] conferência das decisões morreu: ${err}`);
+    }
   }
 }
 

@@ -52,8 +52,9 @@ test("parada: cliente esperando há mais de 20 min; respondido ou recente não e
 test("brief: ontem em uma linha e quem está esperando", () => {
   const dias = vendasPorDia([], [], diasDaJanela(agora, 7));
   dias[5] = { ...dias[5]!, conversas: 4, pagos: 1, valor: 72 };
-  const p: PainelDoHarvey = { dias, semana: somaDoFunil(dias), hoje: dias[6]!, paradas: [{ ticketId: 51567, assunto: "Conversation with Harriet", minutos: 3000, comHarvey: true }], pendentes: [], falhas: [], geradoEm: agora.toISOString() };
+  const p: PainelDoHarvey = { dias, semana: somaDoFunil(dias), hoje: dias[6]!, paradas: [{ ticketId: 51567, assunto: "Conversation with Harriet", minutos: 3000, comHarvey: true }], pendentes: [], decisoes: [{ classe: "reclamacao", total: 2, acoes: { reclamacao_hold: 2 }, falhas: 0, conferidos: 2, statusCerto: 1, conferidos24h: 2, equipeCorrigiu: 1 }], falhas: [], geradoEm: agora.toISOString() };
   const html = resumoDoHarveyHtml(p);
+  assert.match(html, /Complaint: 2 \(job on hold 2\) · right status 50% · team changed status 50%/);
   assert.match(html, /4 new chats/);
   assert.match(html, /1 paid \(£72\.00\)/);
   assert.match(html, /#51567 · Conversation with Harriet · 2d/);
