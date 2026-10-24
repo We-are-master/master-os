@@ -1,32 +1,33 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { diaDoFechamento, ehB2B, emailDaCobranca, motivoDeDesistencia, proximoPasso, respostaDeFechamento, whatsappDaCobranca, type DadosDaCobranca } from "./followup-quotes";
+import { diaDoFechamento, ehB2B, emailDaCobranca, motivoDeDesistencia, proximoPasso, respostaDeFechamento, resumoDoFechamento, whatsappDaCobranca, type DadosDaCobranca } from "./followup-quotes";
 import { montarEmail } from "./email-do-leo";
 
-describe("quote chase: three follow-ups in seven days, then close", () => {
+describe("quote chase: Fixfy customer two follow-ups, account one", () => {
   it("first chase 24h after the quote", () => {
     assert.equal(proximoPasso([], 23), null);
     assert.equal(proximoPasso([], 24), 1);
   });
-  it("second and third 48h apart (day 3 and day 5)", () => {
+  it("second 48h after the first (day 3), then closes 48h later (day 5)", () => {
     assert.equal(proximoPasso(["quote_chase_1"], 47), null);
     assert.equal(proximoPasso(["quote_chase_1"], 48), 2);
-    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48), 3);
-  });
-  it("closes 48h after the third (day 7)", () => {
-    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2", "quote_chase_3"], 47), null);
-    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2", "quote_chase_3"], 48), "fechar");
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 47), null);
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48), "fechar");
   });
   it("closed tickets are left alone", () => {
     assert.equal(proximoPasso(["quote_closed_no_reply"], 500), null);
     assert.equal(proximoPasso(["quote_closed_by_customer"], 500), null);
   });
-  it("B2B gets two chases: the second is the last, then closes 48h later (day 5)", () => {
-    assert.equal(proximoPasso([], 24, true), 1);
-    assert.equal(proximoPasso(["quote_chase_1"], 48, true), 2);
-    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 47, true), null);
-    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48, true), "fechar");
-    assert.match(emailDaCobranca(2, true, { publico: { tipo: "b2b", empresa: "Acme Lettings" } }).assunto, /^Final quote follow-up/);
+  it("account gets one chase that already warns, then closes 72h later", () => {
+    assert.equal(proximoPasso([], 24, "conta"), 1);
+    assert.equal(proximoPasso(["quote_chase_1"], 71, "conta"), null);
+    assert.equal(proximoPasso(["quote_chase_1"], 72, "conta"), "fechar");
+    assert.match(emailDaCobranca(1, true, { ...acme, fechaEm: "Wed 21 Oct 26" }).paragrafos.join(" "), /by Wed 21 Oct 26, we’ll close the enquiry/);
+  });
+  it("closing summary says what happened, with the reference", () => {
+    assert.equal(resumoDoFechamento("no_reply", "conta", "Q-1"), "Quote Q-1 closed: one follow-up sent, no reply in 72 hours.");
+    assert.equal(resumoDoFechamento("no_reply", "fixfy", "Q-1"), "Quote Q-1 closed: two follow-ups sent, no reply in 48 hours after the last one.");
+    assert.equal(resumoDoFechamento("booked_elsewhere", "fixfy", null), "Quote closed: the customer booked someone else.");
   });
   it("B2B is recognised by the b2b tag", () => {
     assert.equal(ehB2B({ tags: ["b2b", "quote_chase_1"] }), true);
@@ -44,7 +45,7 @@ describe("quote chase: three follow-ups in seven days, then close", () => {
     assert.equal(motivoDeDesistencia("yes please go ahead"), null);
   });
   it("copy has no dashes, no placeholders, signed by the team", () => {
-    for (const p of [1, 2, 3] as const) {
+    for (const p of [1, 2] as const) {
       for (const b2b of [false, true]) {
         const e = emailDaCobranca(p, b2b, b2b ? acme : sarah);
         const { html, text } = montarEmail(e);
@@ -71,20 +72,18 @@ const acme: DadosDaCobranca = { ...sarah, publico: { tipo: "b2b", empresa: "Acme
 describe("quote chase copy (24 to 29)", () => {
   it("B2C subjects follow the copy", () => {
     assert.equal(emailDaCobranca(1, false, sarah).assunto, "Your handyman work quote · Ready to proceed?");
-    assert.equal(emailDaCobranca(2, false, sarah).assunto, "Any changes to your handyman work quote?");
-    assert.equal(emailDaCobranca(3, false, sarah).assunto, "A final follow-up on your quote · Q-2026-120");
+    assert.equal(emailDaCobranca(2, false, sarah).assunto, "A final follow-up on your quote · Q-2026-120");
   });
   it("B2B subjects use the property and reference, greeting is the company team", () => {
     const e1 = emailDaCobranca(1, true, acme);
     assert.equal(e1.assunto, "Quote follow-up · 12 Albert Road · Q-2026-120");
     assert.equal(e1.saudacao, "Hi Acme Lettings team,");
-    assert.equal(emailDaCobranca(2, true, acme).assunto, "Final quote follow-up · Q-2026-120");
     assert.equal(emailDaCobranca(1, true, { ...acme, publico: { tipo: "b2b", empresa: null } }).saudacao, "Hi team,");
   });
   it("the closing date only appears when the closure is scheduled", () => {
-    assert.doesNotMatch(emailDaCobranca(3, false, sarah).paragrafos.join(" "), /close this enquiry/);
-    assert.match(emailDaCobranca(3, false, { ...sarah, fechaEm: "Wed 21 Oct 26" }).paragrafos.join(" "), /by Wed 21 Oct 26, we’ll close this enquiry for now/);
-    assert.match(whatsappDaCobranca(3, { ...sarah, fechaEm: "Wed 21 Oct 26" }), /close the enquiry on Wed 21 Oct 26/);
+    assert.doesNotMatch(emailDaCobranca(2, false, sarah).paragrafos.join(" "), /close this enquiry/);
+    assert.match(emailDaCobranca(2, false, { ...sarah, fechaEm: "Wed 21 Oct 26" }).paragrafos.join(" "), /by Wed 21 Oct 26, we’ll close this enquiry for now/);
+    assert.match(whatsappDaCobranca(2, { ...sarah, fechaEm: "Wed 21 Oct 26" }), /close the enquiry on Wed 21 Oct 26/);
   });
   it("closing day is 48h later, in London, inside the sweep hours", () => {
     assert.equal(diaDoFechamento(new Date("2026-10-19T10:00:00Z")), "Wed 21 Oct 26");

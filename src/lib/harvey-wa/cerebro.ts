@@ -54,6 +54,8 @@ export type Contexto = {
   chase?: number;
   /** Horas desde a última mensagem da pessoa (para o chase). */
   horasSemResposta?: number;
+  /** Chase: o lead tem o código do Welcome sem usar; o lembrete pode citar uma vez (welcome-lead.ts). */
+  welcomeNoChase?: string | null;
   /** Preenchido pelo pensar(): tudo que o cliente escreveu (para conferir dado que o modelo diz ter recebido). */
   textoDoCliente?: string;
   /** Preenchido pelo pensar(): a conversa inteira, para conferir o preço que a equipe deu. */
@@ -535,7 +537,7 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
   const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
   const regras = parceiro ? "" : [await blocoDasRegras(), instrucoesDosAjustes(ajustes)].filter(Boolean).join("\n\n");
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(conversa)];
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) + (ctx.welcomeNoChase ?? "") : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 

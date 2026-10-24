@@ -12,7 +12,7 @@
 
 import { harveyLigado } from "@/lib/harvey/autonomia";
 import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
-import { esperaHumana, faltaEsperar } from "./ritmo";
+import { esperaHumana, faltaEsperar, tempoDigitando } from "./ritmo";
 import { preencherFormularioDoJob } from "./ficha-do-job";
 import { etapaDaPassagem, textoDaPassagem } from "./etapa-da-passagem";
 import { registrarDecisao } from "./diario";
@@ -26,6 +26,7 @@ import { externalIdDoLead } from "./primeiro-contato";
 import { ticketDoJobAtivo } from "./job-ativo";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
+import { contextoDoWelcome, welcomeDoTelefone } from "./welcome-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
@@ -451,8 +452,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     await sb.from("harvey_wa_conversas").insert({ conversation_id: conversa.id, user_id: msg.author.userId ?? null, phone: telefone, name: msg.author.displayName ?? null });
   }
 
-  const comecou = Date.now();
-  await digitando(conversa.id);
+  // Sem "digitando" na chegada (dono, 24/10/2026): ele aparece só no fim da espera, como quem estava em outra conversa.
   // Quem digita em rajada: espera um pouco e responde tudo junto (a mensagem mais nova manda).
   await new Promise((r) => setTimeout(r, 2500));
   const msgs = await historico(conversa.id);
@@ -486,7 +486,13 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   }
   // Cliente de Express: o Harvey sabe qual job é antes de responder (o template já foi a primeira mensagem).
   const sobreQuem =
-    [sobreDaPessoa, telefone ? await contextoDoExpress(sb, telefone) : null, telefone ? await contextoDaRetomada(sb, telefone) : null].filter(Boolean).join(" ") || undefined;
+    [
+      sobreDaPessoa,
+      telefone ? await contextoDoExpress(sb, telefone) : null,
+      telefone ? await contextoDaRetomada(sb, telefone) : null,
+      // O código do Welcome que o lead recebeu por e-mail (dono, 24/10/2026, ticket 51755).
+      quem.tipo !== "parceiro" && telefone ? await welcomeDoTelefone(sb, telefone).then((w) => (w ? contextoDoWelcome(w) : null)).catch(() => null) : null,
+    ].filter(Boolean).join(" ") || undefined;
 
   const r = await pensar(
     paraFalas(sessao),
@@ -499,12 +505,23 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
   // segundos pensando. Se nesse meio tempo a conversa saiu dele ou alguém da
   // equipe escreveu depois da mensagem do cliente, a resposta dele é descartada.
   if (r.resposta) {
-    // O ritmo de uma pessoa: o tempo de ler, pensar e digitar, com "digitando" aparecendo enquanto isso.
-    const falta = faltaEsperar(
-      esperaHumana({ caracteres: r.resposta.length, temMidia: msg.content.type !== "text", primeiraResposta: !sessao.some((m) => ehDoHarvey(m)) }),
-      Date.now() - comecou,
-    );
-    for (let resta = falta; resta > 0; resta -= 6_000) {
+    // O ritmo de uma pessoa atendendo três clientes (ritmo.ts). O relógio conta da primeira mensagem
+    // do cliente sem resposta: três mensagens seguidas não recomeçam a espera a cada uma.
+    const ultimaDoHarvey = [...sessao].reverse().find((m) => ehDoHarvey(m));
+    const semResposta = sessao.filter((m) => m.author.type === "user" && (!ultimaDoHarvey || Date.parse(m.received) > Date.parse(ultimaDoHarvey.received)));
+    const desde = Date.parse(semResposta[0]?.received ?? msg.received ?? "") || Date.now();
+    const quente = !!ultimaDoHarvey && !!semResposta[0] && Date.parse(semResposta[0].received) - Date.parse(ultimaDoHarvey.received) <= 90_000;
+    const alvo = esperaHumana({
+      caracteres: r.resposta.length,
+      temMidia: semResposta.some((m) => m.content.type !== "text"),
+      primeiraResposta: !ultimaDoHarvey,
+      quente,
+      fechamento: !!r.checkout,
+    });
+    const falta = faltaEsperar(alvo, Date.now() - desde);
+    const digitar = tempoDigitando(r.resposta.length, falta);
+    if (falta > digitar) await new Promise((ok) => setTimeout(ok, falta - digitar));
+    for (let resta = digitar; resta > 0; resta -= 6_000) {
       await digitando(conversa.id);
       await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
     }
