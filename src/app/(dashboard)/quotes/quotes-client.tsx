@@ -476,7 +476,8 @@ const statusLabels: Record<string, string> = {
   bidding: "Sourcing",
   quote_ready: "Ready to send",
   awaiting_customer: "Awaiting approval",
-  awaiting_payment: "Awaiting payment",
+  // Mesmo nome do status do Zendesk (dono, 24/10/2026): a entrada combinada ainda não entrou.
+  awaiting_payment: "Awaiting deposit",
   rejected: "Rejected",
   converted_to_job: "Converted to job",
 };
@@ -1401,7 +1402,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       { id: "bidding", label: "Sourcing", hint: "Quotes in partner bidding or survey stages.", count: (statusCounts.bidding ?? 0) + (statusCounts.in_survey ?? 0) },
       { id: "quote_ready", label: "Ready to send", hint: "Quotes ready for review before being sent to the customer.", count: statusCounts.quote_ready ?? 0 },
       { id: "awaiting_customer", label: "Awaiting approval", hint: "Quotes awaiting the customer's decision.", count: statusCounts.awaiting_customer ?? 0 },
-      { id: "awaiting_payment", label: "Awaiting payment", hint: "Quotes awaiting the required customer payment.", count: statusCounts.awaiting_payment ?? 0 },
+      { id: "awaiting_payment", label: "Awaiting deposit", hint: "Accepted quotes waiting for the customer deposit.", count: statusCounts.awaiting_payment ?? 0 },
       { id: "closed", label: "Closed", hint: "Quotes that have reached a closed outcome.", count: closed },
     ];
   }, [statusCounts, quoteFunnelCounts]);
@@ -2483,8 +2484,13 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       headerClassName: "normal-case",
       sortable: true,
       sortOptions: QUOTE_SORT_BIDDING_SLA,
+      // 24h sem lance: o chip "No bids" (mesmo nome do status do Zendesk) toma o lugar do prazo.
       render: (item) =>
-        item.status === "bidding" ? (
+        item.status === "bidding" && item.automation_status === "no_bids_reported" ? (
+          <span className="inline-flex h-[18px] items-center rounded-md bg-[var(--danger-light,#fee2e2)] px-1.5 text-[10.5px] font-medium text-[var(--bad,#dc2626)]" title="No partner bid in 24h: invite more partners or call">
+            No bids
+          </span>
+        ) : item.status === "bidding" ? (
           <QuoteBiddingSlaCell quote={item} slaMs={biddingSlaMs} slaHoursLabel={biddingSlaHoursLabelPretty} />
         ) : (
           <span className="text-[11px] text-text-tertiary">—</span>
@@ -3292,7 +3298,7 @@ const QUOTE_DRAWER_PIPELINE: readonly { id: string; label: string; hint?: string
   { id: "bidding", label: "Sourcing", hint: "Quotes in partner bidding or survey stages.", short: "Sourcing", icon: Gavel },
   { id: "quote_ready", label: "Ready to send", hint: "Quotes ready for review before being sent to the customer.", short: "Ready", icon: FileCheck },
   { id: "awaiting_customer", label: "Awaiting approval", hint: "Quotes awaiting the customer's decision.", short: "Approval", icon: UserRound },
-  { id: "awaiting_payment", label: "Awaiting payment", hint: "Quotes awaiting the required customer payment.", short: "Payment", icon: CheckCircle2 },
+  { id: "awaiting_payment", label: "Awaiting deposit", hint: "Accepted quotes waiting for the customer deposit.", short: "Deposit", icon: CheckCircle2 },
 ];
 
 /** Segment progress — New → Bids → Quote Ready → Approval → Payment. */

@@ -42,6 +42,7 @@ import {
   ZD_STATUS_NO_BIDS,
   ZD_STATUS_ON_HOLD,
   ZD_STATUS_OPEN,
+  ZD_STATUS_OVERDUE,
   ZD_STATUS_PARTNER,
   ZD_STATUS_PAYMENT_FAILED,
   ZD_STATUS_QUOTE_READY,
@@ -71,7 +72,7 @@ const VENDAS = new Set<number>([
   ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE,
   ZD_STATUS_BIDDING, ZD_STATUS_NO_BIDS, ZD_STATUS_QUOTE_READY, ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_DEPOSIT_PENDING,
 ]);
-const FINANCEIRO = new Set<number>([ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_FINANCE]);
+const FINANCEIRO = new Set<number>([ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_OVERDUE, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_FINANCE]);
 const OPERACAO = new Set<number>([
   ZD_STATUS_UNASSIGNED, ZD_STATUS_AUTO_ASSIGNING, ZD_STATUS_SCHEDULED, ZD_STATUS_IN_PROGRESS,
   ZD_STATUS_FINAL_CHECKS, ZD_STATUS_ON_HOLD, ZD_STATUS_COMPLAINT, ZD_STATUS_PARTNER,
@@ -115,6 +116,8 @@ export type EntradaDoJob = {
   esperandoEntrada: boolean;
   /** Motivos abertos em job_attention_reasons. */
   motivos: Motivo[];
+  /** Fatura do job vencida (regra da aba Overdue do Finance). Só conta em Awaiting payment. */
+  faturaVencida?: boolean;
   /** On hold por reclamação (`jobOnHoldPorReclamacao`). */
   reclamacao: boolean;
   /** O motivo do on hold, para a nota. */
@@ -137,6 +140,7 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   if (j.motivos.some((m) => CARTAO.has(m))) customStatusId = ZD_STATUS_PAYMENT_FAILED;
   else if (j.esperandoEntrada) customStatusId = ZD_STATUS_DEPOSIT_PENDING;
   else if (j.status === "on_hold" && j.reclamacao) customStatusId = ZD_STATUS_COMPLAINT;
+  else if (j.status === "awaiting_payment" && j.faturaVencida) customStatusId = ZD_STATUS_OVERDUE;
 
   return { customStatusId, actionRequired: null, proximaAcao: null, papel: papelDoStatus(customStatusId) };
 }

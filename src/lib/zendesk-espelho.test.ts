@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { donoDeTicketSemPedido, espelhoDaQuote, espelhoDoJob, mudancasNoTicket, papelDoStatus } from "./zendesk-espelho";
 import {
   ZD_STATUS_AWAITING_PAYMENT, ZD_STATUS_COMPLAINT, ZD_STATUS_COMPLETED, ZD_STATUS_DEPOSIT_PENDING, ZD_STATUS_FINAL_CHECKS,
-  ZD_STATUS_ON_HOLD, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER, ZD_STATUS_NO_BIDS,
+  ZD_STATUS_ON_HOLD, ZD_STATUS_OVERDUE, ZD_STATUS_PAYMENT_FAILED, ZD_STATUS_SCHEDULED, ZD_STATUS_UNASSIGNED, ZD_STATUS_BIDDING, ZD_STATUS_NEW, ZD_STATUS_LEAD, ZD_STATUS_PARTNER, ZD_STATUS_NO_BIDS,
 } from "./zendesk-statuses";
 
 const base: { esperandoEntrada: boolean; motivos: never[]; reclamacao: boolean } = { esperandoEntrada: false, motivos: [], reclamacao: false };
@@ -151,4 +151,13 @@ test("Bidding fica fora da fila nas primeiras 24h; sem lance em 24h vira 🔎 No
   assert.equal(sem.papel, "vendas");
   assert.equal(papelDoStatus(ZD_STATUS_NO_BIDS), "vendas");
   assert.equal(espelhoDaQuote("quote_ready", "no_bids_reported")!.customStatusId === ZD_STATUS_NO_BIDS, false);
+});
+
+test("Awaiting payment com fatura vencida: 🔴 Overdue, dono financeiro (24/10/2026)", () => {
+  const e = espelhoDoJob({ ...base, status: "awaiting_payment", faturaVencida: true })!;
+  assert.equal(e.customStatusId, ZD_STATUS_OVERDUE);
+  assert.equal(e.papel, "financeiro");
+  assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment" })!.customStatusId, ZD_STATUS_AWAITING_PAYMENT);
+  assert.equal(espelhoDoJob({ ...base, status: "scheduled", faturaVencida: true })!.customStatusId, ZD_STATUS_SCHEDULED, "só conta em Awaiting payment");
+  assert.equal(espelhoDoJob({ ...base, status: "awaiting_payment", faturaVencida: true, motivos: ["card_declined"] as never[] })!.customStatusId, ZD_STATUS_PAYMENT_FAILED, "cartão ganha");
 });

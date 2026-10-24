@@ -11,6 +11,9 @@ import type { JobFinanceStatus } from "@/types/database";
  *  - Part paid         parte recebida; saldo dentro do prazo
  *  - Unpaid            nada recebido; dentro do prazo (ou sem fatura ainda)
  *  - Overdue           existe saldo vencido, mesmo com pagamento parcial
+ *  Rótulos iguais aos status do Zendesk (dono, 24/10/2026): as três falhas de cartão
+ *  aparecem como "Payment failed"; o que muda (nova tentativa, banco) vai no hover.
+ *
  *  - Retry scheduled   tentativa no cartão falhou e há nova tentativa agendada
  *  - Payment failed    tentativa falhou e precisa de intervenção
  *  - Action required   o cliente precisa autenticar o pagamento com o banco
@@ -33,11 +36,11 @@ export const JOB_PAYMENT_LABEL: Record<JobPaymentState, string> = {
   paid: "Paid",
   partial: "Part paid",
   unpaid: "Unpaid",
-  deposit_pending: "Deposit pending",
+  deposit_pending: "Awaiting deposit",
   overdue: "Overdue",
-  card_declined: "Retry scheduled",
+  card_declined: "Payment failed",
   card_failed: "Payment failed",
-  bank_check: "Action required",
+  bank_check: "Payment failed",
 };
 
 export type JobPaymentInput = {

@@ -93,6 +93,12 @@ export const ZD_STATUS_PAYMENT_FAILED = Number(process.env.ZENDESK_STATUS_PAYMEN
  */
 export const ZD_STATUS_NO_BIDS = Number(process.env.ZENDESK_STATUS_NO_BIDS_ID?.trim() || "6473488771487");
 
+/**
+ * 🔴 Overdue: job em Awaiting payment com a fatura vencida, pela regra da aba Overdue do
+ * Finance (criado 24/10/2026). Categoria pending, como o Awaiting payment; view 💷 Awaiting payment.
+ */
+export const ZD_STATUS_OVERDUE = Number(process.env.ZENDESK_STATUS_OVERDUE_ID?.trim() || "6476884139423");
+
 /** 🟣 Finance: fila manual do financeiro. */
 export const ZD_STATUS_FINANCE = 5826336578463;
 
@@ -158,6 +164,7 @@ const STATUS_CATEGORY: Record<number, ZendeskBaseStatus> = {
   [ZD_STATUS_ON_HOLD]:           "pending",
   [ZD_STATUS_AWAITING_PAYMENT]:  "pending",
   [ZD_STATUS_DEPOSIT_PENDING]:   "pending",
+  [ZD_STATUS_OVERDUE]:           "pending",
   [ZD_STATUS_PAYMENT_FAILED]:    "open",
   [ZD_STATUS_NO_BIDS]:           "open",
   [ZD_STATUS_COMPLAINT]:         "open",

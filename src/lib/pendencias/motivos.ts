@@ -38,7 +38,7 @@ export type Motivo = (typeof MOTIVOS)[number];
 export const ROTULO_DO_MOTIVO: Record<Motivo, string> = {
   date_tbc: "Date TBC",
   partner_required: "Partner Required",
-  deposit_pending: "Deposit Pending",
+  deposit_pending: "Awaiting deposit",
   card_declined: "Card Declined",
   payment_unsuccessful: "Payment Unsuccessful",
   report_incomplete: "Report Incomplete",
