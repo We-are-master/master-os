@@ -21,6 +21,7 @@ import { contextoDaPessoa, catalogo, paraFalas, sessaoAtual } from "./motor";
 import { chamarSite } from "./site";
 import { enviarTexto, historico, vozDaConversa } from "./sunshine";
 import { devolvidaEm, equipeDonaDaConversa, horasDaEquipeDona } from "./equipe-dona";
+import { instrucaoDoWelcomeNoChase, welcomeDoTelefone } from "./welcome-lead";
 
 const DEGRAUS_H = [1, 4, 20];
 /** Teste: HARVEY_WA_CHASE_ESCALA=0.05 vira 3 min, 12 min e 1h. */
@@ -74,7 +75,9 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     if (!ultima || ultima.author.type === "user") continue; // chegou mensagem e o motor ainda não viu
     const conversa: Fala[] = paraFalas(msgs);
     const { quem, contas, sobreQuem } = await contextoDaPessoa(sb as never, c.phone as string | null);
-    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz }, chamarSite, await catalogo());
+    // Preço do catálogo que não fechou: o código do Welcome pode entrar uma vez no lembrete (dono, 24/10/2026).
+    const welcome = quem.tipo === "parceiro" ? null : await welcomeDoTelefone(sb, c.phone as string | null).catch(() => null);
+    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null }, chamarSite, await catalogo());
 
     if (!r.resposta) {
       out.semNada++;

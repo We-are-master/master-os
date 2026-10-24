@@ -1,31 +1,28 @@
 /**
  * Cobrança de quote enviada: ticket em 🟠 Awaiting approval esperando o cliente.
  *
- * Régua do dono (14/10/2026): o Approval é o nosso lugar e não pode virar
- * depósito. Sete dias, três lembretes, e no 7º dia fecha.
+ * Régua do dono (24/10/2026, troca a de três lembretes de 14/10 e a B2B de 17/10):
  *
- *   dia 1  lembrete 1   (24h depois da quote)
- *   dia 3  lembrete 2   (48h depois do 1º)
- *   dia 5  lembrete 3   (48h depois do 2º, o último, avisa que vamos fechar)
- *   dia 7  fecha        solved, What Happened = no_reply
+ *   conta (B2B ou plataforma)   1 lembrete 24h depois da quote, só e-mail,
+ *                               e fecha 72h depois dele sem resposta (dia 4)
+ *   cliente da Fixfy            2 lembretes, 24h e 72h depois da quote, por UM
+ *                               canal (o da conversa: WhatsApp ou e-mail), e fecha
+ *                               48h depois do 2º sem resposta (dia 5)
  *
- * B2B (dono, 17/10/2026: três é demais para conta): dois lembretes por e-mail,
- * o 2º já é o aviso de fechamento, e fecha 48h depois dele (dia 5).
+ * Conta é a tag `b2b` no ticket OU a conta da quote com process_type b2b/platform.
+ * O último lembrete já avisa o dia em que fecha.
  *
- * Canal:
- *  - B2C: WhatsApp E e-mail. No WhatsApp, texto livre com a janela de 24h aberta e
- *    o template `quote_request_checkin` com ela fechada. O e-mail vai como
- *    comentário público quando o ticket é de e-mail, ou pelo Resend quando o
- *    ticket é de WhatsApp e o OS tem o e-mail da pessoa.
- *  - B2B (tag `b2b`): só e-mail, comentário público no ticket, dois lembretes.
+ * Fecha como solved com o formulário preenchido: Resolution, What Happened e
+ * Closing Summary (o que aconteceu, em uma frase, com a referência da quote).
  *
  * Se o cliente responde que não precisa mais ("no longer needed", "found someone",
  * "too expensive"...), o ticket fecha na hora com o motivo e uma resposta curta.
  * Qualquer outra resposta fica com a equipe: o Reply Status vira 🔴 e o ticket
  * sobe para a Action Required, como sempre.
  *
- * Estado nas tags do ticket: `quote_chase_1..3`, `quote_closed_no_reply`,
- * `quote_closed_by_customer`. Só 8h às 20h de Londres.
+ * Estado nas tags do ticket: `quote_chase_1..2` (`quote_chase_3` de antes conta
+ * como régua cumprida), `quote_closed_no_reply`, `quote_closed_by_customer`.
+ * Só 8h às 20h de Londres.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { autorDosEmails, comentarioDoEmail, montarEmail, REMETENTE_DA_EQUIPE, type EmailDeAcompanhamento } from "./email-do-leo";
@@ -42,69 +39,56 @@ import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/
 
 const STATUS_APPROVAL = Number(process.env.ZENDESK_STATUS_APPROVAL?.trim() || "5688280626847");
 const VIEW_QUOTING = Number(process.env.ZENDESK_VIEW_QUOTING?.trim() || "5685293799071");
-/** Campo "What Happened" do formulário Job. */
-const WHAT_HAPPENED = 5687150349343;
+/** Campos do formulário Job usados no fechamento. */
+const WHAT_HAPPENED = Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343");
+const RESOLUCAO = 5872761703199;
+const CLOSING_SUMMARY = Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231");
 const H = 3_600_000;
 
 export type ResultadoQuotes = { ensaio: boolean; olhados: number; enviados: string[]; fechados: string[]; pulados: string[] };
 
 type Ticket = { id: number; subject: string; tags: string[]; custom_status_id?: number; requester_id: number; via?: { channel?: string } };
 type Comentario = { public: boolean; author_id: number; created_at: string; body?: string; via?: { channel?: string } };
-type Passo = 1 | 2 | 3 | "fechar";
+type Passo = 1 | 2 | "fechar";
+
+/** Conta (B2B ou plataforma) tem um lembrete; cliente da Fixfy, dois. */
+export type TipoDaCobranca = "conta" | "fixfy";
 
 function horaDeLondres(d: Date): number {
   return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "numeric", hour12: false }).format(d));
 }
 
-/**
- * O próximo passo, contado da ÚLTIMA mensagem nossa (que, depois do 1º lembrete,
- * já é o lembrete anterior): 24h para o 1º, 48h entre os outros. Fecha 48h
- * depois do 3º, que dá o 7º dia desde a quote.
- */
-export function proximoPasso(tags: string[], horasDesdeNossa: number, b2b = false): Passo | null {
-  if (tags.includes("quote_closed_no_reply") || tags.includes("quote_closed_by_customer")) return null;
-  if (b2b && (tags.includes("quote_chase_2") || tags.includes("quote_chase_3"))) return horasDesdeNossa >= 48 ? "fechar" : null;
-  if (tags.includes("quote_chase_3")) return horasDesdeNossa >= 48 ? "fechar" : null;
-  if (tags.includes("quote_chase_2")) return horasDesdeNossa >= 48 ? 3 : null;
-  if (tags.includes("quote_chase_1")) return horasDesdeNossa >= 48 ? 2 : null;
-  return horasDesdeNossa >= 24 ? 1 : null;
-}
+/** A régua em horas desde a quote: os lembretes e o fechamento. */
+export type ReguaDaCobranca = { lembretes: number[]; fecha: number };
+export const REGUAS: Record<TipoDaCobranca, ReguaDaCobranca> = {
+  conta: { lembretes: [24], fecha: 24 + 72 },
+  fixfy: { lembretes: [24, 72], fecha: 72 + 48 },
+};
 
-/* ===================== régua v2 (etapa 3, contas diretas com regras.v2) ===================== */
-
-/**
- * A régua da v2: três lembretes e o fechamento, em horas desde a quote.
- * QUOTE_CHASE_HORAS="24,72,120" (os três lembretes) e, opcional, um 4º valor
- * para o fechamento (padrão 168, o 7º dia). Valor torto: o padrão.
- */
-export type ReguaDaCobranca = { lembretes: [number, number, number]; fecha: number };
-export const REGUA_PADRAO: ReguaDaCobranca = { lembretes: [24, 72, 120], fecha: 168 };
-
-export function reguaDaCobranca(env: string | null | undefined = process.env.QUOTE_CHASE_HORAS): ReguaDaCobranca {
-  const ns = String(env ?? "").split(",").map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
-  if (ns.length < 3) return REGUA_PADRAO;
-  const [a, b, c] = ns as [number, number, number];
-  const fecha = ns[3] ?? Math.max(REGUA_PADRAO.fecha, c + 24);
-  if (!(a < b && b < c && c < fecha)) return REGUA_PADRAO;
-  return { lembretes: [a, b, c], fecha };
-}
+/** Horas entre o último lembrete e o fechamento (o "se não responder até..."). */
+export const horasAteFechar = (tipo: TipoDaCobranca) => REGUAS[tipo].fecha - REGUAS[tipo].lembretes.at(-1)!;
 
 /** Quantos lembretes já saíram, pelas tags e pelos envios confirmados (o maior dos dois). */
-export function lembretesFeitos(tags: readonly string[], enviados: readonly number[] = []): 0 | 1 | 2 | 3 {
+export function lembretesFeitos(tags: readonly string[], enviados: readonly number[] = []): number {
   const pelasTags = tags.includes("quote_chase_3") ? 3 : tags.includes("quote_chase_2") ? 2 : tags.includes("quote_chase_1") ? 1 : 0;
-  return Math.min(3, Math.max(pelasTags, ...enviados, 0)) as 0 | 1 | 2 | 3;
+  return Math.max(pelasTags, ...enviados, 0);
 }
 
 /**
- * O próximo passo da v2, contado da última mensagem nossa: o intervalo entre
- * um marco e o seguinte da régua. Exatamente três lembretes, depois fecha.
+ * O próximo passo, contado da última mensagem nossa (depois do 1º lembrete, o
+ * lembrete anterior). Quem já tem mais lembretes que a régua (régua antiga) só fecha.
  */
-export function proximoPassoV2(tags: readonly string[], feitos: 0 | 1 | 2 | 3, horasDesdeNossa: number, regua: ReguaDaCobranca = reguaDaCobranca()): Passo | null {
+export function proximoPassoDaRegua(tags: readonly string[], feitos: number, horasDesdeNossa: number, regua: ReguaDaCobranca): Passo | null {
   if (tags.includes("quote_closed_no_reply") || tags.includes("quote_closed_by_customer")) return null;
   const marcos = [0, ...regua.lembretes, regua.fecha];
-  const intervalo = marcos[feitos + 1]! - marcos[feitos]!;
-  if (horasDesdeNossa < intervalo) return null;
-  return feitos === 3 ? "fechar" : ((feitos + 1) as 1 | 2 | 3);
+  if (feitos >= regua.lembretes.length) return horasDesdeNossa >= regua.fecha - regua.lembretes.at(-1)! ? "fechar" : null;
+  if (horasDesdeNossa < marcos[feitos + 1]! - marcos[feitos]!) return null;
+  return (feitos + 1) as 1 | 2;
+}
+
+/** A régua pelas tags (ticket fora da v2). */
+export function proximoPasso(tags: string[], horasDesdeNossa: number, tipo: TipoDaCobranca = "fixfy"): Passo | null {
+  return proximoPassoDaRegua(tags, lembretesFeitos(tags), horasDesdeNossa, REGUAS[tipo]);
 }
 
 export type QuoteDaCobranca = {
@@ -149,6 +133,17 @@ export function respostaPorEmail(c: Pick<Comentario, "public" | "author_id" | "v
 
 export const chaveDaCobranca = (quoteId: string, n: 1 | 2 | 3) => chaveDeEnvio("quote-chase", quoteId, n);
 
+/** Conta (B2B ou plataforma) ou cliente da Fixfy: a tag b2b, senão o process_type da conta da quote. */
+async function tipoDaCobranca(sb: SupabaseClient, t: Pick<Ticket, "id" | "tags">): Promise<TipoDaCobranca> {
+  if (ehB2B(t)) return "conta";
+  const { data } = await sb.from("quotes").select("source_account_id").eq("external_source", "zendesk").eq("external_ref", String(t.id)).is("deleted_at", null).order("created_at", { ascending: false }).limit(1);
+  const conta = (data?.[0] as { source_account_id?: string | null } | undefined)?.source_account_id;
+  if (!conta) return "fixfy";
+  const { data: a } = await sb.from("accounts").select("process_type").eq("id", conta).maybeSingle();
+  const tipo = (a as { process_type?: string | null } | null)?.process_type;
+  return tipo === "b2b" || tipo === "platform" ? "conta" : "fixfy";
+}
+
 type ContextoV2 = { quote: QuoteDaCobranca; enviados: number[]; ultimoEnvioEm: string | null };
 
 /** A quote do ticket na v2 (conta direta com regras.v2). Fora disso: null, e a régua é a de sempre. */
@@ -180,12 +175,6 @@ async function quoteFresca(sb: SupabaseClient, id: string): Promise<QuoteDaCobra
   return (data as QuoteDaCobranca | null) ?? null;
 }
 
-/** Mantido para quem ainda importa o nome antigo. */
-export const estagioDaCobranca = (tags: string[], horas: number) => {
-  const p = proximoPasso(tags, horas);
-  return p === "fechar" ? null : p;
-};
-
 export function ehB2B(t: Pick<Ticket, "tags">): boolean {
   return t.tags.includes("b2b");
 }
@@ -205,11 +194,11 @@ export type DadosDaCobranca = {
 const juntaPonto = (partes: Array<string | null | undefined>) => partes.map((p) => String(p ?? "").trim()).filter(Boolean).join(" · ");
 
 /**
- * O e-mail de cada lembrete (copy 24 a 28). B2C: três; B2B (tag b2b): dois, o 2º
- * já é o aviso de fechamento. O assunto só vale fora de thread (Resend): no
- * comentário do Zendesk o ticket mantém o assunto dele.
+ * O e-mail de cada lembrete. Conta: um só, que já avisa o fechamento. Cliente da
+ * Fixfy: dois, o 2º é o aviso de fechamento. O assunto só vale fora de thread
+ * (Resend): no comentário do Zendesk o ticket mantém o assunto dele.
  */
-export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobranca): EmailDeAcompanhamento {
+export function emailDaCobranca(passo: 1 | 2, b2b: boolean, d: DadosDaCobranca): EmailDeAcompanhamento {
   const s = servicoCurto(d.servico);
   const ref = d.referencia?.trim() || "";
   const prop = imovelCurto(d.endereco);
@@ -219,26 +208,13 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
   const cta = null;
   const saud = saudacao(d.publico);
   if (b2b) {
-    if (passo === 1) {
-      return {
-        assunto: juntaPonto(["Quote follow-up", prop, ref]),
-        preheader: "Please let us know whether you would like to proceed.",
-        saudacao: saud,
-        paragrafos: [
-          `We’re following up on ${ref ? `quote ${ref}` : "our quote"}${s ? ` for ${s}` : ""}${endereco ? ` at ${endereco}` : ""}.`,
-          "If you’d like to proceed, please confirm your approval and preferred dates through the usual quote process. We’ll then check availability and coordinate access.",
-          "If you’re waiting for the property owner’s approval or need any changes to the scope, just let us know.",
-        ],
-        cta,
-      };
-    }
     return {
-      assunto: juntaPonto(["Final quote follow-up", ref]),
-      preheader: `Please confirm whether the work at ${prop || "the property"} is still required.`,
+      assunto: juntaPonto(["Quote follow-up", prop, ref]),
+      preheader: "Please let us know whether you would like to proceed.",
       saudacao: saud,
       paragrafos: [
-        `Could you let us know whether you still require the work${endereco ? ` at ${endereco}` : ""}?`,
-        "We’re happy to review the scope, proposed timing or access arrangements if anything has changed.",
+        `We’re following up on ${ref ? `quote ${ref}` : "our quote"}${s ? ` for ${s}` : ""}${endereco ? ` at ${endereco}` : ""}.`,
+        "If you’d like to proceed, please confirm your approval and preferred dates through the usual quote process. If you’re waiting for the property owner’s approval or need any changes to the scope, just let us know.",
         `${d.fechaEm ? `If we don’t hear from you by ${d.fechaEm}, we’ll close the enquiry for now. ` : ""}Should the work be needed later, reply here and we’ll check the quote and availability again.`,
       ],
       cta,
@@ -257,18 +233,6 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
       cta,
     };
   }
-  if (passo === 2) {
-    return {
-      assunto: s ? `Any changes to your ${s} quote?` : "Any changes to your quote?",
-      preheader: "We can review the work included or your preferred timing.",
-      saudacao: saud,
-      paragrafos: [
-        `If anything in your ${s ? `${s} ` : ""}quote needs adjusting, we’re happy to take another look.`,
-        "Perhaps the work has changed, or you have a different date in mind. Just reply with what you need and we’ll check the options.",
-      ],
-      cta,
-    };
-  }
   return {
     assunto: juntaPonto(["A final follow-up on your quote", ref]),
     preheader: "Please let us know if you would still like to go ahead.",
@@ -283,11 +247,11 @@ export function emailDaCobranca(passo: 1 | 2 | 3, b2b: boolean, d: DadosDaCobran
 }
 
 /**
- * O lembrete no WhatsApp com a janela de 24h aberta (copy 24 a 26, "Open
- * conversation"). Só B2C: conta não recebe WhatsApp desta régua. Com a janela
- * fechada continua o template aprovado `quote_request_checkin`.
+ * O lembrete no WhatsApp com a janela de 24h aberta. Só cliente da Fixfy: conta
+ * não recebe WhatsApp desta régua. Com a janela fechada continua o template
+ * aprovado `quote_request_checkin`. O 2º é o último e avisa o fechamento.
  */
-export function whatsappDaCobranca(passo: 1 | 2 | 3, d: DadosDaCobranca): string {
+export function whatsappDaCobranca(passo: 1 | 2, d: DadosDaCobranca): string {
   const s = servicoCurto(d.servico);
   const sua = `your ${s ? `${s} ` : ""}quote`;
   const g = saudacao(d.publico);
@@ -295,9 +259,6 @@ export function whatsappDaCobranca(passo: 1 | 2 | 3, d: DadosDaCobranca): string
     return d.link
       ? `${g} Have you had a chance to look through ${sua}? You can review it here: ${d.link}\n\nIf you have a question or a preferred date, just reply and we’ll help.`
       : `${g} Have you had a chance to look through ${sua}? If you have a question or a preferred date, just reply and we’ll help.`;
-  }
-  if (passo === 2) {
-    return `${g} Does anything need changing in ${sua}? Let us know about the work or timing you have in mind and we’ll take another look.`;
   }
   const fim = `${d.fechaEm ? `Otherwise, we’ll close the enquiry on ${d.fechaEm}. ` : ""}You’re welcome to contact us again whenever you need us.`;
   return d.link
@@ -375,10 +336,36 @@ async function dadosDaQuoteDoTicket(sb: SupabaseClient, ticketId: number, b2b: b
   };
 }
 
-async function fechar(t: Ticket, motivo: string, tag: string, nota: string) {
+/** O resumo do fechamento (Closing Summary): o que aconteceu, em uma frase. */
+export function resumoDoFechamento(motivo: string, tipo: TipoDaCobranca, referencia?: string | null): string {
+  const q = referencia?.trim() ? `Quote ${referencia.trim()}` : "Quote";
+  if (motivo === "no_reply") {
+    return tipo === "conta"
+      ? `${q} closed: one follow-up sent, no reply in ${horasAteFechar("conta")} hours.`
+      : `${q} closed: two follow-ups sent, no reply in ${horasAteFechar("fixfy")} hours after the last one.`;
+  }
+  const porque: Record<string, string> = {
+    booked_elsewhere: "the customer booked someone else",
+    too_expensive: "the customer said the price was too high",
+    customer_cancelled: "the customer said they no longer need the work",
+  };
+  return `${q} closed: ${porque[motivo] ?? "the customer replied that they will not go ahead"}.`;
+}
+
+async function fechar(t: Ticket, motivo: string, tag: string, nota: string, resumo: string) {
   await zendeskApi(`tickets/${t.id}.json`, {
     method: "PUT",
-    body: { ticket: { status: "solved", custom_fields: [{ id: WHAT_HAPPENED, value: motivo }], comment: { public: false, body: nota } } },
+    body: {
+      ticket: {
+        status: "solved",
+        custom_fields: [
+          { id: RESOLUCAO, value: motivo === "no_reply" ? "res_no_response" : "res_cancelled" },
+          { id: WHAT_HAPPENED, value: motivo },
+          { id: CLOSING_SUMMARY, value: resumo },
+        ],
+        comment: { public: false, body: nota },
+      },
+    },
   });
   await addTicketTags(t.id, [tag]);
 }
@@ -412,7 +399,8 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     if (t.custom_status_id !== STATUS_APPROVAL) continue;
     out.olhados++;
     const quem = `#${t.id} ${t.subject.slice(0, 50)}`;
-    const b2b = ehB2B(t);
+    const tipo = await tipoDaCobranca(sb, t).catch((): TipoDaCobranca => (ehB2B(t) ? "conta" : "fixfy"));
+    const b2b = tipo === "conta";
     const ehWhatsApp = !b2b && (t.tags.includes("harvey_wa") || t.via?.channel === "whatsapp");
 
     const { comments } = await zendeskApi<{ comments: Comentario[] }>(`tickets/${t.id}/comments.json?sort_order=desc&per_page=20`);
@@ -478,7 +466,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
         if (!rf.reservado) {
           // A resposta já saiu numa rodada anterior e o fechamento é que falhou: só fecha.
           if (rf.motivo === "already sent") {
-            await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`).catch(() => null);
+            await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia)).catch(() => null);
             out.fechados.push(`${quem}: closed (${motivo}, reply already sent)`);
           } else out.pulados.push(`${quem}: closing reply ${rf.motivo ?? "already reserved"}`);
           continue;
@@ -492,7 +480,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
           await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta.email, (await autorDosEmails()).zendesk_user_id) } } });
         }
         if (chaveFim) await confirmarEnvio(sb, chaveFim);
-        await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`);
+        await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia));
         out.fechados.push(`${quem}: closed (${motivo})`);
       } catch (e) {
         if (chaveFim) await falhouEnvio(sb, chaveFim, e).catch(() => null);
@@ -507,7 +495,8 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       continue;
     }
 
-    const passo = v2 ? proximoPassoV2(t.tags, lembretesFeitos(t.tags, v2.enviados), horasDesdeNossa) : proximoPasso(t.tags, horasDesdeNossa, b2b);
+    const regua = REGUAS[tipo];
+    const passo = proximoPassoDaRegua(t.tags, lembretesFeitos(t.tags, v2?.enviados ?? []), horasDesdeNossa, regua);
     if (!passo) continue;
 
     // v2: antes de mandar ou fechar, a quote ainda espera o cliente? (aceita, paga, virou job: para)
@@ -519,9 +508,11 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     }
 
     if (passo === "fechar") {
-      if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, ${b2b ? "day 5" : "day 7"})`); continue; }
+      const dia = Math.round(regua.fecha / 24);
+      if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, day ${dia})`); continue; }
       try {
-        await fechar(t, "no_reply", "quote_closed_no_reply", b2b ? "Quote closed automatically on day 5: two follow-ups and no reply." : "Quote closed automatically on day 7: three follow-ups and no reply.");
+        const resumo = resumoDoFechamento("no_reply", tipo, (await dados()).referencia);
+        await fechar(t, "no_reply", "quote_closed_no_reply", `Quote closed automatically on day ${dia}: ${resumo}`, resumo);
         out.fechados.push(`${quem}: closed (no_reply)`);
       } catch (e) {
         out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 100) : "failed"}`);
@@ -530,15 +521,14 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     }
 
     const emailDoWhatsApp = b2b ? null : ehWhatsApp ? await emailDoCliente(sb, user?.phone) : null;
-    // Os canais de sempre; na v2, só o canal ativo da quote (sem canal gravado: os de sempre).
-    const disponiveis: CanalAtivo[] = ehWhatsApp ? ["whatsapp", ...(emailDoWhatsApp ? (["email"] as const) : [])] : [...(!b2b && user?.phone ? (["whatsapp"] as const) : []), "email"];
-    const usar = v2 ? canaisParaEnviar(canalAtivo(fresca), disponiveis) : disponiveis;
+    // Um canal por lembrete (dono, 24/10/2026): o da conversa. Ticket de WhatsApp vai por WhatsApp
+    // (e-mail só se o canal ativo da v2 virou e-mail); ticket de e-mail, por e-mail.
+    const disponiveis: CanalAtivo[] = ehWhatsApp ? ["whatsapp", ...(emailDoWhatsApp ? (["email"] as const) : [])] : ["email"];
+    const usar = (v2 ? canaisParaEnviar(canalAtivo(fresca), disponiveis) : disponiveis).slice(0, 1);
     const mandaWhats = usar.includes("whatsapp");
     const mandaEmail = usar.includes("email");
     if (!mandaWhats && !mandaEmail) { out.pulados.push(`${quem}: no way to reach the customer on the active channel (${canalAtivo(fresca)})`); continue; }
-    const canais = v2
-      ? [mandaWhats ? `WhatsApp${ehWhatsApp && janelaAberta ? "" : " template"}` : null, mandaEmail ? "email" : null].filter(Boolean).join(" + ")
-      : b2b ? "email" : ehWhatsApp ? `WhatsApp${janelaAberta ? "" : " template"}${emailDoWhatsApp ? " + email" : ""}` : `email${user?.phone ? " + WhatsApp template" : ""}`;
+    const canais = mandaWhats ? `WhatsApp${janelaAberta ? "" : " template"}` : "email";
     if (!aplicar) { out.enviados.push(`${quem}: would send chase ${passo} (${canais})`); continue; }
 
     // v2: reserva ANTES de mandar (a tag depois do envio repetia o lembrete quando falhava).
@@ -554,8 +544,9 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
     }
 
     try {
-      const ultimo = passo === (b2b ? 2 : 3);
-      const d = await dados(ultimo ? diaDoFechamento(agora, v2 ? reguaDaCobranca().fecha - reguaDaCobranca().lembretes[2] : 48) : null);
+      const total = regua.lembretes.length;
+      const ultimo = passo === total;
+      const d = await dados(ultimo ? diaDoFechamento(agora, horasAteFechar(tipo)) : null);
       const email = emailDaCobranca(passo, b2b, d);
       if (mandaWhats && ehWhatsApp && janelaAberta && conversa) {
         await scApi(`/conversations/${conversa}/messages`, { method: "POST", body: { author: { type: "business", displayName: voz || "Fixfy" }, content: { type: "text", text: whatsappDaCobranca(passo, d) }, metadata: { origem: "quote_chase" } } });
@@ -585,7 +576,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       if (chave) await confirmarEnvio(sb, chave);
       await zendeskApi(`tickets/${t.id}.json`, {
         method: "PUT",
-        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of ${b2b ? 2 : 3} sent automatically (${canais}).${passo === (b2b ? 2 : 3) ? ` If there is no reply in ${v2 ? reguaDaCobranca().fecha - reguaDaCobranca().lembretes[2] : 48}h the ticket closes as no reply.` : ""}` } } },
+        body: { ticket: { comment: { public: false, body: `Quote chase ${passo} of ${total} sent automatically (${canais}).${ultimo ? ` If there is no reply in ${horasAteFechar(tipo)}h the ticket closes as no reply.` : ""}` } } },
       });
       await addTicketTags(t.id, [`quote_chase_${passo}`]);
       out.enviados.push(`${quem}: chase ${passo} (${canais})`);

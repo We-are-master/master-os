@@ -16,7 +16,8 @@ import { passarParaEquipe } from "@/lib/harvey-wa/sunshine";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 300 s: o Harvey espera até 2 min antes de responder (ritmo.ts) e ainda pensa e grava Zendesk e banco.
+export const maxDuration = 300;
 
 function autorizado(dado: string | null): boolean {
   const segredo = process.env.SUNSHINE_WEBHOOK_SECRET?.trim();

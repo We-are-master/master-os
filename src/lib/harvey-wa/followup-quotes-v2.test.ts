@@ -1,35 +1,33 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  chaveDaCobranca, intervencaoManual, lembretesFeitos, motivoParaPararCobranca, proximoPassoV2, REGUA_PADRAO, reguaDaCobranca, respostaPorEmail,
+  chaveDaCobranca, horasAteFechar, intervencaoManual, lembretesFeitos, motivoParaPararCobranca, proximoPassoDaRegua, REGUAS, respostaPorEmail,
 } from "./followup-quotes";
 import { confirmarEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 import { bancoFalso } from "@/lib/processo/banco-falso-teste";
 
-describe("quote chase v2: exactly three chases, then close", () => {
-  it("default schedule is day 1, 3 and 5, close on day 7", () => {
-    assert.deepEqual(reguaDaCobranca(undefined), REGUA_PADRAO);
-    assert.deepEqual(REGUA_PADRAO, { lembretes: [24, 72, 120], fecha: 168 });
+describe("quote chase schedule (24/10/2026): account one chase, Fixfy customer two", () => {
+  it("account (B2B or platform): one chase at 24h, closes 72h after it", () => {
+    assert.deepEqual(REGUAS.conta, { lembretes: [24], fecha: 96 });
+    assert.equal(horasAteFechar("conta"), 72);
+    assert.equal(proximoPassoDaRegua([], 0, 23, REGUAS.conta), null);
+    assert.equal(proximoPassoDaRegua([], 0, 24, REGUAS.conta), 1);
+    assert.equal(proximoPassoDaRegua([], 1, 71, REGUAS.conta), null);
+    assert.equal(proximoPassoDaRegua([], 1, 72, REGUAS.conta), "fechar");
   });
-  it("QUOTE_CHASE_HORAS changes the schedule; a broken value falls back to the default", () => {
-    assert.deepEqual(reguaDaCobranca("12, 36, 60, 96"), { lembretes: [12, 36, 60], fecha: 96 });
-    assert.deepEqual(reguaDaCobranca("12,36,60"), { lembretes: [12, 36, 60], fecha: 168 });
-    assert.deepEqual(reguaDaCobranca("72,24,120"), REGUA_PADRAO);
-    assert.deepEqual(reguaDaCobranca("abc"), REGUA_PADRAO);
+  it("Fixfy customer: chases at 24h and 72h, closes 48h after the second", () => {
+    assert.deepEqual(REGUAS.fixfy, { lembretes: [24, 72], fecha: 120 });
+    assert.equal(proximoPassoDaRegua([], 0, 24, REGUAS.fixfy), 1);
+    assert.equal(proximoPassoDaRegua([], 1, 47, REGUAS.fixfy), null);
+    assert.equal(proximoPassoDaRegua([], 1, 48, REGUAS.fixfy), 2);
+    assert.equal(proximoPassoDaRegua([], 2, 47, REGUAS.fixfy), null);
+    assert.equal(proximoPassoDaRegua([], 2, 48, REGUAS.fixfy), "fechar");
   });
-  it("intervals between the marks, counted from our last message", () => {
-    const r = REGUA_PADRAO;
-    assert.equal(proximoPassoV2([], 0, 23, r), null);
-    assert.equal(proximoPassoV2([], 0, 24, r), 1);
-    assert.equal(proximoPassoV2([], 1, 47, r), null);
-    assert.equal(proximoPassoV2([], 1, 48, r), 2);
-    assert.equal(proximoPassoV2([], 2, 48, r), 3);
-    assert.equal(proximoPassoV2([], 3, 47, r), null);
-    assert.equal(proximoPassoV2([], 3, 48, r), "fechar");
-  });
-  it("never a fourth chase, and closed tickets are left alone", () => {
-    assert.equal(proximoPassoV2([], 3, 500, REGUA_PADRAO), "fechar");
-    assert.equal(proximoPassoV2(["quote_closed_no_reply"], 3, 500, REGUA_PADRAO), null);
+  it("never a third chase; tickets from the old three-chase schedule only close", () => {
+    assert.equal(proximoPassoDaRegua([], 3, 500, REGUAS.fixfy), "fechar");
+    assert.equal(proximoPassoDaRegua(["quote_chase_2"], 2, 10, REGUAS.conta), null);
+    assert.equal(proximoPassoDaRegua(["quote_chase_2"], 2, 72, REGUAS.conta), "fechar");
+    assert.equal(proximoPassoDaRegua(["quote_closed_no_reply"], 3, 500, REGUAS.fixfy), null);
   });
   it("chases done = the larger of tags and confirmed sends (tag lost after a send)", () => {
     assert.equal(lembretesFeitos([], []), 0);
