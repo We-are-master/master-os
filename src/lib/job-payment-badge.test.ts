@@ -111,3 +111,11 @@ describe("vencimentoDaFatura", () => {
     assert.equal(vencimentoDaFatura(null, "2026-10-21"), null);
   });
 });
+
+it("Deposit pending na coluna Payment: perde só para o cartão (dono, 24/10/2026)", () => {
+  const nada = new Set<string>();
+  assert.equal(jobPaymentState({ finance_status: "unpaid" }, nada, { depositPending: true }), "deposit_pending");
+  assert.equal(jobPaymentState({ finance_status: "paid" }, nada, { depositPending: true }), "paid");
+  assert.equal(jobPaymentState({ finance_status: "unpaid", card_charge_status: "refused" }, nada, { depositPending: true }), "card_failed");
+  assert.equal(jobPaymentState({ finance_status: "unpaid" }, nada), "unpaid");
+});

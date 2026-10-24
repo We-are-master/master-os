@@ -8,6 +8,7 @@ const VARIANT: Record<JobPaymentState, BadgeVariant> = {
   paid: "success",
   partial: "warning",
   unpaid: "default",
+  deposit_pending: "warning",
   overdue: "danger",
   card_declined: "warning",
   card_failed: "danger",

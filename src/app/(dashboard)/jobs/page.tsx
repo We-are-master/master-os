@@ -211,7 +211,6 @@ import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } fr
 import { coerceJobImagesArray, capJobImagesArray, JOB_SITE_PHOTOS_MAX } from "@/lib/job-images";
 import { uploadQuoteInviteImages } from "@/services/quote-invite-images";
 import { JobSitePhotosStrip, jobSitePhotoUrls } from "@/components/shared/job-site-photos-strip";
-import { JobCardRefusedBadge } from "@/components/shared/job-card-refused-badge";
 import { JobPaymentBadge } from "@/components/shared/job-payment-badge";
 import { invoiceIdsToCheckForOverdue, jobPaymentDetail, jobPaymentState, vencimentoDaFatura, JOB_PAYMENT_LABEL, type JobInvoiceSummary, type JobPaymentState } from "@/lib/job-payment-badge";
 import { invoiceFinanceListTodayYmd } from "@/lib/invoice-finance-tab";
@@ -865,7 +864,7 @@ const JOB_SORT_AMOUNT_DUE: ColumnSortOption[] = [
 
 /** "Show" no menu da coluna Payment, na ordem de quem precisa de ação primeiro. */
 const JOB_PAYMENT_FILTER_OPTIONS = (
-  ["overdue", "card_failed", "bank_check", "card_declined", "unpaid", "partial", "paid"] as const
+  ["overdue", "card_failed", "bank_check", "card_declined", "deposit_pending", "unpaid", "partial", "paid"] as const
 ).map((v) => ({ value: v, label: JOB_PAYMENT_LABEL[v] }));
 
 /**
@@ -1357,7 +1356,7 @@ function JobsPageContent() {
     };
   }, [data]);
 
-  // Motivos abertos (job_attention_reasons) dos jobs da lista: chips na coluna Alerts. Só leitura.
+  // Motivos abertos (job_attention_reasons) dos jobs da lista: Deposit pending na coluna Payment. Só leitura.
   const [motivosPorJob, setMotivosPorJob] = useState<ReadonlyMap<string, ChipDeMotivo[]>>(() => new Map());
   useEffect(() => {
     const ids = data.map((j) => j.id);
@@ -1491,9 +1490,11 @@ function JobsPageContent() {
       if ((item.status === "cancelled" || item.status === "deleted") && jobCustomerBillableRevenueForCollections(item) <= 0) {
         return null;
       }
-      return jobPaymentState(item, overdueInvoiceIdSet);
+      return jobPaymentState(item, overdueInvoiceIdSet, {
+        depositPending: motivosPorJob.get(item.id)?.some((m) => m.motivo === "deposit_pending") ?? false,
+      });
     },
-    [overdueInvoiceIdSet],
+    [overdueInvoiceIdSet, motivosPorJob],
   );
 
   /** Filtro do menu da coluna Payment (Overdue, Unpaid…). Volta para "All" ao trocar de aba. */
@@ -3222,7 +3223,7 @@ function JobsPageContent() {
           );
         }
         // Status é só o status do job, com o mesmo nome do Zendesk (dono, 24/10/2026).
-        // Date TBC, cartão, atraso e motivos abertos vão para a coluna Alerts.
+        // Date TBC e Late ficam na coluna Schedule; cartão, Overdue e Deposit pending na Payment.
         const st = effectiveJobStatusForDisplay(item);
         const onHoldBadge = jobOnHoldDisplayBadge(item);
         const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
@@ -3233,14 +3234,7 @@ function JobsPageContent() {
         );
       },
     },
-    {
-      key: "alerts",
-      label: "Alerts",
-      minWidth: "120px",
-      cellClassName: "whitespace-nowrap",
-      headerClassName: "whitespace-nowrap normal-case",
-      render: (item) => (isVisitJobRow(item) ? null : <JobAlerts job={item} motivos={motivosPorJob.get(item.id)} />),
-    },
+
     // Coluna Account saiu (dono, 18/10/2026): o avatar da conta já vai junto do cliente.
     {
       key: "margin_percent",
@@ -3878,7 +3872,6 @@ function JobsPageContent() {
                           <p className="text-xs text-text-tertiary truncate">{normalizeTypeOfWork(j.title) || j.title}</p>
                           <div className="mt-1 flex flex-col items-start gap-0.5 min-w-0">
                             <p className="text-[10px] font-medium text-text-secondary truncate">{statusCaption}</p>
-                            <JobAlerts job={j} motivos={motivosPorJob.get(j.id)} />
                             {status === "action_required" && j.status === "on_hold" ? (
                               <p className="text-[10px] leading-tight text-text-tertiary">{jobOnHoldDurationSubtitle(j)}</p>
                             ) : null}
@@ -5792,41 +5785,3 @@ function BulkBtn({ label, onClick, variant }: { label: string; onClick: () => vo
   return <button onClick={onClick} className={`inline-flex h-8 items-center px-2.5 text-xs font-medium rounded-[6px] border transition-colors ${colors[variant]}`}>{label}</button>;
 }
 
-/**
- * Coluna Alerts (dono, 24/10/2026): o que pede atenção no job sem mudar a aba dele.
- * Um chip só por célula, nunca dois: o mais urgente ganha e o resto vai no hover.
- * Date TBC e atraso (Late) já aparecem na coluna Schedule e não repetem aqui.
- * Ordem: cartão recusado, depois os motivos abertos na ordem de MOTIVOS.
- */
-function JobAlerts({ job, motivos }: { job: Job; motivos: ChipDeMotivo[] | undefined }) {
-  const cartao = (job as { card_charge_status?: string | null }).card_charge_status;
-  const temCartao = cartao === "refused" || cartao === "requires_action";
-  const chips = (motivos ?? []).filter(
-    (m) => m.motivo !== "date_tbc" && !(temCartao && (m.motivo === "card_declined" || m.motivo === "payment_unsuccessful")),
-  );
-  if (!temCartao && chips.length === 0) return null;
-  const resto = (temCartao ? chips : chips.slice(1)).map((m) => m.rotulo);
-  return (
-    <div className="inline-flex items-center" title={resto.length ? `Also: ${resto.join(" · ")}` : undefined}>
-      {temCartao ? <JobCardRefusedBadge job={job} /> : <MotivoChips chips={[chips[0]]} />}
-      {resto.length ? <span className="ml-1 text-[10px] tabular-nums text-text-tertiary">+{resto.length}</span> : null}
-    </div>
-  );
-}
-
-/** Os motivos abertos do job (job_attention_reasons), um chip por motivo. Sem motivo, nada. */
-function MotivoChips({ chips }: { chips: ChipDeMotivo[] | undefined }) {
-  if (!chips?.length) return null;
-  return (
-    <div className="inline-flex flex-wrap items-center gap-1" aria-label="Action required reasons">
-      {chips.map((c) => (
-        <span
-          key={c.motivo}
-          className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
-        >
-          {c.rotulo}
-        </span>
-      ))}
-    </div>
-  );
-}
