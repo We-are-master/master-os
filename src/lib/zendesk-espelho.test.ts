@@ -184,3 +184,10 @@ test("Title: padrão para cliente Fixfy, assunto da conta B2B, simples vira padr
   assert.equal(tituloDoTicket({ assunto: "Re: Payment update requested · INV-2026-906", fixfy: true, etapa: null }), "Re: Payment update requested · INV-2026-906");
   assert.equal(assuntoSimples("[Housekeep] Painting quote request- N4 3HA"), false);
 });
+
+test("job apagado: fecha o ticket com What Happened other (24/10/2026)", () => {
+  const e = espelhoDoJob({ ...base, status: "deleted", referencia: "JOB-9779" })!;
+  assert.equal(e.customStatusId, ZD_STATUS_COMPLETED);
+  assert.equal(e.fechamento?.whatHappened, "other");
+  assert.equal(e.papel, null);
+});

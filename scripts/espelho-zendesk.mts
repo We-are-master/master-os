@@ -24,7 +24,7 @@ for (const arq of [".env.local", ".env"]) {
     }
   } catch {}
 }
-const { alvoDoJob, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
+const { alvoDoJob, alvoDoJobApagado, aplicarEspelho, lerTicketsCrus, abrirFollowUpDoJob, CAMPOS_DO_JOB_NO_ESPELHO } = await import("../src/lib/zendesk-status-sync");
 const { espelhoDaQuote, donoDeTicketSemPedido, formularioDoJobFaltando, tituloDoTicket, TITLE_FIELD_ID } = await import("../src/lib/zendesk-espelho");
 const { normalizeTypeOfWork } = await import("../src/lib/type-of-work");
 const { extractUkPostcode } = await import("../src/lib/uk-postcode");
@@ -150,6 +150,21 @@ for (const j of jobsValidos) {
   somar(r.ok ? "formulário preenchido" : "formulário: erro");
   if (detalhe || !r.ok) linhas.push(`${(j as { reference?: string }).reference} #${ticketId}: formulário ${r.ok ? "preenchido" : `ERRO ${"error" in r ? r.error : ""}`}`);
 }
+// Job apagado no OS na janela (24/10/2026): fecha o ticket, se nada vivo usa o mesmo ticket.
+if (!so) {
+  const { data: apagados } = await sb.from("jobs").select("id, reference, external_ref").eq("external_source", "zendesk").eq("status", "deleted").gte("deleted_at", desde).limit(500);
+  const vivos = new Set([
+    ...jobsValidos.filter((j) => j.status !== "completed" && j.status !== "cancelled").map((j) => String(j.external_ref)),
+    ...(quotesLidas ?? []).filter((q) => q.status !== "rejected").map((q) => String(q.external_ref ?? "")),
+  ]);
+  for (const j of apagados ?? []) {
+    const ref = String(j.external_ref ?? "");
+    if (!numero(ref) || vivos.has(ref) || ticketsComJob.has(ref)) continue;
+    if (!tickets.has(ref)) for (const [k, v] of await lerTicketsCrus([ref])) tickets.set(k, v);
+    await passar(`job deleted ${j.reference}`, ref, alvoDoJobApagado(j));
+  }
+}
+
 for (const q of so ? [] : quotesLidas ?? []) {
   const ref = String(q.external_ref ?? "");
   if (!numero(ref) || ticketsComJob.has(ref)) continue; // o job manda no ticket

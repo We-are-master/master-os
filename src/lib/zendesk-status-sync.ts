@@ -201,6 +201,14 @@ export type JobDoEspelho = {
   payment_status?: string | null;
 };
 
+/**
+ * Job apagado no OS: o ticket fecha (Solved, "What Happened: other"). Só a passada do espelho
+ * chama, depois de ver que nenhum outro job ou quote vivo usa o mesmo ticket (24/10/2026).
+ */
+export function alvoDoJobApagado(job: Pick<JobDoEspelho, "reference">): Espelho | null {
+  return espelhoDoJob({ status: "deleted", esperandoEntrada: false, motivos: [], reclamacao: false, referencia: job.reference ?? null });
+}
+
 /** O alvo do ticket de um job, com o que já foi lido (motivos, status da quote, fatura vencida). */
 export function alvoDoJob(job: JobDoEspelho, motivos: string[], statusDaQuote: string | null, faturaVencida = false): Espelho | null {
   const status = jobStatusForZendeskSync(job as Parameters<typeof jobStatusForZendeskSync>[0]);

@@ -110,13 +110,16 @@ export function statusDaEtapa(status: JobStatus): number | null {
     case "final_check": return ZD_STATUS_FINAL_CHECKS;
     case "awaiting_payment": return ZD_STATUS_AWAITING_PAYMENT;
     case "completed":
-    case "cancelled": return ZD_STATUS_COMPLETED;
+    case "cancelled":
+    // Apagado no OS (24/10/2026): o ticket fecha, senão fica preso no último status. Quem chama
+    // garante que nenhum outro job ou quote vivo usa o mesmo ticket.
+    case "deleted": return ZD_STATUS_COMPLETED;
     case "on_hold": return ZD_STATUS_ON_HOLD;
     default: return null;
   }
 }
 
-const ENCERRADO = new Set<JobStatus>(["completed", "cancelled"]);
+const ENCERRADO = new Set<JobStatus>(["completed", "cancelled", "deleted"]);
 const CARTAO = new Set<Motivo>(["card_declined", "payment_unsuccessful"]);
 
 export type EntradaDoJob = {
@@ -144,7 +147,9 @@ export function espelhoDoJob(j: EntradaDoJob): Espelho | null {
   if (ENCERRADO.has(j.status)) {
     const fechamento = j.status === "completed"
       ? { whatHappened: "job_completed", resumo: `Closed by the OS: ${j.referencia ?? "the job"} is completed.` }
-      : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
+      : j.status === "deleted"
+        ? { whatHappened: "other", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was deleted.` }
+        : { whatHappened: "customer_cancelled", resumo: `Closed by the OS: ${j.referencia ?? "the job"} was cancelled.` };
     return { customStatusId: etapa, actionRequired: null, proximaAcao: null, papel: null, fechamento, pagamento: null };
   }
 
