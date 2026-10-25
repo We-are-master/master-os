@@ -41,6 +41,8 @@ export const FX = {
 export const FIXFY_CONTACT = {
   email: "hello@getfixfy.com",
   phone: "+44 20 4538 4668",
+  /** O número não aparece nos e-mails (dono, 25/10/2026): só "WhatsApp" com link. */
+  whatsapp: "https://wa.me/442045384668",
   legal: "Getfixfy Ltd, trading as Fixfy · 124 City Road, London EC1V 2NX · Company number 15406523",
 } as const;
 
@@ -261,6 +263,8 @@ export type Aviso = {
   itens?: string[] | null;
   /** Linha pequena depois da lista. */
   nota?: string | null;
+  /** Link no fim do texto ("... message us on WhatsApp."). */
+  link?: { label: string; url: string } | null;
   lugar?: "topo" | "meio" | "fim";
 };
 
@@ -559,7 +563,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
       ? `<p style="margin:0 0 4px 0;font-family:${SANS};font-size:14px;line-height:20px;font-weight:700;color:${t.titulo};">${a.icone ? `${esc(a.icone)}&nbsp; ` : ""}${esc(a.titulo)}</p>`
       : "";
     const texto = a.texto?.trim()
-      ? `<p style="margin:0;font-family:${SANS};font-size:14px;line-height:21px;color:${t.texto};">${!a.titulo?.trim() && a.icone ? `${esc(a.icone)}&nbsp; ` : ""}${esc(a.texto)}</p>`
+      ? `<p style="margin:0;font-family:${SANS};font-size:14px;line-height:21px;color:${t.texto};">${!a.titulo?.trim() && a.icone ? `${esc(a.icone)}&nbsp; ` : ""}${esc(a.texto)}${a.link && urlSegura(a.link.url) ? ` <a href="${esc(urlSegura(a.link.url))}" style="color:${t.texto};font-weight:600;text-decoration:underline;">${esc(a.link.label)}</a>.` : ""}</p>`
       : "";
     const itens = (a.itens ?? []).filter((x) => x.trim())
       .map((x) => `<p style="margin:4px 0 0 0;padding-left:14px;text-indent:-14px;font-family:${SANS};font-size:14px;line-height:21px;color:${t.texto};">&bull;&nbsp; ${esc(x)}</p>`)
@@ -574,7 +578,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const avisoTexto = (lugar: NonNullable<Aviso["lugar"]>) =>
     avisos
       .filter((a) => (a.lugar ?? "meio") === lugar)
-      .map((a) => [a.titulo ? `${a.icone ? `${a.icone} ` : ""}${a.titulo}` : "", a.texto ?? "", ...(a.itens ?? []).map((x) => `- ${x}`), a.nota ?? ""].filter(Boolean).join("\n"))
+      .map((a) => [a.titulo ? `${a.icone ? `${a.icone} ` : ""}${a.titulo}` : "", a.texto ? `${a.texto}${a.link ? ` ${a.link.label}: ${a.link.url}` : ""}` : "", ...(a.itens ?? []).map((x) => `- ${x}`), a.nota ?? ""].filter(Boolean).join("\n"))
       .join("\n\n");
 
   // ─── fotos do trabalho e o report completo ───
@@ -615,7 +619,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
 
   // ─── ajuda, letra pequena e rodapé claro ───
   const ajuda = e.semAjuda ? "" : bloco(
-    `<div style="background:${W.canvas};border-radius:12px;padding:16px 18px;"><p style="margin:0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">Need a hand?</p><p style="margin:3px 0 0 0;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">Reply to this email or message us on WhatsApp at ${FIXFY_CONTACT.phone}. We’re happy to help.</p></div>`,
+    `<div style="background:${W.canvas};border-radius:12px;padding:16px 18px;"><p style="margin:0;font-family:${SANS};font-size:16px;line-height:22px;font-weight:700;color:${FX.navy};">Need a hand?</p><p style="margin:3px 0 0 0;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">Reply to this email or message us on <a href="${FIXFY_CONTACT.whatsapp}" style="color:${FX.navy};font-weight:600;text-decoration:underline;">WhatsApp</a>. We’re happy to help.</p></div>`,
     22,
     24,
   );
@@ -629,7 +633,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const rodapeInner =
     `<img src="${LOGO_NAVY}" alt="Fixfy" width="84" style="display:block;margin:0 auto 10px auto;width:84px;height:auto;border:0;">` +
     `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;color:${W.ink3};">Home repairs and maintenance across London</p>` +
-    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;"><a href="https://www.getfixfy.com" style="color:${W.ink2};text-decoration:none;">getfixfy.com</a> <span style="color:#B5B6C4;">&middot;</span> <a href="mailto:${FIXFY_CONTACT.email}" style="color:${W.ink2};text-decoration:none;">${FIXFY_CONTACT.email}</a> <span style="color:#B5B6C4;">&middot;</span> <span style="color:${W.ink2};">${FIXFY_CONTACT.phone}</span></p>` +
+    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;"><a href="https://www.getfixfy.com" style="color:${W.ink2};text-decoration:none;">getfixfy.com</a> <span style="color:#B5B6C4;">&middot;</span> <a href="mailto:${FIXFY_CONTACT.email}" style="color:${W.ink2};text-decoration:none;">${FIXFY_CONTACT.email}</a> <span style="color:#B5B6C4;">&middot;</span> <a href="${FIXFY_CONTACT.whatsapp}" style="color:${W.ink2};text-decoration:none;">WhatsApp</a></p>` +
     `<p style="margin:0;font-family:${SANS};font-size:12px;line-height:18px;color:${FX.faint};">${esc(FIXFY_CONTACT.legal)}</p>${marketing}`;
   const rodape = z
     ? `<div style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</div>`
@@ -688,7 +692,7 @@ ${miolo}
     assinatura ? `\n${assinatura}` : "",
     fino.length ? `\n${fino.join("\n")}` : "",
     "",
-    `Need a hand? Reply to this email, contact ${FIXFY_CONTACT.email} or call ${FIXFY_CONTACT.phone}.`,
+    `Need a hand? Reply to this email, contact ${FIXFY_CONTACT.email} or message us on WhatsApp: ${FIXFY_CONTACT.whatsapp}`,
     FIXFY_CONTACT.legal,
     e.marketing ? `${e.marketing.motivo} Unsubscribe: ${e.marketing.descadastroUrl}` : "",
   ]
@@ -716,7 +720,7 @@ export function emailPessoal(e: { preheader: string; saudacao: string; paragrafo
     : "";
   const links = sec.length ? `<p style="margin:0 0 14px 0;font-size:14px;line-height:20px;">${sec.map((l) => `<a href="${esc(urlSegura(l.url)!)}" style="color:${FX.navy};font-weight:600;">${esc(l.label)}</a>`).join(" &middot; ")}</p>` : "";
   const assina = assinatura ? `<p style="margin:0;font-size:16px;line-height:24px;color:${FX.text};">${esc(assinatura)}</p>` : "";
-  const rodape = `<p style="margin:0;font-size:12px;line-height:18px;color:${FX.faint};">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:${FX.navy};font-weight:600;">${FIXFY_CONTACT.email}</a> or call ${FIXFY_CONTACT.phone}.<br>${esc(FIXFY_CONTACT.legal)}</p>`;
+  const rodape = `<p style="margin:0;font-size:12px;line-height:18px;color:${FX.faint};">Need a hand? Reply to this email, contact <a href="mailto:${FIXFY_CONTACT.email}" style="color:${FX.navy};font-weight:600;">${FIXFY_CONTACT.email}</a> or message us on <a href="${FIXFY_CONTACT.whatsapp}" style="color:${FX.navy};font-weight:600;">WhatsApp</a>.<br>${esc(FIXFY_CONTACT.legal)}</p>`;
   // Mesma família do Welcome, mas leve (parece e-mail escrito): logo navy, texto corrido, rodapé claro.
   const miolo = `<div style="max-width:560px;margin:0 auto;padding:24px 20px;text-align:left;font-family:${SANS};"><img src="${LOGO_NAVY}" alt="Fixfy" width="92" style="display:block;width:92px;height:auto;border:0;margin:0 0 18px 0;">${ps}${botao}${links}${assina}<div style="margin:24px 0 0 0;padding:16px 0 0 0;border-top:1px solid ${W.line};text-align:left;">${rodape}</div></div>`;
   const html = z
@@ -730,7 +734,7 @@ export function emailPessoal(e: { preheader: string; saudacao: string; paragrafo
     ...sec.map((l) => `${l.label}: ${urlSegura(l.url)}`),
     assinatura ?? "",
     "",
-    `Need a hand? Reply to this email, contact ${FIXFY_CONTACT.email} or call ${FIXFY_CONTACT.phone}.`,
+    `Need a hand? Reply to this email, contact ${FIXFY_CONTACT.email} or message us on WhatsApp: ${FIXFY_CONTACT.whatsapp}`,
     FIXFY_CONTACT.legal,
   ]
     .join("\n")

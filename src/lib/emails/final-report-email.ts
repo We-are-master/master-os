@@ -54,7 +54,7 @@ export function buildFinalReportEmail(d: FinalReportEmailInput): { subject: stri
     paragrafos: [
       liberado ? "Thank you for your payment. Your certificate and final report are attached." : p1,
       ...(d.certificado === "retido" ? [FRASE_CERTIFICADO_RETIDO] : []),
-      `Thank you for choosing Fixfy. If you have any questions about the work${anexado ? " or the report" : ""}, just reply or call us on ${FIXFY_CONTACT.phone}.`,
+      `Thank you for choosing Fixfy. If you have any questions about the work${anexado ? " or the report" : ""}, just reply to this email or message us on WhatsApp.`,
       "We’re happy to help.",
     ],
     linhas: [

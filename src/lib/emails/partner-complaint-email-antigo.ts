@@ -76,12 +76,12 @@ function partnerJobOnHoldFooterHtml(safe: {
     : "";
   return `      <tr><td align="center" style="padding:32px 40px 32px 40px;" class="px-mobile">
         ${linkBlock}
-        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Call us on <a href="tel:${safe.supportTelHref}" style="color:#ED4B00; font-weight:600;">${safe.supportTel}</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
+        <p style="margin:0; font-size:13px; line-height:20px; color:#6B6B85;">Need to talk this through? Message us on <a href="https://wa.me/442045384668" style="color:#ED4B00; font-weight:600;">WhatsApp</a> or email <a href="mailto:${safe.support}" style="color:#ED4B00;">${safe.support}</a>.</p>
       </td></tr>
 
       <tr><td style="background-color:#F7F7FB; padding:24px 40px; border-top:1px solid #E4E4EC;" class="px-mobile">
         <p style="margin:0 0 10px 0; font-size:12px; line-height:18px; color:#6B6B85;">You're receiving this email because you're registered as a partner with Fixfy.</p>
-        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a> · ${safe.supportTel}</p>
+        <p style="margin:0; font-size:12px; line-height:18px; color:#6B6B85;"><strong style="color:#3A3A55;">Fixfy</strong> · <a href="https://www.getfixfy.com" style="color:#6B6B85;">www.getfixfy.com</a> · <a href="mailto:${safe.support}" style="color:#6B6B85;">${safe.support}</a></p>
       </td></tr>`;
 }
 
@@ -213,7 +213,7 @@ ${data.resolveUrl}
 
 Please respond within 12 hours.
 
-Need to talk this through? Call ${supportPhone} or email ${supportEmail}.
+Need to talk this through? Message us on WhatsApp (https://wa.me/442045384668) or email ${supportEmail}.
 
 Fixfy · www.getfixfy.com`;
   }
