@@ -11,7 +11,7 @@ import {
   partnerEmailHeadBlock,
   partnerEmailLogoHeaderRow,
   partnerEmailPreheaderHtml,
-  partnerEmailSplitTitleHtml,
+  partnerEmailHeadlineAfterGreetingHtml,
 } from "./partner-email-layout";
 
 function escapeHtml(s: string): string {
@@ -148,10 +148,8 @@ export function buildPartnerComplaintEmailAntigo(data: {
 ${partnerEmailLogoHeaderRow("26px 40px", true)}
 
       <tr><td style="padding:40px 40px 24px 40px;" class="px-mobile">
-        ${partnerEmailSplitTitleHtml(
-          safe.name,
-          "A complaint was raised on this job. We need your help to resolve it.",
-        )}
+        ${partnerEmailHeadlineAfterGreetingHtml("New Complaint", { marginBottom: "16px" })}
+        <p style="margin:0 0 8px 0; font-size:16px; line-height:24px; color:#3A3A55;">Hi ${safe.name},</p>
         <p style="margin:0 0 16px 0; font-size:16px; line-height:24px; color:#3A3A55;">A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within <strong style="color:#0A0A1F;">12 hours</strong>.</p>
       </td></tr>
 ${jobCard}
@@ -199,9 +197,11 @@ ${footer}`;
     text =
 `ACTION REQUIRED · REPLY WITHIN 12 HOURS
 
+New Complaint
+
 Hi ${data.partnerFirstName || "there"},
 
-A complaint was raised on this job. We need your help to resolve it.
+A complaint has come in about the job below, so we've placed it on hold while we look into it. We've committed to the customer that we'll resolve this within 24 hours, so we'll need your reply with the evidence below within 12 hours.
 
 Job #${data.jobReference} · ${data.jobTitle}
 Location: ${data.propertyAddress || "—"}
