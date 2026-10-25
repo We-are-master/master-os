@@ -206,13 +206,25 @@ export async function chargeJobBalanceOnSavedCard(
  * O cartão salvo vai para o cadastro do cliente (tela de Clients e próximas cobranças).
  * Bandeira e final vêm da Stripe; sem permissão para ler o método, grava só os ids.
  */
-export async function salvarCartaoNoCliente(admin: SupabaseClient, clientId: string, customerId: string, pmId: string): Promise<void> {
+export async function salvarCartaoNoCliente(admin: SupabaseClient, clientId: string, customerId: string, pmId: string, paymentIntentId?: string | null): Promise<void> {
   let card: { brand?: string | null; last4?: string | null } | null = null;
   try {
     const pm = await requireStripe().paymentMethods.retrieve(pmId);
     card = pm.card ? { brand: pm.card.brand, last4: pm.card.last4 } : null;
   } catch {
-    /* chave restrita sem leitura de payment methods: segue só com os ids */
+    /* chave restrita sem leitura de payment methods: tenta pela cobrança do sinal */
+  }
+  // A tela de Clients só mostra o cartão com o final (client-saved-card.tsx). A chave restrita lê a
+  // cobrança, e a cobrança traz bandeira e final (JOB-9794: Mastercard 2322, 25/10/2026).
+  if (!card?.last4 && paymentIntentId) {
+    try {
+      const pi = await requireStripe().paymentIntents.retrieve(paymentIntentId, { expand: ["latest_charge"] });
+      const ch = pi.latest_charge && typeof pi.latest_charge !== "string" ? pi.latest_charge : null;
+      const c = ch?.payment_method_details?.card;
+      if (c?.last4) card = { brand: c.brand, last4: c.last4 };
+    } catch {
+      /* sem leitura da cobrança: segue só com os ids */
+    }
   }
   await admin
     .from("clients")

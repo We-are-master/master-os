@@ -1262,7 +1262,7 @@ export async function POST(req: NextRequest) {
   if (stripeCustomerIn && stripePaymentMethodIn && clientId) {
     try {
       const { salvarCartaoNoCliente } = await import("@/lib/stripe-card-charge");
-      await salvarCartaoNoCliente(supabase, clientId, stripeCustomerIn, stripePaymentMethodIn);
+      await salvarCartaoNoCliente(supabase, clientId, stripeCustomerIn, stripePaymentMethodIn, paymentIntentIn);
     } catch (e) {
       console.error("[api/jobs] card on client failed:", e instanceof Error ? e.message : e);
     }
