@@ -483,8 +483,11 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const corSub = tinto ? fx!.ink : W.orangeSoft;
   const metricaHtml = (m: Metrica) =>
     `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${LABEL};font-size:13px;line-height:16px;font-weight:600;color:${corRotulo};${tinto ? "opacity:0.8;" : ""}">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${DISPLAY};font-stretch:112%;font-size:28px;line-height:34px;font-weight:800;letter-spacing:-0.02em;color:${corValor};${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${LABEL};font-size:14px;line-height:20px;font-weight:600;color:${corSub};">${esc(m.sub)}</p>` : ""}`;
+  // No Zendesk, uma métrica por linha (dono, 25/10/2026, "Job booked" do JOB-9793): lado a lado,
+  // o Zendesk tira o box-sizing, as colunas de 33% não cabem, a data e a janela quebram em duas
+  // linhas sobrepostas e a terceira métrica cai para baixo. Empilhado, cada valor cabe numa linha.
   const colunasMetricas = z
-    ? metricas.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:${Math.floor(100 / metricas.length)}%;box-sizing:border-box;padding:0 ${i < metricas.length - 1 ? 14 : 0}px 0 0;">${metricaHtml(m)}</div>`).join("")
+    ? metricas.map((m, i) => `<div style="padding:0 0 ${i < metricas.length - 1 ? 14 : 0}px 0;">${metricaHtml(m)}</div>`).join("")
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
   // Régua horizontal dentro do quadro, em cima dos números (dono, 24/10/2026: "um do
   // lado do outro, igual era antes, dentro do box, em cima"). Feito = cheio, atual =
