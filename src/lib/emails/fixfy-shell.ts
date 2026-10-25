@@ -481,13 +481,25 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const corRotulo = tinto ? fx!.ink : W.onNavy;
   const corValor = !tinto ? "#FFFFFF" : faixa!.tipo === "acao" ? FX.navy : fx!.cor;
   const corSub = tinto ? fx!.ink : W.orangeSoft;
+  // No Zendesk o valor é menor (22px): duas métricas cabem lado a lado numa linha só.
+  const tamanhoDoValor = z ? "font-size:22px;line-height:28px;white-space:nowrap;" : "font-size:28px;line-height:34px;";
   const metricaHtml = (m: Metrica) =>
-    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${LABEL};font-size:13px;line-height:16px;font-weight:600;color:${corRotulo};${tinto ? "opacity:0.8;" : ""}">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${DISPLAY};font-stretch:112%;font-size:28px;line-height:34px;font-weight:800;letter-spacing:-0.02em;color:${corValor};${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${LABEL};font-size:14px;line-height:20px;font-weight:600;color:${corSub};">${esc(m.sub)}</p>` : ""}`;
-  // No Zendesk, uma métrica por linha (dono, 25/10/2026, "Job booked" do JOB-9793): lado a lado,
-  // o Zendesk tira o box-sizing, as colunas de 33% não cabem, a data e a janela quebram em duas
-  // linhas sobrepostas e a terceira métrica cai para baixo. Empilhado, cada valor cabe numa linha.
+    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${LABEL};font-size:13px;line-height:16px;font-weight:600;color:${corRotulo};${tinto ? "opacity:0.8;" : ""}">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${DISPLAY};font-stretch:112%;${tamanhoDoValor}font-weight:800;letter-spacing:-0.02em;color:${corValor};${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${LABEL};font-size:14px;line-height:20px;font-weight:600;color:${corSub};">${esc(m.sub)}</p>` : ""}`;
+  // No Zendesk, duas métricas por linha (dono, 25/10/2026, "Job booked" do JOB-9793: data e
+  // chegada lado a lado, o valor embaixo). Três colunas de 33% com padding quebravam: o Zendesk
+  // tira o box-sizing e a soma passa de 100%. Aqui cada coluna tem 50% sem padding por fora; o
+  // respiro fica num div de dentro, que não soma na largura.
+  const paresDeMetricas: Metrica[][] = [];
+  for (let i = 0; i < metricas.length; i += 2) paresDeMetricas.push(metricas.slice(i, i + 2));
   const colunasMetricas = z
-    ? metricas.map((m, i) => `<div style="padding:0 0 ${i < metricas.length - 1 ? 14 : 0}px 0;">${metricaHtml(m)}</div>`).join("")
+    ? paresDeMetricas
+        .map(
+          (par, l) =>
+            `<div style="font-size:0;${l < paresDeMetricas.length - 1 ? "padding-bottom:14px;" : ""}">${par
+              .map((m) => `<div style="display:inline-block;vertical-align:top;width:50%;"><div style="padding-right:12px;">${metricaHtml(m)}</div></div>`)
+              .join("")}</div>`,
+        )
+        .join("")
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
   // Régua horizontal dentro do quadro, em cima dos números (dono, 24/10/2026: "um do
   // lado do outro, igual era antes, dentro do box, em cima"). Feito = cheio, atual =
