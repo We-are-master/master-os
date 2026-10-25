@@ -53,7 +53,7 @@ test("#1 confirmação: B2C pelo primeiro nome, linhas e sem travessão", () => 
   const m = buildJobConfirmationEmail({ ...base, publico: { tipo: "b2c", primeiroNome: "Sarah" } });
   assert.equal(m.subject, "Your Fixfy booking is confirmed · Wed 21 Oct 26");
   assert.match(m.text, /^Hi Sarah,$/m);
-  assert.match(m.text, /Your professional is confirmed for Wed 21 Oct 26, arriving 09:00-12:00\./);
+  assert.match(m.text, /Your booking is confirmed for Wed 21 Oct 26, arriving 09:00-12:00\./);
   assert.match(m.text, /Property: 12 Example Road, London, E1 6AN/);
   assert.match(m.text, /Booking: JOB-9800/);
   assert.doesNotMatch(m.html, /<table[^>]*><tr><td[^>]*>.*<table/); // comentário do Zendesk: sem tabela interna

@@ -88,6 +88,20 @@ export async function POST(req: NextRequest) {
       // When a deposit invoice is paid, advance the originating quote from
       // `awaiting_payment` to `converted_to_job`. Safe no-op if the invoice
       // isn't a deposit or the job/quote can't be resolved.
+      // Sinal pago pelo link do OS (reserva do Harvey, cotação): a confirmação do booking sai agora,
+      // mesmo sem parceiro. A própria função confere status, data, sinal e se já saiu (uma vez só).
+      if (inv.job_reference) {
+        try {
+          const { data: jobDoPagamento } = await supabaseAdmin.from("jobs").select("id").eq("reference", inv.job_reference).is("deleted_at", null).maybeSingle();
+          const jid = (jobDoPagamento as { id?: string } | null)?.id;
+          if (jid) {
+            const { dispatchJobCreatedZendesk } = await import("@/lib/zendesk-lifecycle");
+            await dispatchJobCreatedZendesk({ jobId: jid, client: supabaseAdmin });
+          }
+        } catch (e) {
+          console.error("Stripe webhook: booking confirmation after payment failed", e);
+        }
+      }
       if (fullyPaid && inv.invoice_kind === "deposit" && inv.job_reference) {
         // Entrada paga: cotação vai para converted_to_job e o parceiro recebe o aviso (15/10/2026).
         try {

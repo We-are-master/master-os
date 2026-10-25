@@ -235,11 +235,12 @@ export function buildJobConfirmationEmail(args: JobConfirmationEmailArgs): { sub
   const endereco = enderecoCompleto(args);
   const publico = publicoDaSaudacao(args.greetingName, args.publico);
 
+  // Sem falar do profissional (dono, 25/10/2026): a confirmação é da reserva; quem vai não entra no e-mail.
   const quando = data
     ? janela
-      ? `Your professional is confirmed for ${data}, arriving ${janela}.`
-      : `Your professional is confirmed for ${data}. We’ll confirm the arrival time before the visit.`
-    : "Your professional is confirmed.";
+      ? `Your booking is confirmed for ${data}, arriving ${janela}.`
+      : `Your booking is confirmed for ${data}. We’ll confirm the arrival time before the visit.`
+    : "Your booking is confirmed.";
   const intro = String(args.intro ?? "").trim();
   const paragrafos = [
     ...(intro ? [intro.charAt(0).toUpperCase() + intro.slice(1)] : []),
