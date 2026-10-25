@@ -154,10 +154,11 @@ export function blocoDeFotosHtml(
   const mais = opts.maisLink
     ? `<a href="${esc(opts.maisLink.url)}" target="_blank" style="display:inline-block;vertical-align:top;margin:0 8px 8px 0;padding:12px 14px;border:1px solid #E4E4EC;border-radius:8px;background:#F7F7FB;color:#020040;font-size:13px;font-weight:600;text-decoration:none;">${esc(opts.maisLink.label)}</a>`
     : "";
+  // Link simples em destaque, na mesma fileira, depois das fotos (dono, 25/10/2026).
   const baixar = opts.baixarTudo
-    ? `<p style="margin:4px 0 0 0;"><a href="${esc(opts.baixarTudo)}" target="_blank" style="display:inline-block;padding:9px 14px;border:1px solid #020040;border-radius:8px;color:#020040;font-size:13px;line-height:18px;font-weight:700;text-decoration:none;">Save all photos (${urls.length})</a></p>`
+    ? `<a href="${esc(opts.baixarTudo)}" target="_blank" style="display:inline-block;vertical-align:top;margin:0 8px 8px 0;padding:12px 4px;color:#ED4B00;font-size:13px;line-height:18px;font-weight:700;text-decoration:underline;">Save all photos</a>`
     : "";
-  return `<div style="margin:0 0 12px 0;"><p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:#6B6B85;">${esc(opts.legenda)}</p><div style="font-size:0;line-height:0;">${imgs}${mais}</div>${baixar}</div>`;
+  return `<div style="margin:0 0 12px 0;"><p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:#6B6B85;">${esc(opts.legenda)}</p><div style="font-size:0;line-height:0;">${imgs}${mais}${baixar}</div></div>`;
 }
 
 /** Sem foto no job: a linha neutra no lugar das miniaturas (dono, 23/10/2026). */
