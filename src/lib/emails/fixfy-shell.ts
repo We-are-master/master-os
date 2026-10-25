@@ -487,13 +487,21 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const corRotulo = tinto ? fx!.ink : W.onNavy;
   const corValor = !tinto ? "#FFFFFF" : faixa!.tipo === "acao" ? FX.navy : fx!.cor;
   const corSub = tinto ? fx!.ink : W.orangeSoft;
-  const metricaHtml = (m: Metrica) =>
-    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${LABEL};font-size:13px;line-height:16px;font-weight:600;color:${corRotulo};${tinto ? "opacity:0.8;" : ""}">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${DISPLAY};font-stretch:112%;font-size:28px;line-height:34px;font-weight:800;letter-spacing:-0.02em;color:${corValor};${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${LABEL};font-size:14px;line-height:20px;font-weight:600;color:${corSub};">${esc(m.sub)}</p>` : ""}`;
+  const metricaHtml = (m: Metrica, lado = false) =>
+    `${m.rotulo ? `<p style="margin:0 0 4px 0;font-family:${LABEL};font-size:13px;line-height:16px;font-weight:600;color:${corRotulo};${tinto ? "opacity:0.8;" : ""}">${esc(m.rotulo)}</p>` : ""}<p class="fx-big" style="margin:0;font-family:${DISPLAY};font-stretch:112%;font-size:${lado ? "21px" : "28px"};line-height:${lado ? "26px" : "34px"};font-weight:800;letter-spacing:-0.02em;color:${corValor};${m.riscado ? "text-decoration:line-through;text-decoration-thickness:2px;opacity:0.7;" : ""}">${esc(m.valor)}</p>${m.sub ? `<p style="margin:4px 0 0 0;font-family:${LABEL};font-size:14px;line-height:20px;font-weight:600;color:${corSub};">${esc(m.sub)}</p>` : ""}`;
   // No Zendesk, uma métrica por linha (dono, 25/10/2026, "Job booked" do JOB-9793): lado a lado,
   // o Zendesk tira o box-sizing, as colunas de 33% não cabem, a data e a janela quebram em duas
   // linhas sobrepostas e a terceira métrica cai para baixo. Empilhado, cada valor cabe numa linha.
+  // Data e chegada lado a lado, o resto embaixo (dono, 25/10/2026). Duas colunas de 48% sem
+  // padding lateral cabem mesmo sem box-sizing; no celular estreito o valor quebra em vez de
+  // invadir a coluna do lado.
+  const par = z && metricas.length >= 2 ? metricas.slice(0, 2) : [];
+  const resto = z ? metricas.slice(par.length) : metricas;
+  const linhaDoPar = par.length
+    ? `<div style="font-size:0;padding:0 0 ${resto.length ? 14 : 0}px 0;">${par.map((m, i) => `<div style="display:inline-block;vertical-align:top;width:48%;${i === 0 ? "margin-right:4%;" : ""}font-size:14px;">${metricaHtml(m, true)}</div>`).join("")}</div>`
+    : "";
   const colunasMetricas = z
-    ? metricas.map((m, i) => `<div style="padding:0 0 ${i < metricas.length - 1 ? 14 : 0}px 0;">${metricaHtml(m)}</div>`).join("")
+    ? linhaDoPar + resto.map((m, i) => `<div style="padding:0 0 ${i < resto.length - 1 ? 14 : 0}px 0;">${metricaHtml(m)}</div>`).join("")
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${metricas.map((m, i) => `<td class="fx-col" valign="top" style="padding:0 ${i < metricas.length - 1 ? 16 : 0}px 0 0;">${metricaHtml(m)}</td>`).join("")}</tr></table>`;
   // Régua horizontal dentro do quadro, em cima dos números (dono, 24/10/2026: "um do
   // lado do outro, igual era antes, dentro do box, em cima"). Feito = cheio, atual =

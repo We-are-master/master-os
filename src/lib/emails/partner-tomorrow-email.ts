@@ -12,7 +12,7 @@
  * relógio. O rótulo do acordo vem NA FRENTE do valor em cada card.
  */
 import { dataLonga, esc, urlSegura, type Metrica } from "./fixfy-shell";
-import { emailParceiro, horaDeTexto, janelaCurtaDeTexto, pagaDoParceiro, saudacaoDoParceiro, semTravessao } from "./partner-shell";
+import { emailParceiro, horaDeTexto, janelaCurtaDeTexto, pagaDoParceiro, semTravessao } from "./partner-shell";
 import { formatDuration, formatDistanceMiles } from "@/lib/mapbox-directions";
 
 export type PartnerTomorrowStop = {
@@ -128,9 +128,10 @@ export function buildPartnerTomorrowEmail(data: PartnerTomorrowEmailData): {
     zendesk: false,
     preheader: `${jobs} ${dayWord} · first arrival ${primeira}`,
     estado: { texto: dayWord === "today" ? "Today" : "Tomorrow", cor: "navy", chip: true },
-    titulo: `Your jobs for ${dayWord}`,
-    saudacao: saudacaoDoParceiro(data.partnerFirstName),
-    paragrafos: [`Here's your day for ${dayWord}, ${dia}: ${jobs} lined up, ${data.showRoute ? "in driving order from home" : "in arrival order"}.`],
+    // Título com o dia e os números logo embaixo, sem saudação nem frase (dono, 25/10/2026).
+    titulo: `Your jobs for ${dia}`,
+    saudacao: "",
+    paragrafos: [],
     avisos: data.correctionNote?.trim() ? [{ tom: "amber", texto: semTravessao(data.correctionNote.trim()), lugar: "topo" }] : [],
     metricas,
     antesDoBotao: { html: blocos.join(""), text: textos.join("\n\n") },

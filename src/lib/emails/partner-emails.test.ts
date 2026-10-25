@@ -213,9 +213,9 @@ describe("e-mails ao parceiro", () => {
       stops: [{ windowLabel: "9:00 AM – 12:00 PM", title: "Carpentry", address: ENDERECO, clientFirstName: "Sarah", payDisplay: "Fixed · £70.00", portalUrl: "https://partners.test/j/1", drive: { durationSec: 1560, distanceM: 9200 }, slot: "morning" }],
     });
     regrasComuns(e);
-    assert.deepEqual(cabeca(e.html), { chip: "Tomorrow", titulo: "Your jobs for tomorrow", passo: null });
-    assert.match(e.html, />Hi TM,</);
-    assert.match(e.html, /Here&#39;s your day for tomorrow, Wed 28 Oct 26: 1 job lined up, in driving order from home\./);
+    assert.deepEqual(cabeca(e.html), { chip: "Tomorrow", titulo: "Your jobs for Wed 28 Oct 26", passo: null });
+    // Sem saudação nem frase: o título e os números já dizem (dono, 25/10/2026).
+    assert.doesNotMatch(e.html, />Hi TM,<|Here&#39;s your day/);
     assert.match(e.html, />09:00</);
     assert.match(e.html, />09:00-12:00</);
     assert.match(e.html, />Morning slot</);
