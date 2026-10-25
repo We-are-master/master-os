@@ -30,7 +30,7 @@ import { contextoDaRetomada } from "./site-lead";
 import { contextoDoWelcome, welcomeDoTelefone } from "./welcome-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { textoDePagamentoRecebido } from "./confirmacao-no-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
@@ -498,7 +498,9 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
 
   const r = await pensar(
     paraFalas(sessao),
-    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, ticketDaConversa: () => ticketPeloTelefone(telefone), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)) },
+    { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, // O job pago nasce num ticket que dá para editar (dono, 25/10/2026, JOB-9794): o da conversa
+      // enquanto o Harvey atende é "AI agent", só leitura, e o job ficava sem status nem nota. Aí vale o do lead.
+      ticketDaConversa: () => ticketDeTrabalho(telefone ?? "").then((t) => t.editavel[0] ?? t.conversa), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)) },
     chamarSite,
     await catalogo(),
   );
@@ -565,6 +567,11 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     if (!dados.ticketDoJob && quem.tipo === "cliente") Object.assign(dados, await jobDoClienteNoOs(sb, quem.cliente.id));
     const feito = await classificarNoZendesk(telefone, quem, dados).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
     Object.assign(mudancas, { zendesk_em: new Date().toISOString(), zendesk_resultado: feito.slice(0, 300) });
+  }
+  // O checkout da Stripe para o link curto /pay/<ref> (migration 352). À parte: sem a coluna, só isto falha.
+  if (r.checkout?.url) {
+    const { error } = await sb.from("harvey_wa_conversas").update({ checkout_url: r.checkout.url }).eq("conversation_id", conversa.id);
+    if (error) console.error("[harvey-wa] checkout_url não gravado (migration 352?):", error.message);
   }
   if (r.checkout)
     Object.assign(mudancas, {
