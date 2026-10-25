@@ -22,6 +22,7 @@
 
 import { appBaseUrl } from "@/lib/app-base-url";
 import { CLIENT_BRAND, escapeHtml } from "@/lib/emails/client-email-layout";
+import { assinaturaDoVictorHtml } from "./assinatura-victor";
 
 export type BlocoDeTexto = { tipo: "texto"; html: string };
 export type BlocoDeLista = { tipo: "lista"; titulo: string; itens: string[] };
@@ -57,14 +58,25 @@ export type CampanhaInput = {
   assinatura?: Assinatura;
 };
 
-export type Assinatura = { nome: string; linha: string };
+/** `html` substitui o nome e a linha no corpo (assinatura com logo e contatos). */
+export type Assinatura = { nome: string; linha: string; html?: string };
 
 /** Voz do Victor no B2C (dono, 15/10/2026): Diretor de Operações, e a resposta cai na caixa dele. */
 export const ASSINATURA_DO_VICTOR: Assinatura = {
   nome: "Victor Braz",
   linha: "Operations Director, Fixfy. Reply to this email and I will get back to you personally.",
+  html: assinaturaDoVictorHtml(),
 };
 const ASSINATURA_PADRAO: Assinatura = { nome: "The Fixfy Team", linha: "Reply to this email and a real person answers." };
+
+function assinaturaNoCorpo(a: Assinatura): string {
+  if (a.html) return `<div style="margin:24px 0 0;">${a.html}</div>`;
+  return `<p style="margin:22px 0 0; font-size:15px; line-height:24px; color:${CLIENT_BRAND.body};">
+            ${escapeHtml(a.nome)}<br>
+            <span style="color:${CLIENT_BRAND.gray}; font-size:14px;">${escapeHtml(a.linha)}</span>
+          </p>`;
+}
+
 
 /**
  * Cabeçalho compacto (dono, 15/10/2026, versão C): faixa navy baixa com o logo
@@ -224,10 +236,7 @@ ${preheaderOculto(input.preheader)}
           ${corpo}
           ${oferta}
           ${botao(input.cta.texto, input.cta.url)}
-          <p style="margin:22px 0 0; font-size:15px; line-height:24px; color:${CLIENT_BRAND.body};">
-            ${escapeHtml((input.assinatura ?? ASSINATURA_PADRAO).nome)}<br>
-            <span style="color:${CLIENT_BRAND.gray}; font-size:14px;">${escapeHtml((input.assinatura ?? ASSINATURA_PADRAO).linha)}</span>
-          </p>
+          ${assinaturaNoCorpo(input.assinatura ?? ASSINATURA_PADRAO)}
         </td>
       </tr>
 
