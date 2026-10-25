@@ -54,3 +54,10 @@ describe("nomeProprio", () => {
     assert.equal(nomeProprio("MICHELI ANDRÉ"), "Micheli André");
   });
 });
+
+test("palavra com número fica como veio (25/10/2026)", () => {
+  assert.equal(nomeProprio("E11 4AA"), "E11 4AA");
+  assert.equal(nomeProprio("JH JANG"), "Jh Jang");
+  assert.equal(nomeProprio("ARVIN RAVINDRAN"), "Arvin Ravindran");
+  assert.equal(nomeProprio("ranjeet s."), "Ranjeet S.");
+});

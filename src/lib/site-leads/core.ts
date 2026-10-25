@@ -14,6 +14,7 @@
  * mandar em dobro.
  */
 
+import { nomeProprio } from "@/lib/nome-proprio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import { bloquear } from "@/lib/marketing/suppressions";
@@ -151,7 +152,7 @@ export async function registrarPasso(input: PassoDoSite, agora = new Date()) {
 
   const campos: Record<string, unknown> = {
     email,
-    full_name: limpar(input.name, 120) ?? existente?.full_name ?? null,
+    full_name: nomeProprio(limpar(input.name, 120)) || existente?.full_name || null,
     phone,
     postcode: limpar(input.postcode, 10)?.toUpperCase() ?? existente?.postcode ?? null,
     client_id: (cliente?.id as string | undefined) ?? existente?.client_id ?? null,

@@ -32,7 +32,11 @@ export function nomeProprio(bruto: string | null | undefined): string {
   // Já veio com as duas caixas: alguém decidiu, e a decisão vale mais que a regra.
   if (temMinuscula && temMaiuscula) return t;
 
-  const capitalizado = capitalizarPartes(t.toLowerCase());
+  // Palavra a palavra: com número ("E11 4AA", "MS4") fica como veio (dono, 25/10/2026).
+  const capitalizado = t
+    .split(" ")
+    .map((p) => (/\d/.test(p) ? p : capitalizarPartes(p.toLowerCase())))
+    .join(" ");
 
   /**
    * `Mc` seguido de letra vira `McDonald`, não `Mcdonald`.

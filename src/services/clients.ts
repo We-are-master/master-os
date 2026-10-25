@@ -1,4 +1,5 @@
 import { queryList, getSupabase, softDeleteById, type ListParams, type ListResult } from "./base";
+import { nomeProprio } from "@/lib/nome-proprio";
 import type { Client } from "@/types/database";
 import { isUuid } from "@/lib/utils";
 
@@ -51,6 +52,8 @@ export async function createClient(data: Omit<Client, "id" | "created_at" | "upd
   }
   const payload = {
     ...data,
+    // Nome com inicial maiúscula, digitado em CAIXA ALTA ou minúsculo (dono, 25/10/2026).
+    full_name: nomeProprio(data.full_name) || data.full_name,
     source_account_id: trimmedSid === "" ? null : trimmedSid,
   };
   const { data: result, error } = await supabase
@@ -76,6 +79,10 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<C
 
   for (const [key, val] of Object.entries(data)) {
     if (val === undefined) continue;
+    if (key === "full_name" && typeof val === "string") {
+      payload.full_name = nomeProprio(val) || val;
+      continue;
+    }
     if (key === "source_account_id") {
       if (val === null || val === "") {
         payload.source_account_id = null;

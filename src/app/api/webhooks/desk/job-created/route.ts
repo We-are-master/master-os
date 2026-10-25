@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { nomeProprio } from "@/lib/nome-proprio";
 import { resolvePartnerTradePortalBaseUrl } from "@/lib/trade-auth";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   const ticketId        = str(body.ticket_id);
   const title           = str(body.title);
-  const clientName      = str(body.client_name);
+  const clientName      = nomeProprio(str(body.client_name));
   const clientEmail     = resolveDeskWebhookClientEmail(body.client_email);
   const clientPhone     = str(body.client_phone);
   const propertyAddress = str(body.property_address);
