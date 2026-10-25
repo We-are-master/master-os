@@ -232,8 +232,9 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
           {collapsed ? (
             <img src="/favicon.svg" alt={title} width={32} height={32} className="h-8 w-8 shrink-0 rounded-[8px]" />
           ) : (
-            // width/height no HTML: a logo nasce com 140×40 mesmo antes do CSS chegar.
-            <img src="/logos/fixfy-wordmark-white-trim.png" alt={title} width={140} height={40} className="h-10 w-[140px] shrink-0 object-contain object-left" />
+            // A logo de sempre (branca com "fy" laranja), recortada e no tamanho em que aparecia
+            // antes (dono, 25/10/2026: "não a original"). width/height no HTML: nasce no tamanho certo.
+            <img src="/logos/fixfy-wordmark-white-orange-trim.png" alt={title} width={68} height={24} className="h-6 w-[68px] shrink-0 object-contain object-left" />
           )}
         </>
       )}
