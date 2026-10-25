@@ -73,3 +73,11 @@ test("cancelado: chip vermelho e a data da visita riscada", async () => {
   assert.match(a.html, /background:#FDECEC;color:#C62828[^>]*>Cancelled</);
   assert.match(a.html, /text-decoration:line-through[^>]*>Wed 28 Oct 26</);
 });
+
+test("#37 com o report na web: do report completo quando há link; sem link, nada", () => {
+    const base = { publico: { tipo: "b2b" as const, empresa: "Housekeep" }, reference: "JOB-9800", service: "End of Tenancy Clean" };
+    const com = buildJobCompleted({ ...base, reportUrl: "https://app.getfixfy.com/report/abc" });
+    assert.match(com.html, /href="https:\/\/app\.getfixfy\.com\/report\/abc"[^>]*>See the full report</);
+    assert.match(com.whatsapp, /Full report: https:\/\/app\.getfixfy\.com\/report\/abc/);
+    assert.doesNotMatch(buildJobCompleted(base).html, /See the full report/);
+});

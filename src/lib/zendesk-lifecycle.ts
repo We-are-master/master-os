@@ -16,6 +16,7 @@
  * already have one open) or build a service-role client lazily.
  */
 
+import { linkDoReportWeb } from "@/lib/fatura-semanal";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
@@ -536,6 +537,7 @@ async function enviarAvisoDeConclusao(
       service: servico,
       propertyAddress: job.property_address ?? null,
       photoCount: anexos.length,
+      reportUrl: job.final_report ? linkDoReportWeb(job.id) : null,
     });
     await avisarNoTicketDoJob({
       ticketId,

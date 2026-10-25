@@ -45,7 +45,14 @@ const limpo = (s: string | null | undefined) => String(s ?? "").replace(/\s+/g, 
 
 /** #37: job concluído (fim do final check). */
 export function buildJobCompleted(
-  args: Base & { propertyAddress?: string | null; photoCount?: number; /** Dia da conclusão; padrão: hoje (o aviso sai no fim do final check). */ completedOn?: string | Date | null },
+  args: Base & {
+    propertyAddress?: string | null;
+    photoCount?: number;
+    /** Dia da conclusão; padrão: hoje (o aviso sai no fim do final check). */
+    completedOn?: string | Date | null;
+    /** O report na web (todas as fotos e o PDF), como no e-mail final (dono, 25/10/2026). */
+    reportUrl?: string | null;
+  },
 ): AvisoDoCiclo {
   const ref = limpo(args.reference);
   const servico = limpo(args.service) || "maintenance";
@@ -81,8 +88,10 @@ export function buildJobCompleted(
       ["Property", endereco],
       ["Booking", ref],
     ],
+    fotos: args.reportUrl ? { lista: [], link: { label: "See the full report", url: args.reportUrl } } : null,
   });
-  return { assunto, preheader, html, texto: text, whatsapp: [saudacao(args.publico), ...paragrafos].join(" ") };
+  const relatorio = args.reportUrl ? [`Full report: ${args.reportUrl}`] : [];
+  return { assunto, preheader, html, texto: text, whatsapp: [saudacao(args.publico), ...paragrafos, ...relatorio].join(" ") };
 }
 
 /** #38: job cancelado. `visitDate` é o `scheduled_date` (YYYY-MM-DD) ou um ISO. */
