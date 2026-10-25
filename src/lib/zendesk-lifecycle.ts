@@ -59,6 +59,26 @@ type PartnerEmbed = {
 };
 
 const CLIENT_CONFIRMATION_STATUSES = new Set(["scheduled", "late"]);
+/** Job pago com sinal antes de ter parceiro: a confirmação sai nesses status também. */
+const STATUS_ANTES_DO_PARCEIRO = new Set(["unassigned", "auto_assigning"]);
+
+/**
+ * Quanto o cliente já pagou, pelo livro de pagamentos (job_payments: sinal ou pagamento inteiro
+ * na reserva).
+ * O `customer_deposit_paid` do job não é confiável para reserva do site ou do WhatsApp
+ * (JOB-9794 pagou e ficou false). Sem a coluna deleted_at, lê sem o filtro.
+ */
+export async function sinalPagoDoJob(supabase: SupabaseClient, jobId: string): Promise<number> {
+  const ler = async (comDeleted: boolean) => {
+    let q = supabase.from("job_payments").select("amount").eq("job_id", jobId).in("type", ["customer_deposit", "customer_final"]);
+    if (comDeleted) q = q.is("deleted_at", null);
+    return q;
+  };
+  let { data, error } = await ler(true);
+  if (error) ({ data, error } = await ler(false));
+  if (error) return 0;
+  return Math.round(((data ?? []) as Array<{ amount: number | string | null }>).reduce((s, r) => s + Number(r.amount ?? 0), 0) * 100) / 100;
+}
 
 export async function resolveJobTypeOfWorkLabel(
   supabase: SupabaseClient,
@@ -151,7 +171,11 @@ export async function dispatchJobCreatedZendesk(args: {
 
   const jobStatus = String((job as { status?: string | null }).status ?? "");
   const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
-  if (!CLIENT_CONFIRMATION_STATUSES.has(jobStatus) || !dateStr) {
+  // Uma confirmação só (dono, 25/10/2026): com sinal pago ela sai no pagamento, mesmo sem
+  // parceiro (Unassigned); sem sinal, quando o job é agendado com parceiro (Scheduled).
+  const sinalPago = await sinalPagoDoJob(supabase, args.jobId);
+  const confirmaSemParceiro = sinalPago > 0 && STATUS_ANTES_DO_PARCEIRO.has(jobStatus);
+  if ((!CLIENT_CONFIRMATION_STATUSES.has(jobStatus) && !confirmaSemParceiro) || !dateStr) {
     return { ok: true, skipped: "not_scheduled" };
   }
 
@@ -212,7 +236,7 @@ export async function dispatchJobCreatedZendesk(args: {
     propertyAddress,
     propertyPostcode,
     typeOfWork,
-    deposito: depositoDoJob(job as Record<string, unknown>),
+    deposito: depositoDoJob(job as Record<string, unknown>) ?? depositoDoLivro(job as Record<string, unknown>, sinalPago),
   };
   const confirmacao = buildJobConfirmationEmail(argsDaConfirmacao);
   const html = confirmacao.html;
@@ -417,7 +441,7 @@ async function dispatchJobTerminalNotice(args: {
     String(job.title ?? ""),
   );
 
-  const { html } = buildJobCancelled({
+  const aviso = buildJobCancelled({
     publico: publicoDoAviso(orgName, clientRow?.full_name ?? job.client_name ?? ""),
     reference: String(job.reference ?? ""),
     service: servico,
@@ -425,14 +449,38 @@ async function dispatchJobTerminalNotice(args: {
     visitDate: (job as { scheduled_date?: string | null }).scheduled_date ?? null,
   });
 
+  const html = aviso.html;
+  const viaWhatsApp = await ticketDoWhatsApp(ticketId);
   try {
     // Ticket do WhatsApp (job pago na conversa do Harvey): nota interna, como a confirmação.
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !(await ticketDoWhatsApp(ticketId)) });
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !viaWhatsApp });
   } catch (err) {
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+
+  // E o cliente fica sabendo por e-mail, como na confirmação (dono, 25/10/2026): até aqui o
+  // cancelamento num ticket de WhatsApp ficava só na nota interna e o cliente não recebia nada.
+  if (viaWhatsApp) {
+    try {
+      const clientId = String((job as { client_id?: string | null }).client_id ?? "").trim();
+      const billing = clientId ? await resolveNominalBillingParty(supabase, { clientId, fallbackName: clientRow?.full_name ?? "" }) : null;
+      const email = billing?.documentEmail?.trim() ?? "";
+      if (email.includes("@") && email.toLowerCase() !== "team@getfixfy.com") {
+        const { entregarEmailNoTicket } = await import("@/lib/um-ticket/entregar");
+        await entregarEmailNoTicket({
+          ticket: { id: Number(ticketId), origem: "job", canal: "whatsapp" },
+          para: { email, nome: billing?.displayName || null },
+          assunto: aviso.assunto,
+          html,
+          soEmail: true,
+        });
+      }
+    } catch (err) {
+      console.error("[zendesk-lifecycle] cancellation email on WhatsApp ticket failed:", err);
+    }
   }
 
   // Partner "Job cancelled" email is sent via notifyPartnerJobZendesk (office cancel /
@@ -629,6 +677,15 @@ export async function dispatchQuoteRejectedZendesk(
 }
 
 /** Entrada paga do job, para a linha "Payment" da confirmação. Sem entrada paga: null. */
+/** O sinal do livro para o e-mail ("£90 paid, £90 after the job"). */
+function depositoDoLivro(j: Record<string, unknown>, pago: number): { pago: number; restante: number } | null {
+  if (!(pago > 0)) return null;
+  const total = Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
+  const restante = Math.max(0, Math.round((total - pago) * 100) / 100);
+  // Pago por inteiro não é sinal: o e-mail não mostra "£0 after the job".
+  return restante > 0.009 ? { pago, restante } : null;
+}
+
 function depositoDoJob(j: Record<string, unknown>): { pago: number; restante: number } | null {
   const pago = Number(j.customer_deposit ?? 0);
   if (!j.customer_deposit_paid || !(pago > 0)) return null;
