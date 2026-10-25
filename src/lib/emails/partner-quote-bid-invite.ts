@@ -105,13 +105,6 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
     passos: passosDoJob(PASSO_OFERTA),
     avisos: [
       {
-        tom: "amber",
-        icone: "⏱",
-        titulo: "Bid deadline",
-        texto: `This quote expires in ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours. Submit your bid by ${deadlineDisplay} (UK time).`,
-        lugar: "topo",
-      },
-      {
         tom: "neutral",
         titulo: "Required to submit your bid",
         itens: [
@@ -122,6 +115,14 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
         nota: "Use the button below. Incomplete bids cannot be submitted.",
       },
       ajudaDoParceiro(),
+      // Prazo no fim, abaixo do "Questions?" (dono, 25/10/2026).
+      {
+        tom: "amber",
+        icone: "⏱",
+        titulo: "Bid deadline",
+        texto: `This quote expires in ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours. Submit your bid by ${deadlineDisplay} (UK time).`,
+        lugar: "fim",
+      },
     ],
     // Postcode e área só: nome e endereço do cliente entram quando o job é dele.
     linhas: [
