@@ -200,7 +200,10 @@ function NavLink({
 function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   const { resolved, style } = useTheme();
   const logos = useCompanyLogos();
-  const logoSrc = !logos.loading ? resolveAppLogoUrl(resolved, logos, style) : undefined;
+  // A logo do PDF (company_settings.logo_url) não serve à lateral: tem margem e cores do papel, e
+  // trocava a logo oficial depois do carregamento (dono, 25/10/2026: "bug na logo quando recarrega").
+  // A lateral só troca se houver logo de tema (claro/escuro) cadastrada para o app.
+  const logoSrc = !logos.loading ? resolveAppLogoUrl(resolved, { ...logos, logoUrl: undefined }, style) : undefined;
   const [imgErr, setImgErr] = useState(false);
 
   useEffect(() => {
