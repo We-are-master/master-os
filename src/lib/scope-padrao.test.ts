@@ -69,3 +69,8 @@ test("já no padrão volta igual; vazio é null", async () => {
   assert.equal(await scopeNoPadrao(pronto, semModelo), pronto);
   assert.equal(await scopeNoPadrao("  ", semModelo), null);
 });
+
+test("resposta do modelo com dois objetos: vale o primeiro", async () => {
+  const { primeiroObjetoParaTeste } = await import("./scope-padrao");
+  assert.equal(primeiroObjetoParaTeste('{"work":["a {b}"]}\n{"work":[]}'), '{"work":["a {b}"]}');
+});

@@ -167,6 +167,25 @@ Return ONLY JSON with five lists of plain sentences (strings, never objects): {"
 Rules: English. Never invent anything. Never write prices or money, dates, days or times, ticket numbers, or company or platform names (Housekeep, Checkatrade, Fantastic, Express...). Leave a list empty if the request says nothing about it.
 Example: "4 bed 2 Bath\nJohn - 07700900000\nAfter Build Cleaning Service" -> {"work":["After-builders clean"],"property":["4 bed","2 bath"],"access":["On-site contact: John, 07700 900000"],"materials":[],"notes":[]}`;
 
+export const primeiroObjetoParaTeste = (t: string) => primeiroObjeto(t);
+
+/** O primeiro objeto JSON da resposta, contando chaves (às vezes vêm dois, ou texto depois). */
+function primeiroObjeto(texto: string): string {
+  const inicio = texto.indexOf("{");
+  let nivel = 0;
+  let emTexto = false;
+  for (let i = inicio; i >= 0 && i < texto.length; i++) {
+    const c = texto[i];
+    if (emTexto) {
+      if (c === "\\") i++;
+      else if (c === '"') emTexto = false;
+    } else if (c === '"') emTexto = true;
+    else if (c === "{") nivel++;
+    else if (c === "}" && --nivel === 0) return texto.slice(inicio, i + 1);
+  }
+  return texto;
+}
+
 async function organizarComModelo(texto: string): Promise<ScopeFixfy | null> {
   if (!isOpenAIConfigured()) return null;
   try {
@@ -175,7 +194,7 @@ async function organizarComModelo(texto: string): Promise<ScopeFixfy | null> {
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 12_000)),
     ]);
     // Só o objeto: o modelo às vezes escreve algo antes ou depois dele.
-    const json = JSON.parse(resposta.slice(resposta.indexOf("{"), resposta.lastIndexOf("}") + 1)) as Record<string, unknown>;
+    const json = JSON.parse(primeiroObjeto(resposta)) as Record<string, unknown>;
     // Item que veio como objeto vira texto com os valores, para não perder o dado.
     const comoTexto = (x: unknown): string =>
       typeof x === "string" ? x : x && typeof x === "object" ? Object.values(x as Record<string, unknown>).filter((v) => typeof v === "string" || typeof v === "number").join(", ") : "";
