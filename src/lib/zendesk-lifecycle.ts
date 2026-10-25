@@ -441,7 +441,7 @@ async function dispatchJobTerminalNotice(args: {
     String(job.title ?? ""),
   );
 
-  const { html } = buildJobCancelled({
+  const aviso = buildJobCancelled({
     publico: publicoDoAviso(orgName, clientRow?.full_name ?? job.client_name ?? ""),
     reference: String(job.reference ?? ""),
     service: servico,
@@ -449,14 +449,38 @@ async function dispatchJobTerminalNotice(args: {
     visitDate: (job as { scheduled_date?: string | null }).scheduled_date ?? null,
   });
 
+  const html = aviso.html;
+  const viaWhatsApp = await ticketDoWhatsApp(ticketId);
   try {
     // Ticket do WhatsApp (job pago na conversa do Harvey): nota interna, como a confirmação.
-    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !(await ticketDoWhatsApp(ticketId)) });
+    await zdUpdateTicket({ ticketId, htmlBody: html, publicComment: !viaWhatsApp });
   } catch (err) {
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+
+  // E o cliente fica sabendo por e-mail, como na confirmação (dono, 25/10/2026): até aqui o
+  // cancelamento num ticket de WhatsApp ficava só na nota interna e o cliente não recebia nada.
+  if (viaWhatsApp) {
+    try {
+      const clientId = String((job as { client_id?: string | null }).client_id ?? "").trim();
+      const billing = clientId ? await resolveNominalBillingParty(supabase, { clientId, fallbackName: clientRow?.full_name ?? "" }) : null;
+      const email = billing?.documentEmail?.trim() ?? "";
+      if (email.includes("@") && email.toLowerCase() !== "team@getfixfy.com") {
+        const { entregarEmailNoTicket } = await import("@/lib/um-ticket/entregar");
+        await entregarEmailNoTicket({
+          ticket: { id: Number(ticketId), origem: "job", canal: "whatsapp" },
+          para: { email, nome: billing?.displayName || null },
+          assunto: aviso.assunto,
+          html,
+          soEmail: true,
+        });
+      }
+    } catch (err) {
+      console.error("[zendesk-lifecycle] cancellation email on WhatsApp ticket failed:", err);
+    }
   }
 
   // Partner "Job cancelled" email is sent via notifyPartnerJobZendesk (office cancel /
