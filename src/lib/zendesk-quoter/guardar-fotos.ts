@@ -48,6 +48,8 @@ export async function guardarFotosDoTicket(
   ticketId: number | string,
   fotos: readonly FotoBaixada[],
   client?: SupabaseClient,
+  /** Pasta no bucket: `zendesk` (anexos do ticket) ou `housekeep` (fotos do card). */
+  pasta: "zendesk" | "housekeep" = "zendesk",
 ): Promise<string[]> {
   if (fotos.length === 0) return [];
   const supabase = client ?? createServiceClient();
@@ -72,7 +74,7 @@ export async function guardarFotosDoTicket(
          * a mesma foto em vez de criar uma cópia. Sem isso a galeria dobrava
          * de tamanho a cada visita.
          */
-        const path = `zendesk/${ticketId}/${i + 1}.${ext}`;
+        const path = `${pasta}/${ticketId}/${i + 1}.${ext}`;
         const { error } = await supabase.storage
           .from(BUCKET)
           .upload(path, bytes, { contentType: tipo, upsert: true });

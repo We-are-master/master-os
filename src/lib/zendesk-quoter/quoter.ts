@@ -26,6 +26,7 @@ import { normalizeTypeOfWork, acharTypeOfWorkNoTexto, GENERAL_MAINTENANCE_LABEL 
 import { resolveQuoteCatalogServiceId } from "@/lib/quote-bid-invites";
 import { fotosDeVerdade, MIN_BYTES_FOTO } from "./foto-de-verdade";
 import { guardarFotosDoTicket } from "./guardar-fotos";
+import { fotosDoCardHousekeep } from "./fotos-housekeep";
 import { tipoDoPedido, classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { isDirectConsumerAccount } from "@/lib/direct-consumer-accounts";
@@ -1648,7 +1649,11 @@ export async function subirJobBooked(
 
   // As fotos que vieram no ticket, gravadas antes do POST para o job já nascer
   // com elas no card em vez de ganhá-las num segundo passo que pode falhar.
-  const fotos = await guardarFotosDoTicket(ticketId, ticket.imagens);
+  // Housekeep: as fotos do morador ficam no card, não no e-mail (fotos-housekeep.ts).
+  const fotos = [
+    ...(await guardarFotosDoTicket(ticketId, ticket.imagens)),
+    ...(await guardarFotosDoTicket(ticketId, await fotosDoCardHousekeep(ex.cardUrl), undefined, "housekeep")),
+  ];
 
   const base = process.env.MASTER_OS_BASE_URL?.trim() || "http://localhost:3000";
   /**
