@@ -7,6 +7,7 @@
  * dele), a lista do que o lance pede, as fotos, um botão e o quadro de dúvidas.
  */
 
+import { linkParaBaixarFotos } from "@/lib/fotos-zip";
 import { dataLonga, hora24 } from "@/lib/emails/fixfy-shell";
 import {
   CHIP_PARCEIRO,
@@ -55,20 +56,22 @@ function formatBidDeadline(invitedAt: Date): string {
  * parceiro chegar no botão de dar preço. O clique abre a galeria da página de
  * bid, e não o arquivo cru no storage (reclamação dos parceiros em 27/08).
  */
-function fotosDoConvite(photoUrls: string[], bidUrl: string): { html: string; text: string } {
+function fotosDoConvite(photoUrls: string[], bidUrl: string, referencia: string): { html: string; text: string } {
   if (photoUrls.length === 0) return { html: "", text: "" };
   const galeria = `${bidUrl}#photos`;
   const MOSTRA = 3;
   const restantes = photoUrls.length - MOSTRA;
   const legenda = `Site photos: tap a photo to expand. All ${photoUrls.length} open in the partner portal.`;
+  const baixarTudo = linkParaBaixarFotos(referencia, photoUrls);
   return {
     html: blocoDeFotosHtml(photoUrls, {
       legenda,
       max: MOSTRA,
       href: galeria,
       maisLink: { label: restantes > 0 ? `View more (+${restantes})` : "View more", url: galeria },
+      baixarTudo,
     }),
-    text: `${legenda}\n${photoUrls.map((u, i) => `${i + 1}. ${u}`).join("\n")}`,
+    text: `${legenda}\n${photoUrls.map((u, i) => `${i + 1}. ${u}`).join("\n")}${baixarTudo ? `\nSave all photos: ${baixarTudo}` : ""}`,
   };
 }
 
@@ -84,7 +87,7 @@ export function buildPartnerQuoteBidInviteEmail(data: PartnerQuoteBidInviteEmail
   // Copy da versão antiga (dono, 23/10/2026: "usa a copy dos emails antigos").
   const subject = semTravessao(["Quote request", typeLabel, postcode].filter(Boolean).join(" · "));
   const preheader = semTravessao(`New opportunity: ${typeLabel}${postcode ? ` in ${postcode}` : ""}. Bid within ${PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS} hours.`);
-  const fotos = fotosDoConvite(data.photoUrls, data.bidUrl);
+  const fotos = fotosDoConvite(data.photoUrls, data.bidUrl, data.quoteReference);
   const escopo = String(data.scope ?? "")
     .split(/\n+/)
     .map((l) => semTravessao(l.trim()))

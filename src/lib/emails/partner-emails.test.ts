@@ -277,3 +277,16 @@ describe("e-mails ao parceiro", () => {
     assert.ok(trabalhoCurto("General Maintenance", "word ".repeat(80)).length <= 121);
   });
 });
+
+test("Save all photos no convite e no job booked, só com foto", async () => {
+  const { buildPartnerQuoteBidInviteEmail } = await import("./partner-quote-bid-invite");
+  const { buildPartnerJobConfirmationEmail } = await import("./partner-job-confirmation");
+  const convite = buildPartnerQuoteBidInviteEmail({
+    partnerFirstName: "G", quoteReference: "QT-1290", typeOfWork: "Painting", clientName: "S", propertyAddress: "1 A St, London SW11 5RW",
+    scope: "x", photoUrls: ["https://x.supabase.co/a.jpg", "https://x.supabase.co/b.jpg"], bidUrl: "https://p/bid", deepLinkUrl: "fixfy://b", officeQuoteUrl: "https://o",
+  });
+  assert.match(convite.html, /href="[^"]*\/api\/public\/fotos-zip\/[^"]+"[^>]*>Save all photos \(2\)</);
+  const base = { partnerFirstName: "G", jobReference: "JOB-1", jobTitle: "T", clientName: "S", propertyAddress: "1 A St, London SW11 5RW", scope: "x", jobType: "fixed" as const, priceDisplay: "£90.00", reportUrl: null };
+  assert.match(buildPartnerJobConfirmationEmail({ ...base, photoUrls: ["https://x.supabase.co/a.jpg"] }).html, />Save all photos \(1\)</);
+  assert.doesNotMatch(buildPartnerJobConfirmationEmail(base).html, /Save all photos/);
+});

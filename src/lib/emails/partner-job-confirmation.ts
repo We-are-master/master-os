@@ -11,6 +11,7 @@
  * detalhes só do que o tipo pede, fotos, um botão. Sem saudação nem parágrafos.
  */
 
+import { linkParaBaixarFotos } from "@/lib/fotos-zip";
 import { dataLonga, type Metrica } from "@/lib/emails/fixfy-shell";
 import { buildPartnerComplaintEmailAntigo } from "@/lib/emails/partner-complaint-email-antigo";
 import {
@@ -169,10 +170,14 @@ const enderecoOuNada = (e: string | null | undefined) => (e?.trim() && e.trim() 
  * para inspecionar: quem quer inspecionar abre o anexo, que vem em tamanho
  * cheio no mesmo email.
  */
-function fotosDoJob(photoUrls: readonly string[]): { html: string; text: string } | null {
+function fotosDoJob(photoUrls: readonly string[], referencia: string): { html: string; text: string } | null {
   if (!photoUrls.length) return null;
   const legenda = `Site photos: attached to this email in full size${photoUrls.length > 4 ? ` (+${photoUrls.length - 4} more attached)` : ""}.`;
-  return { html: blocoDeFotosHtml(photoUrls, { legenda, max: 4 }), text: legenda };
+  const baixarTudo = linkParaBaixarFotos(referencia, photoUrls);
+  return {
+    html: blocoDeFotosHtml(photoUrls, { legenda, max: 4, baixarTudo }),
+    text: baixarTudo ? `${legenda}\nSave all photos: ${baixarTudo}` : legenda,
+  };
 }
 
 /** Referência sem o sufixo antigo " · Visit N" e o número da visita, se houver. */
@@ -193,7 +198,7 @@ export function buildPartnerJobConfirmationEmail(data: PartnerJobConfirmationDat
   const paga = pagaDoParceiro(data.priceDisplay);
   const tipo = data.jobTitle.trim() || "Job";
   const subject = assunto(visita ? `Visit ${visita} booked` : "Job booked", tipo, ag.data ?? "Date TBC", extractUkPostcode(data.propertyAddress), ref);
-  const fotos = fotosDoJob((data.photoUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0));
+  const fotos = fotosDoJob((data.photoUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0), ref);
   const verJob = data.jobUrl?.trim() || data.reportUrl;
   const cliente = data.clientName?.trim() && data.clientName.trim() !== "—" ? data.clientName.trim() : null;
 
