@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, Image, Font } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Font, Link } from "@react-pdf/renderer";
 import { type NormalizedReport } from "@/lib/job-report-v2";
 import { dataCurta, linhasDoCliente, textoDe, type Linha } from "@/lib/report-cliente";
 import { readPublicLogoDataUri } from "@/lib/pdf/resolve-logo-data-uri";
@@ -334,7 +334,7 @@ export function JobReportPDF({ data }: { data: JobReportPDFData }): React.ReactE
         <View style={s.rodape} fixed>
           <View style={s.rodapeLinha}>
             {/* A ajuda mora no rodapé: em toda página e nunca empurra o relatório para uma folha a mais. */}
-            <Text style={s.rodapeForte}>Anything not quite right? Reply to the email or WhatsApp us on +44 20 4538 4668.</Text>
+            <Text style={s.rodapeForte}>Anything not quite right? Reply to the email or message us on <Link src="https://wa.me/442045384668">WhatsApp</Link>.</Text>
             <Text style={s.rodapeTexto} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
           </View>
           <Text style={[s.rodapeTexto, { marginTop: 4 }]}>getfixfy.com · hello@getfixfy.com · Getfixfy Ltd, trading as Fixfy · 124 City Road, London EC1V 2NX · Company number 15406523</Text>

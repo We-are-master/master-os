@@ -464,7 +464,7 @@ export function buildPartnerJobOnHoldEmail(data: PartnerJobOnHoldData): {
       ["Status", "Awaiting next stage"],
       ["Location", local],
     ],
-    avisos: [ajudaDoParceiro("Call us on +44 20 4538 4668 or reply to this email.", "Need to talk this through?")],
+    avisos: [ajudaDoParceiro("Reply to this email or message us on", "Need to talk this through?")],
   });
   return { subject, html, text };
 }

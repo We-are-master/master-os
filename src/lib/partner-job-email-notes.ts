@@ -4,7 +4,7 @@ import { normalizeTypeOfWork } from "@/lib/type-of-work";
 
 /** Shown on all hourly partner job confirmation emails unless overridden per catalog row. */
 export const DEFAULT_PARTNER_JOB_EMAIL_NOTES_HOURLY =
-  "Paid by the hour for time on site. Need more time than planned? Call us on +44 20 4538 4668 before you carry on.";
+  "Paid by the hour for time on site. Need more time than planned? Message us on WhatsApp before you carry on.";
 
 /** Shown on all fixed partner job confirmation emails unless overridden per catalog row. */
 export const DEFAULT_PARTNER_JOB_EMAIL_NOTES_FIXED =

@@ -113,7 +113,7 @@ function montar(sb: SelfBill, dueYmd: string | null, args: ArgsDoSelfBill | unde
       ["Period", periodo || null],
       ["Commission VAT invoice", invoiceRef],
     ],
-    avisos: [ajudaDoParceiro("Reply to this email or call +44 20 4538 4668.", "Questions about your payout?")],
+    avisos: [ajudaDoParceiro(undefined, "Questions about your payout?")],
     cta: viewUrl ? { label: "View self-bill", url: viewUrl } : null,
   });
 }

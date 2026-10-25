@@ -8,7 +8,7 @@
  * em métricas, a limpeza de travessão e o bloco de fotos, que a moldura não
  * desenha e que o parceiro precisa ver antes de sair de casa.
  */
-import { dataLonga, emailFixfy, esc, hora24, semFotosHtml, horaDeTextoPara24, janelaDeTexto, janelaTexto, type Aviso, type EmailFixfy, type Estado, type Metrica, type Passo } from "./fixfy-shell";
+import { dataLonga, emailFixfy, esc, FIXFY_CONTACT, hora24, semFotosHtml, horaDeTextoPara24, janelaDeTexto, janelaTexto, type Aviso, type EmailFixfy, type Estado, type Metrica, type Passo } from "./fixfy-shell";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { janelaCurta, passosAte } from "./faixas-do-email";
 
@@ -200,8 +200,8 @@ export function emailParceiro(
 }
 
 /** O quadro azul de ajuda, depois do botão. */
-export function ajudaDoParceiro(texto = "Reply to this email or call +44 20 4538 4668.", titulo = "Questions?"): Aviso {
-  return { tom: "blue", icone: "💬", titulo, texto, lugar: "fim" };
+export function ajudaDoParceiro(texto = "Reply to this email or message us on", titulo = "Questions?"): Aviso {
+  return { tom: "blue", icone: "💬", titulo, texto, link: { label: "WhatsApp", url: FIXFY_CONTACT.whatsapp }, lugar: "fim" };
 }
 
 /**

@@ -53,8 +53,9 @@ describe("emailFixfy", () => {
   test("html e texto do mesmo conteúdo, linha vazia some, rodapé novo", () => {
     const m = emailFixfy(base);
     assert.match(m.html, />Need a hand\?</);
-    assert.match(m.html, /Reply to this email or message us on WhatsApp/);
-    assert.match(m.html, /\+44 20 4538 4668/);
+    assert.match(m.html, /Reply to this email or message us on <a /);
+    assert.match(m.html, /href="https:\/\/wa\.me\/442045384668"[^>]*>WhatsApp<\/a>/);
+    assert.doesNotMatch(m.html, /4538 4668/, "o número não aparece, só o link");
     assert.doesNotMatch(m.html, />Property</);
     assert.match(m.text, /Service: Handyman/);
     assert.match(m.text, /Pay now: https:\/\/app\.getfixfy\.com\/pay\/INV-1/);
