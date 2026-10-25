@@ -52,14 +52,14 @@ function formatBidDeadline(invitedAt: Date): string {
 /**
  * MINIATURA no e-mail, galeria inteira no portal (ordem do dono, 07/09/2026).
  *
- * Três miniaturas é o teto: mais que isso e o convite vira rolagem antes de o
- * parceiro chegar no botão de dar preço. O clique abre a galeria da página de
- * bid, e não o arquivo cru no storage (reclamação dos parceiros em 27/08).
+ * Até quatro fotos, grandes e lado a lado (dono, 25/10/2026; antes eram três
+ * miniaturas). O clique abre a galeria da página de bid, e não o arquivo cru
+ * no storage (reclamação dos parceiros em 27/08).
  */
 function fotosDoConvite(photoUrls: string[], bidUrl: string, referencia: string): { html: string; text: string } {
   if (photoUrls.length === 0) return { html: "", text: "" };
   const galeria = `${bidUrl}#photos`;
-  const MOSTRA = 3;
+  const MOSTRA = 4;
   const restantes = photoUrls.length - MOSTRA;
   const legenda = `Site photos: tap a photo to expand. All ${photoUrls.length} open in the partner portal.`;
   const baixarTudo = linkParaBaixarFotos(referencia, photoUrls);

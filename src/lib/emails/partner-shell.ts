@@ -144,21 +144,28 @@ export function blocoDeFotosHtml(
   },
 ): string {
   if (!urls.length) return "";
-  const imgs = urls
-    .slice(0, opts.max)
+  // Fotos grandes, ocupando a largura, até 4 lado a lado (dono, 25/10/2026). Largura em %
+  // e `div` (o Zendesk desenha borda em toda célula de tabela); altura fixa com cover.
+  const mostra = urls.slice(0, opts.max);
+  const n = mostra.length;
+  const largura = (100 - 2 * (n - 1)) / n;
+  const altura = n === 1 ? 300 : n === 2 ? 220 : n === 3 ? 170 : 140;
+  const imgs = mostra
     .map((u, i) => {
-      const img = `<img src="${esc(u)}" alt="Site photo ${i + 1} of ${urls.length}" width="120" style="display:inline-block;width:120px;max-width:120px;height:auto;border-radius:8px;border:1px solid #E4E4EC;margin:0 8px 8px 0;vertical-align:top;">`;
-      return opts.href ? `<a href="${esc(opts.href)}" target="_blank" style="text-decoration:none;">${img}</a>` : img;
+      const img = `<img src="${esc(u)}" alt="Site photo ${i + 1} of ${urls.length}" width="100%" style="display:block;width:100%;height:${altura}px;object-fit:cover;border-radius:10px;border:1px solid #E4E4EC;">`;
+      const caixa = opts.href ? `<a href="${esc(opts.href)}" target="_blank" style="text-decoration:none;">${img}</a>` : img;
+      return `<div style="display:inline-block;vertical-align:top;width:${largura.toFixed(2)}%;${i < n - 1 ? "margin-right:2%;" : ""}">${caixa}</div>`;
     })
     .join("");
-  const mais = opts.maisLink
-    ? `<a href="${esc(opts.maisLink.url)}" target="_blank" style="display:inline-block;vertical-align:top;margin:0 8px 8px 0;padding:12px 14px;border:1px solid #E4E4EC;border-radius:8px;background:#F7F7FB;color:#020040;font-size:13px;font-weight:600;text-decoration:none;">${esc(opts.maisLink.label)}</a>`
+  // Embaixo, no canto direito: "View more" e "Save all photos" como links (dono, 25/10/2026).
+  const links = [
+    opts.maisLink ? `<a href="${esc(opts.maisLink.url)}" target="_blank" style="color:#020040;font-weight:600;text-decoration:underline;">${esc(opts.maisLink.label)}</a>` : "",
+    opts.baixarTudo ? `<a href="${esc(opts.baixarTudo)}" target="_blank" style="color:#ED4B00;font-weight:700;text-decoration:underline;">Save all photos</a>` : "",
+  ].filter(Boolean);
+  const rodape = links.length
+    ? `<p style="margin:10px 0 0 0;text-align:right;font-size:14px;line-height:20px;">${links.join(`<span style="color:#B5B6C4;">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span>`)}</p>`
     : "";
-  // Link simples em destaque, na mesma fileira, depois das fotos (dono, 25/10/2026).
-  const baixar = opts.baixarTudo
-    ? `<a href="${esc(opts.baixarTudo)}" target="_blank" style="display:inline-block;vertical-align:top;margin:0 8px 8px 0;padding:12px 4px;color:#ED4B00;font-size:13px;line-height:18px;font-weight:700;text-decoration:underline;">Save all photos</a>`
-    : "";
-  return `<div style="margin:0 0 12px 0;"><p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:#6B6B85;">${esc(opts.legenda)}</p><div style="font-size:0;line-height:0;">${imgs}${mais}${baixar}</div></div>`;
+  return `<div style="margin:0 0 12px 0;"><p style="margin:0 0 8px 0;font-size:12px;line-height:18px;color:#6B6B85;">${esc(opts.legenda)}</p><div style="font-size:0;line-height:0;">${imgs}</div>${rodape}</div>`;
 }
 
 /** Sem foto no job: a linha neutra no lugar das miniaturas (dono, 23/10/2026). */
