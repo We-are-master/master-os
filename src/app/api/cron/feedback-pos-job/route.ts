@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { feedbackLigado, varrerFeedbackPosJob } from "@/lib/feedback/pos-job";
 
 /**
- * Pedido de feedback pós-job por WhatsApp, uma vez por dia (vercel.json, 10:00
+ * Pedido de feedback pós-job por e-mail, uma vez por dia (vercel.json, 10:00
  * UTC = 10h/11h de Londres, dentro da janela de 9h-20h).
  *
  *   GET /api/cron/feedback-pos-job             manda, se FEEDBACK_POS_JOB=on

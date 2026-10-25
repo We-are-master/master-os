@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { clienteDaFixfy, diasAntes, naJanelaDoFeedback, varrerFeedbackPosJob } from "./pos-job";
 import { reclamacaoNoJob, reclamacaoNoTicket } from "./reclamacao";
 import { fakeSupabase } from "@/lib/client-confirmation/fake-supabase.test-helper";
+import type { AvisoNoTicket } from "@/lib/um-ticket/aviso-do-job";
+import { buildClientFeedbackRequestEmail } from "@/lib/emails/client-feedback-request";
 
 const FIXFY = "5cf896ec-ee42-441b-a698-34fdaeeb28b3";
 const AGORA = new Date("2026-10-14T10:00:00Z"); // 11h de Londres
@@ -13,27 +15,26 @@ const AGORA = new Date("2026-10-14T10:00:00Z"); // 11h de Londres
 function job(id: string, extra: Record<string, unknown> = {}) {
   return {
     id, reference: `JOB-${id}`, title: "End of Tenancy Clean", status: "completed", client_id: `cli-${id}`, client_name: "X",
-    external_source: null, external_ref: null, internal_notes: null,
+    external_source: "zendesk", external_ref: `90${id}`, internal_notes: null, property_address: "1 Test St, London",
     scheduled_date: "2026-10-12", scheduled_start_at: "2026-10-12T08:00:00Z", completed_date: null,
     partner_timer_ended_at: null, final_report: { submitted_at: "2026-10-12T15:00:00Z" },
     on_hold_reason_preset_id: null, on_hold_reason: null, on_hold_complaint_description: null,
     customer_review_submitted_at: null, feedback_requested_at: null, deleted_at: null, ...extra,
   };
 }
-function cliente(id: string, conta: string | null, phone = "07508801803") {
-  return { id: `cli-${id}`, full_name: `Cliente ${id}`, phone, source_account_id: conta };
+function cliente(id: string, conta: string | null, email: string | null = `cliente${id}@gmail.com`) {
+  return { id: `cli-${id}`, full_name: `Cliente ${id}`, email, source_account_id: conta };
 }
 
-const ENV = ["CLIENT_MESSAGING_ENABLED", "SUNSHINE_APP_ID", "SUNSHINE_KEY_ID", "SUNSHINE_KEY_SECRET", "FIXFY_ACCOUNT_ID", "FEEDBACK_JANELA_DIAS", "CLIENT_WA_VIA"];
+const ENV = ["CLIENT_MESSAGING_ENABLED", "FIXFY_ACCOUNT_ID", "FEEDBACK_JANELA_DIAS", "FEEDBACK_REVIEW_URL"];
 let salvo: Record<string, string | undefined> = {};
 
 describe("varrerFeedbackPosJob", () => {
   beforeEach(() => {
     salvo = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
     process.env.CLIENT_MESSAGING_ENABLED = "1";
-    process.env.SUNSHINE_APP_ID = "a"; process.env.SUNSHINE_KEY_ID = "b"; process.env.SUNSHINE_KEY_SECRET = "c";
     process.env.FIXFY_ACCOUNT_ID = FIXFY;
-    delete process.env.FEEDBACK_JANELA_DIAS; delete process.env.CLIENT_WA_VIA;
+    delete process.env.FEEDBACK_JANELA_DIAS; delete process.env.FEEDBACK_REVIEW_URL;
   });
   afterEach(() => {
     for (const k of ENV) { if (salvo[k] === undefined) delete process.env[k]; else process.env[k] = salvo[k]; }
@@ -47,16 +48,22 @@ describe("varrerFeedbackPosJob", () => {
         job("3"), // Housekeep, conta sem a chave: não
         job("4"), // Good Place, conta com a chave: manda
         job("5", { on_hold_reason_preset_id: "complaint" }), // reclamou
-        job("6", { external_source: "zendesk", external_ref: "777" }), // ticket passou por Complaint
+        job("6", { external_ref: "777" }), // ticket passou por Complaint
         job("7", { final_report: { submitted_at: "2026-10-14T09:00:00Z" } }), // concluído hoje: amanhã
         job("8", { final_report: { submitted_at: "2026-09-20T09:00:00Z" }, scheduled_date: "2026-09-20" }), // velho
         job("9", { customer_review_submitted_at: "2026-10-13T10:00:00Z" }),
         job("10", { client_id: "cli-1" }), // mesmo cliente do 1: um pedido só
         job("11", { status: "awaiting_payment" }),
+        job("12"), // sem e-mail do cliente
+        job("13", { external_source: null, external_ref: null }), // sem ticket
+        job("14"), // e-mail de empresa
+        job("15"), // cliente commercial
       ],
       clients: [
         cliente("1", null), cliente("2", FIXFY), cliente("3", "acc-hk"), cliente("4", "acc-gp"),
         cliente("5", null), cliente("6", null), cliente("7", null), cliente("8", null), cliente("9", null),
+        cliente("12", null, null), cliente("13", null),
+        cliente("14", null, "hello@ms4facilities.co.uk"), { ...cliente("15", null), client_type: "commercial" },
       ],
       accounts: [
         { id: "acc-hk", company_name: "Housekeep", client_feedback_whatsapp: false },
@@ -83,19 +90,27 @@ describe("varrerFeedbackPosJob", () => {
     assert.match(por["JOB-9"].detalhe, /already left a review/);
     assert.match(por["JOB-10"].detalhe, /already asked in this run/);
     assert.equal(por["JOB-11"], undefined, "só status completed");
-    assert.match(por["JOB-1"].detalhe, /job_feedback → Cliente \| \+447508801803/);
+    assert.match(por["JOB-1"].detalhe, /email in ticket #901 → cliente1@gmail\.com/);
+    assert.match(por["JOB-12"].detalhe, /no customer email/);
+    assert.match(por["JOB-13"].detalhe, /no Zendesk ticket/);
+    assert.match(por["JOB-14"].detalhe, /business client \(ms4facilities\.co\.uk\)/);
+    assert.match(por["JOB-15"].detalhe, /business client/);
     assert.equal(escritas.length, 0);
   });
 
-  test("aplicando: uma variável, trava gravada, e a rodada seguinte não repete", async () => {
+  test("aplicando: e-mail no ticket do job, trava gravada, e a rodada seguinte não repete", async () => {
     const { client, tabelas } = banco();
-    const enviados: { bodyParams?: string[] }[] = [];
-    const enviar = async (m: { to: string; bodyParams?: string[] }) => { enviados.push(m); return { messageId: "w", to: m.to }; };
-    await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, enviar, lerZendesk });
+    const enviados: AvisoNoTicket[] = [];
+    const avisar = async (a: AvisoNoTicket) => { enviados.push(a); };
+    await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, avisar, lerZendesk });
     assert.equal(enviados.length, 3);
-    for (const m of enviados) assert.equal(m.bodyParams?.length, 1);
+    const primeiro = enviados.find((a) => a.ticketId === 901)!;
+    assert.equal(primeiro.para.email, "cliente1@gmail.com");
+    assert.equal(primeiro.assunto, "How did your End of Tenancy Clean go?");
+    assert.match(primeiro.html, /Hi Cliente,/);
+    assert.match(primeiro.html, /share\.google\/xs9HzIccBF88TgZoj/, "sem FEEDBACK_REVIEW_URL, o perfil do Google");
     assert.ok(tabelas.jobs.find((j) => j.id === "1")!.feedback_requested_at);
-    const r2 = await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, enviar, lerZendesk });
+    const r2 = await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, avisar, lerZendesk });
     assert.equal(enviados.length, 3);
     // O job 10 (mesmo cliente do 1) agora cai na regra da semana.
     assert.match(r2.linhas.find((l) => l.reference === "JOB-10")!.detalhe, /last 7 days/);
@@ -103,7 +118,7 @@ describe("varrerFeedbackPosJob", () => {
 
   test("falha no envio devolve a trava", async () => {
     const { client, tabelas } = banco();
-    await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, lerZendesk, enviar: async () => { throw new Error("Sunshine 400"); } });
+    await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, lerZendesk, avisar: async () => { throw new Error("Zendesk 422"); } });
     assert.equal(tabelas.jobs.find((j) => j.id === "1")!.feedback_requested_at, null);
   });
 
@@ -115,8 +130,21 @@ describe("varrerFeedbackPosJob", () => {
 
   test("fora das 9h-20h de Londres só lista", async () => {
     const { client } = banco();
-    const r = await varrerFeedbackPosJob(client, { agora: new Date("2026-10-14T20:30:00Z"), aplicar: true, lerZendesk });
+    const r = await varrerFeedbackPosJob(client, { agora: new Date("2026-10-14T20:30:00Z"), aplicar: true, lerZendesk, avisar: async () => {} });
     assert.equal(r.modo, "ensaio");
+  });
+});
+
+describe("e-mail de feedback", () => {
+  test("com link: botão; sem link: só a resposta", () => {
+    const base = { clientFirstName: "Sarah", jobReference: "JOB-1", jobTitle: "Deep Clean", completedOn: "Monday 19 October 2026" };
+    const com = buildClientFeedbackRequestEmail({ ...base, feedbackUrl: "https://example.com/review" });
+    assert.match(com.html, /Leave a review/);
+    assert.match(com.html, /https:\/\/example\.com\/review/);
+    const sem = buildClientFeedbackRequestEmail(base);
+    assert.doesNotMatch(sem.html, /Leave a review/);
+    assert.match(sem.text, /reply to this email/);
+    assert.doesNotMatch(com.html + sem.html, /\u2014/, "sem travessão");
   });
 });
 
