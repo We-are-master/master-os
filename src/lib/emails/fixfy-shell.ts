@@ -633,7 +633,7 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const rodapeInner =
     `<img src="${LOGO_NAVY}" alt="Fixfy" width="84" style="display:block;margin:0 auto 10px auto;width:84px;height:auto;border:0;">` +
     `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;color:${W.ink3};">Home repairs and maintenance across London</p>` +
-    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;"><a href="https://www.getfixfy.com" style="color:${W.ink2};text-decoration:none;">getfixfy.com</a> <span style="color:#B5B6C4;">&middot;</span> <a href="mailto:${FIXFY_CONTACT.email}" style="color:${W.ink2};text-decoration:none;">${FIXFY_CONTACT.email}</a> <span style="color:#B5B6C4;">&middot;</span> <a href="${FIXFY_CONTACT.whatsapp}" style="color:${W.ink2};text-decoration:none;">WhatsApp</a></p>` +
+    `<p style="margin:0 0 8px 0;font-family:${SANS};font-size:13px;line-height:18px;"><a href="https://www.getfixfy.com" style="color:${W.ink2};text-decoration:none;">Our website</a> <span style="color:#B5B6C4;">&middot;</span> <a href="mailto:${FIXFY_CONTACT.email}" style="color:${W.ink2};text-decoration:none;">Our email</a> <span style="color:#B5B6C4;">&middot;</span> <a href="${FIXFY_CONTACT.whatsapp}" style="color:${W.ink2};text-decoration:none;">Our WhatsApp</a></p>` +
     `<p style="margin:0;font-family:${SANS};font-size:12px;line-height:18px;color:${FX.faint};">${esc(FIXFY_CONTACT.legal)}</p>${marketing}`;
   const rodape = z
     ? `<div style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</div>`
