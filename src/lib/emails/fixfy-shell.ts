@@ -295,6 +295,11 @@ export type EmailFixfy = {
   /** Linhas rótulo/valor; valor vazio some. */
   linhas?: Array<[string, string | null | undefined]>;
   cta?: { label: string; url: string | null | undefined } | null;
+  /**
+   * E-mail final (dono, 25/10/2026): o quadro do pagamento e os detalhes logo
+   * abaixo do título, depois as fotos e o "What we did.".
+   */
+  painelPrimeiro?: boolean;
   /** Links de texto embaixo do botão (recusar cotação, WhatsApp, indicação). */
   linksSecundarios?: Array<{ label: string; url: string | null | undefined }>;
   transferencia?: Transferencia | null;
@@ -636,7 +641,9 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     : `<tr><td align="center" style="padding:28px 24px 28px 24px;text-align:center;">${rodapeInner}</td></tr>`;
 
   // Com fotos (e-mail final): fotos e "What we did." vêm antes do resumo do pagamento.
-  const miolo = topo + abertura + fotos + resumo + avisosEm("topo") + destaque + detalhes + cartoesHtml + avisosEm("meio") + antes + acao + avisosEm("fim") + transferencia + nota + assina + ajuda + finoHtml + rodape;
+  const miolo = e.painelPrimeiro
+    ? topo + abertura + avisosEm("topo") + destaque + detalhes + fotos + resumo + cartoesHtml + avisosEm("meio") + antes + acao + avisosEm("fim") + transferencia + nota + assina + ajuda + finoHtml + rodape
+    : topo + abertura + fotos + resumo + avisosEm("topo") + destaque + detalhes + cartoesHtml + avisosEm("meio") + antes + acao + avisosEm("fim") + transferencia + nota + assina + ajuda + finoHtml + rodape;
 
   const html = z
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${W.canvas};">${esc(e.preheader)}</div>` +
