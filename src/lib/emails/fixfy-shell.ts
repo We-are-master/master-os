@@ -307,6 +307,8 @@ export type EmailFixfy = {
   /** Letra pequena no fim (texto legal, detalhes do valor). */
   letraPequena?: string[];
   assinatura?: string | null;
+  /** Assinatura com logo e contatos (a do Victor). No HTML entra no lugar de `assinatura`; o texto puro segue com `assinatura`. */
+  assinaturaHtml?: string | null;
   /** E-mail de marketing: link de descadastro e a frase de por que recebe. */
   marketing?: { descadastroUrl: string; motivo: string } | null;
   /**
@@ -615,7 +617,9 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
   const nota = e.nota
     ? bloco(`<div style="border-left:3px solid ${FX.orange};background:${W.canvas};border-radius:10px;padding:14px 16px;font-family:${SANS};font-size:15px;line-height:22px;color:${W.ink2};">${esc(e.nota)}</div>`, 16, 24)
     : "";
-  const assina = assinatura ? bloco(`<p style="margin:0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(assinatura)}</p>`, 16) : "";
+  const assina = e.assinaturaHtml
+    ? bloco(e.assinaturaHtml, 20)
+    : assinatura ? bloco(`<p style="margin:0;font-family:${SANS};font-size:17px;line-height:26px;color:${W.ink};">${esc(assinatura)}</p>`, 16) : "";
 
   // ─── ajuda, letra pequena e rodapé claro ───
   const ajuda = e.semAjuda ? "" : bloco(

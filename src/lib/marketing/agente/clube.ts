@@ -18,6 +18,7 @@ import { acharCupom } from "@/lib/marketing/cupons";
 import { pecaDoClube, type PecaDoClube } from "./clube-servicos";
 import { CLUBE, SITE, diaEmLondres, quandoSaiAEdicao, type EdicaoDoClube } from "./calendario";
 import { agendarBroadcast, broadcasts, criarBroadcast, type BroadcastResend } from "./resend";
+import { assinaturaDoVictorHtml } from "@/lib/emails/assinatura-victor";
 
 /** "Hi Sarah" quando a Resend tem o nome, "Hi there" quando não tem. */
 export const NOME_DO_CONTATO = "{{{contact.first_name|there}}}";
@@ -128,6 +129,7 @@ export function emailDeMarketing(e: {
     cta: e.cta,
     linksSecundarios: e.linksSecundarios,
     assinatura: assinaturaDoMarketing(),
+    assinaturaHtml: assinaturaDoMarketing() ? assinaturaDoVictorHtml() : null,
     marketing: { descadastroUrl: real ?? SAIDA_SENTINELA, motivo: e.motivo ?? MOTIVO_DO_MARKETING },
   });
   if (real) return { html, text };

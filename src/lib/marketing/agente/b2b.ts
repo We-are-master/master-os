@@ -28,6 +28,7 @@ import { CLIENT_BRAND, escapeHtml } from "@/lib/emails/client-email-layout";
 import { horaDeLondres } from "./calendario";
 import { LINK_DE_SAIDA, NOME_DO_CONTATO } from "./clube";
 import { agendarBroadcast, broadcasts, criarBroadcast, type BroadcastResend } from "./resend";
+import { assinaturaDoVictorHtml } from "@/lib/emails/assinatura-victor";
 
 export const AUDIENCIA_B2B = "Fixfy B2B";
 export const TAMANHO_DA_ONDA = 200;
@@ -365,34 +366,9 @@ function linkDaReuniao(e: EmailB2B): string {
 
 const comOrigem = (url: string, e: EmailB2B) => `${url}?utm_source=email&utm_medium=b2b&utm_campaign=agencies_${e.n}_${e.key}`;
 
-/** A assinatura do Victor: logo, barra laranja, nome, cargo, contato e as três frentes. */
+/** A assinatura do Victor: a mesma do Gmail dele. */
 export function assinaturaDoVictor(): string {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; font-family:${ARIAL}; margin-top:6px;">
-  <tr>
-    <td style="padding:0 18px 0 0; vertical-align:middle;">
-      <a href="https://www.getfixfy.com/business" style="text-decoration:none;"><img src="https://www.getfixfy.com/brand/fixfy-primary-navy.png" width="116" height="50" alt="Fixfy" style="display:block; border:0; width:116px; height:50px;"></a>
-    </td>
-    <td style="padding:4px 0 4px 16px; border-left:3px solid ${CLIENT_BRAND.orange}; vertical-align:middle;">
-      <div style="font-size:16px; line-height:21px; font-weight:bold; color:${CLIENT_BRAND.navy};">Victor Braz</div>
-      <div style="font-size:13px; line-height:18px; color:#55597A;">Director of Operations · Fixfy</div>
-      <div style="font-size:13px; line-height:20px; margin-top:5px; color:${CLIENT_BRAND.navy};">
-        <a href="tel:+442045384668" style="color:${CLIENT_BRAND.navy}; text-decoration:none;">${TELEFONE}</a>
-        <span style="color:#C9CEE0;">&nbsp;|&nbsp;</span>
-        <a href="mailto:victor@getfixfy.com" style="color:${CLIENT_BRAND.navy}; text-decoration:none;">victor@getfixfy.com</a>
-      </div>
-      <div style="font-size:13px; line-height:20px;">
-        <a href="https://www.getfixfy.com/business" style="color:${CLIENT_BRAND.orange}; text-decoration:none; font-weight:bold;">getfixfy.com/business</a>
-      </div>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" style="padding:12px 0 0;">
-      <div style="font-size:11px; line-height:16px; letter-spacing:0.12em; text-transform:uppercase; font-weight:bold; color:${CLIENT_BRAND.navy};">
-        Cleaning <span style="color:${CLIENT_BRAND.orange};">·</span> Maintenance <span style="color:${CLIENT_BRAND.orange};">·</span> Compliance
-      </div>
-    </td>
-  </tr>
-</table>`;
+  return assinaturaDoVictorHtml();
 }
 
 export function htmlDoB2B(e: EmailB2B): string {
