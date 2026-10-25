@@ -1256,6 +1256,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insErr?.message ?? "Could not create job." }, { status: 500 });
   }
 
+  // Cartão salvo no sinal (site/WhatsApp): vai também para o cadastro do cliente, como no pay link
+  // do OS (saveCardFromCheckoutSession). Sem isto o JOB-9794 tinha o cartão e o cliente aparecia
+  // sem cartão na tela de Clients (dono, 25/10/2026). Melhor esforço: o job já guarda o que cobra.
+  if (stripeCustomerIn && stripePaymentMethodIn && clientId) {
+    try {
+      const { salvarCartaoNoCliente } = await import("@/lib/stripe-card-charge");
+      await salvarCartaoNoCliente(supabase, clientId, stripeCustomerIn, stripePaymentMethodIn, paymentIntentIn);
+    } catch (e) {
+      console.error("[api/jobs] card on client failed:", e instanceof Error ? e.message : e);
+    }
+  }
+
   // Pagou antes do job (site, WhatsApp): o dinheiro entra no MESMO livro que o
   // pay link usa (job_payments). Sem isto o final check não via o pagamento e
   // o job caía em awaiting_payment cobrando de novo quem já pagou (29/09/2026).
