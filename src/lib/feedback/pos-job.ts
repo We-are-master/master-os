@@ -20,11 +20,14 @@
  *      Zendesk (`reclamacao.ts`). Ticket ilegível = não pede (na dúvida, não).
  *      Cliente que já deixou avaliação no OS também não recebe.
  *   5. Um pedido por cliente por semana: quem fechou dois jobs não recebe dois.
- *   6. E-mail do cliente e ticket do job no Zendesk: o e-mail entra no ticket
+ *   6. Só cliente final (dono, 25/10/2026): e-mail de empresa (domínio fora
+ *      dos provedores pessoais, `segmentoDoEmail`) ou cliente `commercial` não
+ *      recebe. MS4 Facilities e BF Property estavam na conta Fixfy como pessoa.
+ *   7. E-mail do cliente e ticket do job no Zendesk: o e-mail entra no ticket
  *      (`avisarNoTicketDoJob`), e a resposta do cliente cai nele também.
- *   7. Para mandar: `CLIENT_MESSAGING_ENABLED=1` e 9h-20h de Londres.
+ *   8. Para mandar: `CLIENT_MESSAGING_ENABLED=1` e 9h-20h de Londres.
  *
- * O botão leva a `FEEDBACK_REVIEW_URL`; sem ele o e-mail só pede a resposta
+ * O botão leva a `FEEDBACK_REVIEW_URL`, padrão o perfil da Fixfy no Google
  * (`emails/client-feedback-request.ts`).
  *
  * Convivência com o e-mail de avaliação (`marketing/agente/avaliacao.ts`, 10+
@@ -42,6 +45,7 @@ import { dataPorExtenso, hojeEmLondres } from "@/lib/client-confirmation/send";
 import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
 import { emailDoCliente } from "@/lib/um-ticket/escolha";
 import { buildClientFeedbackRequestEmail, linkDoFeedback } from "@/lib/emails/client-feedback-request";
+import { segmentoDoEmail } from "@/lib/marketing/segments";
 import { reclamacaoNoBanco, reclamacaoNoJob, reclamacaoNoZendesk } from "./reclamacao";
 import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib/processo/conta";
 
@@ -230,8 +234,8 @@ export async function varrerFeedbackPosJob(
       if (clientesDaRodada.has(clientId)) { anota("pulado", "client already asked in this run"); continue; }
 
       const { data: cliente } = await sb
-        .from("clients").select("full_name, email, source_account_id").eq("id", clientId).maybeSingle();
-      const c = (cliente ?? {}) as { full_name?: string | null; email?: string | null; source_account_id?: string | null };
+        .from("clients").select("full_name, email, client_type, source_account_id").eq("id", clientId).maybeSingle();
+      const c = (cliente ?? {}) as { full_name?: string | null; email?: string | null; client_type?: string | null; source_account_id?: string | null };
 
       // 3. de quem é o cliente (conta v2: já decidido acima por regras.feedback)
       if (!regras && !clienteDaFixfy(c.source_account_id, fixfyAccountId())) {
@@ -281,6 +285,10 @@ export async function varrerFeedbackPosJob(
       // 6. e-mail e ticket do job
       const email = emailDoCliente(c.email ?? null);
       if (!email) { anota("pulado", "no customer email on file"); continue; }
+      if (c.client_type === "commercial" || segmentoDoEmail(email) === "b2b") {
+        anota("pulado", `business client (${email.split("@")[1]}): feedback is for end customers only`);
+        continue;
+      }
       const ticketId = Number(getZendeskTicketId(j as Parameters<typeof getZendeskTicketId>[0]));
       if (!ticketId) { anota("pulado", "the job has no Zendesk ticket"); continue; }
 

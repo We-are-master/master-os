@@ -22,7 +22,7 @@ function job(id: string, extra: Record<string, unknown> = {}) {
     customer_review_submitted_at: null, feedback_requested_at: null, deleted_at: null, ...extra,
   };
 }
-function cliente(id: string, conta: string | null, email: string | null = `cliente${id}@example.com`) {
+function cliente(id: string, conta: string | null, email: string | null = `cliente${id}@gmail.com`) {
   return { id: `cli-${id}`, full_name: `Cliente ${id}`, email, source_account_id: conta };
 }
 
@@ -56,11 +56,14 @@ describe("varrerFeedbackPosJob", () => {
         job("11", { status: "awaiting_payment" }),
         job("12"), // sem e-mail do cliente
         job("13", { external_source: null, external_ref: null }), // sem ticket
+        job("14"), // e-mail de empresa
+        job("15"), // cliente commercial
       ],
       clients: [
         cliente("1", null), cliente("2", FIXFY), cliente("3", "acc-hk"), cliente("4", "acc-gp"),
         cliente("5", null), cliente("6", null), cliente("7", null), cliente("8", null), cliente("9", null),
         cliente("12", null, null), cliente("13", null),
+        cliente("14", null, "hello@ms4facilities.co.uk"), { ...cliente("15", null), client_type: "commercial" },
       ],
       accounts: [
         { id: "acc-hk", company_name: "Housekeep", client_feedback_whatsapp: false },
@@ -87,9 +90,11 @@ describe("varrerFeedbackPosJob", () => {
     assert.match(por["JOB-9"].detalhe, /already left a review/);
     assert.match(por["JOB-10"].detalhe, /already asked in this run/);
     assert.equal(por["JOB-11"], undefined, "só status completed");
-    assert.match(por["JOB-1"].detalhe, /email in ticket #901 → cliente1@example\.com/);
+    assert.match(por["JOB-1"].detalhe, /email in ticket #901 → cliente1@gmail\.com/);
     assert.match(por["JOB-12"].detalhe, /no customer email/);
     assert.match(por["JOB-13"].detalhe, /no Zendesk ticket/);
+    assert.match(por["JOB-14"].detalhe, /business client \(ms4facilities\.co\.uk\)/);
+    assert.match(por["JOB-15"].detalhe, /business client/);
     assert.equal(escritas.length, 0);
   });
 
@@ -100,10 +105,10 @@ describe("varrerFeedbackPosJob", () => {
     await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, avisar, lerZendesk });
     assert.equal(enviados.length, 3);
     const primeiro = enviados.find((a) => a.ticketId === 901)!;
-    assert.equal(primeiro.para.email, "cliente1@example.com");
+    assert.equal(primeiro.para.email, "cliente1@gmail.com");
     assert.equal(primeiro.assunto, "How did your End of Tenancy Clean go?");
     assert.match(primeiro.html, /Hi Cliente,/);
-    assert.doesNotMatch(primeiro.html, /Leave feedback/, "sem FEEDBACK_REVIEW_URL, sem botão");
+    assert.match(primeiro.html, /share\.google\/xs9HzIccBF88TgZoj/, "sem FEEDBACK_REVIEW_URL, o perfil do Google");
     assert.ok(tabelas.jobs.find((j) => j.id === "1")!.feedback_requested_at);
     const r2 = await varrerFeedbackPosJob(client, { agora: AGORA, aplicar: true, avisar, lerZendesk });
     assert.equal(enviados.length, 3);
@@ -134,10 +139,10 @@ describe("e-mail de feedback", () => {
   test("com link: botão; sem link: só a resposta", () => {
     const base = { clientFirstName: "Sarah", jobReference: "JOB-1", jobTitle: "Deep Clean", completedOn: "Monday 19 October 2026" };
     const com = buildClientFeedbackRequestEmail({ ...base, feedbackUrl: "https://example.com/review" });
-    assert.match(com.html, /Leave feedback/);
+    assert.match(com.html, /Leave a review/);
     assert.match(com.html, /https:\/\/example\.com\/review/);
     const sem = buildClientFeedbackRequestEmail(base);
-    assert.doesNotMatch(sem.html, /Leave feedback/);
+    assert.doesNotMatch(sem.html, /Leave a review/);
     assert.match(sem.text, /reply to this email/);
     assert.doesNotMatch(com.html + sem.html, /\u2014/, "sem travessão");
   });

@@ -77,7 +77,7 @@ describe("varrerFeedbackPosJob com PROCESSOS_V2", () => {
       account_id: null, finance_status: "unpaid", payment_status: null, invoice_id: null, ...extra,
     };
   }
-  const cliente = (id: string, conta: string | null) => ({ id: `cli-${id}`, full_name: `Cliente ${id}`, email: `c${id}@example.com`, source_account_id: conta });
+  const cliente = (id: string, conta: string | null) => ({ id: `cli-${id}`, full_name: `Cliente ${id}`, email: `c${id}@gmail.com`, source_account_id: conta });
 
   function banco() {
     return fakeSupabase({

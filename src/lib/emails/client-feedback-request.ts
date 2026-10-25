@@ -5,8 +5,9 @@
  * e-mail, WhatsApp fica para o informal. Vai dentro do ticket do job, então
  * "responda este e-mail" cai no mesmo ticket e a equipe vê.
  *
- * O link do botão é `FEEDBACK_REVIEW_URL` (o dono ainda escolhe qual). Sem ele,
- * não há botão: o e-mail pede a resposta, que já basta para pegar problema.
+ * O link do botão é `FEEDBACK_REVIEW_URL`; por ora, o perfil da Fixfy no Google
+ * (dono, 25/10/2026, o mesmo do e-mail de avaliação). Sem link, não há botão:
+ * o e-mail pede a resposta.
  */
 import { emailFixfy, saudacao } from "./fixfy-shell";
 import { passosAte, PASSOS_VISITA } from "./faixas-do-email";
@@ -22,8 +23,10 @@ export type ClientFeedbackData = {
   feedbackUrl?: string | null;
 };
 
-export function linkDoFeedback(): string | null {
-  return process.env.FEEDBACK_REVIEW_URL?.trim() || null;
+export const PERFIL_DO_GOOGLE = "https://share.google/xs9HzIccBF88TgZoj";
+
+export function linkDoFeedback(): string {
+  return process.env.FEEDBACK_REVIEW_URL?.trim() || PERFIL_DO_GOOGLE;
 }
 
 export function buildClientFeedbackRequestEmail(d: ClientFeedbackData): { subject: string; html: string; text: string } {
@@ -49,7 +52,7 @@ export function buildClientFeedbackRequestEmail(d: ClientFeedbackData): { subjec
       ["Property", d.propertyAddress],
       ["Booking", d.jobReference],
     ],
-    cta: link ? { label: "Leave feedback", url: link } : null,
+    cta: link ? { label: "Leave a review", url: link } : null,
     zendesk: true,
   });
 
