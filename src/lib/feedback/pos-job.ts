@@ -1,6 +1,7 @@
 /**
- * FEEDBACK PÓS-JOB: o WhatsApp "your job with Fixfy is complete. Was everything
- * done to your satisfaction?" um dia depois do job concluído.
+ * FEEDBACK PÓS-JOB: o e-mail "How did we do?" um dia depois do job concluído.
+ * Era o WhatsApp `job_feedback` até 25/10/2026; o dono passou para e-mail
+ * (aviso ao cliente sai por e-mail, WhatsApp só no informal).
  *
  * Não rodava desde 05/09/2026: o script existia, mas sem agendador nenhum.
  * Agora é varredura diária (cron da Vercel, Hobby só aceita diário) e ensaio
@@ -19,32 +20,32 @@
  *      Zendesk (`reclamacao.ts`). Ticket ilegível = não pede (na dúvida, não).
  *      Cliente que já deixou avaliação no OS também não recebe.
  *   5. Um pedido por cliente por semana: quem fechou dois jobs não recebe dois.
- *   6. Mobile UK válido (mesma régua da confirmação).
+ *   6. E-mail do cliente e ticket do job no Zendesk: o e-mail entra no ticket
+ *      (`avisarNoTicketDoJob`), e a resposta do cliente cai nele também.
  *   7. Para mandar: `CLIENT_MESSAGING_ENABLED=1` e 9h-20h de Londres.
  *
- * Template: `WHATSAPP_TEMPLATE_FEEDBACK`, padrão `job_feedback`, UMA variável
- * (o primeiro nome). Conferido na conta do número do Zendesk em 14/10/2026:
- * `afterwork_feedback` NÃO existe lá (era da WABA do respond.io, e o texto dele
- * era de aprovação antes de fechar o job, não de feedback).
+ * O botão leva a `FEEDBACK_REVIEW_URL`; sem ele o e-mail só pede a resposta
+ * (`emails/client-feedback-request.ts`).
  *
  * Convivência com o e-mail de avaliação (`marketing/agente/avaliacao.ts`, 10+
  * dias depois, Google + REFER20): ficam em dias diferentes de propósito. O
- * WhatsApp do dia 1 é para pegar problema enquanto ainda dá para consertar; o
+ * e-mail do dia 1 é para pegar problema enquanto ainda dá para consertar; o
  * e-mail do dia 10 pede a avaliação pública a quem não reclamou (ele também
  * passou a pular cliente com reclamação, inclusive a que nasceu da resposta a
- * este WhatsApp).
+ * este pedido).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveJobCompletionYmd } from "@/lib/job-completion-anchor";
-import { decidirEnvio, mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
-import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
-import { horaEmLondres } from "@/lib/client-confirmation/sweep-24h";
-import { hojeEmLondres, type EnvioWhatsApp } from "@/lib/client-confirmation/send";
+import { mensagensAoClienteLigadas } from "@/lib/client-confirmation/policy";
+import { horaEmLondres, type AvisoPorEmail } from "@/lib/client-confirmation/sweep-24h";
+import { dataPorExtenso, hojeEmLondres } from "@/lib/client-confirmation/send";
+import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
+import { emailDoCliente } from "@/lib/um-ticket/escolha";
+import { buildClientFeedbackRequestEmail, linkDoFeedback } from "@/lib/emails/client-feedback-request";
 import { reclamacaoNoBanco, reclamacaoNoJob, reclamacaoNoZendesk } from "./reclamacao";
 import { processoDaConta, processosV2Ligado, type RegrasDoProcesso } from "@/lib/processo/conta";
 
-const template = () => process.env.WHATSAPP_TEMPLATE_FEEDBACK?.trim() || "job_feedback";
-const idioma = () => process.env.WHATSAPP_TEMPLATE_LANG?.trim() || "en_GB";
+const avisarDeVerdade: AvisoPorEmail = async (a) => (await import("@/lib/um-ticket/aviso-do-job")).avisarNoTicketDoJob(a);
 const janelaDias = () => {
   const n = Number(process.env.FEEDBACK_JANELA_DIAS ?? 7);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7;
@@ -122,7 +123,7 @@ export type LinhaDoFeedback = {
 };
 
 const SELECT =
-  "id, reference, title, status, client_id, client_name, external_source, external_ref, internal_notes, " +
+  "id, reference, title, status, client_id, property_address, client_name, external_source, external_ref, internal_notes, " +
   "scheduled_date, scheduled_start_at, completed_date, partner_timer_ended_at, final_report, " +
   "on_hold_reason_preset_id, on_hold_reason, on_hold_complaint_description, customer_review_submitted_at, " +
   "feedback_requested_at, account_id, finance_status, payment_status, invoice_id";
@@ -134,7 +135,8 @@ export async function varrerFeedbackPosJob(
     agora?: Date;
     max?: number;
     ignorarJanela?: boolean;
-    enviar?: EnvioWhatsApp;
+    /** Injeção para teste: entrega o e-mail no ticket do job. */
+    avisar?: AvisoPorEmail;
     /** Injeção para teste: lê a reclamação no Zendesk. */
     lerZendesk?: (ticketId: string) => Promise<string | null>;
   },
@@ -155,8 +157,8 @@ export async function varrerFeedbackPosJob(
     aviso = `outside ${FEEDBACK_HORA_INICIO}h-${FEEDBACK_HORA_FIM}h London (now ${h}h): listing only`;
     aplicar = false;
   }
-  if (aplicar && !canalDoClienteConfigurado()) {
-    aviso = `${canalDoClienteFaltando()}: listing only`;
+  if (aplicar && !opcoes?.avisar && !isZendeskConfigured()) {
+    aviso = "Zendesk not configured: listing only";
     aplicar = false;
   }
 
@@ -228,8 +230,8 @@ export async function varrerFeedbackPosJob(
       if (clientesDaRodada.has(clientId)) { anota("pulado", "client already asked in this run"); continue; }
 
       const { data: cliente } = await sb
-        .from("clients").select("full_name, phone, source_account_id").eq("id", clientId).maybeSingle();
-      const c = (cliente ?? {}) as { full_name?: string | null; phone?: string | null; source_account_id?: string | null };
+        .from("clients").select("full_name, email, source_account_id").eq("id", clientId).maybeSingle();
+      const c = (cliente ?? {}) as { full_name?: string | null; email?: string | null; source_account_id?: string | null };
 
       // 3. de quem é o cliente (conta v2: já decidido acima por regras.feedback)
       if (!regras && !clienteDaFixfy(c.source_account_id, fixfyAccountId())) {
@@ -276,14 +278,16 @@ export async function varrerFeedbackPosJob(
       if (errRec) throw new Error(errRec.message);
       if ((recentes ?? []).length) { anota("pulado", "client was asked for feedback in the last 7 days"); continue; }
 
-      // 6. telefone
-      const decisao = decidirEnvio({ politicaDaConta: true, telefoneDoCliente: c.phone ?? null, jaEnviadoEm: null });
-      if (!decisao.manda) { anota("pulado", decisao.motivo); continue; }
+      // 6. e-mail e ticket do job
+      const email = emailDoCliente(c.email ?? null);
+      if (!email) { anota("pulado", "no customer email on file"); continue; }
+      const ticketId = Number(getZendeskTicketId(j as Parameters<typeof getZendeskTicketId>[0]));
+      if (!ticketId) { anota("pulado", "the job has no Zendesk ticket"); continue; }
 
-      const nome = String(c.full_name ?? j.client_name ?? "").trim().split(/\s+/)[0] || "there";
+      const nome = String(c.full_name ?? j.client_name ?? "").trim().split(/\s+/)[0] || "";
       clientesDaRodada.add(clientId);
 
-      if (!aplicar) { anota("enviaria", `${template()} → ${nome} | ${decisao.telefone}`); continue; }
+      if (!aplicar) { anota("enviaria", `email in ticket #${ticketId} → ${email}`); continue; }
       if (enviados >= max) { anota("pulado", `run cap reached (${max}): next run`); continue; }
 
       // Trava antes de mandar: só quem vira a coluna manda. Falha devolve.
@@ -294,11 +298,18 @@ export async function varrerFeedbackPosJob(
       if (!claim || (claim as unknown[]).length === 0) { anota("pulado", "already requested"); continue; }
 
       try {
-        // UMA variável: mandar mais do que o corpo declara faz a Meta recusar tudo.
-        const enviar = opcoes?.enviar ?? enviarAoCliente;
-        await enviar({ to: decisao.telefone, name: template(), language: idioma(), bodyParams: [nome] });
+        const { subject, html } = buildClientFeedbackRequestEmail({
+          clientFirstName: nome,
+          jobReference: j.reference,
+          jobTitle: String(j.title ?? ""),
+          completedOn: ancora ? dataPorExtenso(ancora) : null,
+          propertyAddress: String(j.property_address ?? "").replace(/\s+/g, " ").trim() || null,
+          feedbackUrl: linkDoFeedback(),
+        });
+        const avisar = opcoes?.avisar ?? avisarDeVerdade;
+        await avisar({ ticketId, para: { email, nome: c.full_name ?? null }, assunto: subject, html });
         enviados++;
-        anota("enviado", `${nome} | ${decisao.telefone}`);
+        anota("enviado", `email in ticket #${ticketId} → ${email}`);
       } catch (e) {
         await sb.from("jobs").update({ feedback_requested_at: null }).eq("id", j.id);
         anota("falhou", e instanceof Error ? e.message.slice(0, 160) : String(e));

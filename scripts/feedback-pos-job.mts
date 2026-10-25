@@ -1,5 +1,5 @@
 /**
- * FEEDBACK PÓS-JOB: o WhatsApp que pergunta "como foi?" um dia depois do job
+ * FEEDBACK PÓS-JOB: o e-mail que pergunta "como foi?" um dia depois do job
  * concluído. As regras moram em `src/lib/feedback/pos-job.ts`; quem roda todo
  * dia é o cron `/api/cron/feedback-pos-job` (atrás de FEEDBACK_POS_JOB=on).
  * Este script é para ver a fila e para envio manual.

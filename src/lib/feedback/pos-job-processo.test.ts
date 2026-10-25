@@ -69,7 +69,7 @@ describe("varrerFeedbackPosJob com PROCESSOS_V2", () => {
   function job(id: string, extra: Record<string, unknown>) {
     return {
       id, reference: `JOB-${id}`, title: "Clean", status: "completed", client_id: `cli-${id}`, client_name: "X",
-      external_source: null, external_ref: null, internal_notes: null,
+      external_source: "zendesk", external_ref: `9${id.charCodeAt(0)}${id.charCodeAt(1)}`, internal_notes: null,
       scheduled_date: "2026-10-12", scheduled_start_at: "2026-10-12T08:00:00Z", completed_date: null,
       partner_timer_ended_at: null, final_report: { submitted_at: "2026-10-13T15:00:00Z" },
       on_hold_reason_preset_id: null, on_hold_reason: null, on_hold_complaint_description: null,
@@ -77,7 +77,7 @@ describe("varrerFeedbackPosJob com PROCESSOS_V2", () => {
       account_id: null, finance_status: "unpaid", payment_status: null, invoice_id: null, ...extra,
     };
   }
-  const cliente = (id: string, conta: string | null) => ({ id: `cli-${id}`, full_name: `Cliente ${id}`, phone: "07508801803", source_account_id: conta });
+  const cliente = (id: string, conta: string | null) => ({ id: `cli-${id}`, full_name: `Cliente ${id}`, email: `c${id}@example.com`, source_account_id: conta });
 
   function banco() {
     return fakeSupabase({
