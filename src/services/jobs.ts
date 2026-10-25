@@ -1117,6 +1117,8 @@ export async function updateJob(
 ): Promise<Job> {
   if (!id?.trim()) throw new Error("Invalid job id");
   const trimmedId = id.trim();
+  // Editar o scope passa pela mesma limpeza de criar: preço e plataforma nunca ficam (dono, 25/10/2026).
+  if (typeof input.scope === "string") input = { ...input, scope: limparScope(input.scope) ?? "" };
   const supabase = getSupabase();
   const beforeGates = await fetchJobGatesForUpdate(trimmedId);
   if (!beforeGates) throw new Error("Job not found");

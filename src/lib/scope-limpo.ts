@@ -52,6 +52,26 @@ const ROTULO_REPETIDO =
 /** `checkatrade-lead:8827` prova cobertura no reconcile. Fica. */
 const MARCADOR_DE_COBERTURA = /^[a-z-]+-lead:\s*\S+/i;
 
+/**
+ * Preço NUNCA no scope (dono, 25/10/2026: "never, never, never"). O scope vai para o
+ * parceiro no Job booked e no app, e ele não sabe quanto cobramos do cliente. O
+ * JOB-9796 nasceu com "(fixed £180, tools included…)" escrito por um agente.
+ *
+ * Tira o parêntese que cita valor e, fora dele, a frase inteira que cita valor
+ * ("Price agreed with the customer at £2,075."). O resto da linha fica.
+ */
+const CITA_VALOR = /£\s?\d|\d\s?(gbp|pounds?|quid)\b|\bgbp\s?\d/i;
+
+export function semPreco(linha: string): string {
+  const semParenteses = linha.replace(/\s*\([^()]*\)/g, (p) => (CITA_VALOR.test(p) ? "" : p));
+  if (!CITA_VALOR.test(semParenteses)) return semParenteses;
+  return semParenteses
+    .split(/(?<=[.!?;])\s+/)
+    .filter((frase) => !CITA_VALOR.test(frase))
+    .join(" ")
+    .trim();
+}
+
 function citaPlataforma(linha: string, extras: string[]): boolean {
   const t = linha.toLowerCase();
   if (MARCADOR_DE_COBERTURA.test(linha.trim())) return false;
@@ -89,7 +109,10 @@ export function limparScope(
   if (!texto) return texto ?? null;
   const extras = (opcoes?.nomesProibidos ?? []).filter((n) => n && n.trim().length >= 3);
 
-  const mantidas = texto.split("\n").filter((linha) => {
+  const originais = texto.split("\n");
+  const mantidas = originais.map((linha) => (CITA_VALOR.test(linha) ? semPreco(linha) : linha)).filter((linha, i) => {
+    // Linha que só tinha preço some inteira (não vira linha em branco).
+    if (!linha.trim() && originais[i]!.trim()) return false;
     const t = linha.trim();
     if (!t) return true; // linha em branco decide parágrafo; o colapso vem depois
     if (SO_UM_HORARIO.test(t)) return false;

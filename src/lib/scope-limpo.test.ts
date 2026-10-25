@@ -79,3 +79,19 @@ test("vazio e nulo passam sem quebrar", () => {
   assert.equal(limparScope(undefined), null);
   assert.equal(limparScope(""), "");
 });
+
+test("preço nunca fica no scope (25/10/2026)", () => {
+  const s = [
+    "Half day handyman (fixed £180, tools included; extra fittings or materials only if agreed with the customer first).",
+    "- Fix a glass shelf in the bathroom.",
+    "Hourly: £72 for the first hour, then by the half hour",
+    "Paint two rooms. Price agreed with the customer at £2,075. Furniture to be covered.",
+    "Should be 120 pounds total.",
+  ].join("\n");
+  assert.equal(
+    limparScope(s),
+    ["Half day handyman.", "- Fix a glass shelf in the bathroom.", "Paint two rooms. Furniture to be covered."].join("\n"),
+  );
+  // Medida e quantidade não são preço.
+  assert.equal(limparScope("Paint 20 m² of wall, 2 coats."), "Paint 20 m² of wall, 2 coats.");
+});
