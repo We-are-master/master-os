@@ -1,4 +1,5 @@
 import { tipoDoCatalogo } from "@/lib/tipo-de-trabalho";
+import { scopeNoPadrao } from "@/lib/scope-padrao";
 import { after, NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -885,6 +886,10 @@ export async function POST(req: NextRequest) {
   if (pedidoTitulo && pedidoTitulo !== titleResolved && !(description ?? "").toLowerCase().includes(pedidoTitulo.toLowerCase())) {
     description = description ? `${pedidoTitulo}. ${description}` : pedidoTitulo;
   }
+
+  // Scope no padrão Fixfy (WORK · PROPERTY · ACCESS · MATERIALS · NOTES, dono 25/10/2026),
+  // venha de onde vier; o texto do cliente fica em NOTES. A limpeza roda de novo no fim.
+  description = limparScope(await scopeNoPadrao(description), { nomesProibidos: [accountCompanyName] });
 
   // Find or create end-customer client in this account (Zendesk-safe resolver).
   let clientId: string | null = convertingFromQuote?.clientId ?? null;
