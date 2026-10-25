@@ -28,6 +28,7 @@
  * cada campo só é preenchido quando está vazio no banco.
  */
 
+import { nomeProprio } from "@/lib/nome-proprio";
 import { NextRequest, NextResponse } from "next/server";
 
 import { createServiceClient } from "@/lib/supabase/service";
@@ -141,7 +142,7 @@ export async function POST(req: NextRequest) {
       const { data, error } = await sb
         .from("clients")
         .insert({
-          full_name: (c.name ?? "").trim() || "Checkatrade lead",
+          full_name: nomeProprio(c.name) || "Checkatrade lead",
           email,
           phone: (c.phone ?? "").trim() || null,
           address: (c.address ?? "").trim() || null,

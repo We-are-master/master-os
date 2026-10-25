@@ -1,3 +1,4 @@
+import { nomeProprio } from "@/lib/nome-proprio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** Quantas linhas lemos antes de escolher. Duplicata real e sempre 2 ou 3. */
@@ -73,7 +74,7 @@ export async function resolveClientIdForZendeskJob(
   input: ResolveZendeskJobClientInput,
 ): Promise<ResolveZendeskJobClientResult> {
   const accountId = input.accountId.trim();
-  const clientName = input.clientName.trim();
+  const clientName = nomeProprio(input.clientName) || input.clientName.trim();
   const clientEmail = input.clientEmail?.trim() || null;
   const clientPhone = input.clientPhone?.trim() || null;
   const accountCompanyName = input.accountCompanyName?.trim() || null;

@@ -10,6 +10,7 @@
  *                             o resto segue o fluxo de sempre, calado. Vazia = todo mundo.
  */
 
+import { nomeProprio } from "@/lib/nome-proprio";
 import { harveyLigado } from "@/lib/harvey/autonomia";
 import { reservarPrecoDaEquipe } from "./reserva-da-equipe";
 import { esperaHumana, faltaEsperar, tempoDigitando } from "./ritmo";
@@ -662,7 +663,7 @@ async function registrarLead(
   const agora = new Date().toISOString();
   const campos: Record<string, unknown> = { last_activity_at: agora, updated_at: agora };
   if (a.r.cotacao) Object.assign(campos, { service_label: a.r.cotacao.servico, price: a.r.cotacao.total, postcode: a.r.cotacao.postcode });
-  if (a.r.checkout) Object.assign(campos, { email: a.r.checkout.email.toLowerCase(), full_name: a.r.checkout.nome, step_reached: 4, status: "hot", booking_ref: a.r.checkout.ref, postcode: a.r.checkout.postcode, price: a.r.checkout.total });
+  if (a.r.checkout) Object.assign(campos, { email: a.r.checkout.email.toLowerCase(), full_name: nomeProprio(a.r.checkout.nome) || a.r.checkout.nome, step_reached: 4, status: "hot", booking_ref: a.r.checkout.ref, postcode: a.r.checkout.postcode, price: a.r.checkout.total });
   if (a.r.passarParaEquipe) campos.notes = `Harvey passed to the team: ${a.r.passarParaEquipe}`;
   try {
     if (a.leadId) {

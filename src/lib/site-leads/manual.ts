@@ -11,6 +11,7 @@
  *     ganhar o seu fluxo depois.
  */
 
+import { nomeProprio } from "@/lib/nome-proprio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -138,7 +139,7 @@ function montar(l: LinhaDeLead, email: string | null, phone: string | null, cana
   return {
     email,
     phone,
-    full_name: limpar(l.name, 120),
+    full_name: nomeProprio(limpar(l.name, 120)) || null,
     postcode: limpar(l.postcode, 10)?.toUpperCase() ?? null,
     channel: canal,
     service_label: limpar(l.service, 120),
