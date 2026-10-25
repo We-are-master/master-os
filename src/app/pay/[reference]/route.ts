@@ -35,6 +35,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ reference: 
     return htmlMessage("Invalid link", "This payment link is not valid.", 400);
   }
 
+  // Reserva do WhatsApp (dono, 25/10/2026): /pay/FX-XXXXXX é o link curto do sinal que o Harvey
+  // manda; redireciona para o checkout da Stripe guardado na conversa (motor.ts, checkout_url).
+  if (/^FX-[A-Z0-9]{4,12}$/.test(reference)) return checkoutDaReserva(reference);
+
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/$/, "") ||
     "https://app.getfixfy.com";
@@ -316,4 +320,22 @@ function htmlMessage(title: string, body: string, status: number): NextResponse 
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** O checkout da Stripe da reserva FX-…: o Harvey guardou o URL; a sessão vale 1 hora. */
+async function checkoutDaReserva(ref: string): Promise<NextResponse> {
+  const { data } = await createServiceClient()
+    .from("harvey_wa_conversas")
+    .select("checkout_url, checkout_at, sinal_recebido_em")
+    .eq("checkout_ref", ref)
+    .order("checkout_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ checkout_url: string | null; checkout_at: string | null; sinal_recebido_em: string | null }>();
+  if (!data?.checkout_url) return htmlMessage("Link not found", "This payment link is not valid. Message us on WhatsApp and we will send you a new one.", 404);
+  if (data.sinal_recebido_em) return htmlMessage("Already paid", "Thank you, this deposit has already been paid. Your booking is confirmed.", 200);
+  const idade = Date.now() - Date.parse(data.checkout_at ?? "");
+  if (!Number.isFinite(idade) || idade > 60 * 60_000) {
+    return htmlMessage("Link expired", "This payment link has expired. Message us on WhatsApp and we will send you a fresh one straight away.", 410);
+  }
+  return NextResponse.redirect(data.checkout_url, 303);
 }

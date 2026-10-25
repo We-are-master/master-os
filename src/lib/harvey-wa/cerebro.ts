@@ -846,7 +846,10 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     const total = Number(data.total);
     const sinal = Number(data.payNow ?? total);
     r.checkout = { ...comum, ref: String(data.ref), url: data.url, metodo: "card", total, sinal, jobIds: [] };
-    return { url: data.url, ref: data.ref, total, payNow: sinal, payLater: data.payLater ?? 0, note: "Send this exact link. It expires in 1 hour; if they need longer, create a new one." };
+    // Link curto (dono, 25/10/2026): o cliente recebe /pay/<ref>, que redireciona para o checkout
+    // da Stripe guardado na conversa (rota /pay/[reference]). O URL da Stripe tinha ~600 caracteres.
+    const curto = linkCurtoDoCheckout(String(data.ref));
+    return { url: curto, ref: data.ref, total, payNow: sinal, payLater: data.payLater ?? 0, note: "Send this exact link, nothing else. It works for 1 hour; if they need longer, create a new one." };
   }
   return { error: `unknown tool ${nome}` };
 }
@@ -855,6 +858,12 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
  * O cliente escolheu como pagar o sinal? Vale se a última mensagem dele fala
  * de cartão/transferência, ou se responde à pergunta do Harvey sobre isso.
  */
+/** O link curto do sinal: /pay/<referência da reserva>. */
+export function linkCurtoDoCheckout(ref: string): string {
+  const base = (process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.getfixfy.com").replace(/\/$/, "");
+  return `${base}/pay/${encodeURIComponent(ref)}`;
+}
+
 function escolhaDePagamento(conversa: Fala[]): "card" | "bank" | null {
   // A escolha vale para a conversa toda (a mais recente manda): antes a trava
   // só olhava a última mensagem e o Harvey perguntava "card or bank?" de novo
