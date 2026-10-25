@@ -152,7 +152,10 @@ describe("e-mails ao parceiro", () => {
     assert.ok(queixa.html.indexOf("Action required · reply within 12 hours") < queixa.html.indexOf("Hi TM,"));
     assert.match(queixa.html, /background-color:#C8102E[\s\S]*⚠ Action required · reply within 12 hours/);
     assert.match(queixa.html, /Hi TM,/);
-    assert.match(queixa.html, /A complaint was raised on this job\. We need your help to resolve it\./);
+    // Copy do dono (25/10/2026): título "New Complaint", depois o Hi e o parágrafo.
+    assert.match(queixa.html, />New Complaint</);
+    assert.ok(queixa.html.indexOf("New Complaint") < queixa.html.indexOf("Hi TM,"));
+    assert.doesNotMatch(queixa.html, /A complaint was raised on this job/);
     assert.match(queixa.html, /Job #JOB-9800/);
     assert.match(queixa.html, /⏸ On hold/);
     assert.match(queixa.html, /What the customer reported[\s\S]*Sealant &lt;peeling&gt;/);
