@@ -33,7 +33,7 @@ function cabeca(html: string): { chip: string | null; titulo: string | null; pas
   const chip = html.match(/font-weight:600;color:#[0-9A-F]+;vertical-align:middle;">([^<]+)<\/span>/)?.[1] ?? html.match(/border-radius:999px;">([^<]+)</)?.[1] ?? null;
   const titulo = html.match(/<h1[^>]*>([^<]+)<\/h1>/)?.[1]?.replace(/&#39;/g, "'") ?? null;
   // Passo atual da régua: o traço laranja.
-  const passo = html.match(/background:#ED4B00;[^>]*>&nbsp;<\/div><p[^>]*>([^<]+)</)?.[1] ?? null;
+  const passo = html.match(/border-top:4px solid #ED4B00;[^>]*>([^<]+)</)?.[1] ?? null;
   return { chip, titulo, passo };
 }
 
@@ -268,7 +268,7 @@ describe("e-mails ao parceiro", () => {
     assert.match(b.html, />Approved</);
     assert.doesNotMatch(b.html, />Paid</);
     const sb = buildSelfBillEmail({ reference: "SB-1", net_payout: 70, week_start: "2026-10-26", week_end: "2026-11-01" } as SelfBill, "2026-11-06");
-    assert.match(sb.html, /background:#22C55E;[^>]*>&nbsp;<\/div><p[^>]*color:#4ADE80;">Approved</);
+    assert.match(sb.html, /border-top:4px solid #22C55E;[^>]*color:#4ADE80;">Approved</);
   });
 
   test("helpers: pagamento, área e trabalho curto", () => {

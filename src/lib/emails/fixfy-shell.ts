@@ -510,8 +510,10 @@ export function emailFixfy(e: EmailFixfy): { html: string; text: string } {
     p.estado === "aprovado" ? "#22C55E" : p.estado === "atual" ? FX.orange : p.estado === "feito" ? (tinto ? fx!.cor : "#FFFFFF") : tinto ? "rgba(2,0,64,0.12)" : "rgba(255,255,255,0.18)";
   const corNomePasso = (p: Passo) =>
     p.estado === "aprovado" ? (tinto ? "#0E8A5F" : "#4ADE80") : p.estado === "futuro" ? (tinto ? W.ink3 : W.onNavy) : tinto ? fx!.ink : "#FFFFFF";
+  // A barra é a borda de cima do nome, não um div vazio colorido: o Zendesk some com o
+  // fundo do div vazio e a régua ficava só com os nomes (dono, 25/10/2026).
   const passoHtml = (p: Passo) =>
-    `<div style="height:4px;border-radius:2px;background:${corPasso(p)};font-size:0;line-height:0;">&nbsp;</div><p style="margin:7px 0 0 0;font-family:${LABEL};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" || p.estado === "aprovado" ? 700 : 500};color:${corNomePasso(p)};">${esc(p.nome)}</p>`;
+    `<p style="margin:0;padding:7px 0 0 0;border-top:4px solid ${corPasso(p)};font-family:${LABEL};font-size:11px;line-height:14px;font-weight:${p.estado === "atual" || p.estado === "aprovado" ? 700 : 500};color:${corNomePasso(p)};">${esc(p.nome)}</p>`;
   const larguraPasso = passos.length ? Math.floor(100 / passos.length) : 0;
   const progresso = !passos.length
     ? ""
