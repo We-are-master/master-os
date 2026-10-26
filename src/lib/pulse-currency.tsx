@@ -27,6 +27,8 @@ type Ctx = {
   toggle: () => void;
   /** GBP → BRL. Sempre 1 quando a moeda é libra. */
   rate: number;
+  /** A cotação do dia GBP → BRL, mesmo com a tela em libra (o chip ao lado do botão). */
+  cotacao: number;
   rateSource: "live" | "fallback" | "loading";
   /** Formata um valor **em GBP** na moeda escolhida. */
   money: (gbp: number | null | undefined) => string;
@@ -92,6 +94,7 @@ export function PulseCurrencyProvider({ children }: { children: React.ReactNode 
       setCurrency,
       toggle: () => setCurrency(currency === "GBP" ? "BRL" : "GBP"),
       rate: effectiveRate,
+      cotacao: rate,
       rateSource,
       money: (gbp) => {
         const n = Number(gbp ?? 0);
@@ -129,6 +132,7 @@ export function usePulseMoney(): Ctx {
     setCurrency: () => {},
     toggle: () => {},
     rate: 1,
+    cotacao: FALLBACK_RATE,
     rateSource: "fallback",
     money: (gbp) => formatCurrency(Number(gbp ?? 0)),
   };
