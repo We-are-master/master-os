@@ -1111,6 +1111,7 @@ function AccountDetailDrawer({
   const CLIENTS_PAGE_SIZE = 20;
   const [saving, setSaving] = useState(false);
   const [syncingAccount, setSyncingAccount] = useState(false);
+  const [sendingWelcome, setSendingWelcome] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoCropOpen, setLogoCropOpen] = useState(false);
   const [logoCropFile, setLogoCropFile] = useState<File | null>(null);
@@ -1735,6 +1736,37 @@ function AccountDetailDrawer({
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 ) : null}
+              </div>
+              {/* Boas-vindas da conta (dono, 26/10/2026): o mesmo e-mail para toda conta nova, uma vez. */}
+              <div className="flex items-center gap-3 border-t border-border px-4 py-2.5">
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-primary">
+                  Welcome email
+                  <FixfyHintIcon text="Sent once to the account contact: a welcome and a short guide to sending us jobs. Opens a ticket so the reply lands in Zendesk." />
+                </span>
+                <span className="min-w-0 flex-1" />
+                <Button type="button" variant="outline" size="sm" onClick={() => window.open(`/api/accounts/${account.id}/welcome-email`, "_blank", "noopener,noreferrer")}>
+                  Preview
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!isAdmin || sendingWelcome}
+                  onClick={async () => {
+                    setSendingWelcome(true);
+                    try {
+                      const r = await fetch(`/api/accounts/${account.id}/welcome-email`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+                      const j = (await r.json().catch(() => ({}))) as { error?: string; to?: string; ticketId?: number };
+                      if (!r.ok) throw new Error(j.error ?? "Send failed");
+                      toast.success(`Welcome email sent to ${j.to} (ticket #${j.ticketId})`);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Send failed");
+                    } finally {
+                      setSendingWelcome(false);
+                    }
+                  }}
+                >
+                  {sendingWelcome ? "Sending…" : "Send"}
+                </Button>
               </div>
             </section>
 
