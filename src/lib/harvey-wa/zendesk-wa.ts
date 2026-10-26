@@ -20,6 +20,7 @@ import { ticketAntesDoPreco } from "./preco-da-equipe";
 import type { Identidade } from "./identidade";
 import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
 import { lerFichaDoLead, notaDoMerge } from "@/lib/um-ticket/resumo-do-lead";
+import { TITLE_FIELD_ID } from "@/lib/zendesk-espelho";
 
 const GRUPO_PARCEIROS = "Partners";
 const ORG_CLIENTES = { external_id: "fixfy:b2c-customers", name: "Fixfy Customers" };
@@ -377,6 +378,28 @@ async function marcarConversaEspelhada(ticketWa: number, anteriores: number[]): 
   return `, #${ticketWa} fora da view Leads (espelhado)`;
 }
 
+/**
+ * Title da conversa na hora em que o Harvey assume (dono, 26/10/2026, #51815 "Conversation
+ * with Ten" sem Title enquanto o lead #51814 já tinha "Lead · Handyman work · Tenesan ·
+ * SW9 9RZ"). O assunto da conversa "AI agent" não muda, mas o Title é campo: copia o do
+ * ticket anterior (lead, job ou site), sem esperar o espelho de 10 min. Recusa: segue.
+ */
+async function copiarTituloDoAnterior(ticketWa: number, anteriores: number[]): Promise<string> {
+  if (!anteriores.length) return "";
+  type T = { id: number; subject: string | null; custom_fields?: Array<{ id: number; value: unknown }> };
+  const { tickets } = await zendeskApi<{ tickets: T[] }>(`tickets/show_many.json?ids=${[ticketWa, ...anteriores].join(",")}`);
+  const titulo = (t?: T) => {
+    const v = t?.custom_fields?.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value;
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const conversa = tickets?.find((t) => t.id === ticketWa);
+  if (titulo(conversa)) return "";
+  const doAnterior = anteriores.map((id) => tickets?.find((t) => t.id === id)).map((t) => titulo(t) ?? (t?.subject?.trim() || null)).find(Boolean);
+  if (!doAnterior) return "";
+  await zendeskApi(`tickets/${ticketWa}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: TITLE_FIELD_ID, value: doAnterior }] } } });
+  return `, title "${doAnterior}"`;
+}
+
 async function desmarcarConversaEspelhada(ticketWa: number): Promise<void> {
   const { ticket: t } = await zendeskApi<{ ticket: { tags: string[] } }>(`tickets/${ticketWa}.json`);
   if (!t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return;
@@ -422,6 +445,7 @@ export async function juntarTicketsDaConversa(
     for (const anterior of anteriores)
       espelho += await espelharNoAnterior(ticket, anterior, provaDoJob?.ticketId === anterior ? (provaDoJob.emailDoCliente ?? null) : undefined).catch((e) => `, espelho falhou: ${e instanceof Error ? e.message : e}`);
     if (umTicketLeadsView()) espelho += await marcarConversaEspelhada(ticket, anteriores).catch((e) => `, tag de espelho falhou: ${e instanceof Error ? e.message : e}`);
+    espelho += await copiarTituloDoAnterior(ticket, anteriores).catch((e) => `, title não copiado: ${e instanceof Error ? e.message : e}`);
     return `ticket ${ticket} (AI agent)${espelho}`;
   }
   // Passou para a equipe: a conversa volta a aparecer na view 🎯 Leads (o lead entra nela pelo merge).
