@@ -25,6 +25,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { pensar, type Contas, type Fala } from "./cerebro";
 import { chaveDoTelefone, quemE, type Identidade } from "./identidade";
 import { externalIdDoLead } from "./primeiro-contato";
+import { espelharMensagemNoJob, jobPeloTelefone } from "./espelho-no-job";
 import { ticketDoJobAtivo } from "./job-ativo";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
@@ -338,6 +339,12 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   }
   // Reply status no ticket, em toda mensagem (cliente, equipe, Harvey), pausado ou não.
   await atualizarReplyStatus(conversa.id, msg).catch((e) => console.error("[harvey-wa] reply status:", e));
+  // Cliente com job em andamento: cada mensagem vira nota no ticket do job, na hora (26/10/2026).
+  if (est?.phone && est.tipo !== "parceiro" && (msg.author.type !== "user" || !msg.source?.type || msg.source.type === "whatsapp")) {
+    await espelharMensagemNoJob(createServiceClient(), { telefone: est.phone as string, msg, nomeDoCliente: msg.author.type === "user" ? msg.author.displayName ?? null : null }).catch((e) =>
+      console.error("[harvey-wa] mensagem no ticket do job:", e instanceof Error ? e.message : e),
+    );
+  }
   // A equipe deu o preço no chat: ticket para 🟠 Awaiting approval (e a conversa volta ao Harvey para fechar).
   if (ehDaEquipe(msg) && est?.phone && est.tipo !== "parceiro") {
     await precoDaEquipeNoChat(conversa.id, est.phone as string, msg).catch((e) => console.error("[harvey-wa] preço da equipe:", e));
@@ -542,9 +549,11 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
     await enviarTexto(conversa.id, r.resposta, voz);
   }
 
-  // Parceiro não é lead de venda.
+  // Parceiro não é lead de venda. Cliente com job em andamento também não (morador respondendo o
+  // lembrete da véspera virava lead "new", #51827), a não ser que peça preço ou pague algo novo.
+  const temJobAtivo = quem.tipo === "cliente" && !leadExistente && !r.cotacao && !r.checkout && Boolean(await jobPeloTelefone(sb, telefone).catch(() => null));
   const leadId =
-    quem.tipo === "parceiro" ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, deAnuncio, r });
+    quem.tipo === "parceiro" || temJobAtivo ? leadExistente : await registrarLead(sb, { conversationId: conversa.id, leadId: leadExistente, telefone, nome: msg.author.displayName ?? null, origem, deAnuncio, r });
   const mudancas: Record<string, unknown> = {
     atualizado_em: new Date().toISOString(),
     // O relógio do chase: a pessoa falou, o Harvey respondeu, zera a contagem.
