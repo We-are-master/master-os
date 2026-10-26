@@ -35,6 +35,8 @@ export type ClasseDeTicket =
   | "job_de_plataforma"
   /** Pedem preço para trabalho ainda não orçado. */
   | "pedido_de_quote"
+  /** A Housekeep pede ajuda para cobrir um job deles num dia. Não é quote. */
+  | "pedido_de_cobertura"
   /** O parceiro que vai executar avisa que agendou. */
   | "confirmacao_de_parceiro"
   /** Plataforma cancelou um job que já era nosso. */
@@ -73,6 +75,9 @@ export type AcaoDaClasse = "age" | "nota" | "passa";
 export const ACAO_POR_CLASSE: Readonly<Record<ClasseDeTicket, AcaoDaClasse>> = {
   job_de_plataforma: "age",
   pedido_de_quote: "age",
+  // "Job needing coverage" (dono, 26/10/2026, #51794): a Housekeep pergunta se cobrimos um
+  // job deles num dia. Quem decide é a equipe: nem quote, nem convite a parceiro, nem resposta.
+  pedido_de_cobertura: "passa",
   confirmacao_de_parceiro: "age",
   cancelamento: "age",
   remarcacao: "age",
@@ -92,6 +97,7 @@ export const ACAO_POR_CLASSE: Readonly<Record<ClasseDeTicket, AcaoDaClasse>> = {
 export const ROTULO_DA_CLASSE: Readonly<Record<ClasseDeTicket, string>> = {
   job_de_plataforma: "job da plataforma",
   pedido_de_quote: "pedido de quote",
+  pedido_de_cobertura: "pedido de cobertura da plataforma",
   confirmacao_de_parceiro: "confirmação de parceiro",
   cancelamento: "cancelamento",
   remarcacao: "remarcação",
@@ -151,6 +157,9 @@ const REGRAS: ReadonlyArray<{ re: RegExp; classe: ClasseDeTicket; motivo: string
    *   "Reschedule for SE4 2DT - Handyman Job"
    *   "Reschedule for Install Digital Sink Faucet ... in EC1V 0AA"
    */
+  // Antes de tudo que lê "job" no assunto: "[Housekeep] Job needing coverage: Handyperson | Odd
+  // jobs in SW12 8JT on 26/10/26" virava quote, com convite a 6 parceiros (#51794).
+  { re: /\bjob needing coverage\b/i, classe: "pedido_de_cobertura", motivo: "a Housekeep pede ajuda para cobrir um job deles num dia" },
   { re: /\breschedul(e|ed|ing)\b/i, classe: "remarcacao", motivo: "a plataforma mudou a data ou a janela de um job nosso" },
   { re: /^\s*job booked\b/i, classe: "job_de_plataforma", motivo: "a Housekeep confirma job agendado para nós" },
   { re: /^\s*job scheduled:/i, classe: "job_de_plataforma", motivo: "a plataforma agendou um job nosso" },
