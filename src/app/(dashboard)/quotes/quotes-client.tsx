@@ -1,5 +1,6 @@
 "use client";
 
+import { aceitaQuotes } from "@/lib/partner-aceita-quotes";
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment, useId } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
@@ -4012,7 +4013,11 @@ function QuoteDetailDrawer({
   const partnersEligibleForInvite = useMemo(
     () =>
       partners.filter(
-        (p) => isPartnerEligibleForWork(p) && typeof p.id === "string" && p.id.trim().length > 0,
+        (p) =>
+          isPartnerEligibleForWork(p) &&
+          aceitaQuotes(p.job_preferences) &&
+          typeof p.id === "string" &&
+          p.id.trim().length > 0,
       ),
     [partners],
   );

@@ -4,6 +4,7 @@ import { matchPartnerIdsForWork } from "@/lib/partner-work-matching";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 import { catalogServiceIdForTypeOfWorkLabel } from "@/lib/type-of-work";
 import { sendQuotePartnerInviteEmails } from "@/lib/quote-partner-invite-email";
+import { soQuemAceitaQuotes } from "@/lib/partner-aceita-quotes";
 
 export interface DispatchQuoteBidInvitesParams {
   quoteId: string;
@@ -67,6 +68,8 @@ export async function dispatchQuoteBidInvites(
     });
   }
 
+  // Lista escolhida à mão também passa pelo filtro: quem só recebe job fechado não ganha push de quote.
+  partnerIds = await soQuemAceitaQuotes(supabase, partnerIds);
   if (partnerIds.length === 0) {
     return { partnerIds: [], pushSent: 0, emailsSent: 0, invitationsTracked: 0 };
   }
