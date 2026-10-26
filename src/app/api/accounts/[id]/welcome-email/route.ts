@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createTicket } from "@/lib/zendesk";
-import { buildAccountWelcomeEmail, type PrecoCombinado } from "@/lib/emails/account-welcome";
+import { buildAccountWelcomeEmail } from "@/lib/emails/account-welcome";
 import { confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 
 export const dynamic = "force-dynamic";
@@ -17,23 +17,11 @@ async function montar(id: string) {
   const sb = createServiceClient();
   const { data: conta } = await sb
     .from("accounts")
-    .select("id, company_name, contact_name, email, payment_terms, deleted_at")
+    .select("id, company_name, contact_name, email, deleted_at")
     .eq("id", id)
     .maybeSingle();
   if (!conta || conta.deleted_at) return null;
-  const { data: linhas } = await sb
-    .from("account_service_prices")
-    .select("use_standard, fixed_price, hourly_rate, default_hours, service_catalog(name, pricing_mode)")
-    .eq("account_id", id)
-    .is("deleted_at", null);
-  const precos: PrecoCombinado[] = [];
-  for (const l of (linhas ?? []) as unknown as Array<{ use_standard: boolean; fixed_price: number | null; hourly_rate: number | null; default_hours: number | null; service_catalog: { name: string; pricing_mode: string } | null }>) {
-    if (l.use_standard || !l.service_catalog) continue;
-    const hora = l.service_catalog.pricing_mode === "hourly";
-    const valor = Number(hora ? l.hourly_rate : l.fixed_price) || 0;
-    if (valor > 0) precos.push({ servico: l.service_catalog.name, modo: hora ? "hourly" : "fixed", valor, horasMinimas: hora ? l.default_hours : null });
-  }
-  const email = buildAccountWelcomeEmail({ empresa: conta.company_name, contato: conta.contact_name, precos, prazo: conta.payment_terms });
+  const email = buildAccountWelcomeEmail({ empresa: conta.company_name, contato: conta.contact_name });
   return { sb, conta, email };
 }
 

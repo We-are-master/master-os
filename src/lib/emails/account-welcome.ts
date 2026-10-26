@@ -1,76 +1,69 @@
 /**
- * Boas-vindas de conta nova (dono, 26/10/2026, Crestview Pinnacle): o mesmo e-mail para
- * toda conta, montado com o que está na conta. Nome, contato, o preço combinado
- * (account_service_prices) e onde mandar os jobs. Inglês britânico, sem travessão.
+ * Boas-vindas de conta nova (dono, 26/10/2026): o mesmo e-mail para toda conta, só
+ * boas-vindas e o guia de como trabalhar com a gente. Sem preço (o combinado fica no
+ * contrato e no orçamento). Inglês britânico, sem travessão, na moldura Fixfy.
  *
  * Puro (sem banco, sem envio): a rota `/api/accounts/[id]/welcome-email` lê a conta e manda.
  */
-import { emailFixfy, gbp, primeiroNome } from "./fixfy-shell";
-
-export type PrecoCombinado = {
-  servico: string;
-  /** Por hora: taxa e o mínimo de horas. Fechado: o valor. */
-  modo: "hourly" | "fixed";
-  valor: number;
-  horasMinimas?: number | null;
-};
+import { emailFixfy, primeiroNome } from "./fixfy-shell";
 
 export type BoasVindasDaConta = {
   empresa: string;
   contato?: string | null;
-  precos: PrecoCombinado[];
-  /** "Net 7", "Due on Receipt"... */
-  prazo?: string | null;
   emailDosJobs?: string;
 };
-
-/** "£45 per hour, minimum 2 hours (£90)" ou "£180 fixed". */
-export function linhaDoPreco(p: PrecoCombinado): string {
-  if (p.modo === "fixed") return `${gbp(p.valor)} fixed`;
-  const h = Number(p.horasMinimas) || 0;
-  return h > 1 ? `${gbp(p.valor)} per hour, minimum ${h} hours (${gbp(p.valor * h)})` : `${gbp(p.valor)} per hour`;
-}
 
 export function buildAccountWelcomeEmail(d: BoasVindasDaConta): { subject: string; html: string; text: string } {
   const empresa = d.empresa.trim();
   const nome = primeiroNome(d.contato);
   const email = d.emailDosJobs ?? "hello@getfixfy.com";
-  const precos = d.precos.filter((p) => p.valor > 0);
-  // Um preço só (o caso comum): vira o destaque. Vários: linhas.
-  const unico = precos.length === 1 || (precos.length > 1 && precos.every((p) => linhaDoPreco(p) === linhaDoPreco(precos[0]!))) ? precos[0] : null;
-  const servicos = unico && precos.length > 1 ? precos.map((p) => p.servico).join(", ") : null;
 
   const { html, text } = emailFixfy({
     zendesk: true,
-    preheader: "Everything you need to send us your first jobs: how to book, what it costs and what happens next.",
+    preheader: "How to send us work, what happens next and who to talk to.",
     estado: { texto: "Welcome aboard", cor: "orange" },
     titulo: `Welcome to Fixfy, ${empresa}`,
     saudacao: nome ? `Hi ${nome},` : `Hi ${empresa} team,`,
     paragrafos: [
-      `We're delighted to welcome ${empresa} to Fixfy, and we're looking forward to looking after your properties.`,
-      "Below is everything your team needs to send us work, what it costs and what happens once a job is booked.",
-    ],
-    metricas: unico
-      ? unico.modo === "hourly"
-        ? [
-            { rotulo: "Per hour", valor: gbp(unico.valor) },
-            ...(Number(unico.horasMinimas) > 1 ? [{ rotulo: "Minimum per job", valor: gbp(unico.valor * Number(unico.horasMinimas)), sub: `covers up to ${unico.horasMinimas} hours` }] : []),
-          ]
-        : [{ rotulo: "Agreed price", valor: gbp(unico.valor) }]
-      : null,
-    linhas: [
-      ["Send every job to", email],
-      ["Calls and WhatsApp", "+44 20 4538 4668"],
-      ...(servicos ? ([["Services at this rate", servicos]] as Array<[string, string]>) : []),
-      ...(!unico ? precos.map((p) => [p.servico, linhaDoPreco(p)] as [string, string]) : []),
-      ["Invoices", d.prazo ? `After each job, with the photo report · ${d.prazo}` : "After each job, with the photo report"],
+      `We're delighted to welcome ${empresa} to Fixfy. From repairs and maintenance to cleaning and safety certificates, one team looks after your properties across London.`,
+      "Here is a short guide to working with us, so your team can send us the first job today.",
     ],
     cartoes: [
-      { icone: "📩", titulo: "Email the job", texto: "Address, what needs doing, access and your preferred date." },
-      { icone: "🗓️", titulo: "We confirm", texto: "Date and arrival window, by email." },
-      { icone: "📸", titulo: "Done and reported", texto: "A vetted professional does it; you get photos and the invoice." },
+      { icone: "📩", titulo: "1. Send the job", texto: `Email ${email}. One email per job.` },
+      { icone: "🗓️", titulo: "2. We confirm", texto: "Date and arrival window, by email." },
+      { icone: "📸", titulo: "3. Done and reported", texto: "Photo report and invoice when it's finished." },
     ],
-    nota: "Materials and parts are only bought with your approval, and are listed separately on the invoice with the receipt.",
+    avisos: [
+      {
+        tom: "neutral",
+        titulo: "What to include in each job request",
+        itens: [
+          "The property address, with the full postcode",
+          "What needs doing, with photos or a short video if you have them",
+          "Access: who will let us in, or where the keys are",
+          "Your preferred date and time window",
+          "A contact on site, if it's not you",
+        ],
+        lugar: "meio",
+      },
+      {
+        tom: "blue",
+        titulo: "Good to know",
+        itens: [
+          "Every job is carried out by a vetted, insured professional from our team.",
+          "If anything extra is needed once we're on site, we ask you before going ahead.",
+          "Need a quote first? Send the details and photos and we'll come back with a price.",
+          "Anything not quite right after a visit? Reply to the job email and we'll put it right.",
+        ],
+        lugar: "meio",
+      },
+    ],
+    linhas: [
+      ["Job requests", email],
+      ["Calls and WhatsApp", "+44 20 4538 4668"],
+      ["Website", "getfixfy.com"],
+    ],
+    nota: "Save hello@getfixfy.com in your contacts so our booking emails never end up in spam.",
   });
 
   return { subject: `Welcome to Fixfy, ${empresa}`, html, text };
