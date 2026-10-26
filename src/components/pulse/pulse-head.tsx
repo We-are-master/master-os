@@ -150,12 +150,19 @@ export function PulseHead({ firstName, todaysJobsCount, ceoMode, canSeeCeo, onTo
 
 /** Libra é a moeda do negócio; real é só a lente de leitura desta tela. */
 function CurrencyToggle() {
-  const { currency, toggle, rate, rateSource } = usePulseMoney();
-  const title =
-    currency === "GBP"
-      ? `Ver em real (£1 = R$ ${rate.toFixed(2)}${rateSource === "fallback" ? ", cotação de referência" : ""})`
-      : `Voltar para libra (£1 = R$ ${rate.toFixed(2)}${rateSource === "fallback" ? ", cotação de referência" : ""})`;
+  const { currency, toggle, cotacao, rateSource } = usePulseMoney();
+  const taxa = cotacao.toFixed(2).replace(".", ",");
+  const referencia = rateSource === "fallback" ? ", cotação de referência" : "";
+  const title = currency === "GBP" ? `Ver em real (£1 = R$ ${taxa}${referencia})` : `Voltar para libra (£1 = R$ ${taxa}${referencia})`;
   return (
+    <>
+    {/* A cotação do dia à vista, ao lado do botão (dono, 26/10/2026). */}
+    <span
+      className="inline-flex h-8 items-center rounded-md border border-fx-line bg-card px-2.5 text-[12px] font-medium text-text-secondary tabular-nums"
+      title={rateSource === "fallback" ? "Reference rate: the FX service did not answer" : "Today's GBP to BRL market rate (open.er-api.com, refreshed hourly)"}
+    >
+      {rateSource === "loading" ? "£1 = R$ …" : `£1 = R$ ${taxa}`}
+    </span>
     <button
       type="button"
       onClick={toggle}
@@ -170,6 +177,7 @@ function CurrencyToggle() {
     >
       {currency === "GBP" ? "£" : "R$"}
     </button>
+    </>
   );
 }
 
