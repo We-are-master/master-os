@@ -294,6 +294,12 @@ export type EntradaDoTitulo = {
   assunto: string | null;
   /** Cliente Fixfy (org Fixfy Customers ou sem org). Conta B2B mantém o assunto dela. */
   fixfy: boolean;
+  /**
+   * Remetente sem organização (dono, 26/10/2026, #51807 "getfixy x crestviewpinnacle"):
+   * sem job, quote nem lead no ticket, o Title é o assunto como ele mandou. Com algo nosso
+   * ligado (lead que nós abrimos, job), segue o padrão: esses tickets também nascem sem org.
+   */
+  semOrganizacao?: boolean;
   /** Etapa pelo que está ligado ao ticket; null = sem quote nem job. */
   etapa: "Lead" | "Quote" | "Job" | null;
   servico?: string | null;
@@ -321,6 +327,8 @@ export function assuntoSimples(assunto: string | null | undefined): boolean {
  */
 export function tituloDoTicket(e: EntradaDoTitulo): string {
   const assunto = String(e.assunto ?? "").replace(/\s+/g, " ").trim();
+  // "Conversation with X" é o assunto automático do WhatsApp, não algo que a pessoa escreveu.
+  if (e.semOrganizacao && !e.etapa && !e.ehLead && assunto && !/^conversation with\b/i.test(assunto)) return assunto;
   const simples = assuntoSimples(assunto);
   if (!e.fixfy && !simples) return assunto;
   if (e.etapa) return juntar([e.etapa, e.servico, e.nome, e.postcode]);

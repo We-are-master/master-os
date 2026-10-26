@@ -191,3 +191,12 @@ test("job apagado: fecha o ticket com What Happened other (24/10/2026)", () => {
   assert.equal(e.fechamento?.whatHappened, "other");
   assert.equal(e.papel, null);
 });
+
+test("remetente sem organização: Title é o assunto como veio (26/10/2026)", () => {
+  assert.equal(tituloDoTicket({ assunto: "getfixy x crestviewpinnacle", fixfy: false, semOrganizacao: true, etapa: null, nomeDoRequester: "Sam" }), "getfixy x crestviewpinnacle");
+  assert.equal(tituloDoTicket({ assunto: "EPC", fixfy: false, semOrganizacao: true, etapa: null }), "EPC");
+  // Sem org mas com algo nosso (lead que abrimos, job): segue o padrão.
+  assert.equal(tituloDoTicket({ assunto: "Job Scheduled: General Maintenance - W14 0BP", fixfy: true, semOrganizacao: true, etapa: "Job", servico: "General Maintenance", nome: "Mohsen Sayahi", postcode: "W14 0BP" }), "Job · General Maintenance · Mohsen Sayahi · W14 0BP");
+  assert.equal(tituloDoTicket({ assunto: "Your handyman work enquiry · A few details to get started", fixfy: true, semOrganizacao: true, etapa: null, ehLead: true, nomeDoRequester: "Jean-Michel Doublet" }), "Lead · Jean-Michel Doublet");
+  assert.equal(tituloDoTicket({ assunto: "Conversation with Sa'ood Bashir", fixfy: true, semOrganizacao: true, etapa: null, nomeDoRequester: "Sa'ood Bashir" }), "Enquiry · Sa'ood Bashir");
+});

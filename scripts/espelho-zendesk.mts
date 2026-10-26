@@ -239,6 +239,7 @@ if (!so) {
     const titulo = tituloDoTicket({
       assunto: t.subject,
       fixfy: !t.organization_id || t.organization_id === ORG_FIXFY,
+      semOrganizacao: !t.organization_id,
       etapa: job ? "Job" : quote ? "Quote" : null,
       servico: job ? normalizeTypeOfWork(job.title) || job.title : quote ? normalizeTypeOfWork(quote.service_type ?? quote.title) || quote.service_type || quote.title : null,
       nome: job?.client_name ?? quote?.client_name ?? null,
