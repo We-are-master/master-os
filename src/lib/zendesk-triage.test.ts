@@ -107,7 +107,9 @@ test("o que não casa com nada cai no fluxo antigo, não no descarte", () => {
 
 test("nenhuma classe manda descartar um ticket que pode ser trabalho", () => {
   // A trava do desenho: só passa batido o que comprovadamente não pede nada.
-  const podemPassar = ["ticket_do_os", "lembrete_de_plataforma", "codigo_de_acesso", "ruido"];
+  // pedido_de_cobertura é trabalho, mas da equipe (dono, 26/10/2026): o ticket fica aberto na fila
+  // dela, o Harvey só não mexe.
+  const podemPassar = ["ticket_do_os", "lembrete_de_plataforma", "codigo_de_acesso", "ruido", "pedido_de_cobertura"];
   for (const [classe, acao] of Object.entries(ACAO_POR_CLASSE)) {
     if (acao === "passa") assert.ok(podemPassar.includes(classe), `${classe} não devia passar batido`);
   }
@@ -115,4 +117,13 @@ test("nenhuma classe manda descartar um ticket que pode ser trabalho", () => {
 
 test("a tag do ticket é derivada da classe, sem espaço nem acento", () => {
   assert.equal(tagDaClasse("oferta_de_lead"), "harvey_class__oferta_de_lead");
+});
+
+test("cobertura da Housekeep não é quote: o Harvey não age (26/10/2026)", () => {
+  const t = triarTicket({
+    subject: "[Housekeep] Job needing coverage: Handyperson | Odd jobs in SW12 8JT on 26/10/26",
+    tags: ["intent__order__new__quote_request"],
+  });
+  assert.equal(t.classe, "pedido_de_cobertura");
+  assert.equal(ACAO_POR_CLASSE[t.classe], "passa");
 });

@@ -231,6 +231,7 @@ export function medirDecisoes(linhas: readonly LinhaDaMedida[]): MedidaDaClasse[
 export const ROTULO: Record<string, string> = {
   job_de_plataforma: "Platform booking",
   pedido_de_quote: "Quote request",
+  pedido_de_cobertura: "Platform coverage request",
   confirmacao_de_parceiro: "Partner confirmation",
   cancelamento: "Cancellation",
   remarcacao: "Reschedule",
