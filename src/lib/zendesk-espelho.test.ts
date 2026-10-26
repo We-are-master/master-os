@@ -191,3 +191,9 @@ test("job apagado: fecha o ticket com What Happened other (24/10/2026)", () => {
   assert.equal(e.fechamento?.whatHappened, "other");
   assert.equal(e.papel, null);
 });
+
+test("remetente sem organização: Title é o assunto como veio (26/10/2026)", () => {
+  assert.equal(tituloDoTicket({ assunto: "getfixy x crestviewpinnacle", fixfy: false, semOrganizacao: true, etapa: null, nomeDoRequester: "Sam" }), "getfixy x crestviewpinnacle");
+  assert.equal(tituloDoTicket({ assunto: "EPC", fixfy: false, semOrganizacao: true, etapa: "Quote", servico: "EPC", nome: "X", postcode: "SE1 1AA" }), "EPC");
+  assert.equal(tituloDoTicket({ assunto: "", fixfy: false, semOrganizacao: true, etapa: null, nomeDoRequester: "Sam Lee" }), "Sam Lee");
+});

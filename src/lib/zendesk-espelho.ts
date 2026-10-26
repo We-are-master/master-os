@@ -292,8 +292,14 @@ export const TITLE_FIELD_ID = Number(process.env.ZENDESK_TITLE_FIELD_ID?.trim() 
 export type EntradaDoTitulo = {
   /** Assunto atual do ticket. */
   assunto: string | null;
-  /** Cliente Fixfy (org Fixfy Customers ou sem org). Conta B2B mantém o assunto dela. */
+  /** Cliente Fixfy (org Fixfy Customers). Conta B2B mantém o assunto dela. */
   fixfy: boolean;
+  /**
+   * Remetente sem organização (dono, 26/10/2026, #51807 "getfixy x crestviewpinnacle"):
+   * o Title é o assunto como ele mandou, sempre. Quem ainda não é cliente nosso não
+   * entra no padrão "Etapa · Serviço · Nome · Postcode".
+   */
+  semOrganizacao?: boolean;
   /** Etapa pelo que está ligado ao ticket; null = sem quote nem job. */
   etapa: "Lead" | "Quote" | "Job" | null;
   servico?: string | null;
@@ -321,6 +327,7 @@ export function assuntoSimples(assunto: string | null | undefined): boolean {
  */
 export function tituloDoTicket(e: EntradaDoTitulo): string {
   const assunto = String(e.assunto ?? "").replace(/\s+/g, " ").trim();
+  if (e.semOrganizacao) return assunto || e.nomeDoRequester?.trim() || "";
   const simples = assuntoSimples(assunto);
   if (!e.fixfy && !simples) return assunto;
   if (e.etapa) return juntar([e.etapa, e.servico, e.nome, e.postcode]);
