@@ -19,6 +19,7 @@
  *                                  o aprovado em 07/10/2026 chama pelo nome e o tipo de trabalho)
  */
 
+import { TITLE_FIELD_ID } from "@/lib/zendesk-espelho";
 import { contaDasNotas, rotuloDaConta } from "@/lib/checkatrade-contas";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decideDispatch } from "@/lib/agent/sales/dispatch-gate";
@@ -269,6 +270,8 @@ export async function mandarPrimeiroContatoPorEmail(c: ContatoPorEmail): Promise
           // ai_quote_draft: o Harvey de e-mail não cota em cima; lead_gen segura na view Leads até a resposta.
           tags: ["lead_checkatrade", "lead_gen", "lead_email_sent", "ai_quote_draft"],
           external_id: externalId,
+          // Title já na criação (dono, 26/10/2026): o espelho de 10 min deixava o lead sem Title na view.
+          custom_fields: [{ id: TITLE_FIELD_ID, value: assuntoDoLead(c.servico, c.nomeCompleto || c.nome, c.postcode) }],
         },
       },
     });
@@ -377,7 +380,11 @@ export async function abrirTicketDoLead(sb: SupabaseClient, p: PrimeiroContato, 
         tags: ["harvey_wa_lead", "lead_checkatrade", `checkatrade_${conta}`, "lead_wa_sent", "lead_gen", "ai_quote_draft"],
         external_id: externalId,
         // 🟢 Sent: o template já saiu, a vez é do cliente. Vira 🔴 quando ele responde (dono, 08/10/2026).
-        custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" }],
+        custom_fields: [
+          { id: ZENDESK_REPLY_STATUS_FIELD_ID, value: "reply_replied" },
+          // Title já na criação (dono, 26/10/2026, #51816/#51818 sem Title por 15 min na view Leads).
+          { id: TITLE_FIELD_ID, value: assuntoDoLead(p.servico, nome, brief.postcode) },
+        ],
       },
     },
   });
