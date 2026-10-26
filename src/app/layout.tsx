@@ -1,19 +1,31 @@
 import type { Metadata } from "next";
-import { Archivo, Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+/**
+ * Fontes dentro do projeto (dono, 26/10/2026): com `next/font/google` o build baixava do
+ * Google, e em 26/10 o Google devolveu um endereço que o Turbopack não lê e o deploy de
+ * produção caiu. Mesmos pesos e o subconjunto latin de antes, em `src/app/fonts`.
+ */
+const inter = localFont({
+  src: [
+    { path: "./fonts/Inter-400-latin.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/Inter-500-latin.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/Inter-600-latin.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/Inter-700-latin.woff2", weight: "700", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-inter",
 });
 
 /** Títulos e números grandes, igual ao site (getfixfy.com). */
-const archivo = Archivo({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
+const archivo = localFont({
+  src: [
+    { path: "./fonts/Archivo-500-latin.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/Archivo-600-latin.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/Archivo-700-latin.woff2", weight: "700", style: "normal" },
+  ],
   display: "swap",
   variable: "--font-archivo",
 });
