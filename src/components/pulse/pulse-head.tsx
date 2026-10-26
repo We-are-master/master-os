@@ -159,7 +159,7 @@ function CurrencyToggle() {
     {/* A cotação do dia à vista, ao lado do botão (dono, 26/10/2026). */}
     <span
       className="inline-flex h-8 items-center rounded-md border border-fx-line bg-card px-2.5 text-[12px] font-medium text-text-secondary tabular-nums"
-      title={rateSource === "fallback" ? "Reference rate: the FX service did not answer" : "Today's GBP to BRL market rate (open.er-api.com, refreshed hourly)"}
+      title={rateSource === "fallback" ? "Reference rate: the FX service did not answer" : "Today's GBP to BRL rate from Wise, refreshed hourly"}
     >
       {rateSource === "loading" ? "£1 = R$ …" : `£1 = R$ ${taxa}`}
     </span>
