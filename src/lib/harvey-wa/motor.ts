@@ -31,7 +31,7 @@ import { contextoDaRetomada } from "./site-lead";
 import { contextoDoWelcome, welcomeDoTelefone } from "./welcome-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
-import { anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
+import { anotarContextoDoEnvio, anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
 import { textoDePagamentoRecebido } from "./confirmacao-no-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
@@ -262,6 +262,10 @@ async function jobDoClienteNoOs(sb: ReturnType<typeof createServiceClient>, clie
 /** O ticket anterior da conversa: o do template nosso (harvey_wa_leads) ou o do job em andamento do cliente. */
 export async function juntarTicketAnterior(telefone: string | null, esperarEquipe = false): Promise<void> {
   if (!telefone) return;
+  // A resposta ao nosso lembrete ou cobrança: a conversa ganha a nota do que foi enviado.
+  await anotarContextoDoEnvio(telefone)
+    .then((r) => r && console.log("[harvey-wa]", r))
+    .catch((e) => console.error("[harvey-wa] contexto do envio:", e instanceof Error ? e.message : e));
   const sb = createServiceClient();
   const { data: leadWa } = await sb.from("harvey_wa_leads").select("lead_externo, job_id, ticket_id, origem").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
   const dados = dadosDeJuncao(leadWa);
