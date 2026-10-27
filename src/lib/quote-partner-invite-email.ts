@@ -9,6 +9,7 @@ import { createPartnerBidToken } from "@/lib/quote-response-token";
 import { upsertShortLink } from "@/lib/short-links";
 import { quoteParaParceiro, nomesDeContas } from "@/lib/quote-para-parceiro";
 import { createSideConversation } from "@/lib/zendesk";
+import { soQuemAceitaQuotes } from "@/lib/partner-aceita-quotes";
 
 export interface SendQuotePartnerInviteEmailsParams {
   quoteId: string;
@@ -29,7 +30,8 @@ export async function sendQuotePartnerInviteEmails(
   supabase: SupabaseClient,
   params: SendQuotePartnerInviteEmailsParams,
 ): Promise<SendQuotePartnerInviteEmailsResult> {
-  const partnerIds = params.partnerIds.filter(Boolean);
+  // Parceiro que só recebe job fechado não é convidado para quote, venha de onde vier o convite.
+  const partnerIds = await soQuemAceitaQuotes(supabase, params.partnerIds);
   if (partnerIds.length === 0) return { sent: 0, invited: 0 };
 
   const { data: quote, error: qErr } = await supabase

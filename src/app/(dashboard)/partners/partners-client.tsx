@@ -43,6 +43,7 @@ import { toast } from "sonner";
 import type { CatalogService, Partner, PartnerLegalType, PartnerStatus } from "@/types/database";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { listPartners, listPartnersAll, createPartner, updatePartner } from "@/services/partners";
+import { WorkTypeChoice, PartnerWorkTypeSection, resumoWorkType } from "@/components/partners/partner-work-type";
 import { enrichPartnersDirectoryEarnings, type PartnerWithEarnings } from "@/lib/partner-directory-earnings";
 import { findDuplicatePartners, formatPartnerDuplicateLines } from "@/lib/duplicate-create-warnings";
 import { useDuplicateConfirm } from "@/contexts/duplicate-confirm-context";
@@ -919,6 +920,8 @@ const emptyForm = {
   partner_address: "",
   /** New directory partners start in Onboarding until compliance + activation. */
   status: "onboarding" as PartnerStatus,
+  /** false = booked jobs only, never invited to bid on quotes. */
+  accepts_quotes: true,
 };
 
 const CREATE_PARTNER_WIZARD_STEPS = [
@@ -1867,6 +1870,7 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
         verified: false,
         catalog_service_ids: catalogServiceIdsForTradeLabels(form.trades, partnerCatalogServices),
         ...coveragePatch,
+        job_preferences: { receiveLeads: form.accepts_quotes },
       });
 
       // Mirror the new partner into Zendesk (Organisation + User) fire-and-
@@ -3189,6 +3193,10 @@ export function PartnersClient({ initialData }: PartnersClientProps = {}) {
                   );
                 })}
               </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-text-secondary">Work it receives</label>
+              <WorkTypeChoice value={form.accepts_quotes} onChange={(v) => setForm((f) => ({ ...f, accepts_quotes: v }))} />
             </div>
             </>
           ) : createWizardStep === "documents" ? (
@@ -6182,6 +6190,10 @@ function PartnerDetailDrawer({
                     onPartnerUpdate={onPartnerUpdate}
                     canEdit={canManagePartners}
                   />
+                </DrawerSection>
+
+                <DrawerSection title="Work it receives" summary={resumoWorkType(partner)}>
+                  <PartnerWorkTypeSection partner={partner} onPartnerUpdate={onPartnerUpdate} canEdit={canManagePartners} />
                 </DrawerSection>
 
                 <DrawerSection title="Coverage" summary={formatPartnerCoverageSummary(partner) || "Coverage TBC"}>
