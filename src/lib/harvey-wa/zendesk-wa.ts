@@ -21,6 +21,7 @@ import type { Identidade } from "./identidade";
 import { umTicketLeadsView, umTicketNotaDoMerge, TAG_CONVERSA_ESPELHADA } from "@/lib/um-ticket/flags";
 import { lerFichaDoLead, notaDoMerge } from "@/lib/um-ticket/resumo-do-lead";
 import { TITLE_FIELD_ID } from "@/lib/zendesk-espelho";
+import { envioComContexto, notaDoContexto, tagDoEnvio, ticketDoJob, type EnvioRecente, type JobDoEnvio } from "./contexto-do-envio";
 
 const GRUPO_PARCEIROS = "Partners";
 const ORG_CLIENTES = { external_id: "fixfy:b2c-customers", name: "Fixfy Customers" };
@@ -456,6 +457,51 @@ export async function juntarTicketsDaConversa(
   if (dados.ticketDoLead) juntou += await juntarTicketDoLead(ticket, dados.ticketDoLead).catch((e) => `, merge falhou: ${e instanceof Error ? e.message : e}`);
   if (dados.ticketAntigo) juntou += await juntarTicketAntigo(ticket, dados.ticketAntigo).catch((e) => `, merge do ticket do site falhou: ${e instanceof Error ? e.message : e}`);
   return `ticket ${ticket}${juntou}`;
+}
+
+/**
+ * Nota interna com o último WhatsApp nosso (lembrete, cobrança de quote) no ticket da
+ * conversa, para quem abre saber a que o cliente responde (dono, 27/10/2026, #51865).
+ * Uma nota por envio (tag); conversa "AI agent" recusa nota e tenta de novo na próxima
+ * mensagem; conversa que já é o ticket do job (merge) não precisa.
+ */
+export async function anotarContextoDoEnvio(telefone: string): Promise<string> {
+  if (!isZendeskConfigured()) return "";
+  const sb = createServiceClient();
+  const desde = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const { data } = await sb
+    .from("outbound_messages")
+    .select("dedupe_key, purpose, job_id, quote_id, zendesk_ticket_id, template, sent_at, reserved_at")
+    .eq("channel", "whatsapp")
+    .eq("recipient", telefone)
+    .eq("status", "sent")
+    .gte("reserved_at", desde)
+    .order("reserved_at", { ascending: false })
+    .limit(1);
+  const envio = (data?.[0] ?? null) as EnvioRecente | null;
+  if (!envio || !envioComContexto(envio)) return "";
+  const u = await usuarioPeloTelefone(telefone);
+  const ticket = u ? await ticketDaConversa(u.id) : null;
+  if (!ticket) return "";
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string } }>(`tickets/${ticket}.json`);
+  const tag = tagDoEnvio(envio);
+  if (t?.tags?.includes(tag) || t?.support_type === "ai_agent") return "";
+  let job: JobDoEnvio | null = null;
+  if (envio.job_id) {
+    const { data: j } = await sb
+      .from("jobs")
+      .select("id, reference, title, property_address, scheduled_start_at, scheduled_end_at, scheduled_date, external_source, external_ref")
+      .eq("id", envio.job_id)
+      .maybeSingle();
+    job = (j as JobDoEnvio | null) ?? null;
+  }
+  if (ticketDoJob(job) === ticket) {
+    await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [tag] } });
+    return "";
+  }
+  await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { comment: { body: notaDoContexto(envio, telefone, job), public: false } } } });
+  await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [tag] } });
+  return `contexto de ${envio.purpose} anotado em #${ticket}`;
 }
 
 /**
