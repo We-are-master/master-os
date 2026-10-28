@@ -15,6 +15,7 @@ import { promptDoHarvey, promptDoParceiro } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 import { decidirDesconto } from "./desconto";
 import { faltandoParaCotar, postcodeDaCotacao, precoDoCatalogoJaDado } from "./pedido-de-cotacao";
+import { prometeuAEquipe } from "./turno";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -362,7 +363,7 @@ const FERRAMENTAS_CLIENTE = [
     type: "function",
     function: {
       name: "get_my_bookings",
-      description: "Their existing bookings with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, and any balance to pay with its link. Use it whenever they ask about a booking they already have.",
+      description: "Their existing bookings and quotes with Fixfy (found by their WhatsApp number, or by the email they booked with): day, arrival window, status, who is going, any balance to pay with its link, and quotes being priced or already sent. Use it whenever they ask about a booking they already have, or mention a visit, a measurement, a quote or a job we did. Never tell them there is nothing on file without calling it.",
       parameters: { type: "object", properties: { email: { type: "string", description: "only if they gave the email they booked with" } } },
     },
   },
@@ -573,7 +574,8 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }
       // Disse que vai chamar alguém sem chamar a ferramenta: a passagem acontece do mesmo jeito.
-      if (r.resposta && !r.passarParaEquipe && !/\?\s*$/.test(r.resposta) && /\b(I['’]ll|I will|let me|I['’]m (going to|getting))\s+(grab|get|bring in)\s+(someone|a person|the team|someone from the team)\b/i.test(r.resposta)) {
+      // Cotação pedida não conta: ali ele fica na conversa e "a person from the team will message you" é o combinado.
+      if (r.resposta && !r.passarParaEquipe && !r.cotacaoPedida && prometeuAEquipe(r.resposta)) {
         r.passarParaEquipe = "Harvey said he would get the team (no tool call): check the conversation";
       }
       // O que já foi dito não se diz de novo (o "tools included, no call out fee" a cada resposta).
