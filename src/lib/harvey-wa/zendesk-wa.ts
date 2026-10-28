@@ -293,9 +293,10 @@ export async function classificarNoZendesk(telefone: string | null, quem: Identi
   let juntou = "";
   if (ticket) {
     await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["customer", "harvey-wa"] } });
-    // Dono, 15/10/2026: tudo entra New/Open e a equipe classifica (Lead, quote, job, complaint).
-    // O Harvey só classifica o que é lead da régua; 💬 In Conversation saiu de cena.
-    if (dados.ticketDoLead) await statusDaConversa(ticket, ZD_STATUS_LEAD);
+    // Dono, 28/10/2026: conversa de cliente que não é de um job entra 🎯 Lead (era New/Open
+    // desde 15/10 e ficava no Action Required sem ninguém precisar agir). Conversa do job
+    // segue o OS; statusDaConversa só mexe em New/Open, então quote, job e complaint ficam.
+    if (dados.ticketDoLead || !dados.ticketDoJob) await statusDaConversa(ticket, ZD_STATUS_LEAD);
     // O job primeiro: ele repõe o ponteiro do job. Lead que virou job pode ser o mesmo ticket,
     // e o merge do lead deixaria o job apontando para um ticket fechado.
     if (dados.ticketDoJob) juntou += await juntarTicketDoJob(ticket, dados.ticketDoJob).catch((e) => `, merge do job falhou: ${e instanceof Error ? e.message : e}`);
