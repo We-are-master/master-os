@@ -23,7 +23,8 @@ import {
 } from "@/lib/emails/partner-shell";
 import { extractUkPostcode } from "@/lib/uk-postcode";
 
-export const PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS = 12;
+/** Prazo do parceiro para mandar o lance (dono, 28/10/2026: 12h → 48h). Casa com o fechamento sem lance de `processo/quote-sem-lance.ts`. */
+export const PARTNER_QUOTE_BID_INVITE_EXPIRY_HOURS = 48;
 
 export interface PartnerQuoteBidInviteEmailData {
   partnerFirstName: string;
@@ -38,7 +39,7 @@ export interface PartnerQuoteBidInviteEmailData {
   iosStoreUrl?: string | null;
   androidStoreUrl?: string | null;
   officeQuoteUrl: string;
-  /** When the invite is sent — used to compute the 12h deadline shown in copy. */
+  /** When the invite is sent — used to compute the deadline shown in copy. */
   invitedAt?: Date;
   supportEmail?: string;
   supportPhone?: string;
