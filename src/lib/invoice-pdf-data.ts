@@ -7,6 +7,7 @@ import { loadAccountInvoiceFormat } from "@/lib/invoice-fee-vat";
 import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
 import { buildAgentReceiptView } from "@/lib/agent-model/receipt-view";
 import { displayBillingReference } from "@/lib/billing-reference";
+import { escopoDaFatura } from "@/lib/invoice-scope";
 import {
   parseFrontendSetup,
   resolveInvoicePlatformFeePct,
@@ -55,7 +56,7 @@ export async function loadInvoicePdfData(
     const { data: jobRow } = await admin
       .from("jobs")
       .select(
-        "id, reference, title, client_id, partner_id, created_at, property_address, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost",
+        "id, reference, title, client_id, partner_id, created_at, property_address, completed_date, quote_id, client_price, extras_amount, commission, partner_agreed_value, partner_cost, materials_cost, scope, billed_hours, job_type",
       )
       .eq("reference", inv.job_reference.trim())
       .is("deleted_at", null)
@@ -149,6 +150,8 @@ export async function loadInvoicePdfData(
     serviceType: job?.title ?? undefined,
     completionDate: semanal ? undefined : job?.completed_date ? formatDisplayDate(job.completed_date) : undefined,
     semanal: semanal ? { rotulo: semanal.rotulo, jobs: semanal.jobs } : undefined,
+    scopeOfWork: semanal ? undefined : escopoDaFatura(job?.scope),
+    hoursCharged: semanal ? undefined : horasCobradas(job),
     tradeAmount: trade,
     feeAmount: fee,
     logoUrl,
@@ -157,6 +160,14 @@ export async function loadInvoicePdfData(
     requestPercent: opts?.requestPercent,
     agent,
   };
+}
+
+/** Horas cobradas do job por hora ("2.5 hours"). Fixo ou sem horas: nada. */
+function horasCobradas(job: Job | null): string | undefined {
+  const j = job as (Job & { billed_hours?: number | null; job_type?: string | null }) | null;
+  const h = Number(j?.billed_hours ?? 0);
+  if (!(h > 0) || (j?.job_type && j.job_type !== "hourly")) return undefined;
+  return `${Math.round(h * 100) / 100} hour${h === 1 ? "" : "s"}`;
 }
 
 /** As linhas da fatura semanal (fatura-semanal.ts) e o serviço/taxa somados job a job. */
@@ -182,6 +193,7 @@ async function dadosDaFaturaSemanal(admin: SupabaseClient, inv: Invoice, platfor
       address: l.address ?? undefined,
       completed: l.completed ? formatDisplayDate(l.completed) : undefined,
       amount: l.amount,
+      scope: escopoDaFatura(porId.get(l.jobId)?.scope).slice(0, 4),
       reportUrl: l.reportUrl,
     })),
   };
