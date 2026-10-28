@@ -42,6 +42,7 @@ import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
+import { destinoDaResposta } from "./turno";
 import { processosV2Ligado } from "@/lib/processo/conta";
 import { registrarCanalAtivo } from "@/lib/processo/canal-ativo";
 
@@ -389,8 +390,11 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
   return resultado;
 }
 
-/** Só a mensagem do cliente, na conversa que é do Harvey, gera resposta. */
-async function processarMensagem(evento: EventoSc): Promise<string> {
+/**
+ * Só a mensagem do cliente, na conversa que é do Harvey, gera resposta.
+ * `refeito`: o turno pensa de novo porque outro turno respondeu enquanto ele pensava (ver `destinoDaResposta`).
+ */
+async function processarMensagem(evento: EventoSc, refeito = false): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
@@ -426,8 +430,10 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
 
   const sb = createServiceClient();
   // Trava: a Sunshine reenvia o evento quando a resposta demora.
-  const { error: repetida } = await sb.from("harvey_wa_mensagens").insert({ message_id: msg.id, conversation_id: conversa.id });
-  if (repetida) return "ignorado: repetida";
+  if (!refeito) {
+    const { error: repetida } = await sb.from("harvey_wa_mensagens").insert({ message_id: msg.id, conversation_id: conversa.id });
+    if (repetida) return "ignorado: repetida";
+  }
 
   const { data: estado } = await sb.from("harvey_wa_conversas").select("*").eq("conversation_id", conversa.id).maybeSingle();
   // Canal ativo (etapa 3): o cliente escreveu no WhatsApp, a próxima mensagem automática sai por aqui.
@@ -461,7 +467,7 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
 
   // Sem "digitando" na chegada (dono, 24/10/2026): ele aparece só no fim da espera, como quem estava em outra conversa.
   // Quem digita em rajada: espera um pouco e responde tudo junto (a mensagem mais nova manda).
-  await new Promise((r) => setTimeout(r, 2500));
+  if (!refeito) await new Promise((r) => setTimeout(r, 2500));
   const msgs = await historico(conversa.id);
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
   if (ultimaDoCliente && ultimaDoCliente.id !== msg.id) return "ignorado: chegou outra mensagem depois, ela responde";
@@ -535,14 +541,21 @@ async function processarMensagem(evento: EventoSc): Promise<string> {
       await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
     }
     const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
-    const depois = (await historico(conversa.id, 10).catch(() => [])).filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
+    const recentes = await historico(conversa.id, 10).catch(() => []);
+    const depois = recentes.filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
     const equipeEscreveu = depois.some(ehDaEquipe);
     if ((agora && agora.estado !== "harvey") || equipeEscreveu) return `descartado: ${equipeEscreveu ? "a equipe escreveu enquanto o Harvey pensava" : `conversa com ${agora?.estado}`}`;
-    // O cliente mandou mais alguma coisa enquanto o Harvey escrevia (texto e logo depois a foto): a mensagem
-    // nova responde por tudo. Era daí que saíam duas respostas quase iguais no mesmo minuto. Só vale para
-    // resposta que é só texto: link de pagamento, cotação e passagem já aconteceram e precisam ser ditos.
-    const clienteEscreveuDeNovo = depois.some((m) => m.author.type === "user" && m.id !== msg.id);
-    if (clienteEscreveuDeNovo && !r.checkout && !r.cotacao && !r.cotacaoPedida && !r.passarParaEquipe) return "descartado: o cliente escreveu de novo, a mensagem nova responde";
+    // Um preço só (turno.ts): o preço do catálogo NÃO segura a resposta velha (era daí o £144 e o £72 juntos).
+    const destino = destinoDaResposta({
+      resposta: r.resposta,
+      comEfeito: !!(r.checkout || r.cotacaoPedida || r.passarParaEquipe),
+      clienteEscreveuDeNovo: depois.some((m) => m.author.type === "user" && m.id !== msg.id),
+      outroTurnoRespondeu: depois.some(ehDoHarvey),
+      refeito,
+      ultimaDoHarvey: [...recentes].reverse().find(ehDoHarvey)?.content.text ?? null,
+    });
+    if (destino === "repensar") return `refeito: ${await processarMensagem(evento, true)}`;
+    if (destino !== "enviar") return `descartado: ${destino}`;
     await enviarTexto(conversa.id, r.resposta, voz);
   }
 

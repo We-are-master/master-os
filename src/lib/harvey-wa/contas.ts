@@ -61,6 +61,32 @@ type LinhaJob = {
   invoice_id: string | null;
 };
 
+type LinhaQuote = { reference: string; title: string | null; status: string; total_value: number | null; property_address: string | null; created_at: string };
+
+/** A quote em palavras de cliente: o valor só aparece quando já foi mandado a ele. */
+export function quoteParaCliente(q: LinhaQuote) {
+  const enviada = ["awaiting_customer", "sent", "approved", "accepted", "converted"].includes(q.status);
+  const situacao: Record<string, string> = {
+    draft: "being priced by our professionals",
+    bidding: "being priced by our professionals",
+    awaiting_customer: "sent to them, waiting for their OK",
+    sent: "sent to them, waiting for their OK",
+    approved: "accepted",
+    accepted: "accepted",
+    converted: "accepted and booked",
+    rejected: "declined or closed",
+    expired: "expired",
+  };
+  return {
+    ref: q.reference,
+    service: q.title,
+    address: q.property_address,
+    requested: dia(q.created_at),
+    status: situacao[q.status] ?? q.status.replace(/_/g, " "),
+    price: enviada && Number(q.total_value) > 0 ? Number(q.total_value) : null,
+  };
+}
+
 /** As reservas de quem escreve: pelos clientes com esse telefone e, se ele disser, pelo e-mail. */
 export async function reservasDoCliente(sb: SupabaseClient, a: { telefone: string | null; email?: string | null; clienteId?: string | null }) {
   const ids = new Set<string>();
@@ -94,8 +120,19 @@ export async function reservasDoCliente(sb: SupabaseClient, a: { telefone: strin
     const { data } = await sb.from("invoices").select("id, reference, amount, amount_paid, status, stripe_payment_link_url").in("id", invIds);
     for (const f of data ?? []) faturas.set(f.id as string, f as never);
   }
+  // As quotes também (dono, 28/10/2026, #51866): depois de uma visita de medição o Harvey disse "não há
+  // quote nesta conversa" porque ela morava em outro ticket. A quote é do cliente, não do ticket.
+  const { data: quotes } = await sb
+    .from("quotes")
+    .select("reference, title, status, total_value, property_address, created_at")
+    .in("client_id", [...ids])
+    .is("deleted_at", null)
+    .gte("created_at", new Date(Date.now() - 60 * 86_400_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(5);
   return {
     encontrado: true,
+    quotes: ((quotes ?? []) as LinhaQuote[]).map(quoteParaCliente),
     reservas: lista.map((j) => {
       const f = j.invoice_id ? faturas.get(j.invoice_id) : undefined;
       const falta = f && f.status !== "paid" && f.status !== "cancelled" ? Math.max(0, Number(f.amount) - Number(f.amount_paid ?? 0)) : 0;
