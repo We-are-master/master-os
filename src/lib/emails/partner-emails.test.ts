@@ -55,7 +55,7 @@ describe("e-mails ao parceiro", () => {
     assert.equal(e.subject, "Quote request · General Maintenance · E1 6AN");
     assert.deepEqual(cabeca(e.html), { chip: "New opportunity", titulo: "You have been invited to bid", passo: "Offered" });
     assert.match(e.html, />Hi TM Handyman,</);
-    assert.match(e.html, /#FFF8EB[\s\S]*Bid deadline[\s\S]*Fri 23 Oct 26, 23:00 \(UK time\)/);
+    assert.match(e.html, /#FFF8EB[\s\S]*Bid deadline[\s\S]*Sun 25 Oct 26, 10:00 \(UK time\)/);
     assert.match(e.html, /Required to submit your bid[\s\S]*Two start date options/);
     assert.match(e.html, /Rehang bedroom door\.<br>Adjust kitchen cabinet hinges\./);
     assert.doesNotMatch(e.html + e.text, /Sarah|12 Example Road/);
