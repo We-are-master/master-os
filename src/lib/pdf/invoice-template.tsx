@@ -37,6 +37,10 @@ export interface InvoicePdfData {
   quoteReference?: string;
   serviceType?: string;
   completionDate?: string;
+  /** Tarefas do bloco WORK do job (invoice-scope.ts). Vazio = sem a seção. */
+  scopeOfWork?: string[];
+  /** Job por hora: "2.5 hours". */
+  hoursCharged?: string;
   tradeAmount: number;
   feeAmount: number;
   /** Data URI or https URL for header logo. */
@@ -61,7 +65,7 @@ export interface InvoicePdfData {
   /** Fatura semanal da conta: os jobs do lote, cada um com o link do relatório. */
   semanal?: {
     rotulo: string;
-    jobs: Array<{ reference: string; title: string; address?: string; completed?: string; amount: number; reportUrl: string }>;
+    jobs: Array<{ reference: string; title: string; address?: string; completed?: string; amount: number; scope?: string[]; reportUrl: string }>;
   };
 }
 
@@ -553,6 +557,12 @@ const sheet = StyleSheet.create({
   payKeyFirst: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY },
   payVal: { fontSize: 9, color: MUTED, marginTop: 1 },
   note: { fontSize: 8, color: LABEL, lineHeight: 1.45, marginTop: 14 },
+  scopeWrap: { marginTop: 18 },
+  scopeTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY, letterSpacing: 0.4, borderBottomWidth: 1, borderBottomColor: NAVY, paddingBottom: 5, marginBottom: 6 },
+  scopeRow: { flexDirection: "row", marginBottom: 3 },
+  scopeBullet: { width: 10, fontSize: 9, color: LABEL },
+  scopeText: { flex: 1, fontSize: 9, color: TEXT, lineHeight: 1.4 },
+  scopeMeta: { fontSize: 8, color: LABEL, marginTop: 4, lineHeight: 1.4 },
   paidStamp: { marginTop: 14, alignSelf: "flex-start", borderWidth: 1, borderColor: "#1D9E75", borderRadius: 3, paddingVertical: 4, paddingHorizontal: 9 },
   paidStampText: { fontSize: 9, fontFamily: "Helvetica-Bold", color: "#1D9E75", letterSpacing: 0.6 },
   footer: { position: "absolute", left: 48, right: 48, bottom: 26, borderTopWidth: 0.5, borderTopColor: BORDER, paddingTop: 7 },
@@ -707,6 +717,27 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
           )}
         </View>
 
+        {data.scopeOfWork?.length ? (
+          <View style={sheet.scopeWrap} wrap={false}>
+            <Text style={sheet.scopeTitle}>SCOPE OF WORK</Text>
+            {data.scopeOfWork.map((t, i) => (
+              <View key={i} style={sheet.scopeRow}>
+                <Text style={sheet.scopeBullet}>•</Text>
+                <Text style={sheet.scopeText}>{t}</Text>
+              </View>
+            ))}
+            <Text style={sheet.scopeMeta}>
+              {[
+                data.propertyAddress ? `Property: ${data.propertyAddress}` : "",
+                data.completionDate ? `Completed: ${data.completionDate}` : "",
+                data.hoursCharged ? `Time charged: ${data.hoursCharged}` : "",
+              ]
+                .filter(Boolean)
+                .join("  ·  ")}
+            </Text>
+          </View>
+        ) : null}
+
         {data.semanal ? (
           <View style={{ marginTop: 14 }}>
             <Text style={[sheet.thText, { marginBottom: 4 }]}>JOBS IN THIS INVOICE</Text>
@@ -715,6 +746,7 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
                 <View style={sheet.cDesc}>
                   <Text style={sheet.desc}>{[j.reference, j.title].filter(Boolean).join(" · ")}</Text>
                   <Text style={sheet.descSub}>{[j.address, j.completed ? `Completed ${j.completed}` : ""].filter(Boolean).join("\n")}</Text>
+                  {j.scope?.length ? <Text style={sheet.descSub}>{j.scope.join(" ")}</Text> : null}
                   <Link src={j.reportUrl} style={[sheet.descSub, { color: NAVY, textDecoration: "underline" }]}>View report</Link>
                 </View>
                 <Text style={[sheet.desc, sheet.cAmt]}>{plainMoney(j.amount).slice(1)}</Text>
