@@ -99,12 +99,15 @@ describe("copy 12: final email with invoice", () => {
     limpo(e);
     assert.equal(e.subject, "Your job report and invoice · JOB-9800");
     assert.match(e.text, /Your work is complete/);
-    assert.match(e.text, /your report is ready to view/);
-    assert.match(e.text, /Your invoice is also included\. The remaining amount to pay is £180\.00, due by Wed 21 Oct 26\./);
+    // Sem texto de abertura (dono, 25/10/2026): o quadro mostra o valor e a data.
+    assert.doesNotMatch(e.text, /Hi |The agreed work is complete/);
+    assert.match(e.text, /Amount due: £180\.00/);
+    assert.match(e.text, /Due by: Wed 21 Oct 26/);
+    assert.ok(e.html.indexOf("Amount due") < e.html.indexOf("Billing reference"), "quadro antes dos detalhes");
   });
   it("paid: no pay button, receipt line", () => {
     const e = buildInvoiceClientEmail(inv({ status: "paid", amount_paid: 180 }), ctx, job, { final: true, reportAttachmentCount: 2, documentAttached: true, bankRows: SAMPLE });
-    assert.match(e.text, /Your payment receipt is also attached\. Thank you for your payment\./);
+    assert.match(e.text, /Amount paid: £180\.00/);
     assert.doesNotMatch(e.text, /Pay £|Prefer a bank transfer/);
   });
   it("report missing: never says attached", () => {
