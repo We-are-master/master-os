@@ -151,6 +151,10 @@ export function textoDaQuote(a: {
   entrada?: number | null;
   /** Datas de início do parceiro já formatadas ("Fri 24 Oct"); o cliente escolhe no link. */
   datas?: string[];
+  /** O que o preço cobre (oQueEstaIncluido). Vazio = a frase não aparece. */
+  incluido?: string[];
+  /** "Materials are included." / "Materials are supplied by you." */
+  materiais?: string | null;
 }): string {
   const s = servicoCurto(a.servico);
   const datas = (a.datas ?? []).filter(Boolean);
@@ -160,6 +164,8 @@ export function textoDaQuote(a: {
     : "If you’d like to go ahead, just reply and we’ll help with the next step.";
   return [
     `${saudacaoDe(a.nome)} Your quote${s ? ` for ${s}` : ""} is ready: ${gbp(a.total)} for the work described.`,
+    a.incluido?.length ? `What's included: ${a.incluido.join("; ")}.` : "",
+    a.materiais?.trim() ?? "",
     // Sem ponto colado no link: alguns aparelhos levam o ponto para dentro da URL.
     seguir,
     datas.length ? `The professional can start on ${datas.join(" or ")}${a.link ? ", and you choose the day when you accept" : ""}.` : "",
@@ -217,4 +223,40 @@ export function decidirEnvio(a: {
 
 export function horaDeLondres(d: Date): number {
   return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "numeric", hourCycle: "h23" }).format(d));
+}
+
+/**
+ * O que o preço cobre, para a quote no WhatsApp (dono, 30/10/2026). A QT-2026-1271
+ * saiu como "General Maintenance £360" e a cliente respondeu "There's no detail at
+ * all. Materials? Number of shelves?": o lance veio só com o valor, sem descrição.
+ *
+ * Vem das linhas da quote que dizem algo além do título, ou da descrição de mão de obra
+ * do lance. Nada disso = lista vazia, e quem envia não manda (pede o detalhe ao parceiro).
+ */
+export function oQueEstaIncluido(a: {
+  linhas: ReadonlyArray<string | null | undefined>;
+  titulos: ReadonlyArray<string | null | undefined>;
+  labourDescription?: string | null;
+  materialsDescription?: string | null;
+  materialsCost?: number | null;
+}): { itens: string[]; materiais: string | null } {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const genericos = new Set(
+    [...a.titulos, "works as described", "general maintenance", "handyman", "carpenter", "labour"].filter(Boolean).map((t) => norm(String(t))),
+  );
+  const frase = (t: string) => t.replace(/\s+/g, " ").replace(/[.;\s]+$/, "").trim();
+  const dasLinhas = a.linhas.map((l) => frase(String(l ?? ""))).filter((l) => l.length > 3 && !genericos.has(norm(l)));
+  const doLance = frase(String(a.labourDescription ?? ""))
+    .split(/(?<=[.;])\s+/)
+    .map(frase)
+    .filter((l) => l.length > 3 && !genericos.has(norm(l)));
+  const itens = [...new Set(dasLinhas.length ? dasLinhas : doLance)].slice(0, 6);
+  const descMat = String(a.materialsDescription ?? "");
+  const materiais =
+    Number(a.materialsCost) > 0
+      ? "Materials are included."
+      : /customer|client|you\b|supplied by|buy/i.test(descMat)
+        ? "Materials are supplied by you."
+        : null;
+  return { itens, materiais };
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PARA_REVISAR, TAG_QUOTE_ENVIADA, TAG_SEM_LANCE,
   decidirEnvio, enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, margemDe, precoDoLance,
-  proximoPassoDoLeilao, servicoDoAssunto, textoDaQuote, textoPedeContexto,
+  oQueEstaIncluido, proximoPassoDoLeilao, servicoDoAssunto, textoDaQuote, textoPedeContexto,
 } from "./cotacao-automatica";
 import { ranquearParceiros } from "./melhores-parceiros";
 
@@ -131,4 +131,29 @@ describe("textoDaQuote com entrada (16/10/2026)", () => {
 it("quote text offers the partner's dates to pick on accept", () => {
   const t = textoDaQuote({ nome: "Chloe", total: 480, link: "https://x", datas: ["Fri 24 Oct", "Mon 27 Oct"] });
   assert.match(t, /can start on Fri 24 Oct or Mon 27 Oct, and you choose the day when you accept/);
+});
+
+describe("quote no WhatsApp diz o que está incluído (30/10/2026)", () => {
+  it("lance só com valor e linha genérica: nada a dizer", () => {
+    const r = oQueEstaIncluido({ linhas: ["General Maintenance"], titulos: ["General Maintenance"], materialsCost: 0 });
+    assert.deepEqual(r.itens, []);
+  });
+  it("linha com descrição real entra, e material do cliente é dito", () => {
+    const r = oQueEstaIncluido({
+      linhas: ["Repair the buckled hallway floor and fix the window handles. Labour only"],
+      titulos: ["Carpenter"],
+      materialsDescription: "THE COSTUMER NEED TO BUY THE MATERIAL",
+    });
+    assert.equal(r.itens.length, 1);
+    assert.equal(r.materiais, "Materials are supplied by you.");
+  });
+  it("sem linha útil, usa a descrição do lance frase a frase", () => {
+    const r = oQueEstaIncluido({ linhas: ["Carpenter"], titulos: ["Carpenter"], labourDescription: "Fit 3 floating shelves in the alcove. Hang wallpaper on the wall behind the bed.", materialsCost: 40 });
+    assert.deepEqual(r.itens, ["Fit 3 floating shelves in the alcove", "Hang wallpaper on the wall behind the bed"]);
+    assert.equal(r.materiais, "Materials are included.");
+  });
+  it("o texto da quote leva a lista e o material", () => {
+    const t = textoDaQuote({ nome: "Ella", total: 360, link: "https://x", incluido: ["Fit 3 floating shelves", "Hang wallpaper"], materiais: "Materials are supplied by you." });
+    assert.match(t, /What's included: Fit 3 floating shelves; Hang wallpaper\. Materials are supplied by you\. Review the details/);
+  });
 });

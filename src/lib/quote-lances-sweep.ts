@@ -683,6 +683,34 @@ async function mandarSozinho(
     if (!preco.ok) return { enviado: false, linha: `conferente: ${preco.problemas.join("; ")}` };
   }
 
+  // O que o preço cobre (30/10/2026): sem isso a quote não sai, nem pela equipe. A
+  // QT-2026-1271 foi como "General Maintenance £360" e a cliente pediu o detalhe.
+  const { data: linhasDaQuote } = await supabase.from("quote_line_items").select("description").eq("quote_id", q.id);
+  let notasDoLance = (escolha.melhor as { notes?: string | null }).notes ?? null;
+  if (!notasDoLance && escolha.melhor.partner_id) {
+    const { data: lance } = await supabase
+      .from("quote_bids")
+      .select("notes")
+      .eq("quote_id", q.id)
+      .eq("partner_id", escolha.melhor.partner_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    notasDoLance = (lance as { notes?: string | null } | null)?.notes ?? null;
+  }
+  const doLance = lerPayloadDoLance(notasDoLance);
+  const { oQueEstaIncluido } = await import("@/lib/harvey-wa/cotacao-automatica");
+  const incluido = oQueEstaIncluido({
+    linhas: ((linhasDaQuote ?? []) as Array<{ description?: string | null }>).map((l) => l.description),
+    titulos: [q.title, q.service_type],
+    labourDescription: doLance.labourDescription,
+    materialsDescription: doLance.materialsDescription,
+    materialsCost: doLance.materialsCost,
+  });
+  if (!incluido.itens.length) {
+    return { enviado: false, linha: "sem detalhe do trabalho: o lance veio só com o valor. Peça ao parceiro o que está incluído (itens, quantidades, material) antes de enviar" };
+  }
+
   // O PDF e a tela de Quotes leem as linhas: uma linha com o preço, se ainda não houver.
   const { count } = await supabase.from("quote_line_items").select("id", { count: "exact", head: true }).eq("quote_id", q.id);
   if (!count) {
@@ -715,7 +743,7 @@ async function mandarSozinho(
     const datas = datasDisponiveis(comDatas ?? {}).map((d) =>
       new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }).format(new Date(`${d}T12:00:00Z`)),
     );
-    const bruto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada, datas });
+    const bruto = textoDaQuote({ nome: firstName(conversa.name ?? quote.client_name ?? null) ?? "there", servico: q.service_type, total, referencia: q.reference, link, entrada, datas, incluido: incluido.itens, materiais: incluido.materiais });
     const conferido = conferirMensagem(bruto, { publico: "cliente", custo: escolha.melhor.valor, nomesDeParceiros: [escolha.melhor.partner_name ?? ""] });
     if (!conferido.ok) return { enviado: false, linha: `conferente: ${conferido.problemas.join("; ")}` };
     await enviarTexto(conversa.conversation_id, conferido.texto, vozDaConversa(msgs));
