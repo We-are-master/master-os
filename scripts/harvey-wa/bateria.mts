@@ -105,8 +105,27 @@ const CASOS: Record<string, { quem?: "parceiro" | "cliente"; sobre?: string; abe
     checar: (t) => [!/partners\.getfixfy\.com\/get-started/.test(t) && "não mandou o link de cadastro", /£\d/.test(t) && "falou preço pra candidato"].filter(Boolean) as string[],
   },
   bot: {
+    // Dono, 30/10/2026: perguntado se é IA, passa para uma pessoa; nunca diz que é IA nem que é gente.
     cliente: ["how much for a studio deep clean?", "are you a bot?"],
-    checar: (t) => [!/digital assistant/i.test(t) && "não admitiu ser assistente digital", /\bI'?m (a )?(real|human|person)\b/i.test(t) && "mentiu que é humano"].filter(Boolean) as string[],
+    checar: (t, f, r) =>
+      [
+        !r.passou && "não passou para uma pessoa",
+        /\b(AI|bot|virtual|assistant|automated)\b/i.test(t.split(/are you a bot/i).pop() ?? t) && /\bI['’]?m\b[^.]*\b(AI|bot|virtual|assistant)\b/i.test(t) && "disse o que é",
+        /\bI['’]?m (a )?(real|human|person)\b/i.test(t) && "disse que é gente",
+        /give me a minute/i.test(t) && "disse 'give me a minute'",
+      ].filter(Boolean) as string[],
+  },
+  quem_fala: {
+    cliente: ["hi, I need a curtain rail put up, N4", "sorry, who am I talking to? what company is this?"],
+    checar: (t, f, r) => [r.passou && "passou para a equipe só pela pergunta", !/customer support from Fixfy/i.test(t) && "não disse 'a customer support from Fixfy'", /team will|take this over/i.test(t) && "prometeu a equipe sem passar", /£180/.test(t) && !/£72/.test(t) && "meio dia para um trilho de cortina"].filter(Boolean) as string[],
+  },
+  nome_victor: {
+    cliente: ["hi I need a PAX wardrobe assembled, 236cm, N16", "Btw: your name is Victor?"],
+    checar: (t, f, r) => [r.passou && "passou para a equipe por pergunta de nome", !/customer support from Fixfy/i.test(t) && "não disse quem é"].filter(Boolean) as string[],
+  },
+  ligar: {
+    cliente: ["hi can someone call me about putting up 3 shelves? E10", "Call me back"],
+    checar: (t, f, r) => [r.passou && "passou para a equipe por pedido de ligação", /\bwill (call|ring)\b/i.test(t) && "prometeu ligar", !/£\d/.test(t) && !/\?/.test(t) && "nem preço nem pergunta"].filter(Boolean) as string[],
   },
   reclamacao: {
     cliente: ["Your cleaner came yesterday and left the oven filthy. I want my money back"],
@@ -321,7 +340,7 @@ for (const nome of escolhidos) {
   if (/[—–]/.test(textoHarvey)) problemas.push("usou travessão");
   if (/get in on the day[^\n]*(letting agent|key safe|concierge)/i.test(textoHarvey)) problemas.push("pergunta de acesso com menu de opções");
   if ((textoHarvey.match(/(hi|hey|hello)( there)?,? I['’]m Harvey/gi) ?? []).length > 1) problemas.push("se apresentou duas vezes");
-  if ((textoHarvey.match(/Harvey/g) ?? []).length > 1 && nome !== "bot") problemas.push("repetiu o nome");
+  if ((textoHarvey.match(/Harvey/g) ?? []).length > 1 && nome !== "bot" && nome !== "quem_fala" && nome !== "nome_victor") problemas.push("repetiu o nome");
   const primeira = conversa.find((f) => f.papel === "harvey")?.texto ?? "";
   if (nome !== "reclamacao" && nome !== "stop" && !caso.abertura && !/I['’]?m Harvey/i.test(primeira)) problemas.push("primeira resposta sem 'I'm Harvey'");
   if (/from Fixfy here/i.test(textoHarvey)) problemas.push("disse 'Harvey from Fixfy here'");
@@ -333,7 +352,7 @@ for (const nome of escolhidos) {
   const repetida = falasHarvey.flatMap((fs, i) => fs.filter((fr) => !valorNovo(fr, falasHarvey.slice(0, i).flat()) && falasHarvey.slice(0, i).flat().some((d) => quaseIgual(fr, d))))[0];
   if (repetida) problemas.push(`repetiu frase: "${repetida.slice(0, 60)}"`);
   if (caso.quem !== "cliente" && ofereceDia(textoHarvey) && !ferramentas.includes("get_available_dates")) problemas.push("ofereceu dia sem consultar a agenda");
-  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|06913415/)[0])) problemas.push("disse que está reservado antes do link");
+  if (/\b(got you in|you're booked|booking is confirmed)\b/i.test(textoHarvey.split(/checkout\.stripe\.com|getfixfy\.com\/pay|06913415/)[0])) problemas.push("disse que está reservado antes do link");
   if (problemas.length) falhas++;
   linhas.push(problemas.length ? `  ❌ ${problemas.join(" · ")}` : "  ✅ ok");
   console.log(linhas.join("\n"));

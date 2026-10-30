@@ -36,6 +36,8 @@ const VALIDADE_MS = 30_000;
 
 /** O que o cérebro usa: só os textos, com cache curto. Falhou a leitura, segue com o padrão. */
 export async function edicoesDoHarvey(perfil: PerfilDoHarvey): Promise<EdicoesDoPrompt> {
+  // Bateria contra o texto do código, sem o que está gravado na tela (prompt novo antes de valer).
+  if (process.env.HARVEY_SEM_EDICOES === "1") return {};
   const c = cache.get(perfil);
   if (c && Date.now() - c.em < VALIDADE_MS) return c.edicoes;
   try {
