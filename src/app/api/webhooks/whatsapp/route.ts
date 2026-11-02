@@ -16,6 +16,11 @@
  *
  * Configuração: `WHATSAPP_VERIFY_TOKEN` (qualquer segredo, o mesmo informado à
  * Meta) e, quando houver, `WHATSAPP_APP_SECRET` para conferir a assinatura.
+ *
+ * O número de operação (7983) também chega aqui, por uma URL de retorno só
+ * dele com `?k=<WHATSAPP_VERIFY_TOKEN>`. Esse não é de campanha: vai inteiro
+ * para `wa_mensagens` (tela /inbox, src/lib/whatsapp/operacao.ts) e não passa
+ * pelo Stop nem pelos toques de marketing.
  * Sem o segredo do app a rota aceita o evento, porque tudo que ela faz é
  * REDUZIR envio: um evento forjado no máximo tira alguém da lista.
  */
@@ -25,6 +30,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ehPedidoDeSaida } from "@/lib/marketing/whatsapp";
 import { cliqueDaMensagem } from "@/lib/meta/eventos-whatsapp";
+import { chaveDoRetornoOk, gravarEventoOperacao, OPS_PHONE_NUMBER_ID, type ValorDoWebhook } from "@/lib/whatsapp/operacao";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -67,7 +73,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad signature" }, { status: 401 });
   }
 
-  let evento: { entry?: { changes?: { value?: { messages?: Mensagem[]; statuses?: Status[] } }[] }[] };
+  let evento: { entry?: { changes?: { value?: { messages?: Mensagem[]; statuses?: Status[]; metadata?: { phone_number_id?: string } } }[] }[] };
   try {
     evento = JSON.parse(corpo);
   } catch {
@@ -80,6 +86,16 @@ export async function POST(req: NextRequest) {
   for (const entry of evento.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const valor = change.value ?? {};
+
+      if (valor.metadata?.phone_number_id === OPS_PHONE_NUMBER_ID()) {
+        // Sem a chave da URL o evento não é confiável: a rota não tem o segredo do app.
+        if (chaveDoRetornoOk(req.nextUrl.searchParams.get("k"))) {
+          await gravarEventoOperacao(sb, valor as ValorDoWebhook);
+        } else {
+          console.warn("[whatsapp-webhook] evento do 7983 sem a chave da URL, ignorado");
+        }
+        continue;
+      }
 
       for (const m of valor.messages ?? []) {
         const phone = String(m.from ?? "").replace(/\D/g, "");
