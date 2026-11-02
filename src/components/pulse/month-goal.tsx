@@ -10,6 +10,9 @@
  *  - Custo anda junto com a venda: repasse e material dos MESMOS jobs.
  *  - A meta é a que o time escolhe em Settings > Setup ("Pulse · Revenue goal"), a mesma
  *    do placar das 8h. Nenhum número fixo aqui: sem meta, o card pede para escolher.
+ *  - Contas fixas (dono, 02/11/2026: "até onde tenho que chegar pra pagar as contas
+ *    fixas"): folha + bills recorrentes por mês, divididos pela margem bruta alvo. É o
+ *    mesmo Breakeven de Settings, pintado em vermelho claro na barra.
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -17,6 +20,9 @@ import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { getSupabase } from "@/services/base";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { parseFrontendSetup } from "@/lib/frontend-setup";
+import { computeMonthlyBillsBurn, computeWorkforceMonthlyBurn, type PulseBillRow } from "@/lib/pulse-fixed-costs";
+import { computeBreakevenMonthly } from "@/lib/pulse-revenue-goal";
+import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
 import { resolvePulseMonthlyRevenueGoal } from "@/lib/pulse-revenue-goal";
 import { ukTodayYmd } from "@/lib/uk-schedule-range";
 import { usePulseCeo } from "./pulse-ceo-data";
@@ -33,7 +39,7 @@ type Linha = {
   materials_cost: number | null;
 };
 
-type Dados = { receita: number; custo: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null };
+type Dados = { receita: number; custo: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
 
 export function MonthGoal() {
   const [d, setD] = useState<Dados | null>(null);
@@ -51,12 +57,18 @@ export function MonthGoal() {
       const ateIso = ukWallClockToUtcIso(proximo, "00:00");
       const cols = "status, client_price, extras_amount, partner_cost, materials_cost";
       // Job com horário marcado entra pelo horário; job só com o dia entra pelo dia.
-      const [comHora, soDia, cfg] = await Promise.all([
+      const [comHora, soDia, cfg, folha, bills] = await Promise.all([
         deIso && ateIso
           ? sb.from("jobs").select(cols).is("deleted_at", null).gte("scheduled_start_at", deIso).lt("scheduled_start_at", ateIso).limit(5000)
           : Promise.resolve({ data: [] as Linha[] }),
         sb.from("jobs").select(cols).is("deleted_at", null).is("scheduled_start_at", null).gte("scheduled_date", inicio).lt("scheduled_date", proximo).limit(5000),
         sb.from("company_settings").select("frontend_setup").limit(1).maybeSingle(),
+        sb.from("payroll_internal_costs").select("amount, lifecycle_stage").or(WORKFORCE_COST_ACTIVE_OR_FILTER),
+        sb
+          .from("bills")
+          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date, description, category")
+          .is("archived_at", null)
+          .neq("status", "rejected"),
       ]);
       if (!vivo) return;
       const linhas = [...((comHora.data ?? []) as Linha[]), ...((soDia.data ?? []) as Linha[])].filter((j) => !FORA.has(j.status));
@@ -64,6 +76,10 @@ export function MonthGoal() {
       const c = (j: Linha) => (Number(j.partner_cost) || 0) + (Number(j.materials_cost) || 0);
       const entregues = linhas.filter((j) => ENTREGUE.has(j.status));
       const setup = parseFrontendSetup((cfg.data as { frontend_setup?: unknown } | null)?.frontend_setup);
+      const fixos =
+        computeWorkforceMonthlyBurn((folha.data ?? []) as Array<{ amount: number | null; lifecycle_stage: string | null }>) +
+        computeMonthlyBillsBurn((bills.data ?? []) as PulseBillRow[]);
+      const margemAlvo = setup.target_margin_pct ?? 0;
       setD({
         receita: linhas.reduce((t, j) => t + v(j), 0),
         custo: linhas.reduce((t, j) => t + c(j), 0),
@@ -71,6 +87,9 @@ export function MonthGoal() {
         jobs: linhas.length,
         jobsEntregues: entregues.length,
         meta: resolvePulseMonthlyRevenueGoal(setup, 0).monthlyGoal,
+        fixos,
+        empate: computeBreakevenMonthly(fixos, margemAlvo),
+        margemAlvo,
       });
     })();
     return () => {
@@ -97,6 +116,10 @@ export function MonthGoal() {
   const esperadoHoje = meta ? (meta * dia) / ultimoDia : 0;
   const atras = meta ? esperadoHoje - receita : 0;
   const m = (n: number) => pulseMoney(n);
+  // Até onde a barra precisa chegar para pagar as contas fixas.
+  const empate = d?.empate && d.empate > 0 ? d.empate : null;
+  const pctEmpate = meta && empate ? Math.min(100, (empate / meta) * 100) : 0;
+  const faltaEmpate = empate ? Math.max(0, empate - receita) : 0;
 
   // O detalhe mora no "!": o card mostra só o número, a barra e a distância da meta
   // (dono, 11/10/2026: "muita info, queria algo mais visual").
@@ -110,6 +133,9 @@ export function MonthGoal() {
         meta ? `To hit the goal: ${m(porDia)} a day for the ${diasRestantes} days left.` : null,
         `On pace for ${m(ritmo)} delivered by the end of the month.`,
         meta ? `The marker on the bar is where the month should be today: ${m(esperadoHoje)}.` : null,
+        empate && d
+          ? `Fixed costs: ${m(d.fixos)} a month (team + recurring bills). At the ${d.margemAlvo}% target margin, ${m(empate)} booked pays them (the light red stretch). ${faltaEmpate > 0 ? `${m(faltaEmpate)} still to go.` : "Already covered."}`
+          : null,
       ]
         .filter(Boolean)
         .join("\n\n")
@@ -141,9 +167,22 @@ export function MonthGoal() {
 
         <div className="relative min-w-[200px] flex-1">
           <div className="relative h-2 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
-            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral/35" style={{ width: `${pct}%` }} />
-            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-coral" style={{ width: `${pctEntregue}%` }} />
+            {pctEmpate > 0 ? <div className="absolute inset-y-0 left-0 bg-fx-red/15" style={{ width: `${pctEmpate}%` }} /> : null}
+            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green" style={{ width: `${pct}%` }} />
+            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green brightness-75" style={{ width: `${pctEntregue}%` }} />
           </div>
+          {pctEmpate > 0 && empate ? (
+            <>
+              <span aria-hidden title={`Fixed costs paid at ${m(empate)}`} className="absolute -top-0.5 h-3 w-0.5 rounded-full bg-fx-red/60" style={{ left: `${pctEmpate}%` }} />
+              <span
+                className="absolute top-3 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-fx-red/80 tabular-nums"
+                style={{ left: `${Math.min(Math.max(pctEmpate, 6), 94)}%` }}
+              >
+                Fixed costs {m(empate)}
+                {faltaEmpate > 0 ? ` · ${m(faltaEmpate)} to go` : " · covered"}
+              </span>
+            </>
+          ) : null}
           {meta ? <span aria-hidden title="Where the month should be today" className="absolute -top-1 h-4 w-0.5 rounded-full bg-text-primary" style={{ left: `${pctHoje}%` }} /> : null}
         </div>
 
