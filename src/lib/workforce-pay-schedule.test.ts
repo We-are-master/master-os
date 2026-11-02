@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   accrueMonthlyFixedPayToDate,
   countWorkforceCalendarPayableDays,
+  monthlyPayDatesInRange,
   prorateMonthlyFixedPay,
 } from "./workforce-pay-schedule";
 
@@ -95,5 +96,32 @@ describe("countWorkforceCalendarPayableDays — Isabella (start 25 Jun)", () => 
     );
     assert.equal(payableDays, 2);
     assert.deepEqual(daysOffInRange, []);
+  });
+});
+
+describe("monthlyPayDatesInRange", () => {
+  it("repeats a stale due date on the pay day every month in the window", () => {
+    assert.deepEqual(monthlyPayDatesInRange("2026-04-15", 15, "2026-11-02", "2027-01-10"), [
+      "2026-11-15",
+      "2026-12-15",
+    ]);
+  });
+
+  it("uses the due date's day when no pay day is set", () => {
+    assert.deepEqual(monthlyPayDatesInRange("2026-09-05", null, "2026-11-02", "2026-12-31"), [
+      "2026-11-05",
+      "2026-12-05",
+    ]);
+  });
+
+  it("keeps a future due date and nothing before it", () => {
+    assert.deepEqual(monthlyPayDatesInRange("2026-12-05", 5, "2026-11-02", "2027-01-31"), [
+      "2026-12-05",
+      "2027-01-05",
+    ]);
+  });
+
+  it("returns nothing for an empty window", () => {
+    assert.deepEqual(monthlyPayDatesInRange("2026-04-15", 15, "2026-11-16", "2026-11-22"), []);
   });
 });
