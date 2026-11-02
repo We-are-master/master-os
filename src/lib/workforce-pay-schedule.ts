@@ -261,6 +261,35 @@ export function parseWorkforceStartDate(
   return null;
 }
 
+/**
+ * Monthly pay dates inside [fromYmd, toYmd] for a recurring workforce row.
+ * `due_date` on the row is only the next (or a stale) pay date, so the runway
+ * repeats it on the pay day every month instead of showing it once.
+ * Dates before `dueYmd` are skipped (not yet employed / already scheduled).
+ */
+export function monthlyPayDatesInRange(
+  dueYmd: string,
+  payDayOfMonth: number | null | undefined,
+  fromYmd: string,
+  toYmd: string,
+): string[] {
+  const due = dueYmd.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || fromYmd > toYmd) return [];
+  const day = workforcePayDayOfMonth(payDayOfMonth ?? ymdToDayNumber(due));
+  const out = new Set<string>();
+  if (due >= fromYmd && due <= toYmd) out.add(due);
+
+  const startYmd = due > fromYmd ? due : fromYmd;
+  let cursor = startOfMonth(parseISO(`${startYmd}T12:00:00`));
+  const last = parseISO(`${toYmd}T12:00:00`);
+  while (cursor <= last) {
+    const ymd = format(new Date(cursor.getFullYear(), cursor.getMonth(), day), "yyyy-MM-dd");
+    if (ymd > due && ymd >= fromYmd && ymd <= toYmd) out.add(ymd);
+    cursor = addMonths(cursor, 1);
+  }
+  return [...out].sort();
+}
+
 /** Work-period cutoff (last day of accrual) for the payment due on `dueYmd`. */
 export function workforceCutoffForNextDue(
   dueYmd: string | null | undefined,

@@ -5,12 +5,16 @@ import {
   isSupabaseMissingColumnError,
   isSupabaseSelfBillPaymentPlanSchemaMissing,
 } from "@/lib/supabase-schema-compat";
+import { startOfWeekMondayFromYmd } from "@/lib/dashboard-cashflow-buckets";
+import { monthlyPayDatesInRange } from "@/lib/workforce-pay-schedule";
 import type { Bill, Invoice, InvoicePaymentInstallment, SelfBill, SelfBillPaymentInstallment } from "@/types/database";
 
 const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
 /** Open items older than this (before period start) are omitted unless bounds is null (All). */
 const OPEN_ITEM_LOOKBACK_DAYS = 180;
+/** Weeks of monthly payroll projected when the runway has no period (All). */
+const PAYROLL_PROJECTION_WEEKS = 26;
 
 function openItemsRecencyFrom(bounds: YmdBounds): string {
   return addDaysYmd(bounds.from, -OPEN_ITEM_LOOKBACK_DAYS);
@@ -390,10 +394,11 @@ export type PipelineJobRunwayRow = {
   status: string;
 };
 
-/** Pending payroll lines with due_date in or near the billing runway window. */
+/** Pending payroll in the runway window; monthly rows are projected on their pay day each month. */
 export async function fetchPayrollForBilling(bounds: YmdBounds | null): Promise<PayrollRunwayRow[]> {
   const supabase = getSupabase();
-  const payrollSelectFull = "id, payee_name, description, amount, due_date, status";
+  const payrollSelectFull =
+    "id, payee_name, description, amount, due_date, status, pay_frequency, payment_day_of_month, lifecycle_stage";
   const payrollSelectBase = "id, description, amount, due_date, status";
 
   let query = supabase
@@ -403,10 +408,8 @@ export async function fetchPayrollForBilling(bounds: YmdBounds | null): Promise<
     .not("due_date", "is", null)
     .gt("amount", 0);
 
-  if (bounds) {
-    const from = openItemsRecencyFrom(bounds);
-    query = query.gte("due_date", from).lte("due_date", bounds.to);
-  }
+  // No lower bound: a monthly row keeps an old due_date and still pays every month.
+  if (bounds) query = query.lte("due_date", bounds.to);
 
   let { data, error } = await query.order("due_date", { ascending: true });
   if (error) {
@@ -425,6 +428,11 @@ export async function fetchPayrollForBilling(bounds: YmdBounds | null): Promise<
     data = retry.data as typeof data;
   }
 
+  // Monthly rows repeat on their pay day across the window (All = current week + 26 weeks).
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const projectFrom = bounds ? bounds.from : startOfWeekMondayFromYmd(todayYmd);
+  const projectTo = bounds ? bounds.to : addDaysYmd(projectFrom, 7 * PAYROLL_PROJECTION_WEEKS - 1);
+
   const rows: PayrollRunwayRow[] = [];
   for (const row of data ?? []) {
     const r = row as {
@@ -433,18 +441,25 @@ export async function fetchPayrollForBilling(bounds: YmdBounds | null): Promise<
       description?: string | null;
       amount?: number;
       due_date?: string | null;
+      pay_frequency?: string | null;
+      payment_day_of_month?: number | null;
+      lifecycle_stage?: string | null;
     };
     const id = r.id?.trim();
     const dueYmd = r.due_date?.trim().slice(0, 10) ?? "";
     if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(dueYmd)) continue;
     const amount = Math.round(Number(r.amount ?? 0) * 100) / 100;
     if (amount <= 0.02) continue;
-    rows.push({
-      id,
-      label: r.payee_name?.trim() || r.description?.trim() || "Payroll",
-      amount,
-      dueYmd,
-    });
+    const label = r.payee_name?.trim() || r.description?.trim() || "Payroll";
+    const monthly = r.pay_frequency === "monthly" && r.lifecycle_stage !== "offboard";
+    if (!monthly) {
+      if (bounds && dueYmd < openItemsRecencyFrom(bounds)) continue;
+      rows.push({ id, label, amount, dueYmd });
+      continue;
+    }
+    for (const ymd of monthlyPayDatesInRange(dueYmd, r.payment_day_of_month, projectFrom, projectTo)) {
+      rows.push({ id: ymd === dueYmd ? id : `${id}:${ymd}`, label, amount, dueYmd: ymd });
+    }
   }
   return rows;
 }
