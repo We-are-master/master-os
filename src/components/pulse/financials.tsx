@@ -420,7 +420,7 @@ export function Financials() {
 
   return (
     <>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <KpiCard
           label="Revenue"
           hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Business settings (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
@@ -438,6 +438,13 @@ export function Financials() {
           topRight={<StatusDot color="bg-fx-amber" />}
           onShowDetails={canSeeDetails ? () => setOpenModal("operating") : undefined}
           detailsLabel="View job cost breakdown"
+        />
+        {/* Lucro bruto em £ e % (dono, 02/11/2026: "falta do lucro bruto em números e %"). */}
+        <KpiCard
+          label="Gross profit"
+          hint={`Revenue minus job costs, before overheads. This is what pays the fixed costs.${loading ? "" : `\n\n${margemTexto(margens.bruta, "gross margin", "target")}`}`}
+          value={loading ? "—" : <ComMargem valor={formatGbp(totals.revenue - totals.operatingCost)} margem={margens.bruta} />}
+          topRight={<StatusDot color="bg-fx-green" />}
         />
         <KpiCard
           label="Overheads"
@@ -457,7 +464,7 @@ export function Financials() {
                 ? "coral"
                 : "default"
           }
-          value={loading ? "—" : formatGbp(totals.netMargin)}
+          value={loading ? "—" : <ComMargem valor={formatGbp(totals.netMargin)} margem={margens.liquida} />}
           topRight={<StatusDot color={totals.netMargin >= 0 ? "bg-fx-green" : "bg-fx-red"} />}
           onShowDetails={canSeeDetails ? () => setOpenModal("net") : undefined}
           detailsLabel="View net margin breakdown"
@@ -899,6 +906,18 @@ function StatusDot({ color }: { color: string }) {
  * O rótulo é explícito por causa do card de custo: "38%" solto lê como "o custo é 38%
  * da receita", que é o contrário do que o número diz.
  */
+/** O valor com a margem em % ao lado, menor, na cor de como está contra a meta. */
+function ComMargem({ valor, margem }: { valor: string; margem: MargemDoPeriodo }) {
+  if (margem.pct == null) return <>{valor}</>;
+  const cor = margem.situacao === "abaixo" ? "text-fx-red" : "text-fx-green";
+  return (
+    <>
+      {valor}
+      <span className={cn("ml-1.5 text-[13px] font-semibold tabular-nums", cor)}>{margem.pct}%</span>
+    </>
+  );
+}
+
 function margemTexto(margem: MargemDoPeriodo, rotulo: string, alvo: string): string {
   if (margem.pct == null) return "No revenue in this period.";
   return `${margem.pct}% ${rotulo} · ${alvo} ${margem.alvo}%`;
