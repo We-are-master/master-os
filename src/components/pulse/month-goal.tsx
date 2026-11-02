@@ -70,7 +70,7 @@ export function MonthGoal() {
         sb.from("payroll_internal_costs").select("amount, lifecycle_stage").or(WORKFORCE_COST_ACTIVE_OR_FILTER),
         sb
           .from("bills")
-          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date, description, category")
+          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, recurring_series_end_date, status, due_date, description, category")
           .is("archived_at", null)
           .neq("status", "rejected"),
       ]);

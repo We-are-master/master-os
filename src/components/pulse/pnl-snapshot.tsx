@@ -83,7 +83,7 @@ export function PnlSnapshot() {
         // and one-off in-window manually below.
         supabase
           .from("bills")
-          .select("id, description, amount, is_recurring, recurrence_interval, recurring_series_id, status, due_date, category")
+          .select("id, description, amount, is_recurring, recurrence_interval, recurring_series_id, recurring_series_end_date, status, due_date, category")
           .is("archived_at", null)
           .neq("status", "rejected"),
         // Activated workforce only — onboarding excluded until Activate.
