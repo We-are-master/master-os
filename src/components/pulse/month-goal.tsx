@@ -12,7 +12,11 @@
  *    do placar das 8h. Nenhum número fixo aqui: sem meta, o card pede para escolher.
  *  - Contas fixas (dono, 02/11/2026: "até onde tenho que chegar pra pagar as contas
  *    fixas"): folha + bills recorrentes por mês, divididos pela margem bruta alvo. É o
- *    mesmo Breakeven de Settings, pintado em vermelho claro na barra.
+ *    mesmo Breakeven de Settings.
+ *  - Barra (dono, 02/11/2026: "faturamento, custos e lucro na barra"): tudo em £ na escala
+ *    da meta. Faturamento em navy e o lucro bruto em verde vindo atrás
+ *    dele, os dois com brilho de espelho; o trecho vermelho claro vai até o valor das contas fixas, porque é
+ *    o LUCRO que paga a Fixfy. Verde passando do tracinho = contas do mês pagas.
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -39,7 +43,7 @@ type Linha = {
   materials_cost: number | null;
 };
 
-type Dados = { receita: number; custo: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
+type Dados = { receita: number; custo: number; lucro: number; estimados: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
 
 export function MonthGoal() {
   const [d, setD] = useState<Dados | null>(null);
@@ -80,7 +84,12 @@ export function MonthGoal() {
         computeWorkforceMonthlyBurn((folha.data ?? []) as Array<{ amount: number | null; lifecycle_stage: string | null }>) +
         computeMonthlyBillsBurn((bills.data ?? []) as PulseBillRow[]);
       const margemAlvo = setup.target_margin_pct ?? 0;
+      // Job ainda sem custo (sem parceiro) contaria 100% de lucro; entra pela margem alvo.
+      const semCusto = linhas.filter((j) => c(j) === 0 && !ENTREGUE.has(j.status));
+      const lucro = linhas.reduce((t, j) => t + (c(j) === 0 && !ENTREGUE.has(j.status) ? (v(j) * margemAlvo) / 100 : v(j) - c(j)), 0);
       setD({
+        lucro,
+        estimados: semCusto.length,
         receita: linhas.reduce((t, j) => t + v(j), 0),
         custo: linhas.reduce((t, j) => t + c(j), 0),
         entregue: entregues.reduce((t, j) => t + v(j), 0),
@@ -107,7 +116,6 @@ export function MonthGoal() {
   const receita = d?.receita ?? 0;
   const falta = meta ? Math.max(0, meta - receita) : 0;
   const pct = meta ? Math.min(100, (receita / meta) * 100) : 0;
-  const pctEntregue = meta && d ? Math.min(100, (d.entregue / meta) * 100) : 0;
   const porDia = meta ? falta / diasRestantes : 0;
   const ritmo = d && dia > 0 ? (d.entregue / dia) * ultimoDia : 0;
   const margem = d && d.receita > 0 ? ((d.receita - d.custo) / d.receita) * 100 : 0;
@@ -118,8 +126,11 @@ export function MonthGoal() {
   const m = (n: number) => pulseMoney(n);
   // Até onde a barra precisa chegar para pagar as contas fixas.
   const empate = d?.empate && d.empate > 0 ? d.empate : null;
-  const pctEmpate = meta && empate ? Math.min(100, (empate / meta) * 100) : 0;
-  const faltaEmpate = empate ? Math.max(0, empate - receita) : 0;
+  const fixos = d && d.fixos > 0 ? d.fixos : null;
+  const lucro = Math.max(0, d?.lucro ?? 0);
+  const pctFixos = meta && fixos ? Math.min(100, (fixos / meta) * 100) : 0;
+  const pctLucro = meta ? Math.min(pct, (lucro / meta) * 100) : 0;
+  const faltaLucro = fixos ? Math.max(0, fixos - lucro) : 0;
 
   // O detalhe mora no "!": o card mostra só o número, a barra e a distância da meta
   // (dono, 11/10/2026: "muita info, queria algo mais visual").
@@ -133,8 +144,11 @@ export function MonthGoal() {
         meta ? `To hit the goal: ${m(porDia)} a day for the ${diasRestantes} days left.` : null,
         `On pace for ${m(ritmo)} delivered by the end of the month.`,
         meta ? `The marker on the bar is where the month should be today: ${m(esperadoHoje)}.` : null,
-        empate && d
-          ? `Fixed costs: ${m(d.fixos)} a month (team + recurring bills). At the ${d.margemAlvo}% target margin, ${m(empate)} booked pays them (the light red stretch). ${faltaEmpate > 0 ? `${m(faltaEmpate)} still to go.` : "Already covered."}`
+        fixos && d
+          ? `Profit (green): ${m(lucro)} so far, revenue minus partner and materials.${d.estimados ? ` ${d.estimados} job${d.estimados === 1 ? "" : "s"} with no cost yet counted at the ${d.margemAlvo}% target margin.` : ""}`
+          : null,
+        fixos && d
+          ? `Fixed costs: ${m(fixos)} a month (team + recurring bills), the light red stretch. Profit pays them: ${faltaLucro > 0 ? `${m(faltaLucro)} of profit still to go` : "already covered"}.${empate ? ` At the ${d.margemAlvo}% target margin that takes ${m(empate)} of revenue.` : ""}`
           : null,
       ]
         .filter(Boolean)
@@ -165,25 +179,60 @@ export function MonthGoal() {
           </p>
         </div>
 
-        <div className="relative min-w-[200px] flex-1">
-          <div className="relative h-2 overflow-hidden rounded-full bg-fx-paper-2" role="img" aria-label={`${pct.toFixed(1)}% of the goal booked, ${pctEntregue.toFixed(1)}% delivered`}>
-            {pctEmpate > 0 ? <div className="absolute inset-y-0 left-0 bg-fx-red/15" style={{ width: `${pctEmpate}%` }} /> : null}
-            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green" style={{ width: `${pct}%` }} />
-            <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green brightness-75" style={{ width: `${pctEntregue}%` }} />
+        <div className="relative min-w-[200px] flex-1 pb-4">
+          <div
+            className="relative h-3 overflow-hidden rounded-full bg-fx-paper-2"
+            role="img"
+            aria-label={`Revenue ${m(receita)}, profit ${m(lucro)}${fixos ? `, fixed costs ${m(fixos)}` : ""}`}
+          >
+            {pctFixos > 0 ? <div className="absolute inset-y-0 left-0 bg-fx-red/15" style={{ width: `${pctFixos}%` }} /> : null}
+            <div className="meta-receita absolute inset-y-0 left-0 rounded-full" style={{ width: `${pct}%` }} />
+            <div className="meta-lucro absolute inset-y-0 left-0 rounded-full" style={{ width: `${pctLucro}%` }} />
           </div>
-          {pctEmpate > 0 && empate ? (
-            <>
-              <span aria-hidden title={`Fixed costs paid at ${m(empate)}`} className="absolute -top-0.5 h-3 w-0.5 rounded-full bg-fx-red/60" style={{ left: `${pctEmpate}%` }} />
-              <span
-                className="absolute top-3 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-fx-red/80 tabular-nums"
-                style={{ left: `${Math.min(Math.max(pctEmpate, 6), 94)}%` }}
-              >
-                Fixed costs {m(empate)}
-                {faltaEmpate > 0 ? ` · ${m(faltaEmpate)} to go` : " · covered"}
-              </span>
-            </>
+          {pctFixos > 0 && fixos ? (
+            <span aria-hidden title={`Fixed costs ${m(fixos)}`} className="absolute -top-0.5 h-4 w-0.5 rounded-full bg-fx-red/70" style={{ left: `${pctFixos}%` }} />
           ) : null}
-          {meta ? <span aria-hidden title="Where the month should be today" className="absolute -top-1 h-4 w-0.5 rounded-full bg-text-primary" style={{ left: `${pctHoje}%` }} /> : null}
+          {meta ? <span aria-hidden title={`Where the month should be today: ${m(esperadoHoje)}`} className="absolute -top-1 h-5 w-px bg-text-tertiary/60" style={{ left: `${pctHoje}%` }} /> : null}
+          {d ? (
+            <div className="absolute inset-x-0 top-4 flex flex-wrap gap-x-3 text-[10px] font-medium tabular-nums">
+              <span className="inline-flex items-center gap-1 text-text-secondary">
+                <i aria-hidden className="meta-receita relative inline-block h-1.5 w-3 rounded-full" />
+                Revenue {m(receita)}
+              </span>
+              <span className="inline-flex items-center gap-1 text-fx-green">
+                <i aria-hidden className="meta-lucro relative inline-block h-1.5 w-3 rounded-full" />
+                Profit {m(lucro)}
+              </span>
+              {fixos ? (
+                <span className="inline-flex items-center gap-1 text-fx-red/80">
+                  <i aria-hidden className="inline-block h-1.5 w-0.5 rounded-full bg-fx-red/70" />
+                  Fixed costs {m(fixos)}
+                  {faltaLucro > 0 ? ` · ${m(faltaLucro)} profit to go` : " · paid"}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <style>{`
+            .meta-receita, .meta-lucro {
+              background:
+                linear-gradient(180deg, rgb(255 255 255 / 0.45) 0%, rgb(255 255 255 / 0.1) 48%, rgb(0 0 0 / 0) 52%, rgb(0 0 0 / 0.12) 100%),
+                var(--meta-cor);
+              overflow: hidden;
+            }
+            .meta-receita { --meta-cor: var(--color-fx-navy); }
+            .meta-lucro { --meta-cor: var(--color-fx-green); }
+            .meta-receita::after, .meta-lucro::after {
+              content: "";
+              position: absolute;
+              inset: 0;
+              background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.45) 50%, transparent 65%);
+              transform: translateX(-100%);
+              animation: meta-espelho 3.2s ease-in-out infinite;
+            }
+            @keyframes meta-espelho { 60%, 100% { transform: translateX(100%); } }
+            .meta-lucro::after { animation-delay: 0.25s; }
+            @media (prefers-reduced-motion: reduce) { .meta-receita::after, .meta-lucro::after { animation: none; display: none; } }
+          `}</style>
         </div>
 
         {meta ? (
