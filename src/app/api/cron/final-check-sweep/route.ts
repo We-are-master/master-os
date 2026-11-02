@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 import { entraNaVarredura } from "@/lib/final-check-decisao";
+import { garantirFaturasQueFaltam } from "@/lib/ensure-job-invoice-server";
 
 /**
  * Rede de segurança do final check automático (Fase 3, dono 15/10/2026). O gatilho de
@@ -39,9 +40,11 @@ export async function GET(req: NextRequest) {
   if (!ok) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const ensaio = req.nextUrl.searchParams.get("dry-run") === "1";
-  if (!ensaio && !FINAL_CHECK_AUTO_ON()) return NextResponse.json({ ok: true, ligado: false, resultados: [] });
-
   const admin = createServiceClient();
+  // Rede da regra "job com preço tem fatura" (dono, 02/11/2026): roda ligado ou não o final check.
+  const faturas = ensaio ? [] : await garantirFaturasQueFaltam(admin).catch((e) => [{ reference: null, ok: false, motivo: String(e) }]);
+  if (!ensaio && !FINAL_CHECK_AUTO_ON()) return NextResponse.json({ ok: true, ligado: false, faturas, resultados: [] });
+
   const { data, error } = await admin
     .from("jobs")
     .select("id, reference, final_report")
@@ -64,7 +67,7 @@ export async function GET(req: NextRequest) {
     resultados.push({ job: j.reference, resultado: r });
   }
   console.log(`[final-check-sweep] ${ensaio ? "ensaio" : "rodada"}: ${resultados.length} job(s)`);
-  return NextResponse.json({ ok: true, ligado: FINAL_CHECK_AUTO_ON(), ensaio, resultados });
+  return NextResponse.json({ ok: true, ligado: FINAL_CHECK_AUTO_ON(), ensaio, faturas, resultados });
 }
 
 export const POST = GET;

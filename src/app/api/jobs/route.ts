@@ -63,7 +63,7 @@ import type { ServicePricingPreset } from "@/lib/catalog-pricing-presets";
 import { marginPercent } from "@/lib/catalog-pricing-floor-ceiling";
 import { autoAssignGate, suggestedPartnerMarginPctFor } from "@/lib/auto-assign-gate";
 import { decideApiChargeOnCreate, loadChargeAccount, parseChargeOnCreate } from "@/lib/charge-on-create";
-import { chargeJobOnCreateServer, type ChargeOnCreateResult } from "@/lib/ensure-job-invoice-server";
+import { chargeJobOnCreateServer, garantirFaturaDoJob, type ChargeOnCreateResult } from "@/lib/ensure-job-invoice-server";
 import { processoDaConta } from "@/lib/processo/conta";
 import {
   acharClienteEntreContas,
@@ -1132,6 +1132,10 @@ export async function POST(req: NextRequest) {
       ? 0
       : (marginPercent(clientPrice, partnerCost) ?? 0);
 
+  // Job por hora já nasce com o preço das horas lançadas, e com ele a fatura (dono, 02/11/2026:
+  // "não pode existir nada sem a fatura"). O Final review acerta as horas no fim.
+  const horasIniciais = rateType === "hourly" ? resolveInitialBilledHours(hourlyCatalogDefaultHours, billedHoursIn) : 0;
+  const centavos = (n: number) => Math.round(n * 100) / 100;
   const jobRow: Record<string, unknown> = {
     reference:          String(ref),
     title:              titleResolved,
@@ -1141,8 +1145,8 @@ export async function POST(req: NextRequest) {
     status,
     // A conta que contrata, sempre escrita (o trigger da 342 fica de rede); origem só no v2.
     ...camposDaContaDoJob(accountId, contaV2, sourceIn),
-    client_price:       rateType === "hourly" ? 0 : clientPriceGravado,
-    partner_cost:       rateType === "hourly" ? 0 : partnerCostGravado,
+    client_price:       rateType === "hourly" ? centavos(hourlyClientRate * horasIniciais) : clientPriceGravado,
+    partner_cost:       rateType === "hourly" ? centavos(hourlyPartnerRate * horasIniciais) : partnerCostGravado,
     materials_cost:     0,
     margin_percent:     margin,
     scheduled_date:     isoDate,
@@ -1159,7 +1163,7 @@ export async function POST(req: NextRequest) {
   if (rateType === "hourly") {
     jobRow.hourly_client_rate  = hourlyClientRate;
     jobRow.hourly_partner_rate = hourlyPartnerRate;
-    jobRow.billed_hours        = resolveInitialBilledHours(hourlyCatalogDefaultHours, billedHoursIn);
+    jobRow.billed_hours        = horasIniciais;
   }
   if (resolvedCatalogServiceId) {
     jobRow.catalog_service_id = resolvedCatalogServiceId;
@@ -1686,6 +1690,14 @@ export async function POST(req: NextRequest) {
         reason: decision.reason,
       };
     }
+  }
+
+  // Com preço, a fatura nasce junto, cobrando ou não (dono, 02/11/2026). Rascunho, sem e-mail.
+  try {
+    const fatura = await garantirFaturaDoJob(supabase, String(inserted.id));
+    if (!fatura.ok && fatura.reason !== "sem_preco") console.warn("[api/jobs] invoice not created:", inserted.reference, fatura.reason);
+  } catch (e) {
+    console.error("[api/jobs] invoice ensure failed:", inserted.reference, e);
   }
 
   return NextResponse.json(

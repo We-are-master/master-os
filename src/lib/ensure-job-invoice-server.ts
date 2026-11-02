@@ -157,3 +157,57 @@ export async function chargeJobOnCreateServer(
     return { sent: false, percent, source, reason: e instanceof Error ? e.message : String(e) };
   }
 }
+
+/**
+ * Job com preço e sem fatura não pode existir (dono, 02/11/2026: "todo job que colocar
+ * preço depois tem que criar fatura na hora do preço"). Job por hora com £0 mas com taxa
+ * e horas lançadas ganha o preço das horas antes (era o que travava o Final review do
+ * JOB-9799 e do JOB-9807). Cria em rascunho: nada vai ao cliente daqui.
+ */
+export async function garantirFaturaDoJob(
+  admin: SupabaseClient,
+  jobId: string,
+): Promise<EnsureJobInvoiceResult | { ok: false; reason: "sem_preco" | "fora" }> {
+  const { data } = await admin
+    .from("jobs")
+    .select("id, status, job_type, client_price, partner_cost, billed_hours, hourly_client_rate, hourly_partner_rate, extras_amount, promotion_amount, invoice_id")
+    .eq("id", jobId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  const j = data as (Pick<Job, "id" | "status" | "job_type" | "client_price" | "partner_cost" | "billed_hours" | "hourly_client_rate" | "hourly_partner_rate" | "extras_amount" | "invoice_id"> & { promotion_amount?: number | null }) | null;
+  if (!j || j.status === "cancelled" || j.status === "deleted") return { ok: false, reason: "fora" };
+  if (j.job_type === "hourly" && !(Number(j.client_price) > 0.02)) {
+    const h = Number(j.billed_hours) || 0;
+    const preco = Math.round(h * (Number(j.hourly_client_rate) || 0) * 100) / 100;
+    if (preco > 0.02) {
+      const custo = Math.round(h * (Number(j.hourly_partner_rate) || 0) * 100) / 100;
+      await admin
+        .from("jobs")
+        .update({ client_price: preco, ...(Number(j.partner_cost) > 0.02 ? {} : { partner_cost: custo }) })
+        .eq("id", j.id);
+      j.client_price = preco;
+    }
+  }
+  const total = (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0) - (Number(j.promotion_amount) || 0);
+  if (!(total > 0.02)) return { ok: false, reason: "sem_preco" };
+  return ensureJobInvoiceServer(admin, j.id);
+}
+
+/** Varredura: jobs vivos com preço (ou por hora com horas) e sem fatura. */
+export async function garantirFaturasQueFaltam(admin: SupabaseClient, limite = 50) {
+  const { data } = await admin
+    .from("jobs")
+    .select("id, reference")
+    .is("invoice_id", null)
+    .is("deleted_at", null)
+    .not("status", "in", "(cancelled,deleted)")
+    .or("client_price.gt.0,and(job_type.eq.hourly,billed_hours.gt.0,hourly_client_rate.gt.0)")
+    .order("created_at", { ascending: false })
+    .limit(limite);
+  const resultados: { reference: string | null; ok: boolean; motivo?: string; fatura?: string }[] = [];
+  for (const j of (data ?? []) as { id: string; reference: string | null }[]) {
+    const r = await garantirFaturaDoJob(admin, j.id).catch((e) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) }));
+    resultados.push(r.ok ? { reference: j.reference, ok: true, fatura: r.invoice.reference } : { reference: j.reference, ok: false, motivo: r.reason });
+  }
+  return resultados;
+}
