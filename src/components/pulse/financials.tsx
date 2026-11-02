@@ -133,7 +133,7 @@ export function Financials() {
         supabase
           .from("bills")
           .select(
-            "id, description, amount, status, due_date, category, is_recurring, recurrence_interval, recurring_series_id",
+            "id, description, amount, status, due_date, category, is_recurring, recurrence_interval, recurring_series_id, recurring_series_end_date",
           )
           .is("archived_at", null)
           .neq("status", "rejected")
