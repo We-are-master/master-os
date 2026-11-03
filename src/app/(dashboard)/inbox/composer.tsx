@@ -46,6 +46,11 @@ const SALVAS: Record<TipoDeContato, Salva[]> = {
     { titulo: "Photos", texto: "Could you send a couple of photos of the area, please?" },
     { titulo: "All done", texto: "All done on our side. Is there anything else we can help with?" },
   ],
+  grupo: [
+    { titulo: "Hello all", texto: "Hi all, thanks for the update." },
+    { titulo: "Checking", texto: "Thanks, let me check and come back to you shortly." },
+    { titulo: "Photos", texto: "Could you send a couple of photos when you can, please?" },
+  ],
   outro: [
     { titulo: "Hello", texto: "Hi {nome}, thanks for your message. How can we help?" },
     { titulo: "Address", texto: "Could you share the property address and postcode, please?" },

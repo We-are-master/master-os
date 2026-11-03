@@ -10,6 +10,7 @@
  * é cliente ou parceiro; venda e B2B ficam no Zendesk.
  */
 
+import { ehGrupo } from "@/lib/inbox/grupo";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OPS_PHONE_NUMBER_ID, finalDoNumero } from "@/lib/whatsapp/operacao";
 import { provedorDaOperacao } from "@/lib/whatsapp/uazapi-operacao";
@@ -72,6 +73,22 @@ function porTelefone<T extends Record<string, unknown>>(linhas: T[], contato: st
   return linhas.find((l) => campos.some((c) => finalDoNumero(l[c]) === fim));
 }
 
+/**
+ * O estado de cada conversa, das colunas mais novas para as mais velhas: migration
+ * que ainda não rodou (354 lida/fixada, 355 nome do grupo) não derruba a caixa.
+ */
+async function estadosDasConversas(sb: ReturnType<typeof createServiceClient>, contatos: string[]) {
+  if (!contatos.length) return { data: [] as Record<string, unknown>[], error: null };
+  const base = "contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em";
+  let ultimo: { data: Record<string, unknown>[] | null; error: { message: string } | null } = { data: null, error: null };
+  for (const colunas of [`${base}, lida_em, nao_lida, fixada_em, nome`, `${base}, lida_em, nao_lida, fixada_em`, base]) {
+    const r = await sb.from("inbox_conversas").select(colunas).in("contato", contatos);
+    ultimo = { data: (r.data ?? null) as Record<string, unknown>[] | null, error: r.error };
+    if (!r.error) return ultimo;
+  }
+  return ultimo;
+}
+
 export type DadosDaCaixa = {
   conversas: ConversaDaCaixa[];
   tags: TagDaCaixa[];
@@ -85,13 +102,12 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const sb = createServiceClient();
   const desde = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const hoje = hojeEmLondres();
-  const { data: linhas } = await sb
-    .from("wa_mensagens")
-    .select("id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por_nome, partner_id, criado_em")
-    .eq("phone_number_id", OPS_PHONE_NUMBER_ID())
-    .gte("criado_em", desde)
-    .order("criado_em", { ascending: true })
-    .limit(4000);
+  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por_nome, partner_id, criado_em";
+  const mensagensDesde = (colunas: string) =>
+    sb.from("wa_mensagens").select(colunas).eq("phone_number_id", OPS_PHONE_NUMBER_ID()).gte("criado_em", desde).order("criado_em", { ascending: true }).limit(4000);
+  // Sem a 355 aplicada não há autor: a caixa carrega igual, só sem o nome de quem falou no grupo.
+  const comAutor = await mensagensDesde(`${colunasDaMensagem}, autor, autor_nome`);
+  const linhas = ((comAutor.error ? (await mensagensDesde(colunasDaMensagem)).data : comAutor.data) ?? []) as unknown as Record<string, unknown>[];
 
   // O que a equipe mandou pela tela mora no bucket privado: assina para ver.
   const caminhos = [...new Set((linhas ?? []).map((l) => l.midia_id as string | null).filter((m): m is string => Boolean(m?.startsWith("storage:"))))];
@@ -120,6 +136,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       erro: (l.erro as string | null) ?? null,
       quem: (l.enviado_por_nome as string | null) ?? null,
       criadoEm: l.criado_em as string,
+      autor: ehGrupo(contato) && l.direcao === "entrada" ? { numero: (l.autor as string | null) ?? null, nome: (l.autor_nome as string | null) ?? null } : null,
     });
     if (l.contato_nome) nomeDoPerfil.set(contato, l.contato_nome as string);
     if (l.partner_id) parceiroDoContato.set(contato, l.partner_id as string);
@@ -127,7 +144,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const contatos = [...porContato.keys()];
 
   // Parceiro cadastrado depois da primeira mensagem não tem partner_id na linha: acha pelo telefone.
-  const semParceiro = contatos.filter((c) => !parceiroDoContato.has(c) && finalDoNumero(c).length >= 10);
+  const semParceiro = contatos.filter((c) => !ehGrupo(c) && !parceiroDoContato.has(c) && finalDoNumero(c).length >= 10);
   const filtroTelefone = (campos: string[]) => semParceiro.flatMap((c) => campos.map((f) => `${f}.ilike.%${finalDoNumero(c).slice(-9)}%`)).join(",");
   const [{ data: parceirosPorTelefone }, { data: clientes }, { data: estados, error: semEstado }, { data: tags }, { data: contasPorTelefone }] = await Promise.all([
     semParceiro.length
@@ -136,9 +153,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     semParceiro.length
       ? sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id, source").is("deleted_at", null).or(filtroTelefone(["phone"])).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    contatos.length
-      ? sb.from("inbox_conversas").select("contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em, lida_em, nao_lida, fixada_em").in("contato", contatos)
-      : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
+    estadosDasConversas(sb, contatos),
     sb.from("inbox_tags").select("nome, cor").order("nome"),
     // O número da conta (accounts.contact_number): quem escreve dele é a conta, mesmo sem cliente.
     semParceiro.length
@@ -273,6 +288,21 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
         fixadaEm: (estado?.fixada_em as string | null) ?? null,
         org: null as ConversaDaCaixa["org"],
       };
+
+      if (ehGrupo(contato)) {
+        return {
+          ...base,
+          tipo: "grupo",
+          nome: (estado?.nome as string | null) || "WhatsApp group",
+          parceiro: null,
+          cliente: null,
+          jobs: [],
+          jobHoje: null,
+          etapa: null,
+          quotes: [],
+          faturas: [],
+        };
+      }
 
       const pid = parceiroDoContato.get(contato);
       if (pid) {

@@ -14,6 +14,8 @@ export type MensagemDaCaixa = {
   erro: string | null;
   quem: string | null;
   criadoEm: string;
+  /** Em grupo, quem mandou a mensagem que entrou: número (null se escondido) e nome. */
+  autor?: { numero: string | null; nome: string | null } | null;
 };
 
 export type JobDaCaixa = {
@@ -61,7 +63,7 @@ export type JobParaOferecer = {
  * cliente:  está em `clients` e já teve job. Só esses entram em Clients.
  * outro:    o resto (lead, cadastro sem job, número novo). Fica em All.
  */
-export type TipoDeContato = "conta" | "parceiro" | "cliente" | "outro";
+export type TipoDeContato = "conta" | "parceiro" | "cliente" | "outro" | "grupo";
 
 export type EtapaDaConversa = { grupo: "quote" | "job"; status: string; ref: string; id: string };
 

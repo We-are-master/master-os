@@ -25,6 +25,7 @@ import {
   Radar,
   Send,
   UserRound,
+  UsersRound,
   UserX,
   Wrench,
   MapPin,
@@ -163,6 +164,7 @@ export function ChipDoTipo({ c }: { c: ConversaDaCaixa }) {
   if (c.tipo === "conta") return <Chip icone={Building2} tom="blue">Account</Chip>;
   if (c.tipo === "parceiro") return <Chip icone={Wrench} tom="teal">Partner</Chip>;
   if (c.tipo === "cliente") return <Chip icone={Home} tom="violet">Client</Chip>;
+  if (c.tipo === "grupo") return <Chip icone={UsersRound} tom="green">Group</Chip>;
   return <Chip icone={UserRound}>{c.cliente ? "No jobs yet" : "Unknown"}</Chip>;
 }
 
@@ -228,6 +230,7 @@ export function Avatar({
           c.tipo === "parceiro" && "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200",
           c.tipo === "cliente" && "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200",
           c.tipo === "outro" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+          c.tipo === "grupo" && "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200",
           c.org?.logo && "overflow-hidden bg-white ring-1 ring-border-light dark:bg-white",
         )}
         title={c.org?.nome}
@@ -235,6 +238,8 @@ export function Avatar({
         {c.org?.logo ? (
           // eslint-disable-next-line @next/next/no-img-element -- logo de bucket/URL externa, tamanho fixo
           <img src={c.org.logo} alt={c.org.nome} className="h-full w-full object-contain p-0.5" />
+        ) : c.tipo === "grupo" ? (
+          <UsersRound className={t === "lg" ? "h-6 w-6" : "h-[45%] w-[45%]"} aria-label="Group" />
         ) : (
           iniciais(c.org?.nome ?? c.nome)
         )}
@@ -292,3 +297,14 @@ export function chegada(j: JobDaCaixa, agora: number): { tom: Tom; icone: Lucide
   if (risco !== null && agora >= risco) return { tom: "amber", icone: TriangleAlert, texto: `At risk ${janela}`, title: `At risk · window closes ${j.fim ? horaCurta(j.fim) : "soon"}, not started`, peso: 1 };
   return { tom: "blue", icone: CalendarClock, texto: `Today${janela ? ` ${janela}` : ""}`, title: `Arrival window today${janela ? ` ${janela}` : ""}`, peso: 0 };
 }
+
+/** A cor de quem fala no grupo, fixa por pessoa (como no WhatsApp). */
+const CORES_DO_AUTOR = ["text-teal-700", "text-violet-700", "text-blue-700", "text-amber-700", "text-rose-700", "text-emerald-700", "text-indigo-700", "text-orange-700"];
+export function corDoAutor(chave: string) {
+  let h = 0;
+  for (const ch of chave) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return CORES_DO_AUTOR[h % CORES_DO_AUTOR.length];
+}
+
+/** Rótulo de quem mandou no grupo: o nome do WhatsApp, senão o número. */
+export const nomeDoAutor = (a: { numero: string | null; nome: string | null }) => a.nome || (a.numero ? `+${a.numero}` : "Member");

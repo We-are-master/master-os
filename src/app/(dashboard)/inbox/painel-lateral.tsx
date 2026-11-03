@@ -19,7 +19,7 @@ import { Composer } from "./composer";
 import { Midia, SO_ROTULO, Tique, comPendentes, diaDaMensagemOuHoje, fora, naoLidas, quandoNaLista } from "./caixa-atendimento";
 import { tempo } from "./movimento";
 import type { ConversaDaCaixa, MensagemDaCaixa } from "./tipos";
-import { Avatar, ChipDoTipo } from "./ui";
+import { Avatar, ChipDoTipo, corDoAutor, nomeDoAutor } from "./ui";
 
 type Aba = "todas" | "naoLidas" | "parceiro" | "cliente";
 const ABAS: [Aba, string][] = [
@@ -258,6 +258,9 @@ export function AtendimentoLateral() {
                                   entrada ? "rounded-bl-md border border-border-light bg-card text-text-primary" : "rounded-br-md bg-primary text-[var(--on-brand)]",
                                 )}
                               >
+                                {m.autor && !(antes?.autor && (antes.autor.numero ?? antes.autor.nome) === (m.autor.numero ?? m.autor.nome) && !novoDia) ? (
+                                  <p className={cn("text-[11px] font-semibold", corDoAutor(m.autor.numero ?? m.autor.nome ?? ""))}>{nomeDoAutor(m.autor)}</p>
+                                ) : null}
                                 <Midia m={m} />
                                 {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? <p className="whitespace-pre-wrap break-words">{m.texto}</p> : null}
                                 <span className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10.5px]", entrada ? "text-text-tertiary" : "text-white/70")}>

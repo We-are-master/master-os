@@ -70,7 +70,7 @@ import { CHIP, flutuante, tempo } from "./movimento";
 import { ligarPeloZendesk } from "./ligar";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
-import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
+import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -83,7 +83,7 @@ type Visao =
   | { k: "hoje" }
   | { k: "tag"; nome: string }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
-type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro";
+type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro" | "grupo";
 type Periodo = "hoje" | "semana" | "mes" | "60d";
 const PERIODOS: [Periodo, string, number][] = [
   ["hoje", "Today", 0],
@@ -193,7 +193,7 @@ function conversaRascunho(e: Escolhido): ConversaDaCaixa {
     contato: e.numero,
     nome: e.nome,
     perfil: null,
-    tipo: e.tipo === "conta" || e.tipo === "parceiro" || e.tipo === "cliente" ? e.tipo : "outro",
+    tipo: e.tipo === "conta" || e.tipo === "parceiro" || e.tipo === "cliente" || e.tipo === "grupo" ? e.tipo : "outro",
     ultimaEntradaEm: null,
     mensagens: [],
     resolvidaEm: null,
@@ -394,6 +394,7 @@ export function CaixaAtendimento({
       parceiro: n((c) => !fora(c) && c.tipo === "parceiro"),
       cliente: n((c) => !fora(c) && c.tipo === "cliente"),
       outro: n((c) => !fora(c) && c.tipo === "outro"),
+      grupo: n((c) => !fora(c) && c.tipo === "grupo"),
     };
   }, [conversas]);
 
@@ -426,7 +427,7 @@ export function CaixaAtendimento({
     null;
   const tituloDaVisao =
     tipo !== "todas"
-      ? { conta: "Accounts", parceiro: "Partners", cliente: "Clients", outro: "Unknown" }[tipo]
+      ? { conta: "Accounts", parceiro: "Partners", cliente: "Clients", outro: "Unknown", grupo: "Groups" }[tipo]
       : visao.k === "tag"
         ? visao.nome
         : visao.k === "etapa"
@@ -718,6 +719,16 @@ export function CaixaAtendimento({
           icone={UserRound}
           rotulo="Unknown"
           n={contagem.outro}
+        />
+        <ItemDaLateral
+          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "grupo"}
+          onClick={() => {
+            setVisao({ k: "todas" });
+            setTipo("grupo");
+          }}
+          icone={Users}
+          rotulo="Groups"
+          n={contagem.grupo}
         />
 
         <Titulo
@@ -1036,9 +1047,11 @@ export function CaixaAtendimento({
                   </Acao>
                 </Link>
               ) : null}
-              <Acao icone={Phone} title="Call via Zendesk Talk" onClick={() => void ligarPeloZendesk(aberta.contato)}>
-                Call
-              </Acao>
+              {aberta.tipo !== "grupo" ? (
+                <Acao icone={Phone} title="Call via Zendesk Talk" onClick={() => void ligarPeloZendesk(aberta.contato)}>
+                  Call
+                </Acao>
+              ) : null}
               <Acao icone={Tag} ativo={menu === "tags"} onClick={() => setMenu((m) => (m === "tags" ? null : "tags"))} disabled={!estadoPronto}>
                 Tag
               </Acao>
@@ -1316,6 +1329,12 @@ export function CaixaAtendimento({
                         )}
                       >
                         {m.origem !== "contato" && m.quem ? <p className="mb-0.5 text-[11.5px] font-semibold text-[var(--accent)]">{m.quem}</p> : null}
+                        {m.autor && !(antes?.autor && (antes.autor.numero ?? antes.autor.nome) === (m.autor.numero ?? m.autor.nome) && !novoDia) ? (
+                          <p className={cn("mb-0.5 text-[11.5px] font-semibold", corDoAutor(m.autor.numero ?? m.autor.nome ?? ""))}>
+                            {nomeDoAutor(m.autor)}
+                            {m.autor.numero && m.autor.nome ? <span className="ml-1.5 font-normal text-text-tertiary">+{m.autor.numero}</span> : null}
+                          </p>
+                        ) : null}
                         <Midia m={m} />
                         <div className="flex flex-wrap items-end justify-end gap-x-2.5">
                           {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? (
@@ -1388,7 +1407,9 @@ export function CaixaAtendimento({
               }}
             />
           ) : (
-            <Painel key={aberta.contato} c={aberta} agora={agora} online={Boolean(presenca)} onCriar={abrirCriar} onOferecer={() => setGaveta({ k: "oferecer" })} />
+            <Painel key={aberta.contato} c={aberta} agora={agora} online={Boolean(presenca)} onCriar={abrirCriar} onOferecer={() => setGaveta({ k: "oferecer" })}
+              onAbrirContato={(numero, nome) => abrirNumero({ numero, nome, tipo: "numero" })}
+            />
           )
         ) : null}
       </aside>

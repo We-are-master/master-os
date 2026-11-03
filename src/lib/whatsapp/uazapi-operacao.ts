@@ -15,6 +15,7 @@
  *                                não assina o corpo, então é o que existe
  */
 
+import { destinoNaUazapi, ehGrupo } from "@/lib/inbox/grupo";
 import { timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { EnvioOperacaoError, OPS_PHONE_NUMBER_ID, finalDoNumero } from "./operacao";
@@ -61,6 +62,8 @@ export type MensagemUazapi = {
   wamid: string;
   contato: string;
   contatoNome: string | null;
+  /** Grupo: quem mandou (número, null se o WhatsApp escondeu) e o nome dele, e o assunto do grupo. */
+  grupo: { autor: string | null; autorNome: string | null; nome: string | null } | null;
   direcao: "entrada" | "saida";
   tipo: string;
   texto: string | null;
@@ -71,8 +74,9 @@ export type MensagemUazapi = {
 
 /**
  * Traduz um evento da uazapi numa mensagem, ou diz por que não vira. Pura,
- * para as recusas serem testáveis: grupo e broadcast ficam fora (a caixa é 1 a
- * 1), e o que o próprio OS mandou (`wasSentByApi`) já foi gravado no envio.
+ * para as recusas serem testáveis: broadcast e grupo antigo (com hífen) ficam
+ * fora, e o que o próprio OS mandou (`wasSentByApi`) já foi gravado no envio.
+ * Grupo entra com o id dele como contato e o autor de cada mensagem.
  * O que alguém mandou pelo celular (`fromMe` sem API) entra como saída.
  */
 export function extrairMensagemUazapi(payload: unknown): MensagemUazapi | { pular: string } {
@@ -85,7 +89,9 @@ export function extrairMensagemUazapi(payload: unknown): MensagemUazapi | { pula
   const wamid = str(m.messageid) ?? str(m.messageId) ?? str(key.id) ?? str(m.id);
   const jid = str(m.chatid) ?? str(m.wa_chatid) ?? str(key.remoteJid) ?? str(m.from) ?? "";
   if (!wamid || !jid) return { pular: "sem id ou jid" };
-  if (m.isGroup === true || jid.endsWith("@g.us") || /@(newsletter|broadcast)$/.test(jid)) return { pular: "grupo ou broadcast" };
+  if (/@(newsletter|broadcast)$/.test(jid)) return { pular: "broadcast" };
+  const deGrupo = m.isGroup === true || jid.endsWith("@g.us");
+  if (deGrupo && jid.split("@")[0].includes("-")) return { pular: "grupo antigo" };
   if (m.wasSentByApi === true) return { pular: "enviada pelo OS" };
 
   const contato = jid.split("@")[0].split(":")[0].replace(/\D/g, "");
@@ -101,7 +107,16 @@ export function extrairMensagemUazapi(payload: unknown): MensagemUazapi | { pula
   return {
     wamid,
     contato,
-    contatoNome: daCasa ? null : str(m.senderName) ?? str(m.pushName) ?? null,
+    // Em grupo o nome de quem mandou não é o nome da conversa.
+    contatoNome: daCasa || deGrupo ? null : str(m.senderName) ?? str(m.pushName) ?? null,
+    grupo: deGrupo
+      ? {
+          // `sender_pn` traz o telefone quando o `sender` vem como LID (número escondido).
+          autor: daCasa ? null : numeroDoJid(str(m.sender_pn) ?? str(m.sender) ?? str(key.participant) ?? str(m.participant)),
+          autorNome: daCasa ? null : str(m.senderName) ?? str(m.pushName) ?? null,
+          nome: str(m.groupName) ?? str(rec(p.chat)?.name) ?? str(rec(p.chat)?.wa_name) ?? str(m.chatName) ?? null,
+        }
+      : null,
     direcao: daCasa ? "saida" : "entrada",
     tipo,
     texto,
@@ -109,6 +124,13 @@ export function extrairMensagemUazapi(payload: unknown): MensagemUazapi | { pula
     criadoEm,
     bruto: m,
   };
+}
+
+/** "4477...@s.whatsapp.net" vira "4477..."; LID não é telefone e volta null. */
+function numeroDoJid(jid: string | null): string | null {
+  if (!jid || jid.endsWith("@lid")) return null;
+  const d = jid.split("@")[0].split(":")[0].replace(/\D/g, "");
+  return d.length >= 10 && d.length <= 15 ? d : null;
 }
 
 async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<string | null> {
@@ -139,24 +161,33 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
   if (!m.midiaUrl && ["image", "audio", "video", "document", "sticker"].includes(m.tipo)) {
     m.midiaUrl = await urlDaMidia(m.wamid);
   }
-  const { error } = await sb.from("wa_mensagens").upsert(
-    {
-      wamid: m.wamid,
-      phone_number_id: OPS_PHONE_NUMBER_ID(),
-      contato: m.contato,
-      contato_nome: m.contatoNome,
-      direcao: m.direcao,
-      origem: m.direcao === "entrada" ? "contato" : "celular",
-      tipo: m.tipo,
-      texto: m.texto,
-      midia_id: m.midiaUrl,
-      status: m.direcao === "saida" ? "sent" : null,
-      partner_id: await parceiroDoNumero(sb, m.contato),
-      criado_em: m.criadoEm,
-      bruto: m.bruto,
-    },
-    { onConflict: "wamid", ignoreDuplicates: true },
-  );
+  const linha: Record<string, unknown> = {
+    wamid: m.wamid,
+    phone_number_id: OPS_PHONE_NUMBER_ID(),
+    contato: m.contato,
+    contato_nome: m.contatoNome,
+    direcao: m.direcao,
+    origem: m.direcao === "entrada" ? "contato" : "celular",
+    tipo: m.tipo,
+    texto: m.texto,
+    midia_id: m.midiaUrl,
+    status: m.direcao === "saida" ? "sent" : null,
+    // Grupo não é de um parceiro só: a conversa não vira "parceiro" por causa de um membro.
+    partner_id: m.grupo ? null : await parceiroDoNumero(sb, m.contato),
+    criado_em: m.criadoEm,
+    bruto: m.bruto,
+    ...(m.grupo ? { autor: m.grupo.autor, autor_nome: m.grupo.autorNome } : {}),
+  };
+  let { error } = await sb.from("wa_mensagens").upsert(linha, { onConflict: "wamid", ignoreDuplicates: true });
+  // Sem a 355 aplicada as colunas do autor não existem: grava sem elas para não perder a mensagem.
+  if (error && m.grupo && /autor/.test(error.message)) {
+    const { autor: _a, autor_nome: _n, ...semAutor } = linha;
+    ({ error } = await sb.from("wa_mensagens").upsert(semAutor, { onConflict: "wamid", ignoreDuplicates: true }));
+  }
+  if (m.grupo?.nome) {
+    const { error: e } = await sb.from("inbox_conversas").upsert({ contato: m.contato, nome: m.grupo.nome }, { onConflict: "contato" });
+    if (e) console.error("[uazapi-operacao] nome do grupo", e.message);
+  }
   if (error) console.error("[uazapi-operacao] gravar", error.message);
   return error ? "erro" : "gravada";
 }
@@ -168,7 +199,7 @@ export async function enviarPelaUazapi(para: string, texto: string): Promise<{ w
   const numero = para.replace(/\D/g, "");
   if (numero.length < 11) throw new EnvioOperacaoError(`Invalid WhatsApp number: ${para}`);
 
-  const corpo = { number: numero, text: texto };
+  const corpo = { number: destinoNaUazapi(numero), text: texto };
   const res = await fetch(`${baseUrl()}/send/text`, {
     method: "POST",
     headers: { token, "Content-Type": "application/json", Accept: "application/json" },
@@ -242,7 +273,7 @@ export async function enviarMidiaPelaUazapi(
   const numero = para.replace(/\D/g, "");
   if (numero.length < 11) throw new EnvioOperacaoError(`Invalid WhatsApp number: ${para}`);
   const corpo = {
-    number: numero,
+    number: destinoNaUazapi(numero),
     type: tipo,
     file: url,
     ...(legenda ? { text: legenda } : {}),
@@ -255,6 +286,26 @@ export async function enviarMidiaPelaUazapi(
     throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
   }
   return { wamid, corpo: { ...corpo, file: "(signed url)" } };
+}
+
+/**
+ * Cria um grupo no 7983 com quem a equipe escolheu. Devolve o id do grupo
+ * (só dígitos, a chave da caixa) e quem não entrou (número que não tem
+ * WhatsApp ou que bloqueou ser adicionado a grupos).
+ */
+export async function criarGrupoNaUazapi(nome: string, participantes: string[]): Promise<{ contato: string; falharam: string[] }> {
+  const res = await fetch(`${baseUrl()}/group/create`, {
+    method: "POST",
+    headers: cabecalho(),
+    body: JSON.stringify({ name: nome, participants: participantes }),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const grupo = rec(json.group) ?? {};
+  const jid = str(grupo.JID) ?? str(grupo.jid) ?? str(json.JID) ?? str(json.jid) ?? "";
+  const contato = jid.split("@")[0].replace(/\D/g, "");
+  if (!res.ok || !contato) throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
+  const falharam = (Array.isArray(json.failed) ? json.failed : []).map((f) => String(f).split("@")[0].replace(/\D/g, "")).filter(Boolean);
+  return { contato, falharam };
 }
 
 /** O 7983 está conectado agora? Lê o estado da instância na uazapi. */
@@ -278,7 +329,7 @@ export async function marcarLidaNaUazapi(contato: string): Promise<void> {
     await fetch(`${baseUrl()}/chat/read`, {
       method: "POST",
       headers: cabecalho(),
-      body: JSON.stringify({ number: `${contato.replace(/\D/g, "")}@s.whatsapp.net`, read: true }),
+      body: JSON.stringify({ number: ehGrupo(contato) ? destinoNaUazapi(contato) : `${contato.replace(/\D/g, "")}@s.whatsapp.net`, read: true }),
     });
   } catch {
     /* best effort */

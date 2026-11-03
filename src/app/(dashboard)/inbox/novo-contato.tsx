@@ -6,16 +6,19 @@
  * em contas, parceiros, clientes e leads, ou nome e número digitados) e
  * embaixo a primeira mensagem. Send cria e manda; "Open without sending" só
  * abre a conversa (a que já existe ou um rascunho vazio).
+ *
+ * No alto, Conversation ou Group: o grupo nasce no 7983 com quem foi
+ * escolhido (vários, em chips) e a primeira mensagem, se houver, vai nele.
  */
 
 import { useEffect, useState } from "react";
-import { Building2, Home, MessageCircle, Search, Sparkles, Wrench, X, type LucideIcon } from "lucide-react";
+import { Building2, Home, MessageCircle, Search, Sparkles, UsersRound, Wrench, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 
-export type Escolhido = { numero: string; nome: string; tipo: ContatoAchado["tipo"] | "numero" };
+export type Escolhido = { numero: string; nome: string; tipo: ContatoAchado["tipo"] | "numero" | "grupo" };
 
 type Filtro = "todos" | ContatoAchado["tipo"];
 const FILTROS: [Filtro, string][] = [
@@ -58,6 +61,9 @@ export function NovaConversa({
   const [numero, setNumero] = useState("");
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [modo, setModo] = useState<"conversa" | "grupo">("conversa");
+  const [nomeDoGrupo, setNomeDoGrupo] = useState("");
+  const [membros, setMembros] = useState<{ numero: string; nome: string }[]>([]);
 
   // Busca com uma pausa curta entre teclas; a última resposta vence.
   useEffect(() => {
@@ -87,15 +93,56 @@ export function NovaConversa({
     setNome("");
     setNumero("");
     setTexto("");
+    setModo("conversa");
+    setNomeDoGrupo("");
+    setMembros([]);
     onFechar();
   }
 
   function escolher(a: ContatoAchado) {
     if (!a.numero) return;
+    if (modo === "grupo") return incluir(a.numero, a.nome);
     setEscolhido(a);
     setNome(a.nome);
     setNumero(`+${a.numero}`);
     setQ("");
+  }
+
+  function incluir(n: string, nomeDele: string) {
+    setMembros((ms) => (ms.some((x) => x.numero === n) ? ms : [...ms, { numero: n, nome: nomeDele }]));
+    setQ("");
+  }
+
+  async function criarGrupo() {
+    if (!nomeDoGrupo.trim() || !membros.length) return;
+    setEnviando(true);
+    try {
+      const r = await fetch("/api/inbox/grupo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: nomeDoGrupo.trim(), participantes: membros.map((m) => m.numero) }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { contato?: string; nome?: string; falharam?: string[]; error?: string };
+      if (!r.ok || !j.contato) throw new Error(j.error ?? `Failed (${r.status})`);
+      if (texto.trim()) {
+        const env = await fetch("/api/inbox/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contato: j.contato, texto: texto.trim() }),
+        });
+        if (!env.ok) toast.error("Group created, but the first message did not go out");
+      }
+      const fora = (j.falharam ?? []).map((n) => membros.find((m) => m.numero === n)?.nome ?? `+${n}`);
+      if (fora.length) toast.warning(`Not added: ${fora.join(", ")}. They may need an invite link.`);
+      else toast.success(`Group "${j.nome}" created`);
+      onAbrir({ numero: j.contato, nome: j.nome ?? nomeDoGrupo.trim(), tipo: "grupo" });
+      onEnviado();
+      fechar();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the group");
+    } finally {
+      setEnviando(false);
+    }
   }
 
   const destino = paraWhatsApp(numero);
@@ -131,7 +178,7 @@ export function NovaConversa({
     <Modal
       open={open}
       onClose={fechar}
-      title="New conversation"
+      title={modo === "grupo" ? "New group" : "New conversation"}
       size="sm"
       manageFocus
       footer={
@@ -144,6 +191,17 @@ export function NovaConversa({
             Cancel
           </button>
           <span className="flex-1" />
+          {modo === "grupo" ? (
+            <button
+              type="button"
+              disabled={!nomeDoGrupo.trim() || !membros.length || enviando}
+              onClick={() => void criarGrupo()}
+              className="h-9 rounded-lg bg-primary px-4 text-[13px] font-semibold text-[var(--on-brand)] hover:opacity-90 disabled:opacity-45"
+            >
+              {enviando ? "Creating..." : texto.trim() ? "Create and send" : "Create group"}
+            </button>
+          ) : (
+          <>
           <button
             type="button"
             disabled={!quem || enviando}
@@ -164,10 +222,33 @@ export function NovaConversa({
           >
             {enviando ? "Sending..." : "Send"}
           </button>
+          </>
+          )}
         </div>
       }
     >
       <div className="space-y-4 p-4">
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-secondary p-1">
+          {(
+            [
+              ["conversa", "Conversation", MessageCircle],
+              ["grupo", "Group", UsersRound],
+            ] as const
+          ).map(([k, t, Icone]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setModo(k)}
+              className={cn(
+                "inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-[12.5px] font-medium transition-colors",
+                modo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              <Icone className="h-3.5 w-3.5" />
+              {t}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2 text-[12.5px] text-text-secondary">
           <span className="grid h-6 w-6 place-items-center rounded-full bg-[#25D366]/15 text-[#128C7E]">
             <MessageCircle className="h-3.5 w-3.5" />
@@ -175,8 +256,40 @@ export function NovaConversa({
           Via WhatsApp, operations line
         </div>
 
+        {modo === "grupo" ? (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Group name</span>
+              <input
+                value={nomeDoGrupo}
+                onChange={(e) => setNomeDoGrupo(e.target.value)}
+                maxLength={100}
+                placeholder="e.g. JOB-9806 Kings Cross"
+                className="h-9 w-full rounded-lg border border-border-light bg-card px-2.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-primary/50"
+              />
+            </label>
+            {membros.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {membros.map((m) => (
+                  <span key={m.numero} className="inline-flex h-7 items-center gap-1 rounded-full bg-surface-secondary pl-2.5 pr-1 text-[12px] text-text-primary">
+                    {m.nome}
+                    <button
+                      type="button"
+                      onClick={() => setMembros((ms) => ms.filter((x) => x.numero !== m.numero))}
+                      className="grid h-5 w-5 place-items-center rounded-full text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary"
+                      aria-label={`Remove ${m.nome}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
         {/* Quem: escolhido da busca vira um cartão; sem escolher, a busca e os campos. */}
-        {escolhido ? (
+        {modo === "conversa" && escolhido ? (
           <div className="flex items-center gap-2.5 rounded-xl border border-border-light px-3 py-2.5">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-secondary text-text-secondary">
               {(() => {
@@ -205,7 +318,7 @@ export function NovaConversa({
           </div>
         ) : (
           <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">Contact</label>
+            <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">{modo === "grupo" ? "Add people" : "Contact"}</label>
             <div className="flex h-9 items-center gap-2 rounded-lg border border-border-light bg-card px-2.5 focus-within:border-primary/50">
               <Search className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
               <input
@@ -238,6 +351,7 @@ export function NovaConversa({
                     <button
                       type="button"
                       onClick={() => {
+                        if (modo === "grupo") return incluir(numeroDaBusca, `+${numeroDaBusca}`);
                         setNumero(`+${numeroDaBusca}`);
                         setQ("");
                       }}
@@ -247,7 +361,9 @@ export function NovaConversa({
                         <MessageCircle className="h-3.5 w-3.5" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-medium text-text-primary">Message +{numeroDaBusca}</span>
+                        <span className="block truncate text-[13px] font-medium text-text-primary">
+                          {modo === "grupo" ? "Add" : "Message"} +{numeroDaBusca}
+                        </span>
                         <span className="block truncate text-[11.5px] text-text-tertiary">Not on file</span>
                       </span>
                     </button>
@@ -274,11 +390,14 @@ export function NovaConversa({
                     );
                   })}
                   {buscando || (!lista.length && !numeroDaBusca) ? (
-                    <p className="px-2 py-2 text-[12px] text-text-tertiary">{buscando ? "Searching..." : "Nobody found. Type the name and number below."}</p>
+                    <p className="px-2 py-2 text-[12px] text-text-tertiary">
+                      {buscando ? "Searching..." : modo === "grupo" ? "Nobody found. Type their number to add them." : "Nobody found. Type the name and number below."}
+                    </p>
                   ) : null}
                 </div>
               </div>
             ) : null}
+            {modo === "conversa" ? (
             <div className="mt-3 grid grid-cols-2 gap-2">
               <label className="block">
                 <span className="mb-1.5 block text-[12px] font-medium text-text-secondary">Name</span>
@@ -300,6 +419,7 @@ export function NovaConversa({
                 />
               </label>
             </div>
+            ) : null}
           </div>
         )}
 
@@ -309,10 +429,10 @@ export function NovaConversa({
             value={texto}
             onChange={(e) => setTexto(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void enviar();
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void (modo === "grupo" ? criarGrupo() : enviar());
             }}
             rows={4}
-            placeholder={quem ? `Write to ${quem.nome}` : "Write the first message"}
+            placeholder={modo === "grupo" ? "Optional first message to the group" : quem ? `Write to ${quem.nome}` : "Write the first message"}
             className="w-full resize-none rounded-lg border border-border-light bg-card px-3 py-2 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-primary/50"
           />
         </label>

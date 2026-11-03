@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { staffDaInbox } from "@/lib/inbox/staff";
+import { ehGrupo } from "@/lib/inbox/grupo";
 import { enviarPelaOperacao, EnvioOperacaoError, OPS_PHONE_NUMBER_ID, TEMPLATES_OPERACAO, type TemplateOperacao } from "@/lib/whatsapp/operacao";
 import { enviarMidiaPelaUazapi, enviarPelaUazapi, provedorDaOperacao, type TipoDeMidia } from "@/lib/whatsapp/uazapi-operacao";
 
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
     params = (corpo.params ?? []).map((p) => String(p).trim());
   }
   if (!contato) return NextResponse.json({ error: "contato is required" }, { status: 400 });
+  if (ehGrupo(contato) && !pelaUazapi) return NextResponse.json({ error: "Groups go out only through the uazapi number" }, { status: 400 });
 
   if (nomeTemplate && pelaUazapi) return NextResponse.json({ error: "Templates are not used on this number" }, { status: 400 });
   if (nomeTemplate && !(nomeTemplate in TEMPLATES_OPERACAO)) return NextResponse.json({ error: "Unknown template" }, { status: 400 });

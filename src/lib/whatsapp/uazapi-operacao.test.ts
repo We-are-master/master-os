@@ -17,10 +17,23 @@ describe("extrairMensagemUazapi", () => {
     expect(m).toMatchObject({ direcao: "saida", contatoNome: null });
   });
 
-  it("pula o que o OS mandou, grupo e evento que não é mensagem", () => {
+  it("pula o que o OS mandou, grupo antigo, broadcast e evento que não é mensagem", () => {
     expect(extrairMensagemUazapi(evento({ messageid: "X2", chatid: "447700900123@s.whatsapp.net", fromMe: true, wasSentByApi: true, text: "hi" }))).toEqual({ pular: "enviada pelo OS" });
-    expect(extrairMensagemUazapi(evento({ messageid: "X3", chatid: "1203630@g.us", isGroup: true, text: "hi" }))).toEqual({ pular: "grupo ou broadcast" });
+    expect(extrairMensagemUazapi(evento({ messageid: "X3", chatid: "447700900123-1600000000@g.us", isGroup: true, text: "hi" }))).toEqual({ pular: "grupo antigo" });
+    expect(extrairMensagemUazapi(evento({ messageid: "X5", chatid: "status@broadcast", text: "hi" }))).toEqual({ pular: "broadcast" });
     expect(extrairMensagemUazapi({ EventType: "connection" })).toEqual({ pular: "evento connection" });
+  });
+
+  it("grupo entra pelo id do grupo, com quem mandou e o assunto", () => {
+    const m = extrairMensagemUazapi(
+      evento({ messageid: "G1", chatid: "120363401234567890@g.us", isGroup: true, sender: "123@lid", sender_pn: "447700900123@s.whatsapp.net", senderName: "Dan", groupName: "Kings Cross job", text: "Done" }),
+    );
+    expect(m).toMatchObject({ contato: "120363401234567890", contatoNome: null, direcao: "entrada", grupo: { autor: "447700900123", autorNome: "Dan", nome: "Kings Cross job" } });
+  });
+
+  it("número escondido (LID) fica sem autor, mas com o nome", () => {
+    const m = extrairMensagemUazapi(evento({ messageid: "G2", chatid: "120363401234567890@g.us", isGroup: true, sender: "123@lid", senderName: "Dan", text: "hi" }));
+    expect(m).toMatchObject({ grupo: { autor: null, autorNome: "Dan" } });
   });
 
   it("mídia sem legenda ganha rótulo", () => {

@@ -32,7 +32,7 @@ import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
-import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, chegada, horaCurta, type Tom } from "./ui";
+import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, chegada, corDoAutor, horaCurta, nomeDoAutor, type Tom } from "./ui";
 import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer, SelfBillDaCaixa } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
@@ -395,6 +395,7 @@ export function Painel({
   online,
   onCriar,
   onOferecer,
+  onAbrirContato,
 }: {
   c: ConversaDaCaixa;
   /** O relógio da caixa (anda a cada 10 s): a rota de hoje muda de estado com ele. */
@@ -402,7 +403,10 @@ export function Painel({
   online: boolean;
   onCriar: (t: TipoDoPrefill) => void;
   onOferecer: () => void;
+  /** Abre a conversa particular de alguém (do grupo) na própria caixa. */
+  onAbrirContato?: (numero: string, nome: string) => void;
 }) {
+  if (c.tipo === "grupo") return <PainelDoGrupo c={c} onAbrirContato={onAbrirContato} />;
   if (c.tipo === "parceiro" && c.parceiro) return <PainelDoParceiro c={c} agora={agora} online={online} onOferecer={onOferecer} />;
   if (c.tipo === "outro" && !c.cliente) return <NovoCliente c={c} online={online} />;
   return <PainelDoCliente c={c} online={online} onCriar={onCriar} />;
@@ -1093,6 +1097,62 @@ function SelfBillsDoParceiro({ p }: { p: ParceiroDaCaixa }) {
             <Vazio texto="No self-bill yet." />
           )}
         </div>
+      </Secao>
+    </>
+  );
+}
+
+/**
+ * Grupo: quem falou nele (o WhatsApp não manda a lista de membros com a
+ * mensagem). Cada um abre a conversa particular, como o "responder no
+ * particular" do VOS.
+ */
+function PainelDoGrupo({ c, onAbrirContato }: { c: ConversaDaCaixa; onAbrirContato?: (numero: string, nome: string) => void }) {
+  const pessoas = useMemo(() => {
+    const porChave = new Map<string, { numero: string | null; nome: string | null; n: number; ultima: string }>();
+    for (const m of c.mensagens) {
+      if (!m.autor) continue;
+      const chave = m.autor.numero ?? m.autor.nome ?? "";
+      const atual = porChave.get(chave);
+      porChave.set(chave, { numero: m.autor.numero, nome: m.autor.nome ?? atual?.nome ?? null, n: (atual?.n ?? 0) + 1, ultima: m.criadoEm });
+    }
+    return [...porChave.values()].sort((a, b) => b.ultima.localeCompare(a.ultima));
+  }, [c.mensagens]);
+
+  return (
+    <>
+      <Cabeca c={c} online={false} sub={`WhatsApp group · ${pessoas.length} ${pessoas.length === 1 ? "person" : "people"} talking`} />
+      <Secao titulo="People in this chat">
+        {pessoas.length ? (
+          <div className="space-y-1">
+            {pessoas.map((p) => (
+              <div key={p.numero ?? p.nome} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
+                <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-secondary text-[11.5px] font-semibold", corDoAutor(p.numero ?? p.nome ?? ""))}>
+                  {(p.nome ?? "#").trim().slice(0, 1).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-text-primary">{nomeDoAutor(p)}</span>
+                  <span className="block truncate text-[11.5px] text-text-tertiary">
+                    {[p.numero && p.nome ? `+${p.numero}` : null, `${p.n} message${p.n === 1 ? "" : "s"}`, `last ${dia(p.ultima.slice(0, 10))}`].filter(Boolean).join(" · ")}
+                  </span>
+                </span>
+                {p.numero && onAbrirContato ? (
+                  <button
+                    type="button"
+                    onClick={() => onAbrirContato(p.numero!, nomeDoAutor(p))}
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+                    title="Reply privately"
+                  >
+                    <Send className="h-3 w-3" />
+                    Private
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Vazio texto="Nobody has written here yet." />
+        )}
       </Secao>
     </>
   );
