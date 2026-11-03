@@ -127,7 +127,7 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
       </div>
       <div className="space-y-2">
         {lista.length ? (
-          lista.map((j) => <CartaoDeJob key={j.id} j={j} comData={periodo !== "hoje" && periodo !== "amanha"} />)
+          lista.map((j) => <CartaoDeJob key={j.id} j={j} />)
         ) : (
           <div className="rounded-lg border border-dashed border-border-light px-3 py-3 text-[12.5px] text-text-tertiary">
             {jobs.length ? `Nothing ${PERIODOS.find((x) => x[0] === periodo)![1].toLowerCase()}.` : vazio}
@@ -205,7 +205,26 @@ const diaDaSemana = (d: string) =>
   new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
 
 /** Cartão no formato da rota: ref e pílula, o que e onde, janela, origem e ticket. */
-export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaCaixa; proximo?: boolean; comData?: boolean }) {
+/**
+ * O dia do job dentro do bloco da hora, como na lista de Jobs: Today, Tomorrow e
+ * In 2 days viram chip; fora disso a data curta (13 Mar 26) para não alargar o bloco.
+ */
+function DiaDoJob({ data }: { data: string }) {
+  const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const dias = Math.round((Date.parse(`${data.slice(0, 10)}T00:00:00Z`) - Date.parse(`${hoje}T00:00:00Z`)) / 86_400_000);
+  const chip =
+    dias === 0
+      ? { texto: "Today", cls: "bg-[var(--success-light)] text-[var(--ok)]" }
+      : dias === 1 || dias === 2
+        ? { texto: dias === 1 ? "Tomorrow" : "In 2 days", cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
+        : null;
+  if (chip) return <span className={cn("mb-1 inline-flex h-[17px] items-center whitespace-nowrap rounded-md px-1.5 text-[10px] font-medium", chip.cls)}>{chip.texto}</span>;
+  const d = new Date(`${data.slice(0, 10)}T12:00:00Z`);
+  const curta = d.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short", year: "2-digit" });
+  return <span className="mb-0.5 whitespace-nowrap text-[10.5px] font-medium leading-tight">{curta}</span>;
+}
+
+export function CartaoDeJob({ j, proximo = false }: { j: JobDaCaixa; proximo?: boolean }) {
   const pilula = pilulaDoJob(j, proximo);
   // A janela vem primeiro (é o que importa na rota); a ref e o ticket descem para a linha cinza.
   const partes = (j.endereco ?? "").split(",").map((p) => p.trim()).filter(Boolean);
@@ -219,7 +238,7 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
           proximo ? "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" : "bg-surface-secondary text-text-secondary",
         )}
       >
-        {comData && j.data ? <span className="text-[10.5px] font-medium leading-tight">{dia(j.data)}</span> : null}
+        {j.data ? <DiaDoJob data={j.data} /> : null}
         <span className="text-[14px] font-semibold tabular-nums leading-tight">{j.inicio ? horaCurta(j.inicio) : "Any time"}</span>
         {j.fim ? <span className="text-[10.5px] leading-tight opacity-80">to {horaCurta(j.fim)}</span> : null}
       </span>
@@ -403,7 +422,7 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
               ) : (
                 <>
                   <Vazio texto={rota.length ? "All done today." : "No job today."} />
-                  {proximoDia ? <CartaoDeJob j={proximoDia} proximo comData /> : null}
+                  {proximoDia ? <CartaoDeJob j={proximoDia} proximo /> : null}
                 </>
               )}
             </div>
@@ -606,7 +625,7 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
           </Secao>
           <Secao titulo="Zendesk">{tickets[0] ? cartaoDeTicket(tickets[0]) : <Vazio texto="No Zendesk ticket linked yet." />}</Secao>
           <Secao titulo="Jobs" acao={c.jobs.length > 2 ? <button type="button" onClick={() => setAba("jobs")} className="text-xs font-medium text-[var(--info-ink)] hover:underline">All {c.jobs.length}</button> : null}>
-            <div className="space-y-2">{c.jobs.length ? c.jobs.slice(0, 2).map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
+            <div className="space-y-2">{c.jobs.length ? c.jobs.slice(0, 2).map((j) => <CartaoDeJob key={j.id} j={j} />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
           </Secao>
           <Secao titulo="Quotes">{listaDeQuotes(c.quotes.slice(0, 2))}</Secao>
           <Secao titulo="Invoices">{listaDeFaturas(emAberto, "Nothing to pay.")}</Secao>
