@@ -20,15 +20,10 @@ import { Midia, SO_ROTULO, Tique, comPendentes, conversaRascunho, diaDaMensagemO
 import { EVENTO_ABRIR_CONVERSA, type PedidoDeConversa } from "@/lib/inbox/abrir-conversa";
 import { tempo } from "./movimento";
 import type { ConversaDaCaixa, MensagemDaCaixa } from "./tipos";
-import { Avatar, ChipDoTipo, corDoAutor, nomeDoAutor } from "./ui";
+import { Avatar, ChipDoTipo, SeletorDeTipo, corDoAutor, nomeDoAutor, type TipoRapido } from "./ui";
 
-type Aba = "todas" | "naoLidas" | "parceiro" | "cliente";
-const ABAS: [Aba, string][] = [
-  ["todas", "All"],
-  ["naoLidas", "Unread"],
-  ["parceiro", "Partners"],
-  ["cliente", "Clients"],
-];
+/** Clients junta cliente, conta e lead, como na /inbox. */
+const DE_CLIENTE = new Set(["cliente", "conta", "outro"]);
 
 const LARGURA_PADRAO = 400;
 const LARGURA_MIN = 340;
@@ -51,7 +46,7 @@ export function AtendimentoLateral() {
     }
   });
   const [dados, setDados] = useState<Lista | null>(null);
-  const [aba, setAba] = useState<Aba>("todas");
+  const [aba, setAba] = useState<TipoRapido>("todas");
   const [busca, setBusca] = useState("");
   const [contato, setContato] = useState<string | null>(null);
   const [conversa, setConversa] = useState<ConversaDaCaixa | null>(null);
@@ -131,9 +126,8 @@ export function AtendimentoLateral() {
   const comNaoLidas = conversas.filter((c) => naoLidas(c) > 0).length;
   const q = busca.trim().toLowerCase();
   const lista = conversas.filter((c) => {
-    if (aba === "naoLidas" && naoLidas(c) === 0) return false;
     if (aba === "parceiro" && c.tipo !== "parceiro") return false;
-    if (aba === "cliente" && c.tipo !== "cliente" && c.tipo !== "conta") return false;
+    if (aba === "cliente" && !DE_CLIENTE.has(c.tipo)) return false;
     if (!q) return true;
     return [c.nome, c.contato, c.org?.nome ?? "", ...c.tags].some((v) => v.toLowerCase().includes(q));
   });
@@ -314,21 +308,12 @@ export function AtendimentoLateral() {
                       <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Search" className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary" />
                     </label>
                   </div>
-                  <div className="flex gap-1 border-b border-border-light px-3 py-2">
-                    {ABAS.map(([k, t]) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setAba(k)}
-                        className={cn("relative rounded-lg px-2.5 py-1 text-[13px] font-medium transition-colors", aba === k ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary")}
-                      >
-                        {aba === k ? <mo.span layoutId="lateral-aba" transition={tempo("lg")} className="absolute inset-0 rounded-lg bg-surface-tertiary" /> : null}
-                        <span className="relative">
-                          {t}
-                          {k === "naoLidas" && comNaoLidas ? <span className="ml-1 tabular-nums text-text-tertiary">{comNaoLidas}</span> : null}
-                        </span>
-                      </button>
-                    ))}
+                  <div className="border-b border-border-light px-4 py-2.5">
+                    <SeletorDeTipo
+                      ativo={aba}
+                      onTroca={setAba}
+                      n={{ todas: conversas.length, parceiro: conversas.filter((c) => c.tipo === "parceiro").length, cliente: conversas.filter((c) => DE_CLIENTE.has(c.tipo)).length }}
+                    />
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
                     {!dados ? <p className="px-4 py-6 text-xs text-text-tertiary">{erro ? "Could not load the inbox. Try again in a moment." : "Loading..."}</p> : lista.length === 0 ? <p className="px-4 py-6 text-xs text-text-tertiary">No conversations here.</p> : null}
