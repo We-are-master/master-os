@@ -106,6 +106,8 @@ function NavLink({
   const isParentOfActive = !nested && Boolean(item.children?.length) && childActive && !selfActive;
   const rowHighlight = nested ? selfActive : selfActive || isParentOfActive;
   const showStripe = selfActive;
+  // Recolhido, o nome aparece ao lado do ícone no hover. `fixed` porque o <nav> rola e cortaria um absolute.
+  const [dica, setDica] = useState<{ top: number; left: number } | null>(null);
 
   const Icon = iconMap[item.icon] || SquaresFour;
   const iconClassName = cn(
@@ -114,7 +116,26 @@ function NavLink({
   );
 
   return (
-    <Link href={item.href} onClick={onNavigate}>
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      aria-label={collapsed ? item.label : undefined}
+      onMouseEnter={(e) => {
+        if (!collapsed) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        setDica({ top: r.top + r.height / 2, left: r.right + 10 });
+      }}
+      onMouseLeave={() => setDica(null)}
+    >
+      {collapsed && dica ? (
+        <span
+          role="tooltip"
+          className="pointer-events-none fixed z-[70] -translate-y-1/2 whitespace-nowrap rounded-md bg-[#0a0a1f] px-2 py-1 text-[12px] font-medium text-white shadow-lg"
+          style={{ top: dica.top, left: dica.left }}
+        >
+          {item.label}
+        </span>
+      ) : null}
       <motion.div
         className={cn(
           // VOS UNO sidebar item: 5×8, radius 6, 14/500, gap 9; active 600 with the 3px coral rule.
