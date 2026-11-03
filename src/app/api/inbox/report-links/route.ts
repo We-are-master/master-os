@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await s.sb
     .from("jobs")
-    .select("id, reference, title, scheduled_date, partner_id")
+    .select("id, reference, title, status, scheduled_date, partner_id")
     .in("id", ids)
     .eq("partner_id", parceiroId)
     .eq("report_submitted", false)
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
       ref: (j.reference as string | null) ?? "Job",
       titulo: (j.title as string | null) ?? null,
       data: (j.scheduled_date as string | null) ?? null,
+      status: (j.status as string | null) ?? "",
       url: await buildPartnerJobReportUrl(j.id as string, parceiroId),
     })),
   );

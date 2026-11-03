@@ -12,8 +12,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { LinkDeJob } from "./link-de-job";
+import { ChipDaEtapa } from "./ui";
 
-type JobComLink = { id: string; ref: string; titulo: string | null; data: string | null; url: string };
+type JobComLink = { id: string; ref: string; titulo: string | null; data: string | null; status: string; url: string };
 
 /** O Composer ouve este evento e põe o texto na caixa da conversa aberta. */
 export const EVENTO_RASCUNHO = "inbox:rascunho";
@@ -86,9 +87,12 @@ export function ReportsPendentes({
               {lista.map((j) => (
                 <li key={j.id} className="flex items-center gap-3 px-3.5 py-2.5">
                   <div className="min-w-0 flex-1">
-                    <LinkDeJob id={j.id} className="text-[13.5px] font-semibold text-text-primary hover:underline">
-                      {j.ref}
-                    </LinkDeJob>
+                    <p className="flex items-center gap-2">
+                      <LinkDeJob id={j.id} className="text-[13.5px] font-semibold text-text-primary hover:underline">
+                        {j.ref}
+                      </LinkDeJob>
+                      {j.status ? <ChipDaEtapa e={{ grupo: "job", status: j.status }} /> : null}
+                    </p>
                     <p className="truncate text-[12px] text-text-tertiary">{[diaCurto(j.data), j.titulo].filter(Boolean).join(" · ")}</p>
                   </div>
                   <button
