@@ -231,13 +231,13 @@ export function Avatar({
           c.tipo === "cliente" && "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200",
           c.tipo === "outro" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
           c.tipo === "grupo" && "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200",
-          c.org?.logo && "overflow-hidden bg-white ring-1 ring-border-light dark:bg-white",
+          c.org?.logo && "overflow-hidden ring-1 ring-border-light",
         )}
         title={c.org?.nome}
       >
         {c.org?.logo ? (
-          // eslint-disable-next-line @next/next/no-img-element -- logo de bucket/URL externa, tamanho fixo
-          <img src={c.org.logo} alt={c.org.nome} className="h-full w-full object-contain p-0.5" />
+          // eslint-disable-next-line @next/next/no-img-element -- logo de bucket/URL externa, tamanho fixo; cobre o círculo todo
+          <img src={c.org.logo} alt={c.org.nome} className="h-full w-full object-cover" />
         ) : c.tipo === "grupo" ? (
           <UsersRound className={t === "lg" ? "h-6 w-6" : "h-[45%] w-[45%]"} aria-label="Group" />
         ) : (
