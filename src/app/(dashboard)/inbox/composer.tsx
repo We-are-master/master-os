@@ -27,6 +27,12 @@ const LIMITE_BYTES = 4 * 1024 * 1024;
 type Salva = { titulo: string; texto: string };
 
 const SALVAS: Record<TipoDeContato, Salva[]> = {
+  conta: [
+    { titulo: "Checking", texto: "Hi {nome}, thanks for your message. Let me check and come back to you shortly." },
+    { titulo: "Booked", texto: "All booked in. You will get the confirmation by email." },
+    { titulo: "Partner on the way", texto: "Our partner is on the way to the property. We will keep you posted." },
+    { titulo: "Report sent", texto: "The job is done and the report is in your inbox. Anything else we can help with?" },
+  ],
   parceiro: [
     { titulo: "On track", texto: "Hi {nome}, are you still on track for today?" },
     { titulo: "ETA", texto: "Can you share your ETA, please?" },

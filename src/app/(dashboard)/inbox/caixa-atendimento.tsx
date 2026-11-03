@@ -50,6 +50,7 @@ import {
   Users,
   Wrench,
   X,
+  Building2,
   MapPin,
   TriangleAlert,
   type LucideIcon,
@@ -75,7 +76,7 @@ type Visao =
   | { k: "hoje" }
   | { k: "tag"; nome: string }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
-type Tipo = "todas" | "parceiro" | "cliente" | "outro";
+type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro";
 type Periodo = "hoje" | "semana" | "mes" | "60d";
 const PERIODOS: [Periodo, string, number][] = [
   ["hoje", "Today", 0],
@@ -336,6 +337,7 @@ export function CaixaAtendimento({
       excluidas: n(excluida),
       todas: n((c) => !fora(c)),
       hoje: n((c) => passa(c, { k: "hoje" })),
+      conta: n((c) => !fora(c) && c.tipo === "conta"),
       parceiro: n((c) => !fora(c) && c.tipo === "parceiro"),
       cliente: n((c) => !fora(c) && c.tipo === "cliente"),
       outro: n((c) => !fora(c) && c.tipo === "outro"),
@@ -595,6 +597,16 @@ export function CaixaAtendimento({
 
         <Titulo>Contacts</Titulo>
         <ItemDaLateral
+          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "conta"}
+          onClick={() => {
+            setVisao({ k: "todas" });
+            setTipo("conta");
+          }}
+          icone={Building2}
+          rotulo="Accounts"
+          n={contagem.conta}
+        />
+        <ItemDaLateral
           ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "parceiro"}
           onClick={() => {
             setVisao({ k: "todas" });
@@ -720,6 +732,7 @@ export function CaixaAtendimento({
           {(
             [
               ["todas", "All"],
+              ["conta", "Accounts"],
               ["parceiro", "Partners"],
               ["cliente", "Clients"],
             ] as const

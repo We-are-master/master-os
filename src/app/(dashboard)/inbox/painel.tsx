@@ -488,7 +488,7 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
   const emAberto = c.faturas.filter((f) => f.valor - f.pago > 0.01);
   const tickets = [...new Map(c.jobs.filter((j) => j.ticket && /^\d+$/.test(j.ticket)).map((j) => [j.ticket!, j])).values()];
   const origem = cl?.origem ? rotulo(cl.origem) : null;
-  const sub = [c.tipo === "cliente" ? "Client" : "New client", cl?.conta ?? origem].filter(Boolean).join(" · ");
+  const sub = [c.tipo === "conta" ? (cl ? "Client" : "Account contact") : c.tipo === "cliente" ? "Client" : "New client", c.org?.nome ?? cl?.conta ?? origem].filter(Boolean).join(" · ");
 
   const listaDeQuotes = (qs: typeof c.quotes) =>
     qs.length ? (

@@ -123,7 +123,7 @@ export default async function InboxPage() {
   // Parceiro cadastrado depois da primeira mensagem não tem partner_id na linha: acha pelo telefone.
   const semParceiro = contatos.filter((c) => !parceiroDoContato.has(c) && finalDoNumero(c).length >= 10);
   const filtroTelefone = (campos: string[]) => semParceiro.flatMap((c) => campos.map((f) => `${f}.ilike.%${finalDoNumero(c).slice(-9)}%`)).join(",");
-  const [{ data: parceirosPorTelefone }, { data: clientes }, { data: estados, error: semEstado }, { data: tags }] = await Promise.all([
+  const [{ data: parceirosPorTelefone }, { data: clientes }, { data: estados, error: semEstado }, { data: tags }, { data: contasPorTelefone }] = await Promise.all([
     semParceiro.length
       ? sb.from("partners").select("id, whatsapp, phone").or(filtroTelefone(["whatsapp", "phone"])).limit(200)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -134,6 +134,10 @@ export default async function InboxPage() {
       ? sb.from("inbox_conversas").select("contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em").in("contato", contatos)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     sb.from("inbox_tags").select("nome, cor").order("nome"),
+    // O número da conta (accounts.contact_number): quem escreve dele é a conta, mesmo sem cliente.
+    semParceiro.length
+      ? sb.from("accounts").select("id, contact_number").or(filtroTelefone(["contact_number"])).limit(100)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
   if (semEstado) console.error("[inbox] inbox_conversas", semEstado.message);
 
@@ -147,13 +151,24 @@ export default async function InboxPage() {
     const achado = porTelefone((clientes ?? []) as Record<string, unknown>[], c, ["phone"]);
     if (achado) clienteDoContato.set(c, achado);
   }
+  /** A conta de cada contato: a do cliente (source_account_id), senão a do número da conta. */
+  const contaDoContato = new Map<string, string>();
+  for (const c of semParceiro) {
+    if (parceiroDoContato.has(c)) continue;
+    const doCliente = clienteDoContato.get(c)?.source_account_id as string | null | undefined;
+    const pelaConta = porTelefone((contasPorTelefone ?? []) as Record<string, unknown>[], c, ["contact_number"])?.id as string | undefined;
+    const id = doCliente ?? pelaConta;
+    if (id) contaDoContato.set(c, id);
+  }
+  // Contas que escreveram sem um cliente por trás: os jobs vêm da conta (jobs.account_id).
+  const idsContasDiretas = [...new Set([...contaDoContato.entries()].filter(([c]) => !clienteDoContato.has(c)).map(([, id]) => id))];
   const estadoDoContato = new Map(((estados ?? []) as Record<string, unknown>[]).map((e) => [e.contato as string, e]));
 
   const idsParceiros = [...new Set(parceiroDoContato.values())];
   const idsClientes = [...new Set([...clienteDoContato.values()].map((c) => c.id as string))];
-  const idsContas = [...new Set([...clienteDoContato.values()].map((c) => c.source_account_id as string | null).filter((x): x is string => Boolean(x)))];
+  const idsContas = [...new Set(contaDoContato.values())];
 
-  const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }] = await Promise.all([
+  const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }, { data: jobsContas }] = await Promise.all([
     idsParceiros.length
       ? sb.from("partners").select("id, contact_name, company_name, avatar_url, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes").in("id", idsParceiros)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -174,7 +189,7 @@ export default async function InboxPage() {
     idsClientes.length
       ? sb.from("quotes").select("id, reference, title, client_id, status, total_value, created_at").in("client_id", idsClientes).order("created_at", { ascending: false }).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    idsContas.length ? sb.from("accounts").select("id, company_name, logo_url").in("id", idsContas) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    idsContas.length ? sb.from("accounts").select("id, company_name, contact_name, logo_url").in("id", idsContas) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     // Jobs sem parceiro, para o "Offer job" de uma conversa de parceiro.
     idsParceiros.length
       ? sb
@@ -186,9 +201,12 @@ export default async function InboxPage() {
           .order("scheduled_date", { ascending: true, nullsFirst: false })
           .limit(80)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    idsContasDiretas.length
+      ? sb.from("jobs").select(`${COLUNAS_JOB}, account_id`).in("account_id", idsContasDiretas).is("deleted_at", null).order("created_at", { ascending: false }).limit(400)
+      : Promise.resolve({ data: [] as (LinhaJob & { account_id: string })[] }),
   ]);
 
-  const refsDosClientes = [...new Set(((jobsClientes ?? []) as LinhaJob[]).map((j) => j.reference).filter((r): r is string => Boolean(r)))];
+  const refsDosClientes = [...new Set([...((jobsClientes ?? []) as LinhaJob[]), ...((jobsContas ?? []) as LinhaJob[])].map((j) => j.reference).filter((r): r is string => Boolean(r)))];
   const { data: faturas } = refsDosClientes.length
     ? await sb
         .from("invoices")
@@ -228,6 +246,7 @@ export default async function InboxPage() {
   const parceiroPorId = new Map((parceiros ?? []).map((p) => [p.id as string, p]));
   const nomeDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.company_name as string | null) ?? "Account"]));
   const logoDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.logo_url as string | null) ?? null]));
+  const pessoaDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.contact_name as string | null) ?? null]));
 
   const conversas: ConversaDaCaixa[] = [...porContato.entries()]
     .map(([contato, mensagens]): ConversaDaCaixa => {
@@ -301,7 +320,12 @@ export default async function InboxPage() {
       }
 
       const c = clienteDoContato.get(contato);
-      const jobsDoCliente = c ? ((jobsClientes ?? []) as LinhaJob[]).filter((j) => j.client_id === c.id).map(paraJob) : [];
+      const contaId = contaDoContato.get(contato) ?? null;
+      const jobsDoCliente = c
+        ? ((jobsClientes ?? []) as LinhaJob[]).filter((j) => j.client_id === c.id).map(paraJob)
+        : contaId
+          ? ((jobsContas ?? []) as (LinhaJob & { account_id: string })[]).filter((j) => j.account_id === contaId).map(paraJob)
+          : [];
       const quotesDoCliente = c
         ? (quotes ?? [])
             .filter((q) => q.client_id === c.id)
@@ -320,11 +344,9 @@ export default async function InboxPage() {
       const refs = new Set(jobsDoCliente.map((j) => j.ref));
       return {
         ...base,
-        tipo: jobsDoCliente.length ? "cliente" : "outro",
-        org: c?.source_account_id
-          ? { nome: nomeDaConta.get(c.source_account_id as string) ?? "Account", logo: logoDaConta.get(c.source_account_id as string) ?? null }
-          : null,
-        nome: (c?.full_name as string | null) || base.perfil || `+${contato}`,
+        tipo: contaId ? "conta" : jobsDoCliente.length ? "cliente" : "outro",
+        org: contaId ? { nome: nomeDaConta.get(contaId) ?? "Account", logo: logoDaConta.get(contaId) ?? null } : null,
+        nome: (c?.full_name as string | null) || (contaId && !c ? pessoaDaConta.get(contaId) : null) || base.perfil || `+${contato}`,
         parceiro: null,
         cliente: c
           ? {

@@ -58,7 +58,7 @@ export type JobParaOferecer = {
  * cliente:  está em `clients` e já teve job. Só esses entram em Clients.
  * outro:    o resto (lead, cadastro sem job, número novo). Fica em All.
  */
-export type TipoDeContato = "parceiro" | "cliente" | "outro";
+export type TipoDeContato = "conta" | "parceiro" | "cliente" | "outro";
 
 export type EtapaDaConversa = { grupo: "quote" | "job"; status: string; ref: string; id: string };
 

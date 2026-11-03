@@ -29,6 +29,7 @@ import {
   Wrench,
   XCircle,
   type LucideIcon,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { rotuloDaEtapa, type ConversaDaCaixa, type EtapaDaConversa } from "./tipos";
@@ -153,6 +154,7 @@ export function ChipDaEtapa({ e }: { e: Pick<EtapaDaConversa, "grupo" | "status"
 }
 
 export function ChipDoTipo({ c }: { c: ConversaDaCaixa }) {
+  if (c.tipo === "conta") return <Chip icone={Building2} tom="blue">Account</Chip>;
   if (c.tipo === "parceiro") return <Chip icone={Wrench} tom="teal">Partner</Chip>;
   if (c.tipo === "cliente") return <Chip icone={Home} tom="violet">Client</Chip>;
   return <Chip icone={UserRound}>{c.cliente ? "No jobs yet" : "Unknown"}</Chip>;
@@ -216,6 +218,7 @@ export function Avatar({
         className={cn(
           "flex items-center justify-center rounded-full font-semibold",
           t === "lg" ? "h-14 w-14 text-base" : t === "md" ? "h-10 w-10 text-[13px]" : "h-9 w-9 text-xs",
+          c.tipo === "conta" && "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200",
           c.tipo === "parceiro" && "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200",
           c.tipo === "cliente" && "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200",
           c.tipo === "outro" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
