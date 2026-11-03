@@ -227,7 +227,6 @@ export function CaixaAtendimento({
   const [endereco, setEndereco] = useState("");
   const [verEtapas, setVerEtapas] = useState(true);
   const [agora, setAgora] = useState(() => Date.now());
-  const [canal, setCanal] = useState<{ conectado: boolean; estado: string } | null>(null);
   /** O que a equipe acabou de mudar, até o servidor confirmar no próximo refresh. */
   const [local, setLocal] = useState<
     Record<string, { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[] }>
@@ -268,22 +267,6 @@ export function CaixaAtendimento({
     return () => clearInterval(t);
   }, [router]);
 
-  useEffect(() => {
-    let vivo = true;
-    const ler = () =>
-      fetch("/api/inbox/canal")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => {
-          if (vivo && j) setCanal(j);
-        })
-        .catch(() => undefined);
-    void ler();
-    const t = setInterval(ler, 60_000);
-    return () => {
-      vivo = false;
-      clearInterval(t);
-    };
-  }, []);
 
   useEffect(() => {
     if (!menu) return;
@@ -676,15 +659,6 @@ export function CaixaAtendimento({
           <ItemDaLateral ativo={mesmaVisao(visao, { k: "resolvidas" })} onClick={() => irPara({ k: "resolvidas" })} icone={CheckCheck} rotulo="Resolved" n={contagem.resolvidas} />
           <ItemDaLateral ativo={mesmaVisao(visao, { k: "arquivadas" })} onClick={() => irPara({ k: "arquivadas" })} icone={Archive} rotulo="Archived" n={contagem.arquivadas} />
           <ItemDaLateral ativo={mesmaVisao(visao, { k: "excluidas" })} onClick={() => irPara({ k: "excluidas" })} icone={Trash2} rotulo="Deleted" n={contagem.excluidas} />
-          <div className="mt-3 rounded-lg border border-border-light bg-card p-2.5 text-xs">
-            <p className="flex items-center gap-1.5 font-medium text-text-primary">
-              <span className={cn("h-2 w-2 rounded-full", canal == null ? "bg-slate-300" : canal.conectado ? "bg-emerald-500" : "bg-red-500")} />
-              {canal == null ? "Checking channel" : canal.conectado ? "Connected" : "Disconnected"}
-            </p>
-            <p className="mt-0.5 text-text-secondary">+44 7983 182332</p>
-            <p className="text-[11px] text-text-tertiary">{semJanela ? "via uazapi · phone app stays on" : "via WhatsApp Cloud API"}</p>
-          </div>
-          {estadoPronto ? null : <p className="mt-2 px-1 text-[11px] text-[var(--bad-ink)]">Resolve, archive, delete and views need migration 354.</p>}
         </div>
       </aside>
 
