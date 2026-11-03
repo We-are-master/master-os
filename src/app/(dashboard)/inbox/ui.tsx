@@ -191,7 +191,7 @@ const iniciais = (nome: string) =>
         .join("");
 
 /** O glifo do WhatsApp (o mesmo do VOS, icones-de-canal.tsx), em currentColor. */
-function IconeWhatsApp({ className }: { className?: string }) {
+export function IconeWhatsApp({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 256 256" className={className} aria-hidden>
       <path

@@ -13,9 +13,9 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, MessageSquare, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
+import { FileText, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
 import { toast } from "sonner";
-import { Acao } from "./ui";
+import { Acao, IconeWhatsApp } from "./ui";
 import type { MensagemDaCaixa, TipoDeContato } from "./tipos";
 import { useGravadorDeAudio } from "./gravador";
 import { BotaoDoMicrofone, FaixaDeGravacao } from "./gravacao";
@@ -308,7 +308,7 @@ export function Composer({
     <div ref={caixa} className="wa-composer relative">
       <div className="top">
         <span className="ch">
-          <MessageSquare size={13} aria-hidden />
+          <IconeWhatsApp className="h-[13px] w-[13px] text-[#25D366]" />
           {canal}
           <span className="font-normal text-text-tertiary">to {nome}</span>
         </span>

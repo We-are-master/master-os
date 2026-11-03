@@ -9,17 +9,17 @@
  * "Add as client".
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { AnimatePresence, motion as mo } from "framer-motion";
+import { motion as mo } from "framer-motion";
 import {
   Briefcase,
-  Check,
   ExternalLink,
   FileText,
   MapPin,
   Receipt,
+  Link2,
   Search,
   Send,
   UserPlus,
@@ -30,10 +30,11 @@ import { LinkDeJob } from "./link-de-job";
 import { Select } from "@/components/ui/select";
 import { ReportsPendentes } from "./reports-pendentes";
 import { createClient } from "@/services/clients";
+import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
-import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, chegada, corDoAutor, horaCurta, nomeDoAutor, type Tom } from "./ui";
+import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, corDoAutor, horaCurta, nomeDoAutor, type Tom } from "./ui";
 import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer, SelfBillDaCaixa } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
@@ -184,6 +185,17 @@ function pilulaDoJob(j: JobDaCaixa, proximo: boolean): { texto: string; tom: Tom
   return null;
 }
 
+/** Hourly, Fixed ou os dois, pelo tipo dos jobs dele. */
+function tipoDeTaxa(jobs: JobDaCaixa[]): string {
+  if (!jobs.length) return "-";
+  const h = jobs.filter((j) => j.porHora).length;
+  return h === jobs.length ? "Hourly" : h === 0 ? "Fixed" : "Hourly and fixed";
+}
+
+/** "Fri 7 Nov". */
+const diaDaSemana = (d: string) =>
+  new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
+
 /** Cartão no formato da rota: ref e pílula, o que e onde, janela, origem e ticket. */
 export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaCaixa; proximo?: boolean; comData?: boolean }) {
   const pilula = pilulaDoJob(j, proximo);
@@ -209,89 +221,6 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
         {j.ticket && /^\d+$/.test(j.ticket) ? <span>Ticket #{j.ticket}</span> : null}
       </span>
     </LinkDeJob>
-  );
-}
-
-/**
- * A rota de hoje como linha do tempo: uma parada por job, na ordem da janela.
- * O ponto diz o estado (feito, no local, próximo, depois) e a etiqueta à direita
- * é a mesma chegada da lista (At risk, Late), que anda com o relógio.
- */
-function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId: string | undefined; agora: number }) {
-  // Só o que falta: o feito sai da rota (animando), e cabem 3 paradas antes de rolar.
-  const ordem = [...rota].filter((j) => !JOB_FEITO.has(j.status)).sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""));
-  if (!ordem.length) return <Vazio texto="All stops done for today." />;
-  return (
-    <ol className="relative max-h-[264px] overflow-y-auto pr-0.5">
-      <AnimatePresence initial={false}>
-      {ordem.map((j, i) => {
-        const feito = JOB_FEITO.has(j.status);
-        const noLocal = j.status === "in_progress";
-        const proximo = j.id === proximoId;
-        const ch = feito ? null : chegada(j, agora);
-        const alerta = ch && (ch.tom === "red" || ch.tom === "amber") ? ch : null;
-        const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "No time set";
-        const onde = j.endereco?.split(",").slice(-2).join(",").trim();
-        return (
-          <mo.li
-            key={j.id}
-            className="relative flex gap-3 pb-3 last:pb-0"
-            layout="position"
-            initial={{ opacity: 0, x: -6 }}
-            animate={{ opacity: 1, x: 0, transition: { ...tempo("md"), delay: i * 0.04 } }}
-            exit={{ opacity: 0, x: 16, height: 0, paddingBottom: 0, transition: tempo("lg", "saida") }}
-          >
-            {i < ordem.length - 1 ? <span className="absolute bottom-0 left-[11px] top-7 w-px bg-border-light" aria-hidden /> : null}
-            <span
-              className={cn(
-                "relative z-[1] mt-2 grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold tabular-nums",
-                feito && "bg-emerald-50 text-emerald-600 dark:bg-emerald-950",
-                noLocal && "bg-emerald-500 text-white",
-                !feito && !noLocal && proximo && (alerta?.tom === "red" ? "bg-red-600 text-white" : alerta ? "bg-amber-500 text-white" : "bg-primary text-[var(--on-brand)]"),
-                !feito && !noLocal && !proximo && "bg-card text-text-tertiary ring-1 ring-border-light",
-              )}
-              aria-hidden
-            >
-              {feito ? <Check className="h-3.5 w-3.5" /> : noLocal ? <MapPin className="h-3.5 w-3.5" /> : i + 1}
-            </span>
-            <LinkDeJob
-              id={j.id}
-              className={cn(
-                "min-w-0 flex-1 rounded-xl border px-3 py-2 transition-colors hover:bg-surface-secondary/60",
-                proximo || noLocal ? "border-border bg-card shadow-sm" : "border-border-light",
-                feito && "opacity-60",
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <span className={cn("text-[13.5px] font-semibold tabular-nums", feito ? "text-text-tertiary line-through" : "text-text-primary")}>{janela}</span>
-                <span className="ml-auto shrink-0">
-                  {feito ? (
-                    <Chip tom="slate">Done</Chip>
-                  ) : noLocal ? (
-                    <Chip icone={MapPin} tom="green">On site</Chip>
-                  ) : alerta ? (
-                    <Chip icone={alerta.icone} tom={alerta.tom} title={alerta.title}>
-                      {alerta.tom === "red" ? alerta.texto : "At risk"}
-                    </Chip>
-                  ) : proximo ? (
-                    <Chip tom="blue">Next stop</Chip>
-                  ) : null}
-                </span>
-              </span>
-              <span className="block truncate text-[12.5px] text-text-secondary">
-                <span className="font-medium text-text-primary">{j.ref}</span>
-                {j.titulo ? ` · ${j.titulo}` : ""}
-              </span>
-              <span className="flex gap-x-3 text-[12px] text-text-tertiary">
-                {onde ? <span className="truncate">{onde}</span> : null}
-                <span className="shrink-0">{j.origem ?? "Direct"}</span>
-              </span>
-            </LinkDeJob>
-          </mo.li>
-        );
-      })}
-      </AnimatePresence>
-    </ol>
   );
 }
 
@@ -450,7 +379,13 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
             }
           >
             {rota.length ? (
-              <RotaDeHoje rota={rota} proximoId={proximoId} agora={agora} />
+              <div className="space-y-2">
+                {[...rota]
+                  .sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""))
+                  .map((j) => (
+                    <CartaoDeJob key={j.id} j={j} proximo={j.id === proximoId} />
+                  ))}
+              </div>
             ) : (
               <div className="space-y-2">
                 <Vazio texto="No job today." />
@@ -473,7 +408,7 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
                   </span>
                 }
               />
-              <Campo k="Status" v={p.status ? rotulo(p.status) : "-"} />
+              <Campo k="Rate" v={tipoDeTaxa(c.jobs)} />
               <Campo
                 k="Reports"
                 v={
@@ -486,8 +421,13 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
                   )
                 }
               />
-              <Campo k="Email" v={p.email ?? "-"} />
-              {c.perfil ? <Campo k="WhatsApp" v={c.perfil} /> : null}
+            </Campos>
+          </Secao>
+          <Secao titulo="Self-bill this week" acao={<LinkDaSecao href="/finance/selfbill">Open</LinkDaSecao>}>
+            <Campos>
+              <Campo k="Planned" v={libra.format(p.estaSemana.planejado)} />
+              <Campo k="Confirmed" v={libra.format(p.estaSemana.confirmado)} />
+              <Campo k="Payday" v={p.estaSemana.pagamento ? diaDaSemana(p.estaSemana.pagamento) : "Not set yet"} />
             </Campos>
           </Secao>
           <Secao titulo="Trades & coverage" acao={<LinkDaSecao href={`/partners/${p.id}`} />}>
@@ -673,6 +613,108 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
   );
 }
 
+const ROTULO_DO_ACHADO: Record<ContatoAchado["tipo"], { texto: string; tom: Tom }> = {
+  parceiro: { texto: "Partner", tom: "green" },
+  cliente: { texto: "Client", tom: "blue" },
+  conta: { texto: "Account", tom: "violet" },
+  lead: { texto: "Lead", tom: "amber" },
+};
+
+/**
+ * Número que o cadastro não reconhece: acha quem é (parceiro, cliente, conta ou
+ * lead) e liga. A conversa passa a ser desse cadastro na hora; o telefone dele
+ * não muda.
+ */
+function VincularContato({ c }: { c: ConversaDaCaixa }) {
+  const [q, setQ] = useState(c.perfil ?? "");
+  const [achados, setAchados] = useState<ContatoAchado[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [ligando, setLigando] = useState<string | null>(null);
+
+  useEffect(() => {
+    const termo = q.trim();
+    if (termo.length < 2) return;
+    let cancelado = false;
+    const t = setTimeout(async () => {
+      setBuscando(true);
+      try {
+        const r = await fetch(`/api/inbox/contatos?q=${encodeURIComponent(termo)}`);
+        const j = (await r.json().catch(() => ({}))) as { contatos?: ContatoAchado[]; error?: string };
+        if (!r.ok) throw new Error(j.error ?? "Search failed");
+        if (!cancelado) setAchados(j.contatos ?? []);
+      } catch (e) {
+        if (!cancelado) {
+          setAchados([]);
+          toast.error(e instanceof Error ? e.message : "Search failed");
+        }
+      } finally {
+        if (!cancelado) setBuscando(false);
+      }
+    }, 250);
+    return () => {
+      cancelado = true;
+      clearTimeout(t);
+    };
+  }, [q]);
+
+  async function ligar(a: ContatoAchado) {
+    if (!confirm(`Link +${c.contato} to ${a.nome} (${ROTULO_DO_ACHADO[a.tipo].texto})? Their record keeps its own phone number.`)) return;
+    setLigando(a.id);
+    try {
+      const r = await fetch("/api/inbox/vincular", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contato: c.contato, tipo: a.tipo, id: a.id }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? "Could not link");
+      toast.success(`Linked to ${a.nome}`);
+      window.location.reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not link");
+      setLigando(null);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-tertiary" />
+        <input
+          className="w-full rounded-lg border border-border-light bg-card py-2 pl-8 pr-2.5 text-xs text-text-primary placeholder:text-text-tertiary"
+          placeholder="Search partner, client, account or lead"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+      {q.trim().length >= 2 ? (
+        achados.length ? (
+          <ul className="divide-y divide-border-light rounded-lg border border-border-light">
+            {achados.map((a) => (
+              <li key={`${a.tipo}-${a.id}`} className="flex items-center gap-2 px-2.5 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1.5">
+                    <span className="truncate text-[12.5px] font-medium text-text-primary">{a.nome}</span>
+                    <Chip tom={ROTULO_DO_ACHADO[a.tipo].tom}>{ROTULO_DO_ACHADO[a.tipo].texto}</Chip>
+                  </p>
+                  {a.sub ? <p className="truncate text-[11px] text-text-tertiary">{a.sub}</p> : null}
+                </div>
+                <Acao icone={Link2} onClick={() => void ligar(a)} disabled={ligando !== null}>
+                  {ligando === a.id ? "Linking..." : "Link"}
+                </Acao>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[11.5px] text-text-tertiary">{buscando ? "Searching..." : "Nobody found. Add them as a new client below."}</p>
+        )
+      ) : (
+        <p className="text-[11.5px] text-text-tertiary">Type a name, company, postcode or phone.</p>
+      )}
+    </div>
+  );
+}
+
 /** Número sem cadastro: vira cliente aqui, com o telefone da conversa. */
 function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
   const [nome, setNome] = useState(c.perfil ?? "");
@@ -711,7 +753,10 @@ function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
   return (
     <div>
       <Cabeca c={c} online={online} />
-      <Secao titulo="Not a client yet">
+      <Secao titulo="Who is this?">
+        <VincularContato c={c} />
+      </Secao>
+      <Secao titulo="Or add as a new client">
         <p className="mb-3 text-xs text-text-secondary">
           This inbox is for clients and partners. Sales and B2B stay in Zendesk. If this person already booked with us, add them here.
         </p>

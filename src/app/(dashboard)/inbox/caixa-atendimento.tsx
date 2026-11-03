@@ -1568,7 +1568,7 @@ export function CaixaAtendimento({
             contato={aberta.contato}
             nome={aberta.nome}
             tipo={aberta.tipo}
-            canal="Operations · +44 7983 182332"
+            canal="Operations"
             janelaAberta={janelaAberta(aberta)}
             semJanela={semJanela}
             onEnviado={() => router.refresh()}

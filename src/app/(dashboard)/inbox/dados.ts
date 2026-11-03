@@ -41,10 +41,11 @@ type LinhaJob = {
   partner_name: string | null;
   scheduled_end_at: string | null;
   external_source: string | null;
+  job_type: string | null;
 };
 
 const COLUNAS_JOB =
-  "id, reference, title, partner_id, client_id, client_name, scheduled_date, scheduled_start_at, scheduled_end_at, property_address, status, external_ref, external_source, partner_name";
+  "id, reference, title, partner_id, client_id, client_name, scheduled_date, scheduled_start_at, scheduled_end_at, property_address, status, external_ref, external_source, partner_name, job_type";
 
 const ORIGEM: Record<string, string> = { housekeep: "Housekeep", checkatrade: "Checkatrade", fantastic: "Fantastic", website: "Website" };
 
@@ -62,12 +63,19 @@ const paraJob = (j: LinhaJob): JobDaCaixa => ({
   cliente: j.client_name,
   fim: j.scheduled_end_at,
   origem: j.external_source ? (ORIGEM[j.external_source.toLowerCase()] ?? j.external_source) : null,
+  porHora: j.job_type === "hourly",
 });
 
 const SELF_BILL_FECHADO = ["paid", "rejected", "payout_archived"];
 
 /** Hoje em Londres, AAAA-MM-DD, como `scheduled_date`. */
 const hojeEmLondres = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+/** Somar dias a um AAAA-MM-DD, ao meio-dia UTC para o fuso não mudar o dia. */
+const somarDias = (dia: string, n: number) => {
+  const d = new Date(`${dia}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
 
 /** Mesmo número pelos 10 últimos dígitos; a busca larga vai pelos 9. */
 function porTelefone<T extends Record<string, unknown>>(linhas: T[], contato: string, campos: (keyof T)[]): T | undefined {
@@ -83,7 +91,7 @@ async function estadosDasConversas(sb: ReturnType<typeof createServiceClient>, c
   if (!contatos.length) return { data: [] as Record<string, unknown>[], error: null };
   const base = "contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em";
   let ultimo: { data: Record<string, unknown>[] | null; error: { message: string } | null } = { data: null, error: null };
-  for (const colunas of [`${base}, lida_em, nao_lida, fixada_em, nome, atribuida_a`, `${base}, lida_em, nao_lida, fixada_em, nome`, `${base}, lida_em, nao_lida, fixada_em`, base]) {
+  for (const colunas of [`${base}, lida_em, nao_lida, fixada_em, nome, atribuida_a, vinculo_tipo, vinculo_id`, `${base}, lida_em, nao_lida, fixada_em, nome, atribuida_a`, `${base}, lida_em, nao_lida, fixada_em, nome`, `${base}, lida_em, nao_lida, fixada_em`, base]) {
     const r = await sb.from("inbox_conversas").select(colunas).in("contato", contatos);
     ultimo = { data: (r.data ?? null) as Record<string, unknown>[] | null, error: r.error };
     if (!r.error) return ultimo;
@@ -187,6 +195,32 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     const id = doCliente ?? pelaConta;
     if (id) contaDoContato.set(c, id);
   }
+  // Número ligado à mão (355): vale mais que o telefone do cadastro.
+  const vinculos = ((estados ?? []) as Record<string, unknown>[]).filter((e) => e.vinculo_tipo && e.vinculo_id && !ehGrupo(e.contato as string));
+  const idsClientesLigados = vinculos.filter((v) => v.vinculo_tipo === "cliente").map((v) => v.vinculo_id as string);
+  const clientesLigados = idsClientesLigados.length
+    ? (((await sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id, source").in("id", idsClientesLigados)).data ?? []) as Record<string, unknown>[])
+    : [];
+  for (const v of vinculos) {
+    const c = v.contato as string;
+    const id = v.vinculo_id as string;
+    if (v.vinculo_tipo === "parceiro") {
+      parceiroDoContato.set(c, id);
+      clienteDoContato.delete(c);
+      contaDoContato.delete(c);
+    } else if (v.vinculo_tipo === "cliente") {
+      const cl = clientesLigados.find((x) => x.id === id);
+      if (!cl) continue;
+      parceiroDoContato.delete(c);
+      clienteDoContato.set(c, cl);
+      if (cl.source_account_id) contaDoContato.set(c, cl.source_account_id as string);
+      else contaDoContato.delete(c);
+    } else if (v.vinculo_tipo === "conta") {
+      parceiroDoContato.delete(c);
+      clienteDoContato.delete(c);
+      contaDoContato.set(c, id);
+    }
+  }
   // Contas que escreveram sem um cliente por trás: os jobs vêm da conta (jobs.account_id).
   const idsContasDiretas = [...new Set([...contaDoContato.entries()].filter(([c]) => !clienteDoContato.has(c)).map(([, id]) => id))];
   const estadoDoContato = new Map(((estados ?? []) as Record<string, unknown>[]).map((e) => [e.contato as string, e]));
@@ -195,6 +229,21 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const idsClientes = [...new Set([...clienteDoContato.values()].map((c) => c.id as string))];
   const idsContas = [...new Set(contaDoContato.values())];
 
+  // A semana de cada parceiro (segunda a domingo, Londres): o planejado do self-bill sai do custo destes jobs.
+  const segunda = somarDias(hoje, -((new Date(`${hoje}T12:00:00Z`).getUTCDay() + 6) % 7));
+  const jobsDaSemana = idsParceiros.length
+    ? Promise.resolve(
+        sb
+          .from("jobs")
+          .select("partner_id, partner_cost, scheduled_date, status")
+          .in("partner_id", idsParceiros)
+          .gte("scheduled_date", somarDias(segunda, -14))
+          .lte("scheduled_date", somarDias(segunda, 13))
+          .is("deleted_at", null)
+          .neq("status", "cancelled")
+          .limit(1000),
+      )
+    : null;
   // O ticket de ligações (355). Sem a coluna ainda, vem erro e o Call cai na busca por telefone.
   const ticketsDeLigacao = idsParceiros.length
     ? Promise.resolve(sb.from("partners").select("id, zendesk_ticket_id").in("id", idsParceiros).not("zendesk_ticket_id", "is", null))
@@ -268,7 +317,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     idsParceiros.length
       ? sb
           .from("self_bills")
-          .select("id, reference, partner_id, net_payout, jobs_count, due_date, status, week_label, created_at, email_sent_at")
+          .select("id, reference, partner_id, net_payout, jobs_count, due_date, status, week_label, created_at, email_sent_at, week_start, week_end")
           .in("partner_id", idsParceiros)
           .order("created_at", { ascending: false })
           .limit(300)
@@ -276,6 +325,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   ]);
 
   const parceiroPorId = new Map((parceiros ?? []).map((p) => [p.id as string, p]));
+  const semana = ((jobsDaSemana ? (await jobsDaSemana).data : null) ?? []) as Record<string, unknown>[];
   const ticketDoParceiro = new Map<string, string>();
   const tk = ticketsDeLigacao ? await ticketsDeLigacao : null;
   if (tk && !tk.error) for (const t of (tk.data ?? []) as Record<string, unknown>[]) ticketDoParceiro.set(t.id as string, String(t.zendesk_ticket_id));
@@ -360,7 +410,25 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
                 semana: (b.week_label as string | null) ?? null,
                 enviadoEm: (b.email_sent_at as string | null) ?? null,
               }));
-              return { selfBill: meus.find((b) => !SELF_BILL_FECHADO.includes(b.status)) ?? null, selfBills: meus.slice(0, 6) };
+              // Esta semana: o self-bill que cobre hoje (ou o período segunda a domingo, se ainda não nasceu).
+              const doPeriodo = (selfBills ?? []).find(
+                (x) => x.partner_id === pid && x.week_start && x.week_end && (x.week_start as string) <= hoje && hoje <= (x.week_end as string),
+              );
+              const de = (doPeriodo?.week_start as string | undefined) ?? segunda;
+              const ate = (doPeriodo?.week_end as string | undefined) ?? somarDias(segunda, 6);
+              const planejado = semana
+                .filter((j) => j.partner_id === pid && (j.scheduled_date as string) >= de && (j.scheduled_date as string) <= ate)
+                .reduce((t, j) => t + (Number(j.partner_cost) || 0), 0);
+              return {
+                selfBill: meus.find((b) => !SELF_BILL_FECHADO.includes(b.status)) ?? null,
+                selfBills: meus.slice(0, 6),
+                estaSemana: {
+                  planejado,
+                  confirmado: doPeriodo ? Number(doPeriodo.net_payout ?? 0) : 0,
+                  pagamento: (doPeriodo?.due_date as string | null) ?? null,
+                  ref: (doPeriodo?.reference as string | null) ?? null,
+                },
+              };
             })(),
             oficios: [...new Set([p?.trade as string | null, ...((p?.trades as string[] | null) ?? [])].filter((t): t is string => !!t))],
             cobertura: {
@@ -407,9 +475,14 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       const refs = new Set(jobsDoCliente.map((j) => j.ref));
       return {
         ...base,
-        tipo: contaId ? "conta" : jobsDoCliente.length ? "cliente" : "outro",
+        tipo: contaId ? "conta" : jobsDoCliente.length || estado?.vinculo_tipo === "cliente" ? "cliente" : "outro",
         org: contaId ? { nome: nomeDaConta.get(contaId) ?? "Account", logo: logoDaConta.get(contaId) ?? null } : null,
-        nome: (c?.full_name as string | null) || (contaId && !c ? pessoaDaConta.get(contaId) : null) || base.perfil || `+${contato}`,
+        nome:
+          (c?.full_name as string | null) ||
+          (contaId && !c ? pessoaDaConta.get(contaId) : null) ||
+          (estado?.vinculo_tipo === "lead" ? (estado.nome as string | null) : null) ||
+          base.perfil ||
+          `+${contato}`,
         parceiro: null,
         cliente: c
           ? {

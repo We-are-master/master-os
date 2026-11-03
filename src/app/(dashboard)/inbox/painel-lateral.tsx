@@ -278,7 +278,7 @@ export function AtendimentoLateral() {
                     contato={conversa.contato}
                     nome={conversa.nome}
                     tipo={conversa.tipo}
-                    canal="Operations · +44 7983 182332"
+                    canal="Operations"
                     janelaAberta={Boolean(conversa.ultimaEntradaEm && agora - new Date(conversa.ultimaEntradaEm).getTime() < 24 * 3_600_000)}
                     semJanela={dados?.semJanela ?? false}
                     onEnviado={() => {

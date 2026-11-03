@@ -33,6 +33,8 @@ export type JobDaCaixa = {
   fim: string | null;
   /** De onde veio: Housekeep, Checkatrade, ou null (Fixfy direct). */
   origem: string | null;
+  /** Job por hora (job_type hourly). */
+  porHora: boolean;
 };
 
 export type DocumentoDoParceiro = { id: string; nome: string; tipo: string | null; status: string | null; expira: string | null };
@@ -112,6 +114,8 @@ export type ConversaDaCaixa = {
     selfBill: SelfBillDaCaixa | null;
     /** Os últimos self-bills (abertos e fechados), para o PDF e o envio. */
     selfBills: SelfBillDaCaixa[];
+    /** Self-bill desta semana: o custo dos jobs dela, o que já está confirmado na nota e o dia do pagamento. */
+    estaSemana: { planejado: number; confirmado: number; pagamento: string | null; ref: string | null };
     /** O ticket do Zendesk onde ficam as ligações com ele (o Call abre esse). */
     ticketDeLigacao: string | null;
   } | null;
