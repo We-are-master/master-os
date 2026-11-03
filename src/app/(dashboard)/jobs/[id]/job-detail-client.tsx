@@ -8319,7 +8319,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 {job.job_type === "hourly" ? <Clock className="h-3 w-3 shrink-0" /> : <Lock className="h-3 w-3 shrink-0" />}
                                 {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
                               </span>
-                              {job.catalog_band_label?.trim() ? (
+                              {/* "Hourly (min 1 hour)" repete o Smart Price (ou contradiz o Fixed): só faixa de verdade (EPC, FRA) vira chip. */}
+                              {job.catalog_band_label?.trim() && !/^hourly\b/i.test(job.catalog_band_label.trim()) ? (
                                 <span className={"inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
                               ) : null}
                               <span
