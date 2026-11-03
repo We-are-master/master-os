@@ -7,6 +7,7 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { OPS_PHONE_NUMBER_ID } from "@/lib/whatsapp/operacao";
+import { provedorDaOperacao } from "@/lib/whatsapp/uazapi-operacao";
 import { CaixaAtendimento, type ConversaDaCaixa, type MensagemDaCaixa } from "./caixa-atendimento";
 
 export const dynamic = "force-dynamic";
@@ -92,5 +93,6 @@ export default async function InboxPage() {
     })
     .sort((a, b) => b.mensagens[b.mensagens.length - 1].criadoEm.localeCompare(a.mensagens[a.mensagens.length - 1].criadoEm));
 
-  return <CaixaAtendimento conversas={conversas} />;
+  // Pela uazapi não há janela de 24h: a caixa sempre deixa escrever.
+  return <CaixaAtendimento conversas={conversas} semJanela={provedorDaOperacao() === "uazapi"} />;
 }

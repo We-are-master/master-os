@@ -66,7 +66,7 @@ async function postar(corpo: Record<string, unknown>) {
   if (!res.ok) throw new Error(j.error ?? `Failed (${res.status})`);
 }
 
-export function CaixaAtendimento({ conversas }: { conversas: ConversaDaCaixa[] }) {
+export function CaixaAtendimento({ conversas, semJanela = false }: { conversas: ConversaDaCaixa[]; semJanela?: boolean }) {
   const router = useRouter();
   const [abertaId, setAbertaId] = useState<string | null>(conversas[0]?.contato ?? null);
   const [filtro, setFiltro] = useState<"esperando" | "todas">("todas");
@@ -108,7 +108,7 @@ export function CaixaAtendimento({ conversas }: { conversas: ConversaDaCaixa[] }
     }
   }
 
-  const aberto = aberta ? janelaAberta(aberta) : false;
+  const aberto = semJanela || (aberta ? janelaAberta(aberta) : false);
 
   return (
     <PageTransition>
@@ -169,7 +169,7 @@ export function CaixaAtendimento({ conversas }: { conversas: ConversaDaCaixa[] }
                   <span className="text-[13px] font-semibold text-text-primary">{aberta.nome}</span>
                   <span className="ml-2 text-xs text-text-tertiary">+{aberta.contato}</span>
                 </div>
-                {aberto ? (
+                {semJanela ? null : aberto ? (
                   <Badge variant="success">
                     <Clock className="mr-1 h-3 w-3" />
                     24h window open
