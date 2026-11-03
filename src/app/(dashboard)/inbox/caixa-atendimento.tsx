@@ -1785,6 +1785,8 @@ export function CaixaAtendimento({
             nome={aberta.nome}
             tipo={aberta.tipo}
             canal="Operations"
+            parceiroId={aberta.parceiro?.id ?? null}
+            clienteId={aberta.cliente?.id ?? null}
             janelaAberta={janelaAberta(aberta)}
             semJanela={semJanela}
             onEnviado={() => router.refresh()}
