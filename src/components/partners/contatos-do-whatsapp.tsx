@@ -97,7 +97,7 @@ export function ContatosDoWhatsApp({ tipo, id, nome }: { tipo: "parceiro" | "cli
         subtitle={aDesligar ? `+${aDesligar.contato}${aDesligar.perfil ? ` · ${aDesligar.perfil}` : ""}` : undefined}
         size="sm"
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 border-t border-border-light px-4 py-3 sm:px-6">
             <Button variant="outline" type="button" onClick={() => setADesligar(null)} disabled={desligando}>
               Cancel
             </Button>

@@ -734,7 +734,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
         subtitle={`+${c.contato}${c.perfil ? ` · ${c.perfil}` : ""}`}
         size="sm"
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 border-t border-border-light px-4 py-3 sm:px-6">
             <Button variant="outline" type="button" onClick={() => setAConfirmar(null)} disabled={ligando !== null}>
               Cancel
             </Button>
