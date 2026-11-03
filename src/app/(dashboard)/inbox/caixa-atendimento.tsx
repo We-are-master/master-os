@@ -1100,8 +1100,8 @@ export function CaixaAtendimento({
                     ) : null}
                   </span>
                 </span>
-                {/* Os chips numa linha inteira, a partir da borda esquerda, para caber sem cortar. */}
-                <span className="-mt-1.5 flex w-full flex-wrap items-center gap-1">
+                {/* Os chips numa linha inteira, alinhados à direita (embaixo da hora), para caber sem cortar. */}
+                <span className="-mt-1.5 flex w-full flex-wrap items-center justify-end gap-1 empty:hidden">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
                     {(() => {
