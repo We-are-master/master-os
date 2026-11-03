@@ -2,13 +2,15 @@
  * Envio pela tela /inbox: o 7983 manda ao contato e a mensagem já entra em
  * `wa_mensagens` como `origem: os`. A entrega e a leitura chegam depois pelo
  * webhook, pelo wamid. Texto livre só dentro das 24h desde a última mensagem
- * do contato; fora disso, um dos templates de parceiro.
+ * do contato; fora disso, um dos templates de parceiro. Pela uazapi
+ * (provedorDaOperacao) não há janela nem template: só texto.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-api";
 import { createServiceClient } from "@/lib/supabase/service";
 import { enviarPelaOperacao, EnvioOperacaoError, OPS_PHONE_NUMBER_ID, TEMPLATES_OPERACAO, type TemplateOperacao } from "@/lib/whatsapp/operacao";
+import { enviarPelaUazapi, provedorDaOperacao } from "@/lib/whatsapp/uazapi-operacao";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +28,10 @@ export async function POST(req: NextRequest) {
   const contato = String(corpo.contato ?? "").replace(/\D/g, "");
   if (!contato) return NextResponse.json({ error: "contato is required" }, { status: 400 });
   const opsId = OPS_PHONE_NUMBER_ID();
+  const pelaUazapi = provedorDaOperacao() === "uazapi";
 
   const nomeTemplate = corpo.template as TemplateOperacao | undefined;
+  if (nomeTemplate && pelaUazapi) return NextResponse.json({ error: "Templates are not used on this number" }, { status: 400 });
   if (nomeTemplate && !(nomeTemplate in TEMPLATES_OPERACAO)) return NextResponse.json({ error: "Unknown template" }, { status: 400 });
   const params = (corpo.params ?? []).map((p) => String(p).trim());
   if (nomeTemplate && (params.length !== TEMPLATES_OPERACAO[nomeTemplate].vars.length || params.some((p) => !p))) {
@@ -36,7 +40,7 @@ export async function POST(req: NextRequest) {
   const texto = String(corpo.texto ?? "").trim();
   if (!nomeTemplate && !texto) return NextResponse.json({ error: "Write a message first" }, { status: 400 });
 
-  if (!nomeTemplate) {
+  if (!nomeTemplate && !pelaUazapi) {
     const { data: ultima } = await sb
       .from("wa_mensagens")
       .select("criado_em")
@@ -52,11 +56,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { wamid, corpo: enviado } = await enviarPelaOperacao({
-      para: contato,
-      texto,
-      template: nomeTemplate ? { nome: nomeTemplate, params } : undefined,
-    });
+    const { wamid, corpo: enviado } = pelaUazapi
+      ? await enviarPelaUazapi(contato, texto)
+      : await enviarPelaOperacao({
+          para: contato,
+          texto,
+          template: nomeTemplate ? { nome: nomeTemplate, params } : undefined,
+        });
     const { data: anterior } = await sb.from("wa_mensagens").select("partner_id").eq("contato", contato).not("partner_id", "is", null).limit(1).maybeSingle();
     const { data: linha, error } = await sb
       .from("wa_mensagens")
