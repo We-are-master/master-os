@@ -33,6 +33,7 @@ import {
   XCircle,
   type LucideIcon,
   Building2,
+  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { rotuloDaEtapa, type ConversaDaCaixa, type EtapaDaConversa, type JobDaCaixa } from "./tipos";
@@ -326,3 +327,47 @@ export function corDoAutor(chave: string) {
 
 /** Rótulo de quem mandou no grupo: o nome do WhatsApp, senão o número. */
 export const nomeDoAutor = (a: { numero: string | null; nome: string | null }) => a.nome || (a.numero ? `+${a.numero}` : "Member");
+
+export type TipoRapido = "todas" | "parceiro" | "cliente";
+
+/**
+ * All · Partners · Clients com a contagem, segmentado (como no VOS). A /inbox e o
+ * Atendimento lateral usam o mesmo; Clients junta cliente, conta e lead.
+ */
+export function SeletorDeTipo({
+  ativo,
+  onTroca,
+  n,
+}: {
+  ativo: TipoRapido | null;
+  onTroca: (t: TipoRapido) => void;
+  n: Record<TipoRapido, number>;
+}) {
+  const opcoes: [TipoRapido, string, LucideIcon | null][] = [
+    ["todas", "All", null],
+    ["parceiro", "Partners", Wrench],
+    ["cliente", "Clients", Home],
+  ];
+  return (
+    <div role="tablist" aria-label="Contact type" className="flex rounded-lg bg-surface-tertiary p-0.5">
+      {opcoes.map(([k, t, Icone]) => (
+        <button
+          key={k}
+          type="button"
+          role="tab"
+          aria-selected={ativo === k}
+          onClick={() => onTroca(k)}
+          className={cn(
+            // Largura do conteúdo (sem cortar "Partners"); o espaço que sobra divide igual.
+            "flex h-7 flex-auto items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 text-[12px] font-medium transition-colors",
+            ativo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+          )}
+        >
+          {Icone ? <Icone className="h-3 w-3 shrink-0" /> : null}
+          {t}
+          <span className="text-[11px] tabular-nums text-text-tertiary">{n[k]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
