@@ -131,7 +131,7 @@ export default async function InboxPage() {
       ? sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id, source").is("deleted_at", null).or(filtroTelefone(["phone"])).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     contatos.length
-      ? sb.from("inbox_conversas").select("contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em").in("contato", contatos)
+      ? sb.from("inbox_conversas").select("contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em, lida_em, nao_lida, fixada_em").in("contato", contatos)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     sb.from("inbox_tags").select("nome, cor").order("nome"),
     // O número da conta (accounts.contact_number): quem escreve dele é a conta, mesmo sem cliente.
@@ -263,6 +263,9 @@ export default async function InboxPage() {
         tags: (estado?.tags as string[] | null) ?? [],
         presenca: (estado?.presenca as string | null) ?? null,
         presencaEm: (estado?.presenca_em as string | null) ?? null,
+        lidaEm: (estado?.lida_em as string | null) ?? null,
+        naoLida: Boolean(estado?.nao_lida),
+        fixadaEm: (estado?.fixada_em as string | null) ?? null,
         org: null as ConversaDaCaixa["org"],
       };
 

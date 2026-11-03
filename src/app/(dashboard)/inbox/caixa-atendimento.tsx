@@ -53,17 +53,21 @@ import {
   Wrench,
   X,
   Building2,
+  MailOpen,
+  MessageSquarePlus,
+  Pin,
+  PinOff,
   type LucideIcon,
 } from "lucide-react";
-import { SearchInput } from "@/components/ui/input";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import "./inbox.css";
 import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
+import { NovoContato, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
-import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
@@ -135,6 +139,16 @@ const naoRespondidas = (c: ConversaDaCaixa) => {
   for (let i = c.mensagens.length - 1; i >= 0 && c.mensagens[i].direcao === "entrada"; i--) n++;
   return n;
 };
+/** O contador da lista: entradas depois da última leitura (ou da nossa última resposta). "Mark as unread" vale 1. */
+const naoLidas = (c: ConversaDaCaixa) => {
+  let n = 0;
+  for (let i = c.mensagens.length - 1; i >= 0; i--) {
+    const m = c.mensagens[i];
+    if (m.direcao !== "entrada" || (c.lidaEm && m.criadoEm <= c.lidaEm)) break;
+    n++;
+  }
+  return n || (c.naoLida ? 1 : 0);
+};
 /** Resolvida até o contato escrever depois do "resolver". */
 const resolvida = (c: ConversaDaCaixa) => Boolean(c.resolvidaEm && (!c.ultimaEntradaEm || c.ultimaEntradaEm <= c.resolvidaEm));
 /** Arquivada fica fora da caixa até desarquivar. */
@@ -171,6 +185,34 @@ function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
   if (c.etapa?.grupo === "job") return c.etapa;
   return c.tipo === "parceiro" ? (c.jobs[0] ?? null) : null;
 }
+/** A conversa vazia de quem ainda não recebeu nada: o composer manda, o refresh traz o resto. */
+function conversaRascunho(e: Escolhido): ConversaDaCaixa {
+  return {
+    contato: e.numero,
+    nome: e.nome,
+    perfil: null,
+    tipo: e.tipo === "conta" || e.tipo === "parceiro" || e.tipo === "cliente" ? e.tipo : "outro",
+    ultimaEntradaEm: null,
+    mensagens: [],
+    resolvidaEm: null,
+    arquivadaEm: null,
+    excluidaEm: null,
+    tags: [],
+    presenca: null,
+    presencaEm: null,
+    lidaEm: null,
+    naoLida: false,
+    fixadaEm: null,
+    org: null,
+    parceiro: null,
+    cliente: null,
+    jobs: [],
+    jobHoje: null,
+    etapa: null,
+    quotes: [],
+    faturas: [],
+  };
+}
 const mesmaVisao = (a: Visao, b: Visao) => JSON.stringify(a) === JSON.stringify(b);
 
 
@@ -178,6 +220,20 @@ async function postarConversa(corpo: Record<string, unknown>) {
   const res = await fetch("/api/inbox/conversa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
   const j = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new Error(j.error ?? `Failed (${res.status})`);
+}
+
+function ItemCurto({ icone: Icone, rotulo, onClick, disabled }: { icone: LucideIcon; rotulo: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-text-primary hover:bg-surface-secondary disabled:opacity-40"
+    >
+      <Icone className="h-4 w-4 shrink-0 text-text-tertiary" />
+      {rotulo}
+    </button>
+  );
 }
 
 function ItemDaLateral({
@@ -242,6 +298,12 @@ export function CaixaAtendimento({
   const [tipo, setTipo] = useState<Tipo>("todas");
   const [periodo, setPeriodo] = useState<Periodo>("60d");
   const [abertaId, setAbertaId] = useState<string | null>(null);
+  const [buscaAberta, setBuscaAberta] = useState(false);
+  /** O menu do botão direito numa linha da lista. */
+  const [menuDaLinha, setMenuDaLinha] = useState<{ contato: string; x: number; y: number } | null>(null);
+  const [novoAberto, setNovoAberto] = useState(false);
+  /** Conversa nova, ainda sem mensagem: some quando o primeiro envio chega do servidor. */
+  const [rascunho, setRascunho] = useState<Escolhido | null>(null);
   const [busca, setBusca] = useState("");
   const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | null>(null);
   const [gaveta, setGaveta] = useState<Gaveta>(null);
@@ -252,7 +314,10 @@ export function CaixaAtendimento({
   const [agora, setAgora] = useState(() => Date.now());
   /** O que a equipe acabou de mudar, até o servidor confirmar no próximo refresh. */
   const [local, setLocal] = useState<
-    Record<string, { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[] }>
+    Record<
+      string,
+      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null }
+    >
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
@@ -296,6 +361,20 @@ export function CaixaAtendimento({
     return () => document.removeEventListener("click", fechar);
   }, [menu]);
 
+  useEffect(() => {
+    if (!menuDaLinha) return;
+    const fechar = () => setMenuDaLinha(null);
+    const tecla = (e: KeyboardEvent) => e.key === "Escape" && fechar();
+    document.addEventListener("click", fechar);
+    document.addEventListener("scroll", fechar, true);
+    document.addEventListener("keydown", tecla);
+    return () => {
+      document.removeEventListener("click", fechar);
+      document.removeEventListener("scroll", fechar, true);
+      document.removeEventListener("keydown", tecla);
+    };
+  }, [menuDaLinha]);
+
   const contagem = useMemo(() => {
     const n = (f: (c: ConversaDaCaixa) => boolean) => conversas.filter(f).length;
     return {
@@ -326,13 +405,28 @@ export function CaixaAtendimento({
         (v) => v.toLowerCase().includes(q),
       );
     });
+    // Fixadas sempre no topo, na ordem em que foram fixadas.
+    const fixadas = base.filter((c) => c.fixadaEm).sort((a, b) => (a.fixadaEm ?? "").localeCompare(b.fixadaEm ?? ""));
+    if (fixadas.length) return [...fixadas, ...base.filter((c) => !c.fixadaEm)];
     if (visao.k !== "hoje") return base;
     // Em On site today, quem está atrasado ou em risco sobe.
     const peso = (c: ConversaDaCaixa) => (c.jobHoje ? (chegada(c.jobHoje, agora)?.peso ?? 0) : 0);
     return [...base].sort((a, b) => peso(b) - peso(a));
   }, [conversas, visao, tipo, busca, periodo, agora]);
 
-  const aberta = conversas.find((c) => c.contato === abertaId) ?? lista[0] ?? null;
+  const aberta =
+    conversas.find((c) => c.contato === abertaId) ??
+    (rascunho && rascunho.numero === abertaId ? conversaRascunho(rascunho) : null) ??
+    lista[0] ??
+    null;
+  const tituloDaVisao =
+    tipo !== "todas"
+      ? { conta: "Accounts", parceiro: "Partners", cliente: "Clients", outro: "Unknown" }[tipo]
+      : visao.k === "tag"
+        ? visao.nome
+        : visao.k === "etapa"
+          ? rotuloDaEtapa(visao)
+          : { abertas: "Open", esperando: "Needs reply", hoje: "On site today", todas: "All", resolvidas: "Resolved", arquivadas: "Archived", excluidas: "Deleted" }[visao.k];
   const presenca = aberta ? presencaAgora(aberta, agora) : null;
 
   function irPara(v: Visao) {
@@ -340,9 +434,34 @@ export function CaixaAtendimento({
     setTipo("todas");
   }
 
+  /** Abre a conversa do número escolhido em New conversation: a que já existe, senão um rascunho. */
+  function abrirNumero(e: Escolhido) {
+    const existe = conversas.find((c) => c.contato === e.numero);
+    if (existe) return abrir(existe);
+    setRascunho(e);
+    setAbertaId(e.numero);
+  }
+
   function abrir(c: ConversaDaCaixa) {
     setAbertaId(c.contato);
     fecharGaveta();
+    if (naoLidas(c) > 0) void marcarConversa(c, "ler");
+  }
+
+  /** Lida, não lida, fixar: muda na hora e grava; sem a migration 354 fica só nesta tela. */
+  async function marcarConversa(c: ConversaDaCaixa, acao: "ler" | "nao_ler" | "fixar" | "desafixar") {
+    const antes = local[c.contato];
+    const agoraIso = new Date().toISOString();
+    const patch =
+      acao === "ler" ? { lidaEm: agoraIso, naoLida: false } : acao === "nao_ler" ? { naoLida: true } : acao === "fixar" ? { fixadaEm: agoraIso } : { fixadaEm: null };
+    setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], ...patch } }));
+    if (!estadoPronto) return;
+    try {
+      await postarConversa({ contato: c.contato, acao });
+    } catch (e) {
+      setLocal((l) => ({ ...l, [c.contato]: antes ?? {} }));
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    }
   }
 
   function abrirCriar(t: TipoDoPrefill) {
@@ -687,62 +806,113 @@ export function CaixaAtendimento({
 
       {/* Conversas */}
       <section className="flex min-h-0 flex-col border-r border-border-light">
-        <div className="flex items-end gap-4 border-b border-border-light px-4 pt-3">
-          {(
-            [
-              ["todas", "All"],
-              ["conta", "Accounts"],
-              ["parceiro", "Partners"],
-              ["cliente", "Clients"],
-            ] as const
-          ).map(([k, t]) => {
-            const n = conversas.filter((c) => passa(c, visao) && noPeriodo(c, periodo, agora) && (k === "todas" || c.tipo === k)).length;
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setTipo(k)}
-                className={cn(
-                  "relative pb-2.5 text-[14px] font-semibold transition-colors",
-                  tipo === k ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
-                )}
+        {/* O cabeçalho da lista: o nome da view (a lateral escolhe), o período, a busca que abre e o +. */}
+        <div className="relative flex h-14 shrink-0 items-center border-b border-border-light px-4">
+          <AnimatePresence initial={false} mode="popLayout">
+            {buscaAberta ? (
+              <mo.div
+                key="busca"
+                className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-border-light bg-card px-2.5 focus-within:border-text-tertiary"
+                initial={{ opacity: 0, scaleX: 0.6 }}
+                animate={{ opacity: 1, scaleX: 1, transition: tempo("md") }}
+                exit={{ opacity: 0, scaleX: 0.6, transition: tempo("sm", "saida") }}
+                style={{ transformOrigin: "right center" }}
               >
-                {t}
-                <span className="ml-1 text-[11px] font-medium text-text-tertiary">{n}</span>
-                {tipo === k ? <mo.span layoutId="inbox-aba-ativa" transition={tempo("lg")} className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-primary" /> : null}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2 px-4 pb-2 pt-2.5">
-          <div className="min-w-0 flex-1">
-            <SearchInput placeholder="Search name, number, job ref, tag" value={busca} onChange={(e) => setBusca(e.target.value)} />
-          </div>
-        </div>
-        <div className="flex items-center gap-1 px-4 pb-2 text-[12px] text-text-secondary">
-          <select
-            value={periodo}
-            onChange={(e) => setPeriodo(e.target.value as Periodo)}
-            className="cursor-pointer rounded-md bg-transparent py-0.5 pr-1 font-medium text-text-primary outline-none hover:bg-surface-secondary"
-            aria-label="Period"
+                <Search className="h-4 w-4 shrink-0 text-text-tertiary" />
+                <input
+                  autoFocus
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setBusca("");
+                      setBuscaAberta(false);
+                    }
+                  }}
+                  placeholder="Search name, number, job ref, tag"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBusca("");
+                    setBuscaAberta(false);
+                  }}
+                  className="text-text-tertiary hover:text-text-primary"
+                  aria-label="Close search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </mo.div>
+            ) : (
+              <mo.div key="titulo" className="relative flex h-full min-w-0 flex-1 items-center" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: tempo("md") }} exit={{ opacity: 0, transition: tempo("xs", "saida") }}>
+                <h2 className="text-[16px] font-bold tracking-tight text-text-primary">Conversations</h2>
+                <span className="absolute bottom-0 left-0 h-[2px] w-[118px] rounded-full bg-text-primary" aria-hidden />
+              </mo.div>
+            )}
+          </AnimatePresence>
+
+          <button
+            type="button"
+            onClick={() => setNovoAberto((v) => !v)}
+            className={cn(
+              "ml-2 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-primary text-[var(--on-brand)] transition-transform hover:opacity-90 active:scale-95",
+              novoAberto && "ring-2 ring-primary/30",
+            )}
+            aria-label="New conversation"
+            title="New conversation"
           >
-            {PERIODOS.map(([k]) => (
-              <option key={k} value={k}>
-                {k === "60d" ? "Last 60 days" : k === "hoje" ? "Today" : k === "semana" ? "Last 7 days" : "Last 30 days"}
-              </option>
-            ))}
-          </select>
-          <span className="text-text-tertiary">· Newest first</span>
+            <MessageSquarePlus className="h-[18px] w-[18px]" />
+          </button>
+          {!buscaAberta ? (
+            <button
+              type="button"
+              onClick={() => setBuscaAberta(true)}
+              className="ml-1.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-border-light text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+              aria-label="Search conversations"
+              title="Search"
+            >
+              <Search className="h-[18px] w-[18px]" />
+            </button>
+          ) : null}
+          <AnimatePresence>
+            {novoAberto ? (
+              <NovoContato
+                onFechar={() => setNovoAberto(false)}
+                onEscolher={(e) => {
+                  setNovoAberto(false);
+                  abrirNumero(e);
+                }}
+              />
+            ) : null}
+          </AnimatePresence>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto border-t border-border-light">
+        {/* O que a lista mostra, numa linha só: a view (a lateral escolhe) e o período. */}
+        <div className="flex h-10 shrink-0 items-center px-4">
+          <label className="relative inline-flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-[12.5px] font-medium text-text-secondary hover:text-text-primary">
+            <span>
+              {tituloDaVisao}, {periodo === "hoje" ? "today" : periodo === "semana" ? "last 7 days" : periodo === "mes" ? "last 30 days" : "last 60 days"} · {lista.length}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5" />
+            <select value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Period">
+              {PERIODOS.map(([k]) => (
+                <option key={k} value={k}>
+                  {k === "60d" ? "Last 60 days" : k === "hoje" ? "Today" : k === "semana" ? "Last 7 days" : "Last 30 days"}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {lista.length === 0 ? (
             <p className="px-4 py-6 text-xs text-text-tertiary">{conversas.length === 0 ? "No messages yet. New messages to +44 7983 182332 land here." : "No conversations here."}</p>
           ) : null}
           <AnimatePresence initial={false} mode="popLayout">
           {lista.map((c) => {
             const ultima = c.mensagens[c.mensagens.length - 1];
-            const n = resolvida(c) ? 0 : naoRespondidas(c);
             const ativa = c.contato === aberta?.contato;
+            // A conversa aberta está sendo lida: sem contador nela.
+            const n = resolvida(c) || ativa ? 0 : naoLidas(c);
             const p = presencaAgora(c, agora);
             return (
               <mo.button
@@ -754,8 +924,12 @@ export function CaixaAtendimento({
                 transition={tempo("lg")}
                 type="button"
                 onClick={() => abrir(c)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenuDaLinha({ contato: c.contato, x: e.clientX, y: e.clientY });
+                }}
                 className={cn(
-                  "relative flex w-full gap-3 border-b border-border-light/60 px-4 py-3 text-left transition-colors hover:bg-surface-secondary/70",
+                  "relative flex w-full gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
                   ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
@@ -765,6 +939,7 @@ export function CaixaAtendimento({
                   <span className="flex items-center gap-1.5">
                     <span className={cn("truncate text-[14px] text-text-primary", n > 0 ? "font-bold" : "font-semibold")}>{c.nome}</span>
                     {resolvida(c) ? <CheckCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : null}
+                    {c.fixadaEm ? <Pin className="h-3 w-3 shrink-0 rotate-45 text-text-tertiary" aria-label="Pinned" /> : null}
                     <span className={cn("ml-auto shrink-0 text-[11.5px] tabular-nums", n > 0 ? "font-semibold text-[var(--accent)]" : "text-text-tertiary")}>
                       {quandoNaLista(ultima.criadoEm, agora)}
                     </span>
@@ -790,7 +965,7 @@ export function CaixaAtendimento({
                       </span>
                     ) : null}
                   </span>
-                  <span className="mt-1.5 flex flex-wrap items-center gap-1">
+                  <span className="mt-1 flex items-center gap-1 overflow-hidden">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
                     {(() => {
@@ -1215,6 +1390,35 @@ export function CaixaAtendimento({
           )
         ) : null}
       </aside>
+      <AnimatePresence>
+        {(() => {
+          const c = menuDaLinha ? conversas.find((x) => x.contato === menuDaLinha.contato) : null;
+          if (!menuDaLinha || !c) return null;
+          const lida = naoLidas(c) === 0;
+          const fazer = (f: () => void) => () => {
+            setMenuDaLinha(null);
+            f();
+          };
+          return (
+            <mo.div
+              key="menu-da-linha"
+              {...flutuante("bottom")}
+              style={{ left: menuDaLinha.x, top: Math.min(menuDaLinha.y, window.innerHeight - 180), transformOrigin: "top left" }}
+              className="fixed z-50 w-52 rounded-xl border border-border-light bg-card p-1 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ItemCurto icone={c.fixadaEm ? PinOff : Pin} rotulo={c.fixadaEm ? "Unpin" : "Pin to top"} onClick={fazer(() => void marcarConversa(c, c.fixadaEm ? "desafixar" : "fixar"))} />
+              <ItemCurto icone={lida ? MailOpen : CheckCheck} rotulo={lida ? "Mark as unread" : "Mark as read"} onClick={fazer(() => void marcarConversa(c, lida ? "nao_ler" : "ler"))} />
+              <div className="my-1 h-px bg-border-light" />
+              {fora(c) ? (
+                <ItemCurto icone={ArchiveRestore} rotulo="Restore" onClick={fazer(() => void mover(c, "restaurar"))} />
+              ) : (
+                <ItemCurto icone={Archive} rotulo="Archive" disabled={!estadoPronto} onClick={fazer(() => void mover(c, "arquivar"))} />
+              )}
+            </mo.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
     </MotionConfig>
   );

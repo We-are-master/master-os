@@ -77,6 +77,12 @@ export type ConversaDaCaixa = {
   tags: string[];
   presenca: string | null;
   presencaEm: string | null;
+  /** Até quando a equipe leu: o contador conta as entradas depois disso. */
+  lidaEm: string | null;
+  /** "Mark as unread": mostra o ponto mesmo sem mensagem nova. */
+  naoLida: boolean;
+  /** Fixada no topo da lista. */
+  fixadaEm: string | null;
   /** A empresa a que o contato pertence (parceiro ou conta): nome e logo. O avatar segue ela. */
   org: { nome: string; logo: string | null } | null;
   parceiro: {

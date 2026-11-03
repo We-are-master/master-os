@@ -33,6 +33,11 @@ create table if not exists public.inbox_conversas (
 -- Quem já criou a tabela antes destas colunas.
 alter table public.inbox_conversas add column if not exists arquivada_em timestamptz;
 alter table public.inbox_conversas add column if not exists excluida_em timestamptz;
+-- Lida/não lida e fixada (03/11): a equipe divide o mesmo número, então é por conversa, não por pessoa.
+-- `lida_em` zera o contador; `nao_lida` é o "Mark as unread"; `fixada_em` põe no topo da lista.
+alter table public.inbox_conversas add column if not exists lida_em timestamptz;
+alter table public.inbox_conversas add column if not exists nao_lida boolean not null default false;
+alter table public.inbox_conversas add column if not exists fixada_em timestamptz;
 
 create table if not exists public.inbox_tags (
   id uuid primary key default gen_random_uuid(),

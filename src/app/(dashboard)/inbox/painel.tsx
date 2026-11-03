@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { motion as mo } from "framer-motion";
+import { AnimatePresence, motion as mo } from "framer-motion";
 import {
   Briefcase,
   CalendarClock,
@@ -231,9 +231,12 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
  * é a mesma chegada da lista (At risk, Late), que anda com o relógio.
  */
 function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId: string | undefined; agora: number }) {
-  const ordem = [...rota].sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""));
+  // Só o que falta: o feito sai da rota (animando), e cabem 3 paradas antes de rolar.
+  const ordem = [...rota].filter((j) => !JOB_FEITO.has(j.status)).sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""));
+  if (!ordem.length) return <Vazio texto="All stops done for today." />;
   return (
-    <ol className="relative">
+    <ol className="relative max-h-[264px] overflow-y-auto pr-0.5">
+      <AnimatePresence initial={false}>
       {ordem.map((j, i) => {
         const feito = JOB_FEITO.has(j.status);
         const noLocal = j.status === "in_progress";
@@ -246,8 +249,10 @@ function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId:
           <mo.li
             key={j.id}
             className="relative flex gap-3 pb-3 last:pb-0"
+            layout="position"
             initial={{ opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0, transition: { ...tempo("md"), delay: i * 0.04 } }}
+            exit={{ opacity: 0, x: 16, height: 0, paddingBottom: 0, transition: tempo("lg", "saida") }}
           >
             {i < ordem.length - 1 ? <span className="absolute bottom-0 left-[11px] top-7 w-px bg-border-light" aria-hidden /> : null}
             <span
@@ -298,6 +303,7 @@ function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId:
           </mo.li>
         );
       })}
+      </AnimatePresence>
     </ol>
   );
 }

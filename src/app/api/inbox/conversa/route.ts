@@ -24,6 +24,10 @@ export async function POST(req: NextRequest) {
   else if (corpo.acao === "arquivar") patch = { arquivada_em: agora, excluida_em: null };
   else if (corpo.acao === "excluir") patch = { excluida_em: agora, arquivada_em: null };
   else if (corpo.acao === "restaurar") patch = { arquivada_em: null, excluida_em: null };
+  else if (corpo.acao === "ler") patch = { lida_em: agora, nao_lida: false };
+  else if (corpo.acao === "nao_ler") patch = { nao_lida: true };
+  else if (corpo.acao === "fixar") patch = { fixada_em: agora };
+  else if (corpo.acao === "desafixar") patch = { fixada_em: null };
   else if (corpo.acao === "tags" && Array.isArray(corpo.tags)) {
     patch = { tags: [...new Set(corpo.tags.map((t) => String(t).trim()).filter(Boolean))].slice(0, 20) };
   } else return NextResponse.json({ error: "Unknown action" }, { status: 400 });
@@ -31,7 +35,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await s.sb
     .from("inbox_conversas")
     .upsert({ contato, ...patch, atualizado_em: agora }, { onConflict: "contato" })
-    .select("contato, resolvida_em, arquivada_em, excluida_em, tags")
+    .select("contato, resolvida_em, arquivada_em, excluida_em, tags, lida_em, nao_lida, fixada_em")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, conversa: data });

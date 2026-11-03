@@ -68,7 +68,7 @@ export const tomValido = (t: string): Tom => (t in TONS ? (t as Tom) : "slate");
 
 export function Chip({ icone: Icone, tom = "slate", children, title }: { icone?: LucideIcon; tom?: Tom; children: React.ReactNode; title?: string }) {
   return (
-    <span title={title} className={cn("inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-[1px] text-[11px] font-medium leading-[18px]", TONS[tom])}>
+    <span title={title} className={cn("inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-transparent px-1.5 text-[11px] font-medium leading-[20px] [&]:border-transparent", TONS[tom])}>
       {Icone ? <Icone className="h-3 w-3 shrink-0" /> : null}
       {children}
     </span>
