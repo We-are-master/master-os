@@ -250,7 +250,7 @@ export async function enviarPelaUazapi(para: string, texto: string, respondendo?
   return { wamid, corpo };
 }
 
-export type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean };
+export type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean; /** O próprio número da caixa (o dono da instância). */ nosso: boolean };
 export type InfoDoGrupo = {
   nome: string | null;
   descricao: string | null;
@@ -268,11 +268,18 @@ export type InfoDoGrupo = {
  * (o JID costuma ser LID, que não é telefone).
  */
 export async function infoDoGrupoNaUazapi(contato: string): Promise<InfoDoGrupo> {
-  const res = await fetch(`${baseUrl()}/group/info`, {
-    method: "POST",
-    headers: cabecalho(),
-    body: JSON.stringify({ groupjid: destinoNaUazapi(contato), getInviteLink: false }),
-  });
+  const [res, dono] = await Promise.all([
+    fetch(`${baseUrl()}/group/info`, {
+      method: "POST",
+      headers: cabecalho(),
+      body: JSON.stringify({ groupjid: destinoNaUazapi(contato), getInviteLink: false }),
+    }),
+    // O número da própria instância: no painel ele aparece com a logo da Fixfy.
+    fetch(`${baseUrl()}/instance/status`, { headers: cabecalho(), cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: Record<string, unknown>) => (str(rec(j.instance)?.owner) ?? "").replace(/\D/g, ""))
+      .catch(() => ""),
+  ]);
   const g = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new EnvioOperacaoError(str(g.error) ?? str(g.message) ?? `uazapi ${res.status}`, res.status);
   const tel = (v: unknown) => {
@@ -287,9 +294,11 @@ export async function infoDoGrupoNaUazapi(contato: string): Promise<InfoDoGrupo>
   const membros: MembroDoGrupo[] = (Array.isArray(g.Participants) ? g.Participants : []).map((x) => {
     const p = rec(x) ?? {};
     const perfil = perfis.get(str(p.LID) ?? str(p.JID) ?? "") ?? {};
+    const numero = tel(p.PhoneNumber) ?? tel(perfil.pn);
     return {
-      numero: tel(p.PhoneNumber) ?? tel(perfil.pn),
-      nome: str(perfil.name) ?? str(p.DisplayName) ?? null,
+      numero,
+      nosso: Boolean(dono && numero === dono),
+      nome: (dono && numero === dono ? "Fixfy" : null) ?? str(perfil.name) ?? str(p.DisplayName) ?? null,
       foto: str(perfil.image_preview_url) ?? str(perfil.image_url) ?? null,
       admin: p.IsAdmin === true || p.IsSuperAdmin === true,
       dono: p.IsSuperAdmin === true,

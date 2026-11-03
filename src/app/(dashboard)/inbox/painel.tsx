@@ -1242,7 +1242,30 @@ function SelfBillsDoParceiro({ p }: { p: ParceiroDaCaixa }) {
   );
 }
 
-type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean };
+type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean; nosso?: boolean };
+/**
+ * A foto do membro do grupo. O link da foto do WhatsApp expira: se não abrir,
+ * vira a inicial (nada de imagem quebrada). O número da própria caixa leva a logo da Fixfy.
+ */
+function FotoDoMembro({ foto, nome, chave, nosso }: { foto: string | null; nome: string; chave: string; nosso: boolean }) {
+  const [quebrou, setQuebrou] = useState(false);
+  if (nosso)
+    return (
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary">
+        {/* eslint-disable-next-line @next/next/no-img-element -- ícone fixo do public */}
+        <img src="/fixfy-icon-white.png" alt="Fixfy" className="h-5 w-5 object-contain" />
+      </span>
+    );
+  if (foto && !quebrou)
+    // eslint-disable-next-line @next/next/no-img-element -- foto do WhatsApp, URL externa
+    return <img src={foto} alt="" onError={() => setQuebrou(true)} className="h-9 w-9 shrink-0 rounded-full object-cover" />;
+  return (
+    <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface-secondary text-xs font-semibold", corDoAutor(chave))}>
+      {nome.replace(/^\+/, "").trim().slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
 type InfoDoGrupo = { nome: string | null; descricao: string | null; criadoEm: string | null; criador: string | null; soAdminsFalam: boolean; membros: MembroDoGrupo[] };
 
 /**
@@ -1288,7 +1311,7 @@ function PainelDoGrupo({ c, onAbrirContato }: { c: ConversaDaCaixa; onAbrirConta
           const f = (m.numero && falou.get(m.numero)) || null;
           return { ...m, nome: m.nome ?? f?.nome ?? null, n: f?.n ?? 0, ultima: f?.ultima ?? null };
         })
-      : [...falou.values()].map((f) => ({ numero: f.numero, nome: f.nome, foto: null, admin: false, dono: false, n: f.n, ultima: f.ultima }));
+      : [...falou.values()].map((f) => ({ numero: f.numero, nome: f.nome, foto: null, admin: false, dono: false, nosso: false, n: f.n, ultima: f.ultima }));
     // Admin primeiro, depois quem mais fala, depois o nome.
     return base.sort((a, b) => Number(b.admin) - Number(a.admin) || b.n - a.n || (a.nome ?? a.numero ?? "").localeCompare(b.nome ?? b.numero ?? ""));
   }, [info, falou]);
@@ -1322,14 +1345,7 @@ function PainelDoGrupo({ c, onAbrirContato }: { c: ConversaDaCaixa; onAbrirConta
               const nome = p.nome ?? (p.numero ? `+${p.numero}` : "Hidden number");
               return (
                 <div key={p.numero ?? p.nome} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
-                  {p.foto ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- foto do WhatsApp, URL externa
-                    <img src={p.foto} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
-                  ) : (
-                    <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface-secondary text-xs font-semibold", corDoAutor(p.numero ?? p.nome ?? ""))}>
-                      {nome.replace(/^\+/, "").trim().slice(0, 1).toUpperCase()}
-                    </span>
-                  )}
+                  <FotoDoMembro foto={p.foto} nome={nome} chave={p.numero ?? p.nome ?? ""} nosso={Boolean(p.nosso)} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5">
                       <span className="truncate text-[13px] font-medium text-text-primary">{nome}</span>
