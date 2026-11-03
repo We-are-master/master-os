@@ -20,7 +20,7 @@ import { Midia, SO_ROTULO, Tique, comPendentes, conversaRascunho, diaDaMensagemO
 import { EVENTO_ABRIR_CONVERSA, type PedidoDeConversa } from "@/lib/inbox/abrir-conversa";
 import { tempo } from "./movimento";
 import type { ConversaDaCaixa, MensagemDaCaixa } from "./tipos";
-import { Avatar, ChipDoTipo, SeletorDeTipo, corDoAutor, nomeDoAutor, type TipoRapido } from "./ui";
+import { Avatar, rotuloAoLado, SeletorDeTipo, corDoAutor, nomeDoAutor, type TipoRapido } from "./ui";
 
 /** Clients junta cliente, conta e lead, como na /inbox. */
 const DE_CLIENTE = new Set(["cliente", "conta", "outro"]);
@@ -336,8 +336,11 @@ export function AtendimentoLateral() {
                             <Avatar c={c} tamanho="md" canal />
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-1.5">
-                                <span className={cn("truncate text-[14px] text-text-primary", n ? "font-bold" : "font-semibold")}>{c.nome}</span>
-                                <ChipDoTipo c={c} />
+                                <span className={cn("min-w-0 truncate text-[14px] text-text-primary", n ? "font-bold" : "font-semibold")}>{c.nome}</span>
+                                {(() => {
+                                  const r = rotuloAoLado(c);
+                                  return r ? <span className={cn("shrink-0 text-[12px] font-medium", r.cls)}>{r.texto}</span> : null;
+                                })()}
                                 <span className={cn("ml-auto shrink-0 text-[11.5px] tabular-nums", n ? "font-semibold text-[var(--accent)]" : "text-text-tertiary")}>
                                   {ultima ? quandoNaLista(ultima.criadoEm, agora) : ""}
                                 </span>
