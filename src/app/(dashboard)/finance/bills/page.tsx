@@ -1330,6 +1330,7 @@ function BillModal({
             dueDates={plan.dates}
             amounts={plan.amounts}
             firstMonth={monthKey(plan.dates[0])}
+            baseAmount={amount}
             steps={priceSteps}
             onStepsChange={setPriceSteps}
             overrides={amountOverrides}

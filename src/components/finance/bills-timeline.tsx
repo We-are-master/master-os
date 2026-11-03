@@ -64,7 +64,7 @@ export function BillsTimeline({ bills, onOpenBill }: { bills: Bill[]; onOpenBill
                   {monthLabel(m)}
                 </th>
               ))}
-              <th className="w-[96px] px-3 py-2 text-right font-medium">Ends</th>
+              <th className="w-[104px] px-3 py-2 text-right font-medium">Ends</th>
             </tr>
           </thead>
           <tbody>
@@ -102,8 +102,8 @@ export function BillsTimeline({ bills, onOpenBill }: { bills: Bill[]; onOpenBill
                       )}
                     </td>
                   ))}
-                  <td className="px-3 py-2 text-right text-[11px] text-text-tertiary">
-                    {row.ongoing ? "Ongoing" : row.endYmd ? formatDate(row.endYmd) : "—"}
+                  <td className="whitespace-nowrap px-3 py-2 text-right text-[11px] text-text-tertiary" title={row.endYmd ? `Last payment ${formatDate(row.endYmd)}` : undefined}>
+                    {row.ongoing ? "Ongoing" : row.endYmd ? monthLabel(monthKey(row.endYmd)) : "—"}
                   </td>
                 </tr>
               ))

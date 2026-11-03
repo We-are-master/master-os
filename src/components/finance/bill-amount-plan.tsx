@@ -22,6 +22,7 @@ export function BillAmountPlan({
   dueDates,
   amounts,
   firstMonth,
+  baseAmount,
   steps,
   onStepsChange,
   overrides,
@@ -31,6 +32,8 @@ export function BillAmountPlan({
   /** Resolved amount per due date (same map the save uses). */
   amounts: Record<string, number>;
   firstMonth: string;
+  /** Starting amount, used as the default for a new price change. */
+  baseAmount: string;
   steps: DraftAmountStep[];
   onStepsChange: (next: DraftAmountStep[]) => void;
   overrides: Record<string, string>;
@@ -52,7 +55,7 @@ export function BillAmountPlan({
 
   const addStep = () => {
     const from = steps.length ? addMonths(steps[steps.length - 1].fromMonth, 6) : addMonths(firstMonth, 6);
-    const last = steps[steps.length - 1]?.amount ?? "";
+    const last = steps[steps.length - 1]?.amount ?? baseAmount;
     onStepsChange([...steps, { fromMonth: from, amount: last }]);
   };
 
