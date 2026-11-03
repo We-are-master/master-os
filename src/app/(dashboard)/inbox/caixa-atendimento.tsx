@@ -1152,7 +1152,8 @@ export function CaixaAtendimento({
                       {quandoNaLista(ultima.criadoEm, agora)}
                     </span>
                   </span>
-                  <span className="mt-0.5 flex items-center gap-1">
+                  {/* Altura fixa do chip: com ou sem chip, toda linha da lista tem a mesma altura. */}
+                  <span className="mt-0.5 flex h-[22px] items-center gap-1">
                     {p === "digitando" || p === "gravando" ? (
                       <span className="min-w-0 flex-1 truncate text-[12.5px] text-emerald-600">{p === "digitando" ? "typing..." : "recording audio..."}</span>
                     ) : (
