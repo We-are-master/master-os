@@ -218,7 +218,8 @@ function DiaDoJob({ data }: { data: string }) {
       : dias === 1 || dias === 2
         ? { texto: dias === 1 ? "Tomorrow" : "In 2 days", cls: "bg-[var(--warning-light)] text-[var(--warn-ink)]" }
         : null;
-  if (chip) return <span className={cn("mb-1 inline-flex h-[17px] items-center whitespace-nowrap rounded-md px-1.5 text-[10px] font-medium", chip.cls)}>{chip.texto}</span>;
+  // Cabe no bloco de 68 px: "Tomorrow" e "In 2 days" sem vazar.
+  if (chip) return <span className={cn("mb-1 inline-flex h-4 max-w-full items-center whitespace-nowrap rounded px-1 text-[9.5px] font-semibold leading-none", chip.cls)}>{chip.texto}</span>;
   const d = new Date(`${data.slice(0, 10)}T12:00:00Z`);
   const curta = d.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short", year: "2-digit" });
   return <span className="mb-0.5 whitespace-nowrap text-[10.5px] font-medium leading-tight">{curta}</span>;
@@ -234,7 +235,7 @@ export function CartaoDeJob({ j, proximo = false }: { j: JobDaCaixa; proximo?: b
     <LinkDeJob id={j.id} className="flex gap-3 rounded-xl border border-border-light p-2.5 transition-colors hover:bg-surface-secondary/60">
       <span
         className={cn(
-          "flex w-[60px] shrink-0 flex-col items-center justify-center rounded-lg py-1.5 text-center",
+          "flex w-[68px] shrink-0 flex-col items-center justify-center overflow-hidden rounded-lg px-1 py-1.5 text-center",
           proximo ? "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" : "bg-surface-secondary text-text-secondary",
         )}
       >
