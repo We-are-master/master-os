@@ -145,6 +145,7 @@ export function Composer({
   const gravador = useGravadorDeAudio({ onErro: (m) => toast.error(m) });
   const gravando = gravador.fase !== "parado";
   const primeiro = nome.startsWith("+") ? "there" : nome.split(" ")[0];
+  const quem = nome.startsWith("+") ? "there" : nome;
 
   // "/" no começo do campo abre as mensagens salvas; o resto filtra.
   const busca = texto.startsWith("/") ? texto.slice(1).toLowerCase() : null;
@@ -338,7 +339,7 @@ export function Composer({
         rows={2}
         value={texto}
         disabled={gravando}
-        placeholder={gravando ? "Recording audio…" : arquivo ? "Add a caption…" : `Message ${primeiro}… (type / for saved replies)`}
+        placeholder={gravando ? "Recording audio…" : arquivo ? "Add a caption…" : `Message ${quem}… (type / for saved replies)`}
         onChange={(e) => setTexto(e.target.value)}
         onPaste={(e) => {
           const f = e.clipboardData?.files?.[0];

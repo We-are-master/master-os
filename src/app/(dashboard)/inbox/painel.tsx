@@ -626,7 +626,7 @@ const ROTULO_DO_ACHADO: Record<ContatoAchado["tipo"], { texto: string; tom: Tom 
  * não muda.
  */
 function VincularContato({ c }: { c: ConversaDaCaixa }) {
-  const [q, setQ] = useState(c.perfil ?? "");
+  const [q, setQ] = useState("");
   const [achados, setAchados] = useState<ContatoAchado[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [ligando, setLigando] = useState<string | null>(null);
@@ -683,6 +683,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
         <input
           className="w-full rounded-lg border border-border-light bg-card py-2 pl-8 pr-2.5 text-xs text-text-primary placeholder:text-text-tertiary"
           placeholder="Search partner, client, account or lead"
+          autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />

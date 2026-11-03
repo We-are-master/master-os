@@ -58,7 +58,6 @@ import {
   Pin,
   PinOff,
   type LucideIcon,
-  Phone,
   Ticket,
 } from "lucide-react";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
@@ -68,7 +67,6 @@ import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
 import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
-import { ligarPeloZendesk } from "./ligar";
 import { LinkDeJob } from "./link-de-job";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
@@ -1138,16 +1136,6 @@ export function CaixaAtendimento({
                     const dono = equipe.find((m) => m.id === aberta.atribuidaA);
                     return dono ? <AvatarDaEquipe m={dono} /> : null;
                   })()}
-                </Acao>
-              ) : null}
-              {aberta.tipo !== "grupo" ? (
-                <Acao icone={Phone} title={aberta.parceiro?.ticketDeLigacao ? `Open calls ticket #${aberta.parceiro.ticketDeLigacao} in Zendesk` : "Call via Zendesk Talk"} onClick={() =>
-                    void ligarPeloZendesk(
-                      aberta.contato,
-                      aberta.parceiro ? { id: aberta.parceiro.id, ticket: aberta.parceiro.ticketDeLigacao, nome: aberta.parceiro.empresa ?? aberta.nome } : undefined,
-                    ).then(() => router.refresh())
-                  }>
-                  Call
                 </Acao>
               ) : null}
               <Acao
