@@ -30,11 +30,17 @@ export const NAVIGATION: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Overview", href: "/", icon: "grid-2x2", permission: "dashboard" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
-      { label: "Live operations", href: "/schedule", icon: "calendar", permission: "jobs" },
       // Atendimento do WhatsApp de operação (7983), parceiros e equipe (02/11/2026).
       { label: "Inbox", href: "/inbox", icon: "message-square", permission: "jobs" },
-      // Os agentes de IA (07/10/2026): o Harvey e o que ele sabe, editável.
+    ],
+  },
+  // Live operations e Schedule num bloco próprio, embaixo de Overview e Inbox (dono, 03/11/2026).
+  // O merge da nav salva tira os dois do grupo antigo e põe aqui.
+  {
+    label: "Live",
+    items: [
+      { label: "Live operations", href: "/schedule", icon: "calendar", permission: "jobs" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {
