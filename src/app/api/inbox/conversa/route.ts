@@ -1,7 +1,8 @@
 /**
- * Estado de uma conversa da /inbox: resolver, reabrir e as tags (que são as
- * views da lateral). Resolvida reabre sozinha quando o contato escreve depois:
- * a tela compara `resolvida_em` com a última entrada.
+ * Estado de uma conversa da /inbox: resolver, reabrir, arquivar, excluir,
+ * restaurar e as tags (que são as views da lateral). Resolvida e excluída
+ * voltam sozinhas quando o contato escreve depois (a tela compara com a última
+ * entrada); arquivada fica arquivada. Excluir não apaga mensagem nenhuma.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,6 +21,9 @@ export async function POST(req: NextRequest) {
   let patch: Record<string, unknown>;
   if (corpo.acao === "resolver") patch = { resolvida_em: agora, resolvida_por: s.userId };
   else if (corpo.acao === "reabrir") patch = { resolvida_em: null, resolvida_por: null };
+  else if (corpo.acao === "arquivar") patch = { arquivada_em: agora, excluida_em: null };
+  else if (corpo.acao === "excluir") patch = { excluida_em: agora, arquivada_em: null };
+  else if (corpo.acao === "restaurar") patch = { arquivada_em: null, excluida_em: null };
   else if (corpo.acao === "tags" && Array.isArray(corpo.tags)) {
     patch = { tags: [...new Set(corpo.tags.map((t) => String(t).trim()).filter(Boolean))].slice(0, 20) };
   } else return NextResponse.json({ error: "Unknown action" }, { status: 400 });
@@ -27,7 +31,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await s.sb
     .from("inbox_conversas")
     .upsert({ contato, ...patch, atualizado_em: agora }, { onConflict: "contato" })
-    .select("contato, resolvida_em, tags")
+    .select("contato, resolvida_em, arquivada_em, excluida_em, tags")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, conversa: data });

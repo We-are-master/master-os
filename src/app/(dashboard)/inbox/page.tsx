@@ -131,7 +131,7 @@ export default async function InboxPage() {
       ? sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id, source").is("deleted_at", null).or(filtroTelefone(["phone"])).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     contatos.length
-      ? sb.from("inbox_conversas").select("contato, resolvida_em, tags, presenca, presenca_em").in("contato", contatos)
+      ? sb.from("inbox_conversas").select("contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em").in("contato", contatos)
       : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
     sb.from("inbox_tags").select("nome, cor").order("nome"),
   ]);
@@ -238,6 +238,8 @@ export default async function InboxPage() {
         ultimaEntradaEm: ultimaEntrada?.criadoEm ?? null,
         perfil: nomeDoPerfil.get(contato) ?? null,
         resolvidaEm: (estado?.resolvida_em as string | null) ?? null,
+        arquivadaEm: (estado?.arquivada_em as string | null) ?? null,
+        excluidaEm: (estado?.excluida_em as string | null) ?? null,
         tags: (estado?.tags as string[] | null) ?? [],
         presenca: (estado?.presenca as string | null) ?? null,
         presencaEm: (estado?.presenca_em as string | null) ?? null,

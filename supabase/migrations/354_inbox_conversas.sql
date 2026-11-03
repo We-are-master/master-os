@@ -4,6 +4,10 @@
 -- inbox_conversas   uma linha por contato. `resolvida_em` fecha a conversa;
 --                   ela reabre sozinha quando o contato escreve depois disso
 --                   (a tela compara com a última entrada, nada a limpar).
+--                   `arquivada_em` tira da caixa e fica no Archived até
+--                   alguém desarquivar (contato escrever não traz de volta).
+--                   `excluida_em` some da caixa (as mensagens ficam em
+--                   wa_mensagens); volta sozinha se o contato escrever depois.
 --                   `tags` põe a conversa nas views da lateral. `presenca` e
 --                   `presenca_em` vêm do evento de presença da uazapi.
 -- inbox_tags        o catálogo das tags: nome e cor. Cada tag é uma view.
@@ -18,11 +22,17 @@ create table if not exists public.inbox_conversas (
   contato text primary key,
   resolvida_em timestamptz,
   resolvida_por uuid,
+  arquivada_em timestamptz,
+  excluida_em timestamptz,
   tags text[] not null default '{}',
   presenca text,
   presenca_em timestamptz,
   atualizado_em timestamptz not null default now()
 );
+
+-- Quem já criou a tabela antes destas colunas.
+alter table public.inbox_conversas add column if not exists arquivada_em timestamptz;
+alter table public.inbox_conversas add column if not exists excluida_em timestamptz;
 
 create table if not exists public.inbox_tags (
   id uuid primary key default gen_random_uuid(),

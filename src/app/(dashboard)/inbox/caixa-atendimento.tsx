@@ -27,6 +27,8 @@ import {
   EyeOff,
   FileText,
   Home,
+  Archive,
+  ArchiveRestore,
   Inbox,
   Layers,
   Link2,
@@ -36,6 +38,7 @@ import {
   Send,
   Smartphone,
   Tag,
+  Trash2,
   UserPlus,
   UserRound,
   Users,
@@ -58,6 +61,8 @@ type Visao =
   | { k: "abertas" }
   | { k: "esperando" }
   | { k: "resolvidas" }
+  | { k: "arquivadas" }
+  | { k: "excluidas" }
   | { k: "todas" }
   | { k: "hoje" }
   | { k: "tag"; nome: string }
@@ -112,9 +117,17 @@ const naoRespondidas = (c: ConversaDaCaixa) => {
 };
 /** Resolvida até o contato escrever depois do "resolver". */
 const resolvida = (c: ConversaDaCaixa) => Boolean(c.resolvidaEm && (!c.ultimaEntradaEm || c.ultimaEntradaEm <= c.resolvidaEm));
+/** Arquivada fica fora da caixa até desarquivar. */
+const arquivada = (c: ConversaDaCaixa) => Boolean(c.arquivadaEm);
+/** Excluída some até o contato escrever de novo (como no WhatsApp). */
+const excluida = (c: ConversaDaCaixa) => Boolean(c.excluidaEm && (!c.ultimaEntradaEm || c.ultimaEntradaEm <= c.excluidaEm));
+const fora = (c: ConversaDaCaixa) => arquivada(c) || excluida(c);
 const janelaAberta = (c: ConversaDaCaixa) => Boolean(c.ultimaEntradaEm && Date.now() - new Date(c.ultimaEntradaEm).getTime() < JANELA_MS);
 
 function passa(c: ConversaDaCaixa, v: Visao): boolean {
+  if (v.k === "arquivadas") return arquivada(c);
+  if (v.k === "excluidas") return excluida(c);
+  if (fora(c)) return false;
   switch (v.k) {
     case "abertas":
       return !resolvida(c);
@@ -216,7 +229,9 @@ export function CaixaAtendimento({
   const [agora, setAgora] = useState(() => Date.now());
   const [canal, setCanal] = useState<{ conectado: boolean; estado: string } | null>(null);
   /** O que a equipe acabou de mudar, até o servidor confirmar no próximo refresh. */
-  const [local, setLocal] = useState<Record<string, { resolvidaEm?: string | null; tags?: string[] }>>({});
+  const [local, setLocal] = useState<
+    Record<string, { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[] }>
+  >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
   const [corNova, setCorNova] = useState<Tom>("blue");
@@ -280,14 +295,16 @@ export function CaixaAtendimento({
   const contagem = useMemo(() => {
     const n = (f: (c: ConversaDaCaixa) => boolean) => conversas.filter(f).length;
     return {
-      abertas: n((c) => !resolvida(c)),
-      esperando: n((c) => !resolvida(c) && esperando(c)),
-      resolvidas: n(resolvida),
-      todas: conversas.length,
-      hoje: n((c) => Boolean(c.jobHoje)),
-      parceiro: n((c) => c.tipo === "parceiro"),
-      cliente: n((c) => c.tipo === "cliente"),
-      outro: n((c) => c.tipo === "outro"),
+      abertas: n((c) => passa(c, { k: "abertas" })),
+      esperando: n((c) => passa(c, { k: "esperando" })),
+      resolvidas: n((c) => passa(c, { k: "resolvidas" })),
+      arquivadas: n(arquivada),
+      excluidas: n(excluida),
+      todas: n((c) => !fora(c)),
+      hoje: n((c) => passa(c, { k: "hoje" })),
+      parceiro: n((c) => !fora(c) && c.tipo === "parceiro"),
+      cliente: n((c) => !fora(c) && c.tipo === "cliente"),
+      outro: n((c) => !fora(c) && c.tipo === "outro"),
     };
   }, [conversas]);
 
@@ -376,6 +393,33 @@ export function CaixaAtendimento({
         const proxima = lista.find((x) => x.contato !== c.contato && !resolvida(x));
         setAbertaId(proxima?.contato ?? null);
       }
+      router.refresh();
+    } catch (e) {
+      setLocal((l) => ({ ...l, [c.contato]: antes ?? {} }));
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    }
+  }
+
+  /** Arquivar, excluir ou trazer de volta. Some da lista na hora e passa para a próxima. */
+  async function mover(c: ConversaDaCaixa, acao: "arquivar" | "excluir" | "restaurar") {
+    const antes = local[c.contato];
+    const agoraIso = new Date().toISOString();
+    const patch =
+      acao === "arquivar"
+        ? { arquivadaEm: agoraIso, excluidaEm: null }
+        : acao === "excluir"
+          ? { excluidaEm: agoraIso, arquivadaEm: null }
+          : { arquivadaEm: null, excluidaEm: null };
+    setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], ...patch } }));
+    if (acao !== "restaurar") {
+      const proxima = lista.find((x) => x.contato !== c.contato);
+      setAbertaId(proxima?.contato ?? null);
+    }
+    try {
+      await postarConversa({ contato: c.contato, acao });
+      toast.success(
+        acao === "arquivar" ? "Archived. Find it under Archived." : acao === "excluir" ? "Deleted. It comes back if they write again." : "Back in the inbox",
+      );
       router.refresh();
     } catch (e) {
       setLocal((l) => ({ ...l, [c.contato]: antes ?? {} }));
@@ -509,7 +553,6 @@ export function CaixaAtendimento({
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "abertas" }) && tipo === "todas"} onClick={() => irPara({ k: "abertas" })} icone={Inbox} rotulo="Open" n={contagem.abertas} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "esperando" })} onClick={() => irPara({ k: "esperando" })} icone={Clock} rotulo="Awaiting reply" n={contagem.esperando} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="Job today" n={contagem.hoje} />
-        <ItemDaLateral ativo={mesmaVisao(visao, { k: "resolvidas" })} onClick={() => irPara({ k: "resolvidas" })} icone={CheckCheck} rotulo="Resolved" n={contagem.resolvidas} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "todas"} onClick={() => irPara({ k: "todas" })} icone={Layers} rotulo="All" n={contagem.todas} />
 
         <Titulo>Who</Titulo>
@@ -629,7 +672,11 @@ export function CaixaAtendimento({
         ) : null}
 
         <div className="mt-auto pt-4">
-          <div className="rounded-lg border border-border-light bg-card p-2.5 text-xs">
+          <Titulo>Closed</Titulo>
+          <ItemDaLateral ativo={mesmaVisao(visao, { k: "resolvidas" })} onClick={() => irPara({ k: "resolvidas" })} icone={CheckCheck} rotulo="Resolved" n={contagem.resolvidas} />
+          <ItemDaLateral ativo={mesmaVisao(visao, { k: "arquivadas" })} onClick={() => irPara({ k: "arquivadas" })} icone={Archive} rotulo="Archived" n={contagem.arquivadas} />
+          <ItemDaLateral ativo={mesmaVisao(visao, { k: "excluidas" })} onClick={() => irPara({ k: "excluidas" })} icone={Trash2} rotulo="Deleted" n={contagem.excluidas} />
+          <div className="mt-3 rounded-lg border border-border-light bg-card p-2.5 text-xs">
             <p className="flex items-center gap-1.5 font-medium text-text-primary">
               <span className={cn("h-2 w-2 rounded-full", canal == null ? "bg-slate-300" : canal.conectado ? "bg-emerald-500" : "bg-red-500")} />
               {canal == null ? "Checking channel" : canal.conectado ? "Connected" : "Disconnected"}
@@ -637,7 +684,7 @@ export function CaixaAtendimento({
             <p className="mt-0.5 text-text-secondary">+44 7983 182332</p>
             <p className="text-[11px] text-text-tertiary">{semJanela ? "via uazapi · phone app stays on" : "via WhatsApp Cloud API"}</p>
           </div>
-          {estadoPronto ? null : <p className="mt-2 px-1 text-[11px] text-[var(--bad-ink)]">Resolve and views need migration 354.</p>}
+          {estadoPronto ? null : <p className="mt-2 px-1 text-[11px] text-[var(--bad-ink)]">Resolve, archive, delete and views need migration 354.</p>}
         </div>
       </aside>
 
@@ -787,6 +834,29 @@ export function CaixaAtendimento({
                   Resolve
                 </Acao>
               )}
+              {fora(aberta) ? (
+                <Acao icone={ArchiveRestore} onClick={() => void mover(aberta, "restaurar")} disabled={!estadoPronto}>
+                  Restore
+                </Acao>
+              ) : (
+                <>
+                  <Acao icone={Archive} variante="fantasma" title="Archive" onClick={() => void mover(aberta, "arquivar")} disabled={!estadoPronto}>
+                    Archive
+                  </Acao>
+                  <Acao
+                    icone={Trash2}
+                    variante="fantasma"
+                    title="Delete from the inbox (messages are kept)"
+                    disabled={!estadoPronto}
+                    onClick={() => {
+                      if (confirm(`Delete the conversation with ${aberta.nome} from the inbox? Messages are kept and it comes back if they write again.`))
+                        void mover(aberta, "excluir");
+                    }}
+                  >
+                    Delete
+                  </Acao>
+                </>
+              )}
               <Acao icone={Plus} variante="primario" onClick={() => setMenu((m) => (m === "acoes" ? null : "acoes"))}>
                 Actions
                 <ChevronDown className="h-3.5 w-3.5" />
@@ -864,6 +934,40 @@ export function CaixaAtendimento({
                       }}
                     />
                   ) : null}
+                  {estadoPronto && fora(aberta) ? (
+                    <ItemDoMenu
+                      icone={ArchiveRestore}
+                      titulo="Restore to inbox"
+                      sub={arquivada(aberta) ? "Archived" : "Deleted"}
+                      onClick={() => {
+                        setMenu(null);
+                        void mover(aberta, "restaurar");
+                      }}
+                    />
+                  ) : null}
+                  {estadoPronto && !fora(aberta) ? (
+                    <>
+                      <ItemDoMenu
+                        icone={Archive}
+                        titulo="Archive"
+                        sub="Stays archived until you restore it"
+                        onClick={() => {
+                          setMenu(null);
+                          void mover(aberta, "arquivar");
+                        }}
+                      />
+                      <ItemDoMenu
+                        icone={Trash2}
+                        titulo="Delete"
+                        sub="Hidden until they write again. Messages are kept"
+                        onClick={() => {
+                          setMenu(null);
+                          if (confirm(`Delete the conversation with ${aberta.nome} from the inbox? Messages are kept and it comes back if they write again.`))
+                            void mover(aberta, "excluir");
+                        }}
+                      />
+                    </>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -891,6 +995,16 @@ export function CaixaAtendimento({
             {resolvida(aberta) ? (
               <Chip icone={CheckCheck} tom="green">
                 Resolved
+              </Chip>
+            ) : null}
+            {arquivada(aberta) ? (
+              <Chip icone={Archive} tom="slate">
+                Archived
+              </Chip>
+            ) : null}
+            {excluida(aberta) ? (
+              <Chip icone={Trash2} tom="red">
+                Deleted
               </Chip>
             ) : null}
             {gaveta?.k === "criar" ? <span className="ml-auto text-[11px] text-text-tertiary">Click messages to add them to the scope</span> : null}

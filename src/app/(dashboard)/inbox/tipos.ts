@@ -70,6 +70,10 @@ export type ConversaDaCaixa = {
   ultimaEntradaEm: string | null;
   mensagens: MensagemDaCaixa[];
   resolvidaEm: string | null;
+  /** Fora da caixa até desarquivar. */
+  arquivadaEm: string | null;
+  /** Fora da caixa até o contato escrever de novo (as mensagens ficam). */
+  excluidaEm: string | null;
   tags: string[];
   presenca: string | null;
   presencaEm: string | null;
