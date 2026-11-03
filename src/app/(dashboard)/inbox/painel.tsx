@@ -98,6 +98,9 @@ function faixa(p: Periodo, hoje: string): [string, string] | null {
  * cada um, e os jobs do período em ordem de data. Sem job no período escolhido,
  * diz qual é o próximo para não parecer que não há nada.
  */
+/** Pela hora de início; job sem hora vai para o fim do dia. */
+const porInicio = (a: JobDaCaixa, b: JobDaCaixa) => (a.inicio ?? "~").localeCompare(b.inicio ?? "~");
+
 function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: string; inicial: Periodo }) {
   const [periodo, setPeriodo] = useState<Periodo>(inicial);
   const hoje = hojeEmLondres();
@@ -105,7 +108,7 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
     const f = faixa(p, hoje);
     return jobs
       .filter((j) => !f || (j.data != null && j.data >= f[0] && j.data <= f[1]))
-      .sort((a, b) => (p === "todos" ? (b.data ?? "").localeCompare(a.data ?? "") : (a.data ?? "").localeCompare(b.data ?? "") || (a.inicio ?? "").localeCompare(b.inicio ?? "")));
+      .sort((a, b) => (p === "todos" ? (b.data ?? "").localeCompare(a.data ?? "") : (a.data ?? "").localeCompare(b.data ?? "")) || porInicio(a, b));
   };
   const lista = doPeriodo(periodo);
   const proximo = jobs.filter((j) => j.data && j.data >= hoje).sort((a, b) => (a.data ?? "").localeCompare(b.data ?? ""))[0];
@@ -140,11 +143,14 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
   );
 }
 
-function Secao({ titulo, acao, children }: { titulo: string; acao?: React.ReactNode; children: React.ReactNode }) {
+function Secao({ titulo, extra, acao, children }: { titulo: string; extra?: React.ReactNode; acao?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="border-b border-border-light px-4 py-4">
       <div className="mb-2.5 flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-tertiary">{titulo}</p>
+        <p className="flex items-baseline gap-2 text-[11px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+          {titulo}
+          {extra ? <span className="normal-case tracking-normal">{extra}</span> : null}
+        </p>
         {acao}
       </div>
       {children}
@@ -219,8 +225,8 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
         {j.fim ? <span className="text-[10.5px] leading-tight opacity-80">to {horaCurta(j.fim)}</span> : null}
       </span>
       <span className="min-w-0 flex-1 py-0.5">
-        <span className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-semibold text-text-primary">{j.titulo ?? j.ref}</span>
+        <span className="flex items-start gap-2">
+          <span className="min-w-0 text-[13px] font-semibold leading-snug text-text-primary">{j.titulo ?? j.ref}</span>
           <span className="ml-auto shrink-0">
             {pilula ? <Chip tom={pilula.tom}>{pilula.texto}</Chip> : j.status ? <ChipDaEtapa e={{ grupo: "job", status: j.status }} /> : null}
           </span>
@@ -378,10 +384,10 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
         <>
           <Secao
             titulo="Today's route"
-            acao={
+            extra={
               rota.length ? (
-                <span className="text-[11.5px] tabular-nums text-text-tertiary">
-                  {rota.filter((j) => JOB_FEITO.has(j.status)).length}/{rota.length} done
+                <span className="text-[11.5px] font-normal tabular-nums text-text-tertiary">
+                  · {rota.filter((j) => JOB_FEITO.has(j.status)).length}/{rota.length} done
                 </span>
               ) : undefined
             }
@@ -389,7 +395,7 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
             {rota.length ? (
               <div className="space-y-2">
                 {[...rota]
-                  .sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""))
+                  .sort(porInicio)
                   .map((j) => (
                     <CartaoDeJob key={j.id} j={j} proximo={j.id === proximoId} />
                   ))}
