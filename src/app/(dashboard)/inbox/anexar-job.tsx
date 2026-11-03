@@ -30,11 +30,10 @@ type Item = {
 };
 type Valor = "cliente" | "parceiro" | "nenhum";
 
-// Rótulo do botão e a linha que ele põe na mensagem, para não ter dúvida do que vai.
-const VALORES: [Valor, string, string][] = [
-  ["cliente", "What the client pays", "Adds “Price: £…”, plus the portal link for accounts."],
-  ["parceiro", "What the partner gets", "Adds “You get: £…”, plus the report link if it is still missing."],
-  ["nenhum", "No price", "No price line. Use it when you only share the details."],
+const VALORES: [Valor, string][] = [
+  ["cliente", "What the client pays"],
+  ["parceiro", "What the partner gets"],
+  ["nenhum", "No price"],
 ];
 
 export const valorPadrao = (tipo: TipoDeContato): Valor => (tipo === "parceiro" || tipo === "grupo" ? "parceiro" : tipo === "outro" ? "nenhum" : "cliente");
@@ -251,7 +250,6 @@ export function AnexarJob({
             </button>
           ))}
         </div>
-        <p className="cmp-anexar-dica">{VALORES.find(([k]) => k === valor)?.[2]}</p>
       </div>
     </motion.div>
   );

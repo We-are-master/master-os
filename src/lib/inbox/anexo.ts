@@ -89,6 +89,8 @@ export async function buscarParaAnexar(sb: SupabaseClient, corpo: Record<string,
     .from("jobs")
     .select(CAMPOS_JOB)
     .is("deleted_at", null)
+    // Job concluído não entra: o seletor é para o que ainda está em andamento.
+    .neq("status", "completed")
     .order("scheduled_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(20);
