@@ -1081,7 +1081,7 @@ export function CaixaAtendimento({
                   setMenuDaLinha({ contato: c.contato, x: e.clientX, y: e.clientY });
                 }}
                 className={cn(
-                  "relative flex w-full flex-wrap gap-3 border-b border-border-light px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
+                  "relative flex w-full items-center gap-3 border-b border-border-light px-3.5 py-2 text-left transition-colors hover:bg-surface-secondary/70",
                   ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
@@ -1099,7 +1099,7 @@ export function CaixaAtendimento({
                   </span>
                   <span className="mt-0.5 flex items-center gap-1">
                     {p === "digitando" || p === "gravando" ? (
-                      <span className="truncate text-[12.5px] text-emerald-600">{p === "digitando" ? "typing..." : "recording audio..."}</span>
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-emerald-600">{p === "digitando" ? "typing..." : "recording audio..."}</span>
                     ) : (
                       <>
                         {ultima.direcao === "saida" ? (
@@ -1107,20 +1107,13 @@ export function CaixaAtendimento({
                         ) : (
                           <ArrowDownLeft className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
                         )}
-                        <span className={cn("truncate text-[12.5px]", n > 0 ? "font-medium text-text-primary" : "text-text-secondary")}>
+                        <span className={cn("min-w-0 flex-1 truncate text-[12.5px]", n > 0 ? "font-medium text-text-primary" : "text-text-secondary")}>
                           {ultima.texto ?? `[${ultima.tipo}]`}
                         </span>
                       </>
                     )}
-                    {n > 0 ? (
-                      <span className="ml-auto flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10.5px] font-semibold text-white">
-                        {n}
-                      </span>
-                    ) : null}
-                  </span>
-                </span>
-                {/* Os chips numa linha inteira, alinhados à direita (embaixo da hora), para caber sem cortar. */}
-                <span className="-mt-1.5 flex w-full flex-wrap items-center justify-end gap-1 empty:hidden">
+                    {/* Os chips na linha da prévia, à direita: a linha da lista fica com duas alturas só. */}
+                    <span className="flex shrink-0 items-center gap-1 pl-1 empty:hidden">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
                     {(() => {
@@ -1133,12 +1126,19 @@ export function CaixaAtendimento({
                         </mo.span>
                       ) : null;
                     })()}
-                    {c.tags.slice(0, 2).map((t) => (
+                    {c.tags.slice(0, 1).map((t) => (
                       <Chip key={t} icone={Tag} tom="slate">
                         {t}
                       </Chip>
                     ))}
                   </span>
+                    {n > 0 ? (
+                      <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10.5px] font-semibold text-white">
+                        {n}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
               </mo.button>
             );
           })}
