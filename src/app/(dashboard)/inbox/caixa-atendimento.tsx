@@ -326,6 +326,8 @@ export function CaixaAtendimento({
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
+  /** O menu de tag no modo "New tag": um formulário curto em vez da busca. */
+  const [formTag, setFormTag] = useState(false);
   const [criandoView, setCriandoView] = useState(false);
   const [apagadas, setApagadas] = useState<Set<string>>(new Set());
   /** Mensagens que acabaram de sair daqui: aparecem na hora, antes do servidor confirmar. */
@@ -361,7 +363,12 @@ export function CaixaAtendimento({
 
   useEffect(() => {
     if (!menu) return;
-    const fechar = () => setMenu(null);
+    // Clique dentro da área dos menus não fecha. `composedPath` porque o botão clicado
+    // pode já ter saído do DOM (o "New tag" vira formulário no mesmo clique).
+    const fechar = (e: MouseEvent) => {
+      if (e.composedPath().some((el) => el instanceof HTMLElement && el.dataset.areaDoMenu !== undefined)) return;
+      setMenu(null);
+    };
     document.addEventListener("click", fechar);
     return () => document.removeEventListener("click", fechar);
   }, [menu]);
@@ -1033,7 +1040,7 @@ export function CaixaAtendimento({
                 )}
               </p>
             </div>
-            <div className="relative flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <div className="relative flex items-center gap-1.5" data-area-do-menu onClick={(e) => e.stopPropagation()}>
               {jobDaConversa(aberta) ? (
                 <Link href={`/jobs/${jobDaConversa(aberta)!.id}`}>
                   <Acao icone={Link2} title="Open the job">
@@ -1052,7 +1059,13 @@ export function CaixaAtendimento({
                   Call
                 </Acao>
               ) : null}
-              <Acao icone={Tag} ativo={menu === "tags"} onClick={() => setMenu((m) => (m === "tags" ? null : "tags"))} disabled={!estadoPronto}>
+              <Acao
+                icone={Tag}
+                ativo={menu === "tags"}
+                onClick={() => {
+                  setFormTag(false);
+                  setMenu((m) => (m === "tags" ? null : "tags"));
+                }} disabled={!estadoPronto}>
                 Tag
               </Acao>
               {resolvida(aberta) ? (
@@ -1080,6 +1093,57 @@ export function CaixaAtendimento({
               {menu === "tags" ? (
                 // Como as etiquetas do WhatsApp: uma busca que também cria, e um clique marca ou desmarca.
                 <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-[150px] top-10 z-30 w-60 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                  {formTag ? (
+                    // Criar tag: nome, uma prévia de como fica e o botão que já marca esta conversa.
+                    <form
+                      className="p-1"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const nome = novaTag.trim();
+                        if (!nome) return;
+                        const existe = tags.find((t) => t.nome.toLowerCase() === nome.toLowerCase());
+                        if (existe) {
+                          if (!aberta.tags.includes(existe.nome)) void alternarTag(aberta, existe.nome);
+                          setNovaTag("");
+                        } else void criarTag(aberta);
+                        setFormTag(false);
+                      }}
+                    >
+                      <p className="mb-2 text-[12.5px] font-semibold text-text-primary">New tag</p>
+                      <input
+                        autoFocus
+                        className="h-8 w-full rounded-lg border border-border-light bg-card px-2.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-primary/50"
+                        placeholder="e.g. Waiting on access"
+                        maxLength={40}
+                        value={novaTag}
+                        onChange={(e) => setNovaTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setFormTag(false);
+                        }}
+                      />
+                      <p className="mt-1.5 text-[11.5px] leading-snug text-text-tertiary">It is added to this chat and shows up as a view in the sidebar.</p>
+                      <div className="mt-2.5 flex justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormTag(false);
+                            setNovaTag("");
+                          }}
+                          className="h-7 rounded-md px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!novaTag.trim() || !estadoPronto}
+                          className="h-7 rounded-md bg-primary px-2.5 text-[12px] font-semibold text-[var(--on-brand)] hover:opacity-90 disabled:opacity-45"
+                        >
+                          Create and add
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                  <>
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
@@ -1136,8 +1200,21 @@ export function CaixaAtendimento({
                         Create “{novaTag.trim()}”
                       </button>
                     ) : null}
-                    {tags.length === 0 && !novaTag.trim() ? <p className="px-2 py-1.5 text-xs text-text-tertiary">No tags yet. Type a name to create one.</p> : null}
+                    {tags.length === 0 && !novaTag.trim() ? <p className="px-2 py-1.5 text-xs text-text-tertiary">No tags yet.</p> : null}
                   </div>
+                  <div className="mt-1 border-t border-border-light pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setFormTag(true)}
+                      disabled={!estadoPronto}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-text-primary hover:bg-surface-secondary disabled:opacity-40"
+                    >
+                      <Plus className="h-3.5 w-3.5 shrink-0" />
+                      New tag
+                    </button>
+                  </div>
+                  </>
+                  )}
                 </mo.div>
               ) : null}
               </AnimatePresence>
