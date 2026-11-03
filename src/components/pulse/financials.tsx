@@ -420,7 +420,7 @@ export function Financials() {
 
   return (
     <>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 @3xl:grid-cols-5 gap-3">
         <KpiCard
           label="Revenue"
           hint={`Total client price + extras for jobs in the active pipeline. Goal comes from Business settings (breakeven = cover fixed costs at target gross margin; healthy = target net margin after fixed costs). Period goal prorates by working days.${revenueGoalUi.dica ? `\n\n${revenueGoalUi.dica}` : ""}`}
