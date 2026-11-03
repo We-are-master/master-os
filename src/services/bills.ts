@@ -69,6 +69,8 @@ export type CreateBillPayload = Omit<Bill, "id" | "created_at" | "updated_at" | 
   recurringOccurrenceCount?: number | null;
   /** Last inclusive due date; caps generated occurrences and enables auto-archive after this date. */
   recurring_series_end_date?: string | null;
+  /** Amount per due date (price changes and one-payment overrides); missing dates use `amount`. */
+  amountByDueDate?: Record<string, number> | null;
 };
 
 function resolveRecurringOccurrenceCount(interval: BillRecurrence, payload: CreateBillPayload): number {
@@ -96,7 +98,7 @@ export async function createBill(payload: CreateBillPayload): Promise<Bill> {
     const rows = dueDates.map((due_date) => ({
       description: payload.description,
       category: payload.category ?? null,
-      amount: payload.amount,
+      amount: payload.amountByDueDate?.[due_date] ?? payload.amount,
       due_date,
       is_recurring: true,
       recurrence_interval: interval,

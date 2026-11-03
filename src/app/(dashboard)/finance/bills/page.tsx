@@ -46,6 +46,9 @@ import {
   recurrenceLabel,
 } from "@/lib/bill-recurrence";
 import { buildBillDisplayList, recurringGroupKey, type BillDisplayItem } from "@/lib/bill-groups";
+import { amountsForDueDates, monthKey } from "@/lib/bill-timeline";
+import { BillAmountPlan, type DraftAmountStep } from "@/components/finance/bill-amount-plan";
+import { BillsTimeline } from "@/components/finance/bills-timeline";
 
 type BillsPreset = "all" | "one_off" | "recurring" | "unpaid" | "paid" | "archived";
 
@@ -94,6 +97,7 @@ export default function BillsPage() {
   /** Linhas marcadas: chave da linha → ids de todas as cobranças dela (série inteira). */
   const [selectedRows, setSelectedRows] = useState<Record<string, string[]>>({});
   const [deleting, setDeleting] = useState(false);
+  const [view, setView] = useState<"list" | "timeline">("list");
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -587,7 +591,7 @@ export default function BillsPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {([
             { id: "all", label: "All" },
             { id: "one_off", label: "One-off" },
@@ -610,12 +614,27 @@ export default function BillsPage() {
               {chip.label}
             </button>
           ))}
+          <SegmentedControl
+            className="ml-auto"
+            size="sm"
+            value={view}
+            onChange={(v) => setView(v as "list" | "timeline")}
+            options={[
+              { id: "list", label: "List" },
+              { id: "timeline", label: "Timeline" },
+            ]}
+          />
         </div>
 
         {loading ? (
           <div className="flex justify-center py-14">
             <Loader2 className="h-8 w-8 animate-spin text-text-tertiary" />
           </div>
+        ) : view === "timeline" ? (
+          <BillsTimeline
+            bills={bills.filter((b) => billKindTab === "all" || (billKindTab === "recurring") === !!b.is_recurring)}
+            onOpenBill={(b) => openEditBill(b)}
+          />
         ) : compactRows.length === 0 ? (
           <p className="text-sm text-text-tertiary py-10 text-center rounded-xl border border-dashed border-border-light bg-surface-hover/30">
             No bills for this filter.
@@ -860,6 +879,7 @@ export default function BillsPage() {
                       ? form.recurringOccurrenceCount
                       : undefined,
                   recurring_series_end_date: form.recurring_series_end_date ?? null,
+                  amountByDueDate: form.amountByDueDate ?? null,
                   submitted_by_id: profile?.id,
                   submitted_by_name: profile?.full_name,
                 });
@@ -898,6 +918,8 @@ type BillModalSavePayload = Partial<Bill> & {
   recurringOccurrenceCount?: number;
   /** Last inclusive due date for a new recurring series. */
   recurring_series_end_date?: string | null;
+  /** New recurring bill: amount per due date when the price changes over time. */
+  amountByDueDate?: Record<string, number>;
 };
 
 function BillModal({
@@ -931,6 +953,8 @@ function BillModal({
   const [seriesSiblings, setSeriesSiblings] = useState<Bill[] | null>(null);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [amountById, setAmountById] = useState<Record<string, string>>({});
+  const [priceSteps, setPriceSteps] = useState<DraftAmountStep[]>([]);
+  const [amountOverrides, setAmountOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -957,6 +981,8 @@ function BillModal({
       setRecurringEndDate("");
       setSeriesSiblings(null);
       setAmountById({});
+      setPriceSteps([]);
+      setAmountOverrides({});
     });
   }, [open, initial]);
 
@@ -1046,6 +1072,15 @@ function BillModal({
         return;
       }
     }
+    if (!initial && is_recurring) {
+      const bad =
+        priceSteps.some((st) => !st.fromMonth || !(parseFloat(st.amount) >= 0)) ||
+        Object.values(amountOverrides).some((v) => !(parseFloat(v) >= 0));
+      if (bad) {
+        toast.error("Every price change needs a month and a valid amount.");
+        return;
+      }
+    }
     if (!initial && billType === "debit" && is_recurring) {
       const inst = parseInt(String(debitInstallments).trim(), 10);
       if (!Number.isFinite(inst) || inst < 1 || inst > 120) {
@@ -1066,6 +1101,10 @@ function BillModal({
           : undefined,
       recurring_series_end_date:
         !initial && is_recurring && hasRecurringEnd ? recurringEndDate.trim() : null,
+      amountByDueDate:
+        !initial && is_recurring && plan && (priceSteps.length > 0 || Object.keys(amountOverrides).length > 0)
+          ? plan.amounts
+          : undefined,
     });
   };
 
@@ -1075,12 +1114,10 @@ function BillModal({
    * preview built from its own arithmetic is a preview that can disagree with
    * the rows, and these rows are money that lands in Billing and in Pulse.
    */
-  const schedulePreview = (() => {
+  const plan = (() => {
     const value = parseFloat(amount);
     if (!Number.isFinite(value) || value < 0 || !due_date) return null;
-    if (!is_recurring) {
-      return { count: 1, total: value, first: due_date, last: due_date, ongoing: false };
-    }
+    if (!is_recurring) return { dates: [due_date], amounts: { [due_date]: value } };
     const cap =
       billType === "debit"
         ? Math.min(120, Math.max(1, parseInt(String(debitInstallments).trim(), 10) || 0))
@@ -1089,14 +1126,29 @@ function BillModal({
     if (hasRecurringEnd && (!end || end < due_date)) return null;
     const dates = generateRecurringDueDates(due_date, recurrence_interval, cap, end);
     if (dates.length === 0) return null;
+    const steps = [
+      { fromMonth: monthKey(due_date), amount: value },
+      ...priceSteps
+        .filter((st) => st.fromMonth && parseFloat(st.amount) >= 0)
+        .map((st) => ({ fromMonth: st.fromMonth, amount: parseFloat(st.amount) })),
+    ];
+    const overrides: Record<string, number> = {};
+    for (const [d, v] of Object.entries(amountOverrides)) if (parseFloat(v) >= 0) overrides[d] = parseFloat(v);
+    return { dates, amounts: amountsForDueDates(dates, steps, overrides) };
+  })();
+
+  const schedulePreview = (() => {
+    if (!plan) return null;
+    const total = plan.dates.reduce((t, d) => t + (plan.amounts[d] ?? 0), 0);
     return {
-      count: dates.length,
-      total: Math.round(value * dates.length * 100) / 100,
-      first: dates[0],
-      last: dates[dates.length - 1],
+      count: plan.dates.length,
+      total: Math.round(total * 100) / 100,
+      first: plan.dates[0],
+      last: plan.dates[plan.dates.length - 1],
+      varies: new Set(Object.values(plan.amounts)).size > 1,
       // No end date means the series keeps going; we schedule a horizon now and
       // the last line below is where the forecast currently stops, not the end.
-      ongoing: !hasRecurringEnd,
+      ongoing: is_recurring && !hasRecurringEnd,
     };
   })();
 
@@ -1273,12 +1325,23 @@ function BillModal({
             ) : null}
           </div>
         ) : null}
+        {plan && is_recurring && !initial && plan.dates.length > 1 ? (
+          <BillAmountPlan
+            dueDates={plan.dates}
+            amounts={plan.amounts}
+            firstMonth={monthKey(plan.dates[0])}
+            steps={priceSteps}
+            onStepsChange={setPriceSteps}
+            overrides={amountOverrides}
+            onOverridesChange={setAmountOverrides}
+          />
+        ) : null}
         {schedulePreview && !initial ? (
           <div className="rounded-xl border border-border-light bg-surface-hover/40 px-3.5 py-3">
             <p className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Review</p>
             <p className="mt-1 text-[15px] font-semibold tabular-nums text-text-primary">
               {formatCurrency(schedulePreview.total)}
-              {schedulePreview.count > 1 ? (
+              {schedulePreview.count > 1 && !schedulePreview.varies ? (
                 <span className="ml-1.5 text-[12px] font-medium text-text-tertiary">
                   {schedulePreview.count} × {formatCurrency(parseFloat(amount) || 0)}
                 </span>
