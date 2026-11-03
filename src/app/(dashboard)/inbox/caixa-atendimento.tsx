@@ -65,7 +65,7 @@ import { cn } from "@/lib/utils";
 import "./inbox.css";
 import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
-import { NovoContato, type Escolhido } from "./novo-contato";
+import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { ligarPeloZendesk } from "./ligar";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
@@ -859,7 +859,7 @@ export function CaixaAtendimento({
 
           <button
             type="button"
-            onClick={() => setNovoAberto((v) => !v)}
+            onClick={() => setNovoAberto(true)}
             className={cn(
               "ml-2 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-primary text-[var(--on-brand)] transition-transform hover:opacity-90 active:scale-95",
               novoAberto && "ring-2 ring-primary/30",
@@ -880,17 +880,12 @@ export function CaixaAtendimento({
               <Search className="h-[18px] w-[18px]" />
             </button>
           ) : null}
-          <AnimatePresence>
-            {novoAberto ? (
-              <NovoContato
-                onFechar={() => setNovoAberto(false)}
-                onEscolher={(e) => {
-                  setNovoAberto(false);
-                  abrirNumero(e);
-                }}
-              />
-            ) : null}
-          </AnimatePresence>
+          <NovaConversa
+            open={novoAberto}
+            onFechar={() => setNovoAberto(false)}
+            onAbrir={abrirNumero}
+            onEnviado={() => router.refresh()}
+          />
         </div>
         {/* O que a lista mostra, numa linha só: a view (a lateral escolhe) e o período. */}
         <div className="flex h-10 shrink-0 items-center px-4">
