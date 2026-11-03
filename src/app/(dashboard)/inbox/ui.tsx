@@ -162,7 +162,13 @@ export function ChipDaEtapa({ e }: { e: Pick<EtapaDaConversa, "grupo" | "status"
 
 export function ChipDoTipo({ c }: { c: ConversaDaCaixa }) {
   if (c.tipo === "conta") return <Chip icone={Building2} tom="blue">Account</Chip>;
-  if (c.tipo === "parceiro") return <Chip icone={Wrench} tom="teal">Partner</Chip>;
+  // O parceiro aparece pelo ofício principal (a chave inglesa e o verde já dizem que é parceiro).
+  if (c.tipo === "parceiro")
+    return (
+      <Chip icone={Wrench} tom="teal" title="Partner">
+        {c.parceiro?.oficio ?? "Partner"}
+      </Chip>
+    );
   if (c.tipo === "cliente") return <Chip icone={Home} tom="violet">Client</Chip>;
   if (c.tipo === "grupo") return <Chip icone={UsersRound} tom="green">Group</Chip>;
   return <Chip icone={UserRound}>{c.cliente ? "No jobs yet" : "Unknown"}</Chip>;

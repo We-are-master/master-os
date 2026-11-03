@@ -1021,7 +1021,7 @@ export function CaixaAtendimento({
                   setMenuDaLinha({ contato: c.contato, x: e.clientX, y: e.clientY });
                 }}
                 className={cn(
-                  "relative flex w-full gap-3 border-b border-border-light px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
+                  "relative flex w-full flex-wrap gap-3 border-b border-border-light px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
                   ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
@@ -1057,7 +1057,9 @@ export function CaixaAtendimento({
                       </span>
                     ) : null}
                   </span>
-                  <span className="mt-1 flex items-center gap-1 overflow-hidden">
+                </span>
+                {/* Os chips numa linha inteira, a partir da borda esquerda, para caber sem cortar. */}
+                <span className="-mt-1.5 flex w-full flex-wrap items-center gap-1">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
                     {(() => {
@@ -1076,7 +1078,6 @@ export function CaixaAtendimento({
                       </Chip>
                     ))}
                   </span>
-                </span>
               </mo.button>
             );
           })}
