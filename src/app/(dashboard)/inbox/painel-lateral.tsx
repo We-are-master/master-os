@@ -16,7 +16,8 @@ import { ChatsCircle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import "./inbox.css";
 import { Composer } from "./composer";
-import { Midia, SO_ROTULO, Tique, comPendentes, diaDaMensagemOuHoje, fora, naoLidas, quandoNaLista } from "./caixa-atendimento";
+import { Midia, SO_ROTULO, Tique, comPendentes, conversaRascunho, diaDaMensagemOuHoje, fora, naoLidas, quandoNaLista } from "./caixa-atendimento";
+import { EVENTO_ABRIR_CONVERSA, type PedidoDeConversa } from "@/lib/inbox/abrir-conversa";
 import { tempo } from "./movimento";
 import type { ConversaDaCaixa, MensagemDaCaixa } from "./tipos";
 import { Avatar, ChipDoTipo, corDoAutor, nomeDoAutor } from "./ui";
@@ -88,6 +89,22 @@ export function AtendimentoLateral() {
       clearInterval(t);
     };
   }, [aberto, contato, carregarLista, carregarConversa]);
+
+  // Um número clicado em outra tela (o telefone do cliente no job) abre aqui a conversa,
+  // a que já existe ou um rascunho para começar.
+  useEffect(() => {
+    const ouvir = (e: Event) => {
+      const d = (e as CustomEvent<PedidoDeConversa>).detail;
+      if (!d?.numero) return;
+      setAberto(true);
+      setContato(d.numero);
+      setPendentes([]);
+      setConversa(dados?.conversas.find((c) => c.contato === d.numero) ?? conversaRascunho({ numero: d.numero, nome: d.nome, tipo: d.tipo ?? "cliente" }));
+      void carregarConversa(d.numero);
+    };
+    window.addEventListener(EVENTO_ABRIR_CONVERSA, ouvir);
+    return () => window.removeEventListener(EVENTO_ABRIR_CONVERSA, ouvir);
+  }, [dados, carregarConversa]);
 
   useEffect(() => {
     if (!aberto) return;

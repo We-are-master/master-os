@@ -207,7 +207,7 @@ function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
   return c.tipo === "parceiro" ? (c.jobs[0] ?? null) : null;
 }
 /** A conversa vazia de quem ainda não recebeu nada: o composer manda, o refresh traz o resto. */
-function conversaRascunho(e: Escolhido): ConversaDaCaixa {
+export function conversaRascunho(e: Escolhido): ConversaDaCaixa {
   return {
     contato: e.numero,
     nome: e.nome,
