@@ -12,9 +12,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { Building2, Home, MessageCircle, Search, Sparkles, UsersRound, Wrench, X, type LucideIcon } from "lucide-react";
+import { Building2, Home, MessageCircle, Search, Sparkles, UserPlus, UsersRound, Wrench, X, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/modal";
+import { Select } from "@/components/ui/select";
+import { createClient } from "@/services/clients";
+import { listActiveAccountsForFilter, type FilterableAccount } from "@/services/accounts";
 import { cn } from "@/lib/utils";
 import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 
@@ -37,6 +40,81 @@ function paraWhatsApp(bruto: string): string | null {
   if (d.startsWith("0") && d.length === 11) return `44${d.slice(1)}`;
   if (d.startsWith("00")) return d.slice(2);
   return d.length >= 10 ? d : null;
+}
+
+/**
+ * Quem ainda não está no OS: nome, número e a conta. Salva na hora como cliente
+ * (o mesmo "Add as client" do painel) e já entra na conversa ou no grupo.
+ */
+function NovoContatoRapido({ inicial, onSalvo, onCancelar }: { inicial: string; onSalvo: (numero: string, nome: string) => void; onCancelar: () => void }) {
+  const soDigitos = /^[\d\s+()-]+$/.test(inicial.trim());
+  const [nome, setNome] = useState(soDigitos ? "" : inicial.trim());
+  const [numero, setNumero] = useState(soDigitos ? inicial.trim() : "");
+  const [contas, setContas] = useState<FilterableAccount[]>([]);
+  const [conta, setConta] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    void listActiveAccountsForFilter().then((l) => {
+      setContas(l);
+      setConta((atual) => atual || l.find((a) => /^fixfy\b/i.test(a.name))?.id || "");
+    });
+  }, []);
+
+  async function salvar() {
+    const n = paraWhatsApp(numero);
+    if (!nome.trim()) return toast.error("Add the name");
+    if (!n) return toast.error("Add a valid WhatsApp number");
+    if (!conta) return toast.error("Pick the account");
+    setSalvando(true);
+    try {
+      await createClient({
+        full_name: nome.trim(),
+        phone: `+${n}`,
+        client_type: "residential",
+        source: "direct",
+        status: "active",
+        source_account_id: conta,
+      });
+      toast.success(`${nome.trim()} saved as a client`);
+      onSalvo(n, nome.trim());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the contact");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  const campo = "h-9 w-full rounded-lg border border-border-light bg-card px-2.5 text-[13px] text-text-primary outline-none placeholder:text-text-tertiary focus:border-primary/50";
+  return (
+    <div className="mt-1.5 space-y-2 rounded-lg border border-border-light bg-surface-secondary/40 p-2.5">
+      <p className="text-[12px] font-medium text-text-primary">New contact</p>
+      <div className="grid grid-cols-2 gap-2">
+        <input autoFocus value={nome} onChange={(e) => setNome(e.target.value)} maxLength={120} placeholder="Full name" className={campo} />
+        <input value={numero} onChange={(e) => setNumero(e.target.value)} inputMode="tel" placeholder="+44 7..." className={cn(campo, "tabular-nums")} />
+      </div>
+      <Select
+        aria-label="Account"
+        value={conta}
+        onChange={(e) => setConta(e.target.value)}
+        className="h-9 text-[13px]"
+        options={[{ value: "", label: contas.length ? "Account" : "Loading accounts..." }, ...contas.map((a) => ({ value: a.id, label: a.name }))]}
+      />
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancelar} className="h-8 rounded-lg px-2.5 text-[12.5px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={salvando}
+          onClick={() => void salvar()}
+          className="h-8 rounded-lg bg-primary px-3 text-[12.5px] font-semibold text-[var(--on-brand)] hover:opacity-90 disabled:opacity-45"
+        >
+          {salvando ? "Saving..." : "Save contact"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function NovaConversa({
@@ -64,6 +142,7 @@ export function NovaConversa({
   const [modo, setModo] = useState<"conversa" | "grupo">("conversa");
   const [nomeDoGrupo, setNomeDoGrupo] = useState("");
   const [membros, setMembros] = useState<{ numero: string; nome: string }[]>([]);
+  const [criandoContato, setCriandoContato] = useState(false);
 
   // Busca com uma pausa curta entre teclas; a última resposta vence.
   useEffect(() => {
@@ -96,6 +175,7 @@ export function NovaConversa({
     setModo("conversa");
     setNomeDoGrupo("");
     setMembros([]);
+    setCriandoContato(false);
     onFechar();
   }
 
@@ -318,7 +398,15 @@ export function NovaConversa({
           </div>
         ) : (
           <div>
-            <label className="mb-1.5 block text-[12px] font-medium text-text-secondary">{modo === "grupo" ? "Add people" : "Contact"}</label>
+            <div className="mb-1.5 flex items-center">
+              <label className="flex-1 text-[12px] font-medium text-text-secondary">{modo === "grupo" ? "Add people" : "Contact"}</label>
+              {!criandoContato ? (
+                <button type="button" onClick={() => setCriandoContato(true)} className="inline-flex items-center gap-1 text-[12px] font-medium text-text-secondary hover:text-text-primary">
+                  <UserPlus className="h-3.5 w-3.5" />
+                  New contact
+                </button>
+              ) : null}
+            </div>
             <div className="flex h-9 items-center gap-2 rounded-lg border border-border-light bg-card px-2.5 focus-within:border-primary/50">
               <Search className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
               <input
@@ -329,7 +417,21 @@ export function NovaConversa({
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
               />
             </div>
-            {!curto ? (
+            {criandoContato ? (
+              <NovoContatoRapido
+                inicial={q}
+                onCancelar={() => setCriandoContato(false)}
+                onSalvo={(n, nomeDele) => {
+                  setCriandoContato(false);
+                  if (modo === "grupo") return incluir(n, nomeDele);
+                  setEscolhido({ tipo: "cliente", id: n, nome: nomeDele, sub: "New client", numero: n });
+                  setNome(nomeDele);
+                  setNumero(`+${n}`);
+                  setQ("");
+                }}
+              />
+            ) : null}
+            {!curto && !criandoContato ? (
               <div className="mt-1.5 rounded-lg border border-border-light p-1">
                 <div className="flex gap-1 overflow-x-auto px-0.5 pb-1">
                   {FILTROS.map(([k, t]) => (
@@ -391,7 +493,16 @@ export function NovaConversa({
                   })}
                   {buscando || (!lista.length && !numeroDaBusca) ? (
                     <p className="px-2 py-2 text-[12px] text-text-tertiary">
-                      {buscando ? "Searching..." : modo === "grupo" ? "Nobody found. Type their number to add them." : "Nobody found. Type the name and number below."}
+                      {buscando ? (
+                        "Searching..."
+                      ) : (
+                        <>
+                          Nobody found.{" "}
+                          <button type="button" onClick={() => setCriandoContato(true)} className="font-medium text-text-primary underline-offset-2 hover:underline">
+                            Add them as a new contact
+                          </button>
+                        </>
+                      )}
                     </p>
                   ) : null}
                 </div>

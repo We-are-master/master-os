@@ -61,6 +61,12 @@ export function Modal({
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // onClose in a ref: callers often pass an inline function, and re-running the
+  // focus effect on every render pulled focus to the close button on each keystroke.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open || !manageFocus) return;
@@ -72,7 +78,7 @@ export function Modal({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
       } else if (event.key === "Tab") {
         const items = focusable();
         const first = items[0];
@@ -90,7 +96,7 @@ export function Modal({
       document.removeEventListener("keydown", onKeyDown, true);
       previous?.focus();
     };
-  }, [open, manageFocus, onClose]);
+  }, [open, manageFocus]);
 
   const isWizard = layout === "wizard";
   const effectiveScrollBody = isWizard ? false : scrollBody;
