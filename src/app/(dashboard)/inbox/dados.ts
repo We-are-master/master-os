@@ -116,7 +116,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const hoje = hojeEmLondres();
   // Em paralelo com o resto: quem pode assumir conversa.
   const equipeAPromessa = equipeDaInbox(sb);
-  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por_nome, partner_id, criado_em";
+  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por, enviado_por_nome, partner_id, criado_em";
   const mensagensDesde = (colunas: string) =>
     sb.from("wa_mensagens").select(colunas).eq("phone_number_id", OPS_PHONE_NUMBER_ID()).gte("criado_em", desde).order("criado_em", { ascending: true }).limit(4000);
   // Sem a 355 aplicada não há autor: a caixa carrega igual, só sem o nome de quem falou no grupo.
@@ -129,6 +129,14 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   if (caminhos.length) {
     const { data } = await sb.storage.from("inbox-media").createSignedUrls(caminhos.map((c) => c.slice("storage:".length)), 60 * 60 * 12);
     for (const s of data ?? []) if (s.path && s.signedUrl) assinadas.set(`storage:${s.path}`, s.signedUrl);
+  }
+
+  // A foto de quem da equipe mandou, para o avatar no balão de saída.
+  const idsDeQuemMandou = [...new Set(linhas.map((l) => l.enviado_por as string | null).filter((x): x is string => Boolean(x)))];
+  const fotoDe = new Map<string, string | null>();
+  if (idsDeQuemMandou.length) {
+    const { data } = await sb.from("profiles").select("id, avatar_url").in("id", idsDeQuemMandou);
+    for (const p of data ?? []) fotoDe.set(p.id as string, (p.avatar_url as string | null) ?? null);
   }
 
   const porContato = new Map<string, MensagemDaCaixa[]>();
@@ -149,6 +157,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       status: (l.status as string | null) ?? null,
       erro: (l.erro as string | null) ?? null,
       quem: (l.enviado_por_nome as string | null) ?? null,
+      quemAvatar: l.enviado_por ? (fotoDe.get(l.enviado_por as string) ?? null) : null,
       criadoEm: l.criado_em as string,
       autor: ehGrupo(contato) && l.direcao === "entrada" ? { numero: (l.autor as string | null) ?? null, nome: (l.autor_nome as string | null) ?? null } : null,
     });

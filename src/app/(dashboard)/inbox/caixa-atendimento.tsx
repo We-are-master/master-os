@@ -306,6 +306,25 @@ function AvatarDaEquipe({ m }: { m: MembroDaEquipe }) {
   );
 }
 
+/** O avatar de quem mandou a mensagem de saída, como no VOS: foto, senão iniciais; do celular, o ícone do aparelho. */
+function AvatarDeQuemMandou({ m }: { m: MensagemDaCaixa }) {
+  if (m.origem === "celular" || !m.quem)
+    return (
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-tertiary text-text-tertiary" title={m.origem === "celular" ? "Sent from the phone" : "Fixfy"}>
+        <Smartphone className="h-4 w-4" />
+      </span>
+    );
+  const iniciais = m.quem.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  return m.quemAvatar ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={m.quemAvatar} alt={m.quem} title={m.quem} className="h-8 w-8 shrink-0 rounded-full object-cover" />
+  ) : (
+    <span title={m.quem} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+      {iniciais}
+    </span>
+  );
+}
+
 const Titulo = ({ children, acao }: { children: React.ReactNode; acao?: React.ReactNode }) => (
   // A linha em cima separa cada grupo da lateral, como no VOS.
   <p className="mx-1 mt-3 flex items-center border-t border-border-light px-1.5 pb-1.5 pt-3.5 text-[12.5px] font-medium text-text-tertiary">
@@ -1608,6 +1627,12 @@ export function CaixaAtendimento({
                           <p className="mt-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px] font-medium text-[#ffd2c2]">Not delivered{m.erro ? `: ${m.erro}` : ""}</p>
                         ) : null}
                       </div>
+                      {m.direcao === "saida" ? (
+                        // Em sequência da mesma pessoa, o avatar fica só no último balão.
+                        <span className={cn(todas[i + 1]?.direcao === "saida" && todas[i + 1]?.quem === m.quem && todas[i + 1]?.origem === m.origem && new Date(todas[i + 1].criadoEm).toDateString() === new Date(m.criadoEm).toDateString() ? "invisible" : "")}>
+                          <AvatarDeQuemMandou m={m} />
+                        </span>
+                      ) : null}
                     </div>
                   </mo.div>
                 );

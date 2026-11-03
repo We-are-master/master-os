@@ -13,6 +13,8 @@ export type MensagemDaCaixa = {
   status: string | null;
   erro: string | null;
   quem: string | null;
+  /** Foto de quem da equipe mandou (profiles.avatar_url); null mostra as iniciais. */
+  quemAvatar?: string | null;
   criadoEm: string;
   /** Em grupo, quem mandou a mensagem que entrou: número (null se escondido) e nome. */
   autor?: { numero: string | null; nome: string | null } | null;
