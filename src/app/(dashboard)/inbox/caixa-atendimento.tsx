@@ -46,7 +46,9 @@ import {
 import { SearchInput } from "@/components/ui/input";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
+import "./inbox.css";
 import { Composer } from "./composer";
+import { PlayerDeAudio } from "./player-de-audio";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, PONTO, TONS, iconeDaEtapa, presencaAgora, tomValido, type Tom } from "./ui";
@@ -498,7 +500,7 @@ export function CaixaAtendimento({
   );
 
   return (
-    <div className="grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_340px] overflow-hidden bg-card">
+    <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_300px] overflow-hidden bg-card">
       {/* Lateral */}
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
         <p className="px-2.5 pb-1 pt-1.5 text-[15px] font-semibold text-text-primary">Inbox</p>
@@ -999,7 +1001,12 @@ function Midia({ m }: { m: MensagemDaCaixa }) {
       </a>
     );
   }
-  if (m.tipo === "audio") return <audio controls preload="none" src={m.midiaUrl} className="mb-1 h-9 w-64 max-w-full" />;
+  if (m.tipo === "audio")
+    return (
+      <div className="mb-1 py-0.5">
+        <PlayerDeAudio src={m.midiaUrl} />
+      </div>
+    );
   if (m.tipo === "video") return <video controls preload="metadata" src={m.midiaUrl} className="mb-1 max-h-60 rounded-lg" />;
   return (
     <a href={m.midiaUrl} target="_blank" rel="noreferrer" className="mb-1 inline-flex items-center gap-1.5 rounded-lg border border-current/20 px-2 py-1 underline-offset-2 hover:underline">

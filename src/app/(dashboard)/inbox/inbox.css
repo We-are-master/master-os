@@ -1,0 +1,172 @@
+/*
+ * A /inbox no desenho do Atendimento do VOS: composer, gravação de voz (gv-*)
+ * e player de áudio (pa-*). Regras copiadas do vos-os.css do VOS, com os
+ * tokens do VOS mapeados para os do OS aqui em cima. Tudo preso em `.cx`.
+ */
+.cx{
+  --ink:var(--text-primary);--ink-2:var(--text-secondary);--ink-3:var(--text-tertiary);
+  --ink-4:color-mix(in oklab,var(--text-tertiary) 70%,transparent);
+  --panel:var(--card-bg);--panel-2:var(--surface-secondary);--panel-3:var(--surface-tertiary);
+  --line:var(--border-light);--snd:var(--brand);--snd-ink:var(--on-brand,#fff);
+  --fs-caption:11px;--fs-chip:10.5px;--fs-meta:12px;--r-xs:6px;
+  --shadow-lift:0 10px 30px -12px rgba(10,10,31,.28),0 2px 6px rgba(10,10,31,.06);
+  --vos-dur-xs:100ms;--vos-dur-sm:150ms;--vos-dur-md:200ms;--vos-dur-lg:280ms;
+  --vos-curva-entrada:cubic-bezier(.22,1,.36,1);--vos-curva-saida:cubic-bezier(.4,0,.6,1);
+  --vos-ciclo-digitando:1200ms;
+}
+@keyframes vos-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+.cx .mono{font-variant-numeric:tabular-nums;}
+
+/* Composer (vos-os.css .wa-composer) */
+.cx .wa-composer{margin:10px 16px 4px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:0 2px 10px rgba(0,0,0,.05);display:flex;flex-direction:column;flex-shrink:0;}
+.cx .wa-composer.note{background:color-mix(in oklab,var(--warn) 7%,var(--panel));border-color:color-mix(in oklab,var(--warn) 38%,var(--line));}
+.cx .wa-composer .top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px 0;}
+.cx .wa-composer .ch{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink-2);}
+.cx .wa-composer .ch svg{color:var(--ok);}
+.cx .wa-composer.note .ch svg{color:var(--warn);}
+.cx .wa-composer .ai{display:inline-flex;align-items:center;gap:5px;border:0;background:none;color:var(--m-ai);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;padding:3px 6px;border-radius:var(--r-xs);transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada), opacity var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .wa-composer .ai:hover{background:color-mix(in oklab,var(--m-ai) 10%,transparent);transition-duration:var(--vos-dur-xs);}
+.cx .wa-composer .ai:disabled{opacity:.45;cursor:default;background:none;}
+.cx .wa-composer textarea{border:0;background:none;resize:none;padding:8px 12px;font-size:13px;line-height:1.5;color:var(--ink);font-family:inherit;min-height:46px;max-height:160px;outline:none;}
+.cx .wa-composer textarea::placeholder{color:var(--ink-3);}
+.cx .wa-composer .bot{display:flex;align-items:center;gap:8px;padding:0 10px 9px;}
+.cx .wa-composer .bot .tools{display:flex;align-items:center;gap:2px;}
+.cx .wa-composer .bot .attach{width:30px;height:30px;display:grid;place-items:center;background:none;border:0;border-radius:8px;color:var(--ink-3);cursor:pointer;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada), color var(--vos-dur-sm) var(--vos-curva-entrada), opacity var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .wa-composer .bot .attach:hover{background:var(--panel-2);color:var(--ink);transition-duration:var(--vos-dur-xs);}
+.cx .wa-composer .bot .attach:disabled{opacity:.4;cursor:default;background:none;}.cx .wa-composer .bot .attach.on{color:var(--info);background:color-mix(in oklab, var(--info) 12%, transparent);}
+.cx .wa-composer .bot .hint{margin-left:auto;font-size:11px;color:var(--ink-3);opacity:.8;}
+.cx .wa-composer .snd{width:32px;height:32px;border-radius:10px;background:var(--snd);color:var(--snd-ink);display:grid;place-items:center;border:0;cursor:pointer;flex:none;box-shadow:0 6px 16px -7px color-mix(in oklab,var(--snd) 70%,transparent);}
+.cx .wa-composer .snd:disabled{opacity:.45;cursor:default;box-shadow:none;}
+.cx .wa-composer.note .snd{background:var(--warn);}
+
+/* Gravação e player (vos-os.css .gv-* e .pa-*) */
+.cx .pa{--pa-cor:currentColor;display:flex;align-items:center;gap:10px;min-width:220px;max-width:320px;color:var(--ink);}
+.cx .pa audio{display:none;}
+.cx .pa-play{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:999px;border:0;cursor:pointer;color:inherit;background:color-mix(in oklab,currentColor 10%,transparent);transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada),transform var(--vos-dur-xs) var(--vos-curva-entrada);}
+.cx .pa-play:hover{background:color-mix(in oklab,currentColor 16%,transparent);transition-duration:var(--vos-dur-xs);}
+.cx .pa-play:active{transform:scale(.94);}
+.cx .pa-onda{position:relative;flex:1;min-width:0;height:26px;display:flex;align-items:center;gap:2px;cursor:pointer;touch-action:none;outline:none;border-radius:4px;}
+.cx .pa-onda:focus-visible{box-shadow:0 0 0 2px var(--accent);}
+.cx .pa-onda > i{flex:1;min-width:2px;max-width:3px;height:100%;border-radius:999px;background:color-mix(in oklab,currentColor 26%,transparent);transform-origin:center;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada);animation:pa-cresce var(--vos-dur-md) var(--vos-curva-entrada) both;animation-delay:calc(var(--i) * 8ms);}
+.cx .pa-onda > i.on{background:currentColor;}
+@keyframes pa-cresce{from{opacity:0;}to{opacity:1;}}
+.cx .pa-trilho{position:absolute;inset:0;pointer-events:none;will-change:transform;}
+.cx .pa-bola{position:absolute;left:-5px;top:50%;width:10px;height:10px;margin-top:-5px;border-radius:999px;background:currentColor;opacity:0;transform:scale(.4);transition:opacity var(--vos-dur-sm) var(--vos-curva-entrada),transform var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .pa-tocando .pa-bola,.cx .pa-onda:hover .pa-bola,.cx .pa-arrastando .pa-bola{opacity:1;transform:scale(1);}
+.cx .pa-tempo{flex:none;min-width:30px;font-size:var(--fs-caption);color:color-mix(in oklab,currentColor 62%,transparent);font-variant-numeric:tabular-nums;}
+.cx .pa-vel{flex:none;height:20px;padding:0 6px;border-radius:6px;border:0;cursor:pointer;font-size:var(--fs-chip);font-weight:600;color:inherit;background:color-mix(in oklab,currentColor 10%,transparent);font-variant-numeric:tabular-nums;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .pa-vel:hover{background:color-mix(in oklab,currentColor 18%,transparent);transition-duration:var(--vos-dur-xs);}
+.cx .pa-previa{min-width:0;max-width:none;width:100%;}
+.cx .wa-audio{min-width:240px;max-width:320px;}
+
+/* A faixa da gravação (cola no campo pelo fio de baixo). */
+.cx .gv{--gv-arraste:0;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);color:var(--ink);min-height:48px;}
+.cx .gv-lixeira{flex:none;position:relative;display:grid;place-items:center;width:30px;height:30px;border-radius:999px;border:0;background:transparent;color:var(--ink-3);cursor:pointer;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada),color var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .gv-lixeira:hover{background:var(--panel-2);color:var(--bad);transition-duration:var(--vos-dur-xs);}
+.cx .gv-lixeira svg{display:block;}
+.cx .gv-tampa{position:absolute;top:8px;left:8px;transform-origin:1px 4px;transition:transform var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .gv-cesto{margin-top:6px;}
+.cx .gv-meio{flex:1;min-width:0;display:flex;align-items:center;}
+.cx .gv-vivo,.cx .gv-previa{display:flex;align-items:center;gap:10px;flex:1;min-width:0;}
+.cx .gv-ponto{flex:none;width:8px;height:8px;border-radius:999px;background:var(--bad);animation:vos-pulse var(--vos-ciclo-digitando) var(--vos-curva-saida) infinite;}
+.cx .gv-ponto-pausado{animation:none;background:var(--ink-4);}
+.cx .gv-tempo{flex:none;min-width:34px;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.cx .gv-onda{flex:1;min-width:0;height:26px;display:flex;align-items:center;justify-content:flex-end;gap:2px;overflow:hidden;}
+.cx .gv-onda > i{flex:none;width:3px;height:100%;border-radius:999px;background:var(--ink);transform-origin:center;transition:transform var(--vos-dur-xs) var(--vos-curva-entrada);}
+.cx .gv-acao{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:999px;border:0;cursor:pointer;color:var(--ink-2);background:var(--panel-2);transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada),color var(--vos-dur-sm) var(--vos-curva-entrada),transform var(--vos-dur-xs) var(--vos-curva-entrada);}
+.cx .gv-acao:hover{background:var(--panel-3);color:var(--ink);transition-duration:var(--vos-dur-xs);}
+.cx .gv-retomar{color:var(--bad);}
+.cx .gv-enviar{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:999px;border:0;cursor:pointer;background:var(--ink);color:var(--panel);transition:transform var(--vos-dur-xs) var(--vos-curva-entrada),opacity var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .gv-enviar:hover{opacity:.88;}
+.cx .gv-acao:active,.cx .gv-enviar:active{transform:scale(.92);}
+/* Segurando o microfone: o aviso acompanha o dedo e apaga perto do limite. */
+.cx .gv-deslize{flex:none;display:inline-flex;align-items:center;gap:2px;font-size:var(--fs-meta);color:var(--ink-3);transform:translateX(calc(var(--gv-arraste) * 1px));opacity:calc(1 + var(--gv-arraste) / 140);}
+.cx .gv-deslize svg{animation:gv-chama var(--vos-ciclo-digitando) var(--vos-curva-saida) infinite;}
+@keyframes gv-chama{0%,100%{transform:translateX(0);opacity:.5;}50%{transform:translateX(-4px);opacity:1;}}
+.cx .gv-segurando .gv-vivo{transform:translateX(calc(var(--gv-arraste) * .35px));}
+/* Descartar: a onda escoa pra lixeira, a tampa abre e fecha. */
+.cx .gv-descartando .gv-meio{transform:scaleX(0) translateX(-20px);opacity:0;transform-origin:left center;transition:transform var(--vos-dur-lg) var(--vos-curva-saida),opacity var(--vos-dur-lg) var(--vos-curva-saida);}
+.cx .gv-descartando .gv-lixeira{color:var(--bad);background:var(--panel-2);}
+.cx .gv-descartando .gv-tampa{animation:gv-tampa calc(var(--vos-dur-lg) + var(--vos-dur-md)) var(--vos-curva-entrada) both;}
+@keyframes gv-tampa{0%{transform:rotate(0);}35%{transform:translateY(-2px) rotate(-38deg);}70%{transform:translateY(-2px) rotate(-38deg);}100%{transform:rotate(0);}}
+.cx .gv-descartando .gv-acao,.cx .gv-descartando .gv-enviar{opacity:.3;pointer-events:none;}
+/* O botão do microfone e o cadeado que sobe quando segura. */
+.cx .gv-mic-lugar{position:relative;display:inline-flex;}
+.cx .gv-mic{touch-action:none;transition:transform var(--vos-dur-sm) var(--vos-curva-entrada),background-color var(--vos-dur-sm) var(--vos-curva-entrada),color var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .gv-mic-ativo{color:var(--ink);}
+.cx .gv-mic-segurando{transform:scale(1.35);background:var(--bad) !important;color:#fff !important;border-radius:999px;}
+.cx .gv-cadeado{position:absolute;bottom:calc(100% + 10px);left:50%;margin-left:-15px;width:30px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 0 5px;border-radius:999px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow-lift);color:var(--ink-2);z-index:5;}
+.cx .gv-cadeado-seta{display:grid;transition:transform var(--vos-dur-xs) var(--vos-curva-entrada);}
+@media (prefers-reduced-motion: reduce){
+  .cx .gv-ponto,.cx .gv-deslize svg,.cx .pa-onda > i,.cx .gv-descartando .gv-tampa{animation:none;}
+  .cx .gv-mic-segurando{transform:none;}
+}
+
+/* Teclado de emoji (vos-theme.css .wa-emok) */
+.cx .emok { display: flex; flex-direction: column; gap: 8px; }
+.cx .emok-busca { flex: none; }
+.cx .emok-abas {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.cx .emok-aba {
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: background-color var(--vos-dur-sm) var(--vos-curva-entrada), opacity var(--vos-dur-sm) var(--vos-curva-entrada), filter var(--vos-dur-sm) var(--vos-curva-entrada);
+}
+.cx .emok-aba:hover { background: var(--panel-3); opacity: 0.85; transition-duration: var(--vos-dur-xs); }
+/* Categoria aberta em cor cheia: o próprio emoji é o indicador. */
+.cx .emok-aba.on { background: var(--pick-bg); filter: none; opacity: 1; }
+.cx .emok-nome {
+  font-size: var(--fs-caption);
+  font-weight: 650;
+  color: var(--ink-3);
+  text-transform: none;
+}
+.cx .emok-grade {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+  max-height: 232px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.cx .emok-grade button {
+  height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--vos-dur-xs) var(--vos-curva-entrada);
+}
+.cx .emok-grade button:hover { background: var(--panel-3); }
+.cx .emok-vazio { font-size: var(--fs-meta); color: var(--ink-3); padding: 6px 2px; }
+.cx .emok-busca{display:flex;align-items:center;gap:6px;height:30px;padding:0 9px;border:1px solid var(--line);border-radius:8px;color:var(--ink-3);background:var(--panel);}
+.cx .emok-busca input{flex:1;min-width:0;border:0;outline:none;background:none;font-size:12.5px;color:var(--ink);}
+.cx .emok-busca button{display:grid;place-items:center;border:0;background:none;color:var(--ink-3);cursor:pointer;}
+
+/* Flutuantes do composer: emoji e mensagens salvas */
+.cx .cmp-pop{position:absolute;bottom:calc(100% + 8px);left:0;z-index:30;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-lift);padding:10px;transform-origin:bottom left;}
+.cx .cmp-salvas{left:0;right:0;padding:6px;max-height:280px;overflow:auto;}
+.cx .cmp-salvas-h{display:flex;align-items:center;gap:6px;padding:4px 8px 6px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
+.cx .cmp-salva{display:block;width:100%;text-align:left;border:0;background:none;border-radius:8px;padding:7px 8px;cursor:pointer;color:var(--ink);font-size:12.5px;line-height:1.45;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .cmp-salva b{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:1px;}
+.cx .cmp-salva:hover,.cx .cmp-salva.on{background:var(--panel-2);transition-duration:var(--vos-dur-xs);}
+.cx .cmp-anexo{display:flex;align-items:center;gap:8px;margin:8px 12px 0;padding:6px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);font-size:12px;color:var(--ink);}
+.cx .cmp-anexo img{width:34px;height:34px;object-fit:cover;border-radius:6px;}
+.cx .cmp-anexo button{display:grid;place-items:center;border:0;background:none;color:var(--ink-3);cursor:pointer;margin-left:auto;}
+.cx .wa-composer .snd{transition:transform var(--vos-dur-xs) var(--vos-curva-entrada),opacity var(--vos-dur-sm) var(--vos-curva-entrada);}
+.cx .wa-composer .snd:active:not(:disabled){transform:scale(.94);}
+.cx .wa-composer{margin:8px 16px 12px;}
