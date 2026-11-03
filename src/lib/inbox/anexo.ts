@@ -18,7 +18,9 @@ import { fixfyAccountId } from "@/lib/certificado/regra";
 
 export type ValorDoAnexo = "cliente" | "parceiro" | "nenhum";
 
-export type ItemDaBusca = { tipo: "job" | "quote"; id: string; ref: string; titulo: string | null; endereco: string | null; data: string | null; status: string };
+export type GrupoDoAnexo = "contato" | "outros" | "quotes";
+
+export type ItemDaBusca = { tipo: "job" | "quote"; grupo: GrupoDoAnexo; id: string; ref: string; titulo: string | null; endereco: string | null; data: string | null; status: string };
 
 const libras = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : typeof v === "string" && Number(v) > 0 ? Number(v) : null);
@@ -29,57 +31,63 @@ const termo = (q: string) => q.replace(/[%,()*\\]/g, " ").trim().slice(0, 60);
 const CAMPOS_JOB = "id, reference, title, property_address, scheduled_date, status, created_at";
 const CAMPOS_QUOTE = "id, reference, title, property_address, status, created_at";
 
+/**
+ * Três grupos, nesta ordem: os jobs de quem está na conversa, os outros jobs
+ * que a busca achou e as quotes. Sem busca, só o que é do contato.
+ */
 export async function buscarParaAnexar(sb: SupabaseClient, corpo: Record<string, unknown>): Promise<ItemDaBusca[]> {
   const q = termo(String(corpo.q ?? ""));
   const parceiroId = limpo(corpo.parceiroId);
   const clienteId = limpo(corpo.clienteId);
+  const dono = parceiroId ? { col: "partner_id", id: parceiroId } : clienteId ? { col: "client_id", id: clienteId } : null;
+  if (!q && !dono) return [];
+  const ou = `reference.ilike.%${q}%,client_name.ilike.%${q}%,property_address.ilike.%${q}%,title.ilike.%${q}%`;
 
   // Jobs pela data marcada, a mais distante primeiro: o que vem pela frente aparece antes do histórico.
-  let jobs = sb
-    .from("jobs")
-    .select(CAMPOS_JOB)
-    .is("deleted_at", null)
-    .order("scheduled_date", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(8);
-  let quotes = sb.from("quotes").select(CAMPOS_QUOTE).is("deleted_at", null).order("created_at", { ascending: false }).limit(6);
-  if (q) {
-    const ou = `reference.ilike.%${q}%,client_name.ilike.%${q}%,property_address.ilike.%${q}%,title.ilike.%${q}%`;
-    jobs = jobs.or(ou);
-    quotes = quotes.or(ou);
-  } else if (parceiroId) {
-    // Sem busca: o que é de quem está na conversa. Parceiro não tem quote dele aqui.
-    jobs = jobs.eq("partner_id", parceiroId);
-    quotes = quotes.eq("partner_id", parceiroId);
-  } else if (clienteId) {
-    jobs = jobs.eq("client_id", clienteId);
-    quotes = quotes.eq("client_id", clienteId);
-  } else {
-    return [];
-  }
+  const jobs = () =>
+    sb
+      .from("jobs")
+      .select(CAMPOS_JOB)
+      .is("deleted_at", null)
+      .order("scheduled_date", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
 
-  const [j, qt] = await Promise.all([jobs, quotes]);
-  const itens: ItemDaBusca[] = [
-    ...(j.data ?? []).map((r) => ({
-      tipo: "job" as const,
-      id: r.id as string,
-      ref: (r.reference as string | null) ?? "Job",
-      titulo: (r.title as string | null) ?? null,
-      endereco: (r.property_address as string | null) ?? null,
-      data: (r.scheduled_date as string | null) ?? null,
-      status: (r.status as string | null) ?? "",
-    })),
-    ...(qt.data ?? []).map((r) => ({
-      tipo: "quote" as const,
-      id: r.id as string,
-      ref: (r.reference as string | null) ?? "Quote",
-      titulo: (r.title as string | null) ?? null,
-      endereco: (r.property_address as string | null) ?? null,
-      data: null,
-      status: (r.status as string | null) ?? "",
-    })),
+  let doContato = dono ? jobs().eq(dono.col, dono.id).limit(10) : null;
+  if (doContato && q) doContato = doContato.or(ou);
+  const outros = q ? jobs().or(ou).limit(18) : null;
+  // Quote: as do cliente sem busca; com busca, qualquer uma que case. Parceiro não tem quote dele aqui.
+  let quotes = sb.from("quotes").select(CAMPOS_QUOTE).is("deleted_at", null).order("created_at", { ascending: false }).limit(6);
+  quotes = q ? quotes.or(ou) : clienteId ? quotes.eq("client_id", clienteId) : null!;
+
+  const [a, b, c] = await Promise.all([doContato ?? { data: [] }, outros ?? { data: [] }, quotes ?? { data: [] }]);
+  const job = (grupo: GrupoDoAnexo) => (r: Record<string, unknown>): ItemDaBusca => ({
+    tipo: "job",
+    grupo,
+    id: r.id as string,
+    ref: (r.reference as string | null) ?? "Job",
+    titulo: (r.title as string | null) ?? null,
+    endereco: (r.property_address as string | null) ?? null,
+    data: (r.scheduled_date as string | null) ?? null,
+    status: (r.status as string | null) ?? "",
+  });
+  const meus = (a.data ?? []).map(job("contato"));
+  const ja = new Set(meus.map((x) => x.id));
+  return [
+    ...meus,
+    ...(b.data ?? []).filter((r) => !ja.has(r.id as string)).slice(0, 8).map(job("outros")),
+    ...(c.data ?? []).map(
+      (r): ItemDaBusca => ({
+        tipo: "quote",
+        grupo: "quotes",
+        id: r.id as string,
+        ref: (r.reference as string | null) ?? "Quote",
+        titulo: (r.title as string | null) ?? null,
+        endereco: (r.property_address as string | null) ?? null,
+        data: null,
+        status: (r.status as string | null) ?? "",
+      }),
+    ),
   ];
-  return itens;
 }
 
 /** Conta de verdade (não a Fixfy direct) ganha o link do portal. */

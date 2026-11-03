@@ -12,6 +12,7 @@
  * Oferecer job a parceiro é o assign do Jobs. A tela recarrega a cada 10 s.
  */
 
+import { TextoDoWhatsApp, semMarcas } from "./texto-wa";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -1183,7 +1184,7 @@ export function CaixaAtendimento({
                           <ArrowDownLeft className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
                         )}
                         <span className={cn("min-w-0 flex-1 truncate text-[12.5px]", n > 0 ? "font-medium text-text-primary" : "text-text-secondary")}>
-                          {ultima.texto ?? `[${ultima.tipo}]`}
+                          {ultima.texto ? semMarcas(ultima.texto) : `[${ultima.tipo}]`}
                         </span>
                       </>
                     )}
@@ -1737,7 +1738,7 @@ export function CaixaAtendimento({
                         <Midia m={m} />
                         <div className="flex flex-wrap items-end justify-end gap-x-2.5">
                           {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? (
-                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.texto}</p>
+                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words"><TextoDoWhatsApp texto={m.texto} /></p>
                           ) : m.midiaUrl ? null : (
                             <p className="min-w-0 flex-1 opacity-70">[{m.tipo}]</p>
                           )}
