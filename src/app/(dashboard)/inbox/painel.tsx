@@ -202,26 +202,31 @@ const diaDaSemana = (d: string) =>
 /** Cartão no formato da rota: ref e pílula, o que e onde, janela, origem e ticket. */
 export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaCaixa; proximo?: boolean; comData?: boolean }) {
   const pilula = pilulaDoJob(j, proximo);
-  const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? ` to ${horaCurta(j.fim)}` : ""}` : null;
-  const onde = [j.titulo, j.endereco?.split(",").slice(-2).join(",").trim()].filter(Boolean).join(" · ");
+  // A janela vem primeiro (é o que importa na rota); a ref e o ticket descem para a linha cinza.
+  const partes = (j.endereco ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  const onde = partes.length >= 2 ? `${partes[partes.length - 1]} · ${partes[partes.length - 2]}` : partes[0] ?? null;
+  const ticket = j.ticket && /^\d+$/.test(j.ticket) ? `#${j.ticket}` : null;
   return (
-    <LinkDeJob id={j.id} className="block rounded-xl border border-border-light px-3.5 py-2.5 transition-colors hover:bg-surface-secondary/60">
-      <span className="flex items-center gap-2">
-        <span className="text-[13.5px] font-semibold text-text-primary">{j.ref}</span>
-        <span className="ml-auto">
-          {pilula ? (
-            <Chip tom={pilula.tom}>{pilula.texto}</Chip>
-          ) : j.status ? (
-            <ChipDaEtapa e={{ grupo: "job", status: j.status }} />
-          ) : null}
-        </span>
+    <LinkDeJob id={j.id} className="flex gap-3 rounded-xl border border-border-light p-2.5 transition-colors hover:bg-surface-secondary/60">
+      <span
+        className={cn(
+          "flex w-[60px] shrink-0 flex-col items-center justify-center rounded-lg py-1.5 text-center",
+          proximo ? "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" : "bg-surface-secondary text-text-secondary",
+        )}
+      >
+        {comData && j.data ? <span className="text-[10.5px] font-medium leading-tight">{dia(j.data)}</span> : null}
+        <span className="text-[14px] font-semibold tabular-nums leading-tight">{j.inicio ? horaCurta(j.inicio) : "Any time"}</span>
+        {j.fim ? <span className="text-[10.5px] leading-tight opacity-80">to {horaCurta(j.fim)}</span> : null}
       </span>
-      {onde ? <span className="block truncate text-[12.5px] text-text-secondary">{onde}</span> : null}
-      <span className="mt-0.5 flex flex-wrap gap-x-3 text-[12px] text-text-tertiary">
-        {comData ? <span>{dia(j.data)}</span> : null}
-        {janela ? <span>{janela}</span> : null}
-        <span>{j.origem ?? "Direct"}</span>
-        {j.ticket && /^\d+$/.test(j.ticket) ? <span>Ticket #{j.ticket}</span> : null}
+      <span className="min-w-0 flex-1 py-0.5">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-[13px] font-semibold text-text-primary">{j.titulo ?? j.ref}</span>
+          <span className="ml-auto shrink-0">
+            {pilula ? <Chip tom={pilula.tom}>{pilula.texto}</Chip> : j.status ? <ChipDaEtapa e={{ grupo: "job", status: j.status }} /> : null}
+          </span>
+        </span>
+        {onde ? <span className="block truncate text-[12px] text-text-secondary">{onde}</span> : null}
+        <span className="mt-0.5 block truncate text-[11px] text-text-tertiary">{[j.ref, ticket, j.origem && !/zendesk/i.test(j.origem) ? j.origem : null].filter(Boolean).join(" · ")}</span>
       </span>
     </LinkDeJob>
   );
