@@ -21,6 +21,7 @@ import { useGravadorDeAudio } from "./gravador";
 import { BotaoDoMicrofone, FaixaDeGravacao } from "./gravacao";
 import { TecladoDeEmoji } from "./teclado-de-emoji";
 import { flutuante, tempo } from "./movimento";
+import { EVENTO_RASCUNHO } from "./reports-pendentes";
 
 const LIMITE_BYTES = 4 * 1024 * 1024;
 
@@ -122,6 +123,15 @@ export function Composer({
   onResolvida?: (id: string, erro?: string) => void;
 }) {
   const [texto, setTexto] = useState("");
+  // Texto pronto vindo do painel (pedido de report): entra na caixa, quem envia é a pessoa.
+  useEffect(() => {
+    const ouvir = (e: Event) => {
+      const d = (e as CustomEvent<{ contato: string; texto: string }>).detail;
+      if (d?.contato === contato) setTexto(d.texto);
+    };
+    window.addEventListener(EVENTO_RASCUNHO, ouvir);
+    return () => window.removeEventListener(EVENTO_RASCUNHO, ouvir);
+  }, [contato]);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [previa, setPrevia] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);

@@ -16,6 +16,7 @@ import { AnimatePresence, motion as mo } from "framer-motion";
 import {
   Briefcase,
   CalendarClock,
+  ChevronDown,
   Check,
   ExternalLink,
   FileText,
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { LinkDeJob } from "./link-de-job";
+import { ReportsPendentes } from "./reports-pendentes";
 import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -49,13 +51,13 @@ type AbaParceiro = "parceiro" | "jobs" | "selfbill" | "docs" | "arquivos";
 type AbaCliente = "cliente" | "jobs" | "quotes" | "faturas" | "ticket" | "arquivos";
 
 type Periodo = "hoje" | "amanha" | "semana" | "proxima" | "mes" | "todos";
-const PERIODOS: [Periodo, string, string][] = [
-  ["hoje", "Today", "Today"],
-  ["amanha", "Tomorrow", "Tmrw"],
-  ["semana", "This week", "Week"],
-  ["proxima", "Next week", "Next wk"],
-  ["mes", "This month", "Month"],
-  ["todos", "All", "All"],
+const PERIODOS: [Periodo, string][] = [
+  ["hoje", "Today"],
+  ["amanha", "Tomorrow"],
+  ["semana", "This week"],
+  ["proxima", "Next week"],
+  ["mes", "This month"],
+  ["todos", "All"],
 ];
 
 /** Hoje em Londres como AAAA-MM-DD, e somar dias sem fuso no meio. */
@@ -108,30 +110,19 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
 
   return (
     <div className="px-4 py-3">
-      {/* Uma linha só: o número em cima, o período embaixo, num trilho cinza. */}
-      <div className="mb-3 grid grid-cols-6 gap-0.5 rounded-lg bg-surface-secondary p-0.5" role="tablist" aria-label="Period">
-        {PERIODOS.map(([k, t, curto]) => {
-          const n = doPeriodo(k).length;
-          const on = periodo === k;
-          return (
-            <button
-              key={k}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              title={t}
-              onClick={() => setPeriodo(k)}
-              className={cn(
-                "flex min-w-0 flex-col items-center rounded-md py-1 transition-colors",
-                on ? "bg-card text-text-primary shadow-sm ring-1 ring-border-light" : "text-text-tertiary hover:text-text-primary",
-              )}
-            >
-              <span className={cn("text-[13px] font-semibold leading-4 tabular-nums", on ? "text-primary" : n ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
-              <span className="w-full truncate text-center text-[10px] font-medium leading-3">{curto}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* O período num dropdown, com a contagem de cada um nas opções. */}
+      <label className="relative mb-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border-light bg-card px-2.5 py-1 text-[12.5px] font-medium text-text-primary hover:bg-surface-secondary/60">
+        <span>{PERIODOS.find((x) => x[0] === periodo)![1]}</span>
+        <span className="rounded-full bg-surface-secondary px-1.5 text-[11px] font-semibold tabular-nums text-text-secondary">{lista.length}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" />
+        <select value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Period">
+          {PERIODOS.map(([k, t]) => (
+            <option key={k} value={k}>
+              {t} ({doPeriodo(k).length})
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="space-y-2">
         {lista.length ? (
           lista.map((j) => <CartaoDeJob key={j.id} j={j} comData={periodo !== "hoje" && periodo !== "amanha"} />)
@@ -415,15 +406,25 @@ export function Painel({
 
 function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa; agora: number; online: boolean; onOferecer: () => void }) {
   const [aba, setAba] = useState<AbaParceiro>("parceiro");
+  const [reportsAbertos, setReportsAbertos] = useState(false);
   const p = c.parceiro!;
   const rota = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data) : [];
   const depois = c.jobs.filter((j) => !rota.includes(j));
   // "Next" é o primeiro da rota que ainda não começou.
   const proximoId = rota.find((j) => !["in_progress", "final_check", "awaiting_payment", "completed"].includes(j.status))?.id;
-  const sub = [p.oficio ?? "Partner", p.area].filter(Boolean).join(" · ");
+  // Embaixo do nome, só a empresa (ofício e área estão na aba Partner).
+  const sub = p.empresa?.trim() || c.org?.nome || "Partner";
 
   return (
     <div>
+      <ReportsPendentes
+        aberto={reportsAbertos}
+        onFechar={() => setReportsAbertos(false)}
+        parceiroId={p.id}
+        contato={c.contato}
+        nome={c.nome}
+        jobs={p.semRelatorio}
+      />
       <Cabeca c={c} online={online} sub={sub}>
         <Acao icone={Send} onClick={onOferecer}>
           Offer a job
@@ -485,20 +486,11 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
                 k="Reports"
                 v={
                   p.semRelatorio.length ? (
-                    <span>
-                      {p.semRelatorio.length} missing (
-                      {p.semRelatorio.slice(0, 3).map((j, i) => (
-                        <span key={j.id}>
-                          {i ? ", " : ""}
-                          <LinkDeJob id={j.id} className="hover:underline">
-                            {j.ref}
-                          </LinkDeJob>
-                        </span>
-                      ))}
-                      {p.semRelatorio.length > 3 ? "..." : ""})
-                    </span>
+                    <button type="button" onClick={() => setReportsAbertos(true)} className="font-medium text-warning hover:underline">
+                      {p.semRelatorio.length} missing · Request
+                    </button>
                   ) : (
-                    "Up to date"
+                    "All reports submitted"
                   )
                 }
               />
@@ -563,7 +555,8 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
   const emAberto = c.faturas.filter((f) => f.valor - f.pago > 0.01);
   const tickets = [...new Map(c.jobs.filter((j) => j.ticket && /^\d+$/.test(j.ticket)).map((j) => [j.ticket!, j])).values()];
   const origem = cl?.origem ? rotulo(cl.origem) : null;
-  const sub = [c.tipo === "conta" ? (cl ? "Client" : "Account contact") : c.tipo === "cliente" ? "Client" : "New client", c.org?.nome ?? cl?.conta ?? origem].filter(Boolean).join(" · ");
+  // Com empresa, só ela embaixo do nome; sem empresa, o que a pessoa é e de onde veio.
+  const sub = c.org?.nome || cl?.conta || [c.tipo === "cliente" ? "Client" : "New client", origem].filter(Boolean).join(" · ");
 
   const listaDeQuotes = (qs: typeof c.quotes) =>
     qs.length ? (
