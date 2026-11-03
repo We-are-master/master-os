@@ -339,10 +339,16 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
   const [aba, setAba] = useState<AbaParceiro>("parceiro");
   const [reportsAbertos, setReportsAbertos] = useState(false);
   const p = c.parceiro!;
-  const rota = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data) : [];
-  const depois = c.jobs.filter((j) => !rota.includes(j));
-  // "Next" é o primeiro da rota que ainda não começou.
-  const proximoId = rota.find((j) => !["in_progress", "final_check", "awaiting_payment", "completed"].includes(j.status))?.id;
+  const rota = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data).sort(porInicio) : [];
+  // A rota mostra um job só: o que está em andamento, senão o próximo que ainda não começou.
+  // O resto do dia e o histórico ficam na aba Jobs.
+  const emAndamento = rota.find((j) => j.status === "in_progress");
+  const proximoDeHoje = rota.find((j) => j.status !== "in_progress" && !JOB_FEITO.has(j.status) && j.status !== "on_hold");
+  const foco = emAndamento ?? proximoDeHoje;
+  const hoje = hojeEmLondres();
+  const proximoDia = c.jobs
+    .filter((j) => j.data && j.data > (rota[0]?.data ?? hoje) && !JOB_FEITO.has(j.status))
+    .sort((a, b) => (a.data ?? "").localeCompare(b.data ?? "") || porInicio(a, b))[0];
   // Embaixo do nome, só a empresa (ofício e área estão na aba Partner).
   const sub = p.empresa?.trim() || c.org?.nome || "Partner";
 
@@ -376,29 +382,25 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
       {aba === "parceiro" ? (
         <>
           <Secao
-            titulo="Today's route"
+            titulo="Next job"
             extra={
               rota.length ? (
-                <span className="text-[11.5px] font-normal tabular-nums text-text-tertiary">
-                  · {rota.filter((j) => JOB_FEITO.has(j.status)).length}/{rota.length} done
+                <span className="text-[11.5px] font-normal tabular-nums text-text-tertiary" title="Done today / jobs today">
+                  · {rota.filter((j) => JOB_FEITO.has(j.status)).length}/{rota.length}
                 </span>
               ) : undefined
             }
           >
-            {rota.length ? (
-              <div className="space-y-2">
-                {[...rota]
-                  .sort(porInicio)
-                  .map((j) => (
-                    <CartaoDeJob key={j.id} j={j} proximo={j.id === proximoId} />
-                  ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Vazio texto="No job today." />
-                {depois[0] ? <CartaoDeJob j={depois[0]} proximo comData /> : null}
-              </div>
-            )}
+            <div className="space-y-2">
+              {foco ? (
+                <CartaoDeJob j={foco} proximo={foco === proximoDeHoje} />
+              ) : (
+                <>
+                  <Vazio texto={rota.length ? "All done today." : "No job today."} />
+                  {proximoDia ? <CartaoDeJob j={proximoDia} proximo comData /> : null}
+                </>
+              )}
+            </div>
           </Secao>
           <Secao titulo="Partner">
             <Campos>
