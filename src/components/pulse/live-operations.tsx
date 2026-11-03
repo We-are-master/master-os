@@ -205,7 +205,7 @@ export function LiveOperations() {
         .join("\n");
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 [&>*]:min-w-0">
+    <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3 @5xl:grid-cols-6 [&>*]:min-w-0">
       <KpiCard
         label="Sales today"
         hint={kpiHint("Jobs added to the OS today (UK calendar day): client price plus extras.")}

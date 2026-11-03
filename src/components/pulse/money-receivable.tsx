@@ -34,7 +34,7 @@ export function MoneyReceivable() {
   const d = estado?.chave === chave ? estado.d : null;
   const periodo = bounds ? `due ${rangeLabel || "in the selected period"}` : "all open invoices";
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 [&>*]:min-w-0">
+    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-3 [&>*]:min-w-0">
       <KpiCard
         label="Outstanding"
         hint={`Unpaid invoices ${periodo} that are not overdue yet, counting the open balance. Platforms past their date are here too: they pay on their own cycle.`}

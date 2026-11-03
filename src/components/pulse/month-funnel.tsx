@@ -55,7 +55,7 @@ export function MonthFunnel() {
   const rotuloCls = "inline-flex items-center gap-[5px] text-[12px] font-semibold";
   return (
     <section aria-label={`Funnel · ${mes}`} className="overflow-hidden rounded-xl border border-fx-line bg-card">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 @xl:grid-cols-3 @3xl:grid-cols-6">
         {passos.map((p, i) => (
           <div key={p.rotulo} className="relative min-w-0 border-fx-line px-3.5 py-3 [&:not(:first-child)]:border-l">
             <p className={`${rotuloCls} text-text-secondary`}>
@@ -63,7 +63,7 @@ export function MonthFunnel() {
               <FixfyHintIcon text={p.nota} placement="top-start" />
             </p>
             <p className="mt-1.5 text-[20px] font-semibold leading-none tabular-nums text-text-primary">{p.valor}</p>
-            {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full border border-fx-line bg-card p-0.5 text-fx-mute lg:block" /> : null}
+            {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full border border-fx-line bg-card p-0.5 text-fx-mute @3xl:block" /> : null}
           </div>
         ))}
         <div className="min-w-0 border-l border-fx-line bg-fx-coral-50 px-3.5 py-3">

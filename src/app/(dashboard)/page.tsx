@@ -40,7 +40,9 @@ function PulseInner() {
   return (
     <PageTransition>
       <PulseCurrencyProvider>
-      <div className="pulse-dark">
+      {/* Container (03/11/2026): as grades olham a largura do painel, não da tela. Com o Inbox lateral
+          aberto a página encolhe ~520px, e os breakpoints de tela (lg/xl) mantinham 5-6 colunas apertadas. */}
+      <div className="pulse-dark @container">
         {/* Mesmo respiro das outras telas (15/10/2026): a margem negativa colava o título na busca. */}
         <div className="space-y-3">
           <PulseHead
@@ -58,7 +60,7 @@ function PulseInner() {
               <PulseStrip title="Operations" hint="Jobs right now, by stage.">
                 <LiveOperations />
               </PulseStrip>
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr]">
+              <div className="grid grid-cols-1 gap-3 @5xl:grid-cols-[1.35fr_1fr]">
                 <PulseStrip title="Period results" hint="Revenue, costs and margin for the selected period.">
                   <Financials />
                 </PulseStrip>
@@ -67,16 +69,16 @@ function PulseInner() {
                 </PulseStrip>
               </div>
               <MonthFunnel />
-              <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-4 lg:items-start">
+              <div className="grid grid-cols-1 @3xl:grid-cols-[1.6fr_1fr] gap-4 @3xl:items-start">
                 <TodaysFlow />
                 <AlertsFeed />
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
+              <div className="grid grid-cols-1 @3xl:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
                 <MonthBurnUp />
                 <RevenueBySource />
               </div>
               {/* Live Jobs e as maiores contas do ano, meia tela cada (dono, 12/10/2026). O Auto-flow saiu. */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch [&>*]:min-w-0">
+              <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-4 items-stretch [&>*]:min-w-0">
                 <LiveBoard />
                 <TopAccounts />
               </div>
