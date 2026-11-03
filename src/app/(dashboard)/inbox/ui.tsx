@@ -165,6 +165,18 @@ export function oficioCurto(oficio: string | null | undefined): string | null {
   return /clean/i.test(oficio) ? "Cleaner" : oficio;
 }
 
+/**
+ * O rótulo curto ao lado do nome na lista: o ofício do parceiro (Cleaner para
+ * qualquer limpeza) e, para o resto, o que o contato é: Account, Client, Group ou Lead.
+ */
+export function rotuloAoLado(c: ConversaDaCaixa): { texto: string; cls: string } | null {
+  if (c.tipo === "parceiro") return { texto: oficioCurto(c.parceiro?.oficio) ?? "Partner", cls: "text-teal-700 dark:text-teal-300" };
+  if (c.tipo === "conta") return { texto: "Account", cls: "text-blue-700 dark:text-blue-300" };
+  if (c.tipo === "cliente") return { texto: "Client", cls: "text-violet-700 dark:text-violet-300" };
+  if (c.tipo === "grupo") return { texto: "Group", cls: "text-emerald-700 dark:text-emerald-300" };
+  return { texto: "Lead", cls: "text-amber-700 dark:text-amber-300" };
+}
+
 export function ChipDoTipo({ c }: { c: ConversaDaCaixa }) {
   if (c.tipo === "conta") return <Chip icone={Building2} tom="blue">Account</Chip>;
   // Parceiro não tem chip: o ofício curto vai ao lado do nome (oficioCurto).
