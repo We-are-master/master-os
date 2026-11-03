@@ -74,7 +74,7 @@ import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, type Filtros } from "./filtros";
-import { Acao, Avatar, Chip, JOB_FEITO, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
+import { Acao, Avatar, Chip, JOB_FEITO, oficioCurto, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -1070,7 +1070,8 @@ export function CaixaAtendimento({
                 <Avatar c={c} tamanho="md" online={Boolean(p)} canal />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className={cn("truncate text-[14px] text-text-primary", n > 0 ? "font-bold" : "font-semibold")}>{c.nome}</span>
+                    <span className={cn("min-w-0 truncate text-[14px] text-text-primary", n > 0 ? "font-bold" : "font-semibold")}>{c.nome}</span>
+                    {oficioCurto(c.parceiro?.oficio) ? <span className="shrink-0 text-[12px] font-medium text-teal-700 dark:text-teal-300">{oficioCurto(c.parceiro?.oficio)}</span> : null}
                     {resolvida(c) ? <CheckCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : null}
                     {c.fixadaEm ? <Pin className="h-3 w-3 shrink-0 rotate-45 text-text-tertiary" aria-label="Pinned" /> : null}
                     <span className={cn("ml-auto shrink-0 text-[11.5px] tabular-nums", n > 0 ? "font-semibold text-[var(--accent)]" : "text-text-tertiary")}>

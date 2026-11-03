@@ -27,7 +27,6 @@ import {
   UserRound,
   UsersRound,
   UserX,
-  Wrench,
   MapPin,
   TriangleAlert,
   CalendarClock,
@@ -160,15 +159,16 @@ export function ChipDaEtapa({ e }: { e: Pick<EtapaDaConversa, "grupo" | "status"
   );
 }
 
+/** O ofício do parceiro em uma palavra para a lista: qualquer limpeza vira "Cleaner"; o resto fica como está. */
+export function oficioCurto(oficio: string | null | undefined): string | null {
+  if (!oficio) return null;
+  return /clean/i.test(oficio) ? "Cleaner" : oficio;
+}
+
 export function ChipDoTipo({ c }: { c: ConversaDaCaixa }) {
   if (c.tipo === "conta") return <Chip icone={Building2} tom="blue">Account</Chip>;
-  // O parceiro aparece pelo ofício principal (a chave inglesa e o verde já dizem que é parceiro).
-  if (c.tipo === "parceiro")
-    return (
-      <Chip icone={Wrench} tom="teal" title="Partner">
-        {c.parceiro?.oficio ?? "Partner"}
-      </Chip>
-    );
+  // Parceiro não tem chip: o ofício curto vai ao lado do nome (oficioCurto).
+  if (c.tipo === "parceiro") return null;
   if (c.tipo === "cliente") return <Chip icone={Home} tom="violet">Client</Chip>;
   if (c.tipo === "grupo") return <Chip icone={UsersRound} tom="green">Group</Chip>;
   return <Chip icone={UserRound}>{c.cliente ? "No jobs yet" : "Unknown"}</Chip>;
