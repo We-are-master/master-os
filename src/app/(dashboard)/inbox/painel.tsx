@@ -194,13 +194,6 @@ function pilulaDoJob(j: JobDaCaixa, proximo: boolean): { texto: string; tom: Tom
   return null;
 }
 
-/** Hourly, Fixed ou os dois, pelo tipo dos jobs dele. */
-function tipoDeTaxa(jobs: JobDaCaixa[]): string {
-  if (!jobs.length) return "-";
-  const h = jobs.filter((j) => j.porHora).length;
-  return h === jobs.length ? "Hourly" : h === 0 ? "Fixed" : "Hourly and fixed";
-}
-
 /** "Fri 7 Nov". */
 const diaDaSemana = (d: string) =>
   new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
@@ -409,7 +402,7 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
           </Secao>
           <Secao titulo="Partner">
             <Campos>
-              <Campo k="Rating" v={p.nota ? `${p.nota.toFixed(1)} · ${p.jobsFeitos} jobs` : `${p.jobsFeitos} jobs`} />
+              <Campo k="Rating" v={p.nota ? p.nota.toFixed(1) : "No rating yet"} />
               <Campo
                 k="Compliance"
                 v={
@@ -422,7 +415,6 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
                   </span>
                 }
               />
-              <Campo k="Rate" v={tipoDeTaxa(c.jobs)} />
               <Campo
                 k="Reports"
                 v={
