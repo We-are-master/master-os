@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { AnimatePresence, MotionConfig, motion as mo } from "framer-motion";
 import {
   Briefcase,
   CalendarClock,
@@ -41,6 +42,7 @@ import {
   MessageSquare,
   Plus,
   RotateCcw,
+  Search,
   Send,
   Smartphone,
   Tag,
@@ -51,8 +53,6 @@ import {
   Wrench,
   X,
   Building2,
-  MapPin,
-  TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import { SearchInput } from "@/components/ui/input";
@@ -61,9 +61,10 @@ import { cn } from "@/lib/utils";
 import "./inbox.css";
 import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
+import { CHIP, flutuante, tempo } from "./movimento";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
-import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
-import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, PONTO, TONS, iconeDaEtapa, presencaAgora, tomValido, type Tom } from "./ui";
+import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -172,36 +173,6 @@ function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
 }
 const mesmaVisao = (a: Visao, b: Visao) => JSON.stringify(a) === JSON.stringify(b);
 
-/** Trabalho terminado: a etiqueta de chegada some. */
-const JOB_FEITO = new Set(["final_check", "awaiting_payment", "completed", "cancelled", "deleted"]);
-const MIN = 60_000;
-const atraso = (ms: number) => {
-  const m = Math.max(1, Math.round(ms / MIN));
-  if (m < 60) return `+${m}m`;
-  if (m >= 120) return "+2h+";
-  return `+1h${String(m - 60).padStart(2, "0")}`;
-};
-
-/**
- * A chegada do job de hoje, na lista: muda sozinha com o relógio. At risk nos
- * últimos 30 min da janela sem começar; Late quando a janela fechou (sem fim de
- * janela: 15 e 30 min depois do início).
- */
-function chegada(j: JobDaCaixa, agora: number): { tom: Tom; icone: LucideIcon; texto: string; title: string; peso: number } | null {
-  if (JOB_FEITO.has(j.status)) return null;
-  const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "";
-  if (j.status === "in_progress") return { tom: "green", icone: MapPin, texto: "On site", title: "Partner on site", peso: 0 };
-  const ini = j.inicio ? new Date(j.inicio).getTime() : null;
-  const fim = j.fim ? new Date(j.fim).getTime() : null;
-  const limite = fim ?? (ini !== null ? ini + 30 * MIN : null);
-  const risco = fim !== null ? fim - 30 * MIN : ini !== null ? ini + 15 * MIN : null;
-  if (j.status === "late" || (limite !== null && agora >= limite)) {
-    const passou = limite !== null && agora > limite ? agora - limite : 0;
-    return { tom: "red", icone: TriangleAlert, texto: passou ? `Late ${atraso(passou)}` : "Late", title: `Late · not started${janela ? `, window ${janela}` : ""}`, peso: 2 };
-  }
-  if (risco !== null && agora >= risco) return { tom: "amber", icone: TriangleAlert, texto: `At risk ${janela}`, title: `At risk · window closes ${j.fim ? horaCurta(j.fim) : "soon"}, not started`, peso: 1 };
-  return { tom: "blue", icone: CalendarClock, texto: `Today${janela ? ` ${janela}` : ""}`, title: `Arrival window today${janela ? ` ${janela}` : ""}`, peso: 0 };
-}
 
 async function postarConversa(corpo: Record<string, unknown>) {
   const res = await fetch("/api/inbox/conversa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
@@ -236,7 +207,7 @@ function ItemDaLateral({
         apagado && !ativo && "opacity-55",
       )}
     >
-      {ativo ? <span className="absolute -left-2 inset-y-1.5 w-[3px] rounded-r-full bg-primary" /> : null}
+      {ativo ? <mo.span layoutId="inbox-lateral-ativa" transition={tempo("lg")} className="absolute -left-2 inset-y-1.5 w-[3px] rounded-r-full bg-primary" /> : null}
       {Icone ? <Icone className={cn("h-4 w-4 shrink-0", ativo ? "text-text-primary" : "text-text-tertiary")} /> : null}
       {ponto ? <span className={cn("ml-1 mr-0.5 h-2 w-2 shrink-0 rounded-full", PONTO[ponto])} /> : null}
       <span className="truncate">{rotulo}</span>
@@ -285,7 +256,6 @@ export function CaixaAtendimento({
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
-  const [corNova, setCorNova] = useState<Tom>("blue");
   const [criandoView, setCriandoView] = useState(false);
   const [apagadas, setApagadas] = useState<Set<string>>(new Set());
   /** Mensagens que acabaram de sair daqui: aparecem na hora, antes do servidor confirmar. */
@@ -301,7 +271,6 @@ export function CaixaAtendimento({
     for (const n of apagadas) m.delete(n);
     return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome));
   }, [tagsDoServidor, tagsNovas, apagadas]);
-  const corDaTag = (nome: string) => tomValido(tags.find((t) => t.nome === nome)?.cor ?? "slate");
 
   useEffect(() => {
     try {
@@ -483,7 +452,7 @@ export function CaixaAtendimento({
     const nome = novaTag.trim();
     if (!nome) return;
     try {
-      const res = await fetch("/api/inbox/tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome, cor: corNova }) });
+      const res = await fetch("/api/inbox/tags", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome, cor: "slate" }) });
       const j = (await res.json().catch(() => ({}))) as { error?: string; tag?: TagDaCaixa };
       if (!res.ok || !j.tag) throw new Error(j.error ?? "Could not create the view");
       const criada = j.tag;
@@ -538,11 +507,11 @@ export function CaixaAtendimento({
       }}
     >
       <div className="flex h-8 items-center gap-2 rounded-lg border border-border-light bg-card px-2.5 focus-within:border-text-tertiary">
-        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", PONTO[corNova])} />
+        <Tag className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
         <input
           autoFocus={!paraConversa}
           className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
-          placeholder="View name"
+          placeholder="Tag name"
           value={novaTag}
           onChange={(e) => setNovaTag(e.target.value)}
           onKeyDown={(e) => {
@@ -553,17 +522,6 @@ export function CaixaAtendimento({
           }}
           disabled={!estadoPronto}
         />
-      </div>
-      <div className="flex items-center gap-1.5">
-        {(Object.keys(TONS) as Tom[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            aria-label={`Colour ${t}`}
-            onClick={() => setCorNova(t)}
-            className={cn("h-3.5 w-3.5 rounded-full transition-transform hover:scale-110", PONTO[t], corNova === t && "ring-2 ring-text-primary ring-offset-2 ring-offset-card")}
-          />
-        ))}
       </div>
       <div className="flex justify-end gap-1.5">
         {paraConversa ? null : (
@@ -579,13 +537,14 @@ export function CaixaAtendimento({
           </button>
         )}
         <button type="submit" disabled={!novaTag.trim() || !estadoPronto} className="rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-[var(--on-brand)] disabled:opacity-40">
-          {paraConversa ? "Create and tag" : "Create view"}
+          {paraConversa ? "Create and tag" : "Create tag"}
         </button>
       </div>
     </form>
   );
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_300px] overflow-hidden bg-card">
       {/* Lateral */}
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
@@ -661,7 +620,7 @@ export function CaixaAtendimento({
             <ItemDaLateral
               ativo={mesmaVisao(visao, { k: "tag", nome: t.nome })}
               onClick={() => irPara({ k: "tag", nome: t.nome })}
-              ponto={tomValido(t.cor)}
+              icone={Tag}
               rotulo={t.nome}
               n={nTag(t.nome)}
             />
@@ -750,7 +709,7 @@ export function CaixaAtendimento({
               >
                 {t}
                 <span className="ml-1 text-[11px] font-medium text-text-tertiary">{n}</span>
-                {tipo === k ? <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-primary" /> : null}
+                {tipo === k ? <mo.span layoutId="inbox-aba-ativa" transition={tempo("lg")} className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-primary" /> : null}
               </button>
             );
           })}
@@ -779,14 +738,20 @@ export function CaixaAtendimento({
           {lista.length === 0 ? (
             <p className="px-4 py-6 text-xs text-text-tertiary">{conversas.length === 0 ? "No messages yet. New messages to +44 7983 182332 land here." : "No conversations here."}</p>
           ) : null}
+          <AnimatePresence initial={false} mode="popLayout">
           {lista.map((c) => {
             const ultima = c.mensagens[c.mensagens.length - 1];
             const n = resolvida(c) ? 0 : naoRespondidas(c);
             const ativa = c.contato === aberta?.contato;
             const p = presencaAgora(c, agora);
             return (
-              <button
+              <mo.button
                 key={c.contato}
+                layout="position"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0, transition: tempo("md") }}
+                exit={{ opacity: 0, transition: tempo("sm", "saida") }}
+                transition={tempo("lg")}
                 type="button"
                 onClick={() => abrir(c)}
                 className={cn(
@@ -794,7 +759,7 @@ export function CaixaAtendimento({
                   ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
-                {ativa ? <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary" /> : null}
+                {ativa ? <mo.span layoutId="inbox-conversa-ativa" transition={tempo("lg")} className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary" /> : null}
                 <Avatar c={c} tamanho="md" online={Boolean(p)} canal />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
@@ -831,21 +796,24 @@ export function CaixaAtendimento({
                     {(() => {
                       const ch = c.jobHoje ? chegada(c.jobHoje, agora) : null;
                       return ch ? (
-                        <Chip icone={ch.icone} tom={ch.tom} title={ch.title}>
-                          {ch.texto}
-                        </Chip>
+                        <mo.span key={ch.texto} {...CHIP} className="inline-flex">
+                          <Chip icone={ch.icone} tom={ch.tom} title={ch.title}>
+                            {ch.texto}
+                          </Chip>
+                        </mo.span>
                       ) : null;
                     })()}
                     {c.tags.slice(0, 2).map((t) => (
-                      <Chip key={t} icone={Tag} tom={corDaTag(t)}>
+                      <Chip key={t} icone={Tag} tom="slate">
                         {t}
                       </Chip>
                     ))}
                   </span>
                 </span>
-              </button>
+              </mo.button>
             );
           })}
+          </AnimatePresence>
         </div>
       </section>
 
@@ -917,23 +885,75 @@ export function CaixaAtendimento({
               ) : null}
               <Acao icone={MoreHorizontal} title="More" ativo={menu === "mais"} onClick={() => setMenu((m) => (m === "mais" ? null : "mais"))} />
 
+              <AnimatePresence>
               {menu === "tags" ? (
-                <div className="absolute right-[150px] top-10 z-30 w-60 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
-                  <p className="px-2 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-text-tertiary">Add to views</p>
-                  {tags.length === 0 ? <p className="px-2 py-1 text-xs text-text-tertiary">No views yet. Create one below.</p> : null}
-                  {tags.map((t) => (
-                    <label key={t.nome} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-text-primary hover:bg-surface-secondary">
-                      <input type="checkbox" checked={aberta.tags.includes(t.nome)} onChange={() => void alternarTag(aberta, t.nome)} />
-                      <span className={cn("h-2 w-2 rounded-full", PONTO[tomValido(t.cor)])} />
-                      {t.nome}
-                    </label>
-                  ))}
-                  <div className="mt-1.5 border-t border-border-light px-1 pt-2">{criadorDeTag(aberta)}</div>
-                </div>
+                // Como as etiquetas do WhatsApp: uma busca que também cria, e um clique marca ou desmarca.
+                <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-[150px] top-10 z-30 w-60 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const nome = novaTag.trim();
+                      if (!nome) return;
+                      const existe = tags.find((t) => t.nome.toLowerCase() === nome.toLowerCase());
+                      if (existe) {
+                        void alternarTag(aberta, existe.nome);
+                        setNovaTag("");
+                      } else void criarTag(aberta);
+                    }}
+                  >
+                    <div className="flex h-8 items-center gap-2 rounded-lg bg-surface-secondary px-2.5">
+                      <Search className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                      <input
+                        autoFocus
+                        className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+                        placeholder="Search or create a tag"
+                        value={novaTag}
+                        onChange={(e) => setNovaTag(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setMenu(null);
+                        }}
+                        disabled={!estadoPronto}
+                      />
+                    </div>
+                  </form>
+                  <div className="mt-1 max-h-60 overflow-y-auto">
+                    {tags
+                      .filter((t) => t.nome.toLowerCase().includes(novaTag.trim().toLowerCase()))
+                      .map((t) => {
+                        const tem = aberta.tags.includes(t.nome);
+                        return (
+                          <button
+                            key={t.nome}
+                            type="button"
+                            onClick={() => void alternarTag(aberta, t.nome)}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-text-primary hover:bg-surface-secondary"
+                          >
+                            <Tag className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                            <span className="flex-1 truncate">{t.nome}</span>
+                            {tem ? <Check className="h-4 w-4 shrink-0 text-[var(--accent)]" /> : null}
+                          </button>
+                        );
+                      })}
+                    {novaTag.trim() && !tags.some((t) => t.nome.toLowerCase() === novaTag.trim().toLowerCase()) ? (
+                      <button
+                        type="button"
+                        onClick={() => void criarTag(aberta)}
+                        disabled={!estadoPronto}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-text-primary hover:bg-surface-secondary disabled:opacity-40"
+                      >
+                        <Plus className="h-3.5 w-3.5 shrink-0" />
+                        Create “{novaTag.trim()}”
+                      </button>
+                    ) : null}
+                    {tags.length === 0 && !novaTag.trim() ? <p className="px-2 py-1.5 text-xs text-text-tertiary">No tags yet. Type a name to create one.</p> : null}
+                  </div>
+                </mo.div>
               ) : null}
+              </AnimatePresence>
 
+              <AnimatePresence>
               {menu === "mais" ? (
-                <div className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
                   {!fora(aberta) ? (
                     <>
                       <ItemDoMenu
@@ -959,10 +979,12 @@ export function CaixaAtendimento({
                   ) : null}
                   {fora(aberta) ? <p className="px-2 py-1.5 text-xs text-text-tertiary">Restore it first to archive or delete.</p> : null}
                   {!estadoPronto ? <p className="px-2 py-1.5 text-xs text-text-tertiary">Needs migration 354.</p> : null}
-                </div>
+                </mo.div>
               ) : null}
+              </AnimatePresence>
+              <AnimatePresence>
               {menu === "acoes" ? (
-                <div className="absolute right-0 top-10 z-30 w-72 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-0 top-10 z-30 w-72 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
                   {aberta.tipo === "parceiro" ? (
                     <>
                       <ItemDoMenu
@@ -1029,8 +1051,9 @@ export function CaixaAtendimento({
                       }}
                     />
                   ) : null}
-                </div>
+                </mo.div>
               ) : null}
+              </AnimatePresence>
             </div>
           </div>
 
@@ -1039,13 +1062,19 @@ export function CaixaAtendimento({
             {aberta.cliente?.conta ? <Chip icone={Users}>{aberta.cliente.conta}</Chip> : null}
             {aberta.etapa ? <ChipDaEtapa e={aberta.etapa} /> : null}
             {aberta.jobHoje ? <ChipDaEtapa e={{ grupo: "job", status: aberta.jobHoje.status }} /> : null}
-            {aberta.jobHoje ? (
-              <Chip icone={CalendarClock} tom="blue">
-                {aberta.jobHoje.ref} today{aberta.jobHoje.inicio ? ` ${horaCurta(aberta.jobHoje.inicio)}` : ""}
-              </Chip>
-            ) : null}
+            {(() => {
+              // A mesma etiqueta da lista: muda sozinha (At risk, Late, On site) e some quando acaba.
+              const ch = aberta.jobHoje ? chegada(aberta.jobHoje, agora) : null;
+              return ch ? (
+                <mo.span key={ch.texto} {...CHIP} className="inline-flex">
+                  <Chip icone={ch.icone} tom={ch.tom} title={`${aberta.jobHoje!.ref} · ${ch.title}`}>
+                    {ch.texto}
+                  </Chip>
+                </mo.span>
+              ) : null;
+            })()}
             {aberta.tags.map((t) => (
-              <Chip key={t} icone={Tag} tom={corDaTag(t)}>
+              <Chip key={t} icone={Tag} tom="slate">
                 {t}
                 <button type="button" className="ml-0.5 opacity-60 hover:opacity-100" aria-label={`Remove ${t}`} onClick={() => void alternarTag(aberta, t)}>
                   <X className="h-3 w-3" />
@@ -1070,14 +1099,23 @@ export function CaixaAtendimento({
             {gaveta?.k === "criar" ? <span className="ml-auto text-[11px] text-text-tertiary">Click messages to add them to the scope</span> : null}
           </div>
 
+          {/* column-reverse segura a rolagem no fim; o mb-auto põe a conversa curta no topo, como no WhatsApp. */}
           <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-5 py-4">
-            <div className="space-y-2">
+            <mo.div key={aberta.contato} className="mb-auto space-y-2" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={tempo("md")}>
+              <AnimatePresence initial={false}>
               {comPendentes(aberta.mensagens, pendentes[aberta.contato]).map((m, i, todas) => {
                 const antes = todas[i - 1];
                 const novoDia = !antes || new Date(antes.criadoEm).toDateString() !== new Date(m.criadoEm).toDateString();
                 const marcavel = Boolean(gaveta?.k === "criar" && m.direcao === "entrada" && m.texto);
                 return (
-                  <div key={m.id}>
+                  <mo.div
+                    key={m.id}
+                    layout="position"
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={tempo("lg")}
+                    style={{ transformOrigin: m.direcao === "entrada" ? "bottom left" : "bottom right" }}
+                  >
                     {novoDia ? (
                       <div className="my-2 flex justify-center">
                         <span className="rounded-full bg-surface-tertiary px-3 py-1 text-[11.5px] font-medium text-text-secondary">{diaDaMensagemOuHoje(m.criadoEm)}</span>
@@ -1119,10 +1157,11 @@ export function CaixaAtendimento({
                         ) : null}
                       </div>
                     </div>
-                  </div>
+                  </mo.div>
                 );
               })}
-            </div>
+              </AnimatePresence>
+            </mo.div>
           </div>
 
           <Composer
@@ -1172,11 +1211,12 @@ export function CaixaAtendimento({
               }}
             />
           ) : (
-            <Painel key={aberta.contato} c={aberta} online={Boolean(presenca)} onCriar={abrirCriar} onOferecer={() => setGaveta({ k: "oferecer" })} />
+            <Painel key={aberta.contato} c={aberta} agora={agora} online={Boolean(presenca)} onCriar={abrirCriar} onOferecer={() => setGaveta({ k: "oferecer" })} />
           )
         ) : null}
       </aside>
     </div>
+    </MotionConfig>
   );
 }
 

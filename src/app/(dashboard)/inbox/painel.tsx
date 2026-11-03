@@ -12,9 +12,11 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { motion as mo } from "framer-motion";
 import {
   Briefcase,
   CalendarClock,
+  Check,
   ExternalLink,
   FileText,
   Home,
@@ -29,12 +31,13 @@ import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
-import { Acao, Avatar, Chip, ChipDaEtapa, type Tom } from "./ui";
+import { tempo } from "./movimento";
+import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, chegada, horaCurta, type Tom } from "./ui";
 import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
 const libra = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
-export const horaCurta = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+export { horaCurta };
 export const dia = (data: string | null) =>
   data ? new Date(`${data}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "No date";
 const rotulo = (s: string) => (s ? s.replace(/_/g, " ").replace(/^./, (x) => x.toUpperCase()) : "");
@@ -222,6 +225,83 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
   );
 }
 
+/**
+ * A rota de hoje como linha do tempo: uma parada por job, na ordem da janela.
+ * O ponto diz o estado (feito, no local, próximo, depois) e a etiqueta à direita
+ * é a mesma chegada da lista (At risk, Late), que anda com o relógio.
+ */
+function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId: string | undefined; agora: number }) {
+  const ordem = [...rota].sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""));
+  return (
+    <ol className="relative">
+      {ordem.map((j, i) => {
+        const feito = JOB_FEITO.has(j.status);
+        const noLocal = j.status === "in_progress";
+        const proximo = j.id === proximoId;
+        const ch = feito ? null : chegada(j, agora);
+        const alerta = ch && (ch.tom === "red" || ch.tom === "amber") ? ch : null;
+        const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "No time set";
+        const onde = j.endereco?.split(",").slice(-2).join(",").trim();
+        return (
+          <mo.li
+            key={j.id}
+            className="relative flex gap-3 pb-3 last:pb-0"
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0, transition: { ...tempo("md"), delay: i * 0.04 } }}
+          >
+            {i < ordem.length - 1 ? <span className="absolute bottom-0 left-[11px] top-7 w-px bg-border-light" aria-hidden /> : null}
+            <span
+              className={cn(
+                "relative z-[1] mt-2 grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold tabular-nums",
+                feito && "bg-emerald-50 text-emerald-600 dark:bg-emerald-950",
+                noLocal && "bg-emerald-500 text-white",
+                !feito && !noLocal && proximo && (alerta?.tom === "red" ? "bg-red-600 text-white" : alerta ? "bg-amber-500 text-white" : "bg-primary text-[var(--on-brand)]"),
+                !feito && !noLocal && !proximo && "bg-card text-text-tertiary ring-1 ring-border-light",
+              )}
+              aria-hidden
+            >
+              {feito ? <Check className="h-3.5 w-3.5" /> : noLocal ? <MapPin className="h-3.5 w-3.5" /> : i + 1}
+            </span>
+            <Link
+              href={`/jobs/${j.id}`}
+              className={cn(
+                "min-w-0 flex-1 rounded-xl border px-3 py-2 transition-colors hover:bg-surface-secondary/60",
+                proximo || noLocal ? "border-border bg-card shadow-sm" : "border-border-light",
+                feito && "opacity-60",
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <span className={cn("text-[13.5px] font-semibold tabular-nums", feito ? "text-text-tertiary line-through" : "text-text-primary")}>{janela}</span>
+                <span className="ml-auto shrink-0">
+                  {feito ? (
+                    <Chip tom="slate">Done</Chip>
+                  ) : noLocal ? (
+                    <Chip icone={MapPin} tom="green">On site</Chip>
+                  ) : alerta ? (
+                    <Chip icone={alerta.icone} tom={alerta.tom} title={alerta.title}>
+                      {alerta.tom === "red" ? alerta.texto : "At risk"}
+                    </Chip>
+                  ) : proximo ? (
+                    <Chip tom="blue">Next stop</Chip>
+                  ) : null}
+                </span>
+              </span>
+              <span className="block truncate text-[12.5px] text-text-secondary">
+                <span className="font-medium text-text-primary">{j.ref}</span>
+                {j.titulo ? ` · ${j.titulo}` : ""}
+              </span>
+              <span className="flex gap-x-3 text-[12px] text-text-tertiary">
+                {onde ? <span className="truncate">{onde}</span> : null}
+                <span className="shrink-0">{j.origem ?? "Direct"}</span>
+              </span>
+            </Link>
+          </mo.li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Cabeca({ c, online, sub, children }: { c: ConversaDaCaixa; online: boolean; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="border-b border-border-light px-4 py-3">
@@ -246,11 +326,12 @@ function Abas<T extends string>({ abas, ativa, onTroca }: { abas: [T, string][];
           type="button"
           onClick={() => onTroca(k)}
           className={cn(
-            "-mb-px whitespace-nowrap border-b-2 py-3 text-[13px] font-medium transition-colors",
-            ativa === k ? "border-text-primary text-text-primary" : "border-transparent text-text-tertiary hover:text-text-secondary",
+            "relative -mb-px whitespace-nowrap py-3 text-[13px] font-medium transition-colors",
+            ativa === k ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
           )}
         >
           {t}
+          {ativa === k ? <mo.span layoutId="painel-aba-ativa" transition={tempo("lg")} className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-text-primary" /> : null}
         </button>
       ))}
     </div>
@@ -304,23 +385,25 @@ function Arquivos({ c }: { c: ConversaDaCaixa }) {
 
 export function Painel({
   c,
+  agora,
   online,
   onCriar,
   onOferecer,
 }: {
   c: ConversaDaCaixa;
+  /** O relógio da caixa (anda a cada 10 s): a rota de hoje muda de estado com ele. */
+  agora: number;
   online: boolean;
   onCriar: (t: TipoDoPrefill) => void;
   onOferecer: () => void;
 }) {
-  if (c.tipo === "parceiro" && c.parceiro) return <PainelDoParceiro c={c} online={online} onOferecer={onOferecer} />;
+  if (c.tipo === "parceiro" && c.parceiro) return <PainelDoParceiro c={c} agora={agora} online={online} onOferecer={onOferecer} />;
   if (c.tipo === "outro" && !c.cliente) return <NovoCliente c={c} online={online} />;
   return <PainelDoCliente c={c} online={online} onCriar={onCriar} />;
 }
 
-function PainelDoParceiro({ c, online, onOferecer }: { c: ConversaDaCaixa; online: boolean; onOferecer: () => void }) {
+function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa; agora: number; online: boolean; onOferecer: () => void }) {
   const [aba, setAba] = useState<AbaParceiro>("parceiro");
-  const [agora] = useState(() => Date.now());
   const p = c.parceiro!;
   const rota = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data) : [];
   const depois = c.jobs.filter((j) => !rota.includes(j));
@@ -353,17 +436,24 @@ function PainelDoParceiro({ c, online, onOferecer }: { c: ConversaDaCaixa; onlin
 
       {aba === "parceiro" ? (
         <>
-          <Secao titulo="Today's route">
-            <div className="space-y-2">
-              {rota.length ? (
-                rota.map((j) => <CartaoDeJob key={j.id} j={j} proximo={j.id === proximoId} />)
-              ) : (
-                <>
-                  <Vazio texto="No job today." />
-                  {depois[0] ? <CartaoDeJob j={depois[0]} proximo comData /> : null}
-                </>
-              )}
-            </div>
+          <Secao
+            titulo="Today's route"
+            acao={
+              rota.length ? (
+                <span className="text-[11.5px] tabular-nums text-text-tertiary">
+                  {rota.filter((j) => JOB_FEITO.has(j.status)).length}/{rota.length} done
+                </span>
+              ) : undefined
+            }
+          >
+            {rota.length ? (
+              <RotaDeHoje rota={rota} proximoId={proximoId} agora={agora} />
+            ) : (
+              <div className="space-y-2">
+                <Vazio texto="No job today." />
+                {depois[0] ? <CartaoDeJob j={depois[0]} proximo comData /> : null}
+              </div>
+            )}
           </Secao>
           <Secao titulo="Partner">
             <Campos>

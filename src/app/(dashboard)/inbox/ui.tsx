@@ -27,12 +27,18 @@ import {
   UserRound,
   UserX,
   Wrench,
+  MapPin,
+  TriangleAlert,
+  CalendarClock,
   XCircle,
   type LucideIcon,
   Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { rotuloDaEtapa, type ConversaDaCaixa, type EtapaDaConversa } from "./tipos";
+import { rotuloDaEtapa, type ConversaDaCaixa, type EtapaDaConversa, type JobDaCaixa } from "./tipos";
+
+export const horaCurta = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+
 
 export type Tom = "slate" | "blue" | "green" | "amber" | "red" | "violet" | "teal" | "pink";
 
@@ -254,4 +260,35 @@ export function Avatar({
       ) : null}
     </span>
   );
+}
+
+/** Trabalho terminado: a etiqueta de chegada some. */
+export const JOB_FEITO = new Set(["final_check", "awaiting_payment", "completed", "cancelled", "deleted"]);
+const MIN = 60_000;
+const atraso = (ms: number) => {
+  const m = Math.max(1, Math.round(ms / MIN));
+  if (m < 60) return `+${m}m`;
+  if (m >= 120) return "+2h+";
+  return `+1h${String(m - 60).padStart(2, "0")}`;
+};
+
+/**
+ * A chegada do job de hoje, na lista: muda sozinha com o relógio. At risk nos
+ * últimos 30 min da janela sem começar; Late quando a janela fechou (sem fim de
+ * janela: 15 e 30 min depois do início).
+ */
+export function chegada(j: JobDaCaixa, agora: number): { tom: Tom; icone: LucideIcon; texto: string; title: string; peso: number } | null {
+  if (JOB_FEITO.has(j.status)) return null;
+  const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "";
+  if (j.status === "in_progress") return { tom: "green", icone: MapPin, texto: "On site", title: "Partner on site", peso: 0 };
+  const ini = j.inicio ? new Date(j.inicio).getTime() : null;
+  const fim = j.fim ? new Date(j.fim).getTime() : null;
+  const limite = fim ?? (ini !== null ? ini + 30 * MIN : null);
+  const risco = fim !== null ? fim - 30 * MIN : ini !== null ? ini + 15 * MIN : null;
+  if (j.status === "late" || (limite !== null && agora >= limite)) {
+    const passou = limite !== null && agora > limite ? agora - limite : 0;
+    return { tom: "red", icone: TriangleAlert, texto: passou ? `Late ${atraso(passou)}` : "Late", title: `Late · not started${janela ? `, window ${janela}` : ""}`, peso: 2 };
+  }
+  if (risco !== null && agora >= risco) return { tom: "amber", icone: TriangleAlert, texto: `At risk ${janela}`, title: `At risk · window closes ${j.fim ? horaCurta(j.fim) : "soon"}, not started`, peso: 1 };
+  return { tom: "blue", icone: CalendarClock, texto: `Today${janela ? ` ${janela}` : ""}`, title: `Arrival window today${janela ? ` ${janela}` : ""}`, peso: 0 };
 }
