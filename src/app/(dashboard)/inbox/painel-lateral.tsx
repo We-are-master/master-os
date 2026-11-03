@@ -290,6 +290,8 @@ export function AtendimentoLateral() {
                     nome={conversa.nome}
                     tipo={conversa.tipo}
                     canal="Operations"
+                    parceiroId={conversa.parceiro?.id ?? null}
+                    clienteId={conversa.cliente?.id ?? null}
                     janelaAberta={Boolean(conversa.ultimaEntradaEm && agora - new Date(conversa.ultimaEntradaEm).getTime() < 24 * 3_600_000)}
                     semJanela={dados?.semJanela ?? false}
                     onEnviado={() => {
