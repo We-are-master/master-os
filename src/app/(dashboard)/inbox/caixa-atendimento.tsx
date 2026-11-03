@@ -222,6 +222,8 @@ export function CaixaAtendimento({
   const [corNova, setCorNova] = useState<Tom>("blue");
   const [criandoView, setCriandoView] = useState(false);
   const [apagadas, setApagadas] = useState<Set<string>>(new Set());
+  /** Mensagens que acabaram de sair daqui: aparecem na hora, antes do servidor confirmar. */
+  const [pendentes, setPendentes] = useState<Record<string, MensagemDaCaixa[]>>({});
 
   const conversas = useMemo(
     () => doServidor.map((c) => (local[c.contato] ? ({ ...c, ...local[c.contato] } as ConversaDaCaixa) : c)),
@@ -896,8 +898,8 @@ export function CaixaAtendimento({
 
           <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-5 py-4">
             <div className="space-y-2">
-              {aberta.mensagens.map((m, i) => {
-                const antes = aberta.mensagens[i - 1];
+              {comPendentes(aberta.mensagens, pendentes[aberta.contato]).map((m, i, todas) => {
+                const antes = todas[i - 1];
                 const novoDia = !antes || new Date(antes.criadoEm).toDateString() !== new Date(m.criadoEm).toDateString();
                 const marcavel = Boolean(gaveta?.k === "criar" && m.direcao === "entrada" && m.texto);
                 return (
@@ -951,6 +953,13 @@ export function CaixaAtendimento({
             janelaAberta={janelaAberta(aberta)}
             semJanela={semJanela}
             onEnviado={() => router.refresh()}
+            onPendente={(m) => setPendentes((p) => ({ ...p, [aberta.contato]: [...(p[aberta.contato] ?? []), m] }))}
+            onResolvida={(id, erro) =>
+              setPendentes((p) => ({
+                ...p,
+                [aberta.contato]: (p[aberta.contato] ?? []).map((m) => (m.id === id ? { ...m, status: erro ? "failed" : "sent", erro: erro ?? null } : m)),
+              }))
+            }
           />
         </section>
       ) : (
@@ -989,6 +998,27 @@ export function CaixaAtendimento({
       </aside>
     </div>
   );
+}
+
+/**
+ * A conversa com o que acabou de sair daqui. A pendente some quando o servidor
+ * já traz a mesma mensagem (mesmo tipo, e mesmo texto se for texto); as que
+ * falharam ficam, para a pessoa ver que não foi.
+ */
+function comPendentes(doServidor: MensagemDaCaixa[], pendentes: MensagemDaCaixa[] | undefined): MensagemDaCaixa[] {
+  if (!pendentes?.length) return doServidor;
+  const vivas = pendentes.filter(
+    (p) =>
+      p.status === "failed" ||
+      !doServidor.some(
+        (m) =>
+          m.direcao === "saida" &&
+          m.tipo === p.tipo &&
+          (p.tipo !== "text" || (m.texto ?? "") === (p.texto ?? "")) &&
+          Date.parse(m.criadoEm) >= Date.parse(p.criadoEm) - 60_000,
+      ),
+  );
+  return vivas.length ? [...doServidor, ...vivas] : doServidor;
 }
 
 function Midia({ m }: { m: MensagemDaCaixa }) {

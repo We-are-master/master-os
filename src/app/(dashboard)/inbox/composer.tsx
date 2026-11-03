@@ -13,10 +13,10 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, Loader2, MessageSquare, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
+import { FileText, MessageSquare, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
 import { toast } from "sonner";
 import { Acao } from "./ui";
-import type { TipoDeContato } from "./tipos";
+import type { MensagemDaCaixa, TipoDeContato } from "./tipos";
 import { useGravadorDeAudio } from "./gravador";
 import { BotaoDoMicrofone, FaixaDeGravacao } from "./gravacao";
 import { TecladoDeEmoji } from "./teclado-de-emoji";
@@ -96,6 +96,8 @@ export function Composer({
   janelaAberta,
   semJanela,
   onEnviado,
+  onPendente,
+  onResolvida,
 }: {
   contato: string;
   nome: string;
@@ -104,6 +106,9 @@ export function Composer({
   janelaAberta: boolean;
   semJanela: boolean;
   onEnviado: () => void;
+  /** A mensagem entra na conversa na hora; o envio corre por trás. */
+  onPendente?: (m: MensagemDaCaixa) => void;
+  onResolvida?: (id: string, erro?: string) => void;
 }) {
   const [texto, setTexto] = useState("");
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -166,22 +171,36 @@ export function Composer({
 
   const focar = () => requestAnimationFrame(() => campo.current?.focus());
 
-  async function mandar() {
-    if (enviando) return;
-    if (!arquivo && !texto.trim()) return;
-    setEnviando(true);
+  /** Põe a bolha na conversa já, com "sending", e devolve o id para resolver depois. */
+  function pendente(tipoMsg: string, conteudo: string | null, midiaUrl: string | null): string {
+    const id = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    onPendente?.({ id, direcao: "saida", origem: "os", tipo: tipoMsg, texto: conteudo, midiaUrl, status: "sending", erro: null, quem: "You", criadoEm: new Date().toISOString() });
+    return id;
+  }
+
+  async function correr(id: string, envio: Promise<void>) {
     try {
-      if (arquivo) await postarArquivo(contato, arquivo, texto.trim());
-      else await postarJson({ contato, texto: texto.trim() });
-      setTexto("");
-      setArquivo(null);
+      await envio;
+      onResolvida?.(id);
       onEnviado();
-      focar();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not send");
-    } finally {
-      setEnviando(false);
+      const msg = e instanceof Error ? e.message : "Could not send";
+      onResolvida?.(id, msg);
+      toast.error(msg);
     }
+  }
+
+  // Não espera a uazapi: limpa o campo, mostra a bolha e envia por trás.
+  function mandar() {
+    if (!arquivo && !texto.trim()) return;
+    const conteudo = texto.trim();
+    const anexo = arquivo;
+    const tipoMsg = !anexo ? "text" : anexo.type.startsWith("image/") ? "image" : anexo.type.startsWith("video/") ? "video" : "document";
+    const id = pendente(tipoMsg, conteudo || (anexo && tipoMsg === "document" ? anexo.name : null), anexo ? URL.createObjectURL(anexo) : null);
+    setTexto("");
+    setArquivo(null);
+    focar();
+    void correr(id, anexo ? postarArquivo(contato, anexo, conteudo) : postarJson({ contato, texto: conteudo }));
   }
 
   async function enviarGravacao() {
@@ -191,15 +210,8 @@ export function Composer({
       toast.error("Voice note is over 4 MB. Record a shorter one.");
       return;
     }
-    setEnviando(true);
-    try {
-      await postarArquivo(contato, voz, "", "ptt");
-      onEnviado();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not send the voice note");
-    } finally {
-      setEnviando(false);
-    }
+    const id = pendente("audio", null, URL.createObjectURL(voz));
+    void correr(id, postarArquivo(contato, voz, "", "ptt"));
   }
 
   function escolher(f: File | undefined) {
@@ -333,7 +345,7 @@ export function Composer({
           }
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            void mandar();
+            mandar();
           }
         }}
       />
@@ -425,12 +437,12 @@ export function Composer({
         <button
           type="button"
           className="snd"
-          onClick={() => void mandar()}
-          disabled={enviando || gravando || (!texto.trim() && !arquivo)}
+          onClick={mandar}
+          disabled={gravando || (!texto.trim() && !arquivo)}
           aria-label="Send"
           title="Send"
         >
-          {enviando ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+          <Send size={15} />
         </button>
       </div>
     </div>

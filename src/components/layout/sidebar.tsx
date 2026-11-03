@@ -231,7 +231,8 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
       ) : (
         <>
           {collapsed ? (
-            <img src="/favicon.svg" alt={title} width={32} height={32} className="h-8 w-8 shrink-0 rounded-[8px]" />
+            // Menu recolhido: só o símbolo (engrenagem e chave), branco, sem a palavra (dono, 03/11/2026).
+            <img src="/fixfy-icon-white.png" alt={title} width={30} height={30} className="h-[30px] w-[30px] shrink-0 object-contain" />
           ) : (
             // A logo de sempre (branca com "fy" laranja), recortada e no tamanho em que aparecia
             // antes (dono, 25/10/2026: "não a original"). width/height no HTML: nasce no tamanho certo.
