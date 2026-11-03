@@ -731,6 +731,9 @@ function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
 }
 
 /** Oferecer um job sem parceiro a quem está na conversa: o assign do Jobs, e a mensagem aqui. */
+/** Altura de uma linha da lista de oferta (px): o modal mostra 10. */
+const LINHA_DA_OFERTA = 55;
+
 export function OfertaDeJob({
   c,
   jobs,
@@ -746,6 +749,7 @@ export function OfertaDeJob({
   emModal?: boolean;
 }) {
   const [busca, setBusca] = useState("");
+  const [mostrar, setMostrar] = useState(10);
   const [escolhido, setEscolhido] = useState<JobParaOferecer | null>(null);
   const [mandarAqui, setMandarAqui] = useState(true);
   const lista = useMemo(() => {
@@ -774,7 +778,7 @@ export function OfertaDeJob({
   }
 
   return (
-    <div className={cn("flex flex-col", emModal ? "max-h-[min(70dvh,640px)]" : "h-full")}>
+    <div className={cn("flex flex-col", emModal ? "max-h-[min(85dvh,720px)]" : "h-full")}>
       <div className={cn("flex items-center gap-2 border-b border-border-light px-4 py-3", emModal && "hidden")}>
         <Send className="h-4 w-4 text-text-primary" />
         <p className="flex-1 text-[15px] font-semibold text-text-primary">Offer a job to {primeiro}</p>
@@ -789,7 +793,10 @@ export function OfertaDeJob({
             className="w-full rounded-lg border border-border-light bg-card py-1.5 pl-8 pr-2.5 text-xs text-text-primary placeholder:text-text-tertiary"
             placeholder="Search ref, address, client"
             value={busca}
-            onChange={(e) => setBusca(e.target.value)}
+            onChange={(e) => {
+              setBusca(e.target.value);
+              setMostrar(10);
+            }}
           />
         </div>
         <label className="flex items-center gap-1.5 text-text-secondary">
@@ -800,15 +807,23 @@ export function OfertaDeJob({
           Offer opens the usual allocation: {primeiro} gets the email, the app push and the Zendesk note.
         </p>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      {/* Cabem 10 linhas; com mais, rola e vai carregando de 10 em 10. Com menos, o modal encolhe. */}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto"
+        style={emModal ? { maxHeight: LINHA_DA_OFERTA * 10 } : undefined}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollTop + el.clientHeight > el.scrollHeight - LINHA_DA_OFERTA * 2) setMostrar((n) => (n < lista.length ? n + 10 : n));
+        }}
+      >
         {lista.length === 0 ? (
           <div className="p-4">
             <Vazio texto="No dated jobs waiting for a partner." />
           </div>
         ) : null}
         <ul className="divide-y divide-border-light">
-          {lista.map((j) => (
-            <li key={j.id} className="flex items-center gap-3 px-4 py-2 hover:bg-surface-secondary/50">
+          {lista.slice(0, mostrar).map((j) => (
+            <li key={j.id} className="flex h-[55px] items-center gap-3 px-4 hover:bg-surface-secondary/50">
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2">
                   <LinkDeJob id={j.id} className="text-[13px] font-semibold text-text-primary hover:underline">

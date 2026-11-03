@@ -232,7 +232,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
           .in("status", ["unassigned", "auto_assigning"])
           .not("scheduled_date", "is", null)
           .order("scheduled_date", { ascending: true, nullsFirst: false })
-          .limit(80)
+          .limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     idsContasDiretas.length
       ? sb.from("jobs").select(`${COLUNAS_JOB}, account_id`).in("account_id", idsContasDiretas).is("deleted_at", null).order("created_at", { ascending: false }).limit(400)
