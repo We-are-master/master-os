@@ -27,7 +27,14 @@ export type JobDaCaixa = {
   status: string;
   parceiro: string | null;
   cliente: string | null;
+  /** Fim da janela de chegada. */
+  fim: string | null;
+  /** De onde veio: Housekeep, Checkatrade, ou null (Fixfy direct). */
+  origem: string | null;
 };
+
+export type DocumentoDoParceiro = { id: string; nome: string; tipo: string | null; status: string | null; expira: string | null };
+export type SelfBillDaCaixa = { id: string; ref: string; valor: number; jobs: number; vence: string | null; status: string; semana: string | null };
 
 export type QuoteDaCaixa = { id: string; ref: string; titulo: string | null; status: string; total: number };
 export type FaturaDaCaixa = { id: string; ref: string; job: string | null; status: string; valor: number; pago: number };
@@ -66,8 +73,31 @@ export type ConversaDaCaixa = {
   tags: string[];
   presenca: string | null;
   presencaEm: string | null;
-  parceiro: { id: string; empresa: string | null; oficio: string | null; email: string | null; status: string | null } | null;
-  cliente: { id: string; nome: string; email: string | null; endereco: string | null; postcode: string | null; contaId: string | null; conta: string | null } | null;
+  parceiro: {
+    id: string;
+    empresa: string | null;
+    oficio: string | null;
+    email: string | null;
+    status: string | null;
+    nota: number | null;
+    jobsFeitos: number;
+    area: string | null;
+    documentos: DocumentoDoParceiro[];
+    /** Jobs dele já feitos sem relatório. */
+    semRelatorio: { id: string; ref: string }[];
+    /** O self-bill em aberto mais recente. */
+    selfBill: SelfBillDaCaixa | null;
+  } | null;
+  cliente: {
+    id: string;
+    nome: string;
+    email: string | null;
+    endereco: string | null;
+    postcode: string | null;
+    contaId: string | null;
+    conta: string | null;
+    origem: string | null;
+  } | null;
   /** Parceiro: os próximos alocados a ele. Cliente: os dele, do mais novo. */
   jobs: JobDaCaixa[];
   /** Algum job desta pessoa marcado para hoje (Londres). */

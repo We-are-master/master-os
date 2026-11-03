@@ -218,6 +218,8 @@ export function CaixaAtendimento({
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
   const [corNova, setCorNova] = useState<Tom>("blue");
+  const [criandoView, setCriandoView] = useState(false);
+  const [apagadas, setApagadas] = useState<Set<string>>(new Set());
 
   const conversas = useMemo(
     () => doServidor.map((c) => (local[c.contato] ? ({ ...c, ...local[c.contato] } as ConversaDaCaixa) : c)),
@@ -226,8 +228,9 @@ export function CaixaAtendimento({
   const tags = useMemo(() => {
     const m = new Map(tagsDoServidor.map((t) => [t.nome, t]));
     for (const t of tagsNovas) m.set(t.nome, t);
+    for (const n of apagadas) m.delete(n);
     return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [tagsDoServidor, tagsNovas]);
+  }, [tagsDoServidor, tagsNovas, apagadas]);
   const corDaTag = (nome: string) => tomValido(tags.find((t) => t.nome === nome)?.cor ?? "slate");
 
   useEffect(() => {
@@ -397,10 +400,31 @@ export function CaixaAtendimento({
       if (!res.ok || !j.tag) throw new Error(j.error ?? "Could not create the view");
       const criada = j.tag;
       setTagsNovas((t) => [...t, criada]);
+      setApagadas((a) => {
+        const n = new Set(a);
+        n.delete(criada.nome);
+        return n;
+      });
       setNovaTag("");
+      setCriandoView(false);
       if (paraConversa && !paraConversa.tags.includes(criada.nome)) await alternarTag(paraConversa, criada.nome);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create the view");
+    }
+  }
+
+  async function apagarView(nome: string) {
+    if (!window.confirm(`Delete the view "${nome}"? Chats keep their messages; only the grouping goes.`)) return;
+    setApagadas((a) => new Set(a).add(nome));
+    if (visao.k === "tag" && visao.nome === nome) setVisao({ k: "abertas" });
+    const res = await fetch(`/api/inbox/tags?nome=${encodeURIComponent(nome)}`, { method: "DELETE" });
+    if (!res.ok) {
+      setApagadas((a) => {
+        const n = new Set(a);
+        n.delete(nome);
+        return n;
+      });
+      toast.error("Could not delete the view");
     }
   }
 
@@ -419,32 +443,55 @@ export function CaixaAtendimento({
 
   const criadorDeTag = (paraConversa: ConversaDaCaixa | null) => (
     <form
-      className="mt-1.5 space-y-1.5 border-t border-border-light px-1 pt-2"
+      className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
         void criarTag(paraConversa);
       }}
     >
-      <input
-        className="h-7 w-full rounded-md border border-border-light bg-card px-2 text-xs text-text-primary placeholder:text-text-tertiary"
-        placeholder="New view, e.g. Follow up"
-        value={novaTag}
-        onChange={(e) => setNovaTag(e.target.value)}
-        disabled={!estadoPronto}
-      />
-      <div className="flex items-center gap-1">
+      <div className="flex h-8 items-center gap-2 rounded-lg border border-border-light bg-card px-2.5 focus-within:border-text-tertiary">
+        <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", PONTO[corNova])} />
+        <input
+          autoFocus={!paraConversa}
+          className="min-w-0 flex-1 bg-transparent text-[13px] text-text-primary outline-none placeholder:text-text-tertiary"
+          placeholder="View name"
+          value={novaTag}
+          onChange={(e) => setNovaTag(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setNovaTag("");
+              setCriandoView(false);
+            }
+          }}
+          disabled={!estadoPronto}
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
         {(Object.keys(TONS) as Tom[]).map((t) => (
           <button
             key={t}
             type="button"
-            aria-label={t}
+            aria-label={`Colour ${t}`}
             onClick={() => setCorNova(t)}
-            className={cn("h-4 w-4 rounded-full", PONTO[t], corNova === t && "ring-2 ring-text-primary ring-offset-1 ring-offset-card")}
+            className={cn("h-3.5 w-3.5 rounded-full transition-transform hover:scale-110", PONTO[t], corNova === t && "ring-2 ring-text-primary ring-offset-2 ring-offset-card")}
           />
         ))}
-        <span className="flex-1" />
-        <button type="submit" disabled={!novaTag.trim() || !estadoPronto} className="rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-[var(--on-brand)] disabled:opacity-50">
-          Add
+      </div>
+      <div className="flex justify-end gap-1.5">
+        {paraConversa ? null : (
+          <button
+            type="button"
+            onClick={() => {
+              setNovaTag("");
+              setCriandoView(false);
+            }}
+            className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-surface-tertiary"
+          >
+            Cancel
+          </button>
+        )}
+        <button type="submit" disabled={!novaTag.trim() || !estadoPronto} className="rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-[var(--on-brand)] disabled:opacity-40">
+          {paraConversa ? "Create and tag" : "Create view"}
         </button>
       </div>
     </form>
@@ -493,18 +540,50 @@ export function CaixaAtendimento({
           n={contagem.outro}
         />
 
-        <Titulo>Views</Titulo>
+        <Titulo
+          acao={
+            estadoPronto ? (
+              <button type="button" onClick={() => setCriandoView((v) => !v)} className="rounded p-0.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary" aria-label="New view" title="New view">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            ) : null
+          }
+        >
+          Views
+        </Titulo>
         {tags.map((t) => (
-          <ItemDaLateral
-            key={t.nome}
-            ativo={mesmaVisao(visao, { k: "tag", nome: t.nome })}
-            onClick={() => irPara({ k: "tag", nome: t.nome })}
-            ponto={tomValido(t.cor)}
-            rotulo={t.nome}
-            n={nTag(t.nome)}
-          />
+          <div key={t.nome} className="group relative">
+            <ItemDaLateral
+              ativo={mesmaVisao(visao, { k: "tag", nome: t.nome })}
+              onClick={() => irPara({ k: "tag", nome: t.nome })}
+              ponto={tomValido(t.cor)}
+              rotulo={t.nome}
+              n={nTag(t.nome)}
+            />
+            <button
+              type="button"
+              onClick={() => void apagarView(t.nome)}
+              className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded bg-surface-secondary p-0.5 text-text-tertiary hover:text-[var(--bad-ink)] group-hover:block"
+              aria-label={`Delete view ${t.nome}`}
+              title="Delete view"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
         ))}
-        <div className="px-1.5">{criadorDeTag(null)}</div>
+        {criandoView ? (
+          <div className="mx-1 mt-1 rounded-lg border border-border-light bg-card p-2">{criadorDeTag(null)}</div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setCriandoView(true)}
+            disabled={!estadoPronto}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-text-tertiary hover:bg-surface-secondary hover:text-text-secondary disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            {tags.length ? "New view" : "New view, e.g. Follow up"}
+          </button>
+        )}
 
         <Titulo
           acao={
@@ -720,7 +799,7 @@ export function CaixaAtendimento({
                       {t.nome}
                     </label>
                   ))}
-                  {criadorDeTag(aberta)}
+                  <div className="mt-1.5 border-t border-border-light px-1 pt-2">{criadorDeTag(aberta)}</div>
                 </div>
               ) : null}
 

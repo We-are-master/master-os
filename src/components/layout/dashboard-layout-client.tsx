@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,10 @@ export default function DashboardLayoutClient({
   const themeState = useThemeProvider();
   // A /inbox ocupa a tela toda, como o Atendimento do VOS: sem cabeçalho nem margem.
   const telaCheia = usePathname()?.startsWith("/inbox") ?? false;
+  // Na /inbox o menu começa fechado (só ícones, com o botão de expandir); fora dela, volta aberto.
+  useEffect(() => {
+    setCollapsed(telaCheia);
+  }, [telaCheia]);
 
   const toggle = useCallback(() => setCollapsed((p) => !p), []);
   const toggleMobile = useCallback(() => setMobileOpen((p) => !p), []);

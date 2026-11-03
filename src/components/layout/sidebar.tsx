@@ -211,7 +211,8 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   }, [logoSrc, resolved, style]);
 
   const title = logos.companyName?.trim() || APP_NAME;
-  const showCustom = Boolean(logoSrc && !imgErr);
+  // Fechada, a lateral mostra só o ícone: a logo cadastrada é a marca inteira e espremida vira "fixfy" ilegível.
+  const showCustom = Boolean(logoSrc && !imgErr && !collapsed);
 
   return (
     <Link href="/" className={cn("flex items-center min-w-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40", collapsed ? "justify-center" : "gap-2.5")}>

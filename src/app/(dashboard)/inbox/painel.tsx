@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * A coluna da direita da /inbox: quem está falando e o que a operação sabe
- * dele. Parceiro: o job de hoje, os próximos e "Offer job" (o mesmo assign do
- * Jobs, com e-mail e Zendesk). Cliente: a etapa em que ele está, jobs,
- * cotações e faturas. Número sem cadastro: "Add as client".
+ * A gaveta da direita da /inbox: quem está falando e o que a operação sabe
+ * dele. Parceiro: a rota de hoje, nota e compliance, relatórios que faltam,
+ * self-bill em aberto, documentos e arquivos da conversa, com "Offer a job"
+ * (o mesmo assign do Jobs, com e-mail e Zendesk). Cliente: cadastro, ticket
+ * do Zendesk, jobs, cotações, faturas e arquivos. Número sem cadastro:
+ * "Add as client".
  */
 
 import { useMemo, useState } from "react";
@@ -21,15 +23,14 @@ import {
   Search,
   Send,
   UserPlus,
-  Wrench,
   X,
 } from "lucide-react";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
-import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo } from "./ui";
-import type { ConversaDaCaixa, JobDaCaixa, JobParaOferecer } from "./tipos";
+import { Acao, Avatar, Chip, ChipDaEtapa, type Tom } from "./ui";
+import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
 const libra = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
@@ -38,19 +39,36 @@ export const dia = (data: string | null) =>
   data ? new Date(`${data}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "No date";
 const rotulo = (s: string) => (s ? s.replace(/_/g, " ").replace(/^./, (x) => x.toUpperCase()) : "");
 export const ticketDe = (c: ConversaDaCaixa) => c.jobs.map((j) => j.ticket).find((t) => t && /^\d+$/.test(t)) ?? null;
+const DIA_MS = 86_400_000;
 
-type Aba = "info" | "jobs" | "quotes" | "faturas";
+type AbaParceiro = "parceiro" | "jobs" | "selfbill" | "docs" | "arquivos";
+type AbaCliente = "cliente" | "jobs" | "quotes" | "faturas" | "ticket" | "arquivos";
 
 function Secao({ titulo, acao, children }: { titulo: string; acao?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="border-b border-border-light px-4 py-3">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">{titulo}</p>
+    <div className="border-b border-border-light px-4 py-4">
+      <div className="mb-2.5 flex items-center justify-between">
+        <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-text-tertiary">{titulo}</p>
         {acao}
       </div>
       {children}
     </div>
   );
+}
+
+const LinkDaSecao = ({ href, children = "Open", externo = false }: { href: string; children?: React.ReactNode; externo?: boolean }) =>
+  externo ? (
+    <a href={href} target="_blank" rel="noreferrer" className="text-xs font-medium text-[var(--info-ink)] hover:underline">
+      {children}
+    </a>
+  ) : (
+    <Link href={href} className="text-xs font-medium text-[var(--info-ink)] hover:underline">
+      {children}
+    </Link>
+  );
+
+function Campos({ children }: { children: React.ReactNode }) {
+  return <dl className="grid grid-cols-[96px_1fr] gap-x-3 gap-y-2 text-[13px]">{children}</dl>;
 }
 
 function Campo({ k, v }: { k: string; v: React.ReactNode }) {
@@ -62,53 +80,118 @@ function Campo({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-const Vazio = ({ texto }: { texto: string }) => <p className="text-xs text-text-tertiary">{texto}</p>;
+const Vazio = ({ texto }: { texto: string }) => <p className="text-[13px] text-text-tertiary">{texto}</p>;
 
-export function CartaoDeJob({ j, mostrarParceiro = true, destaque = false }: { j: JobDaCaixa; mostrarParceiro?: boolean; destaque?: boolean }) {
+/** A pílula do canto do cartão: o que o job está fazendo agora. */
+function pilulaDoJob(j: JobDaCaixa, proximo: boolean): { texto: string; tom: Tom } | null {
+  if (j.status === "in_progress") return { texto: "On site", tom: "green" };
+  if (["final_check", "awaiting_payment", "completed"].includes(j.status)) return { texto: "Done", tom: "slate" };
+  if (j.status === "late") return { texto: "Late", tom: "red" };
+  if (j.status === "on_hold") return { texto: "On hold", tom: "amber" };
+  if (proximo) return { texto: "Next", tom: "slate" };
+  return null;
+}
+
+/** Cartão no formato da rota: ref e pílula, o que e onde, janela, origem e ticket. */
+export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaCaixa; proximo?: boolean; comData?: boolean }) {
+  const pilula = pilulaDoJob(j, proximo);
+  const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? ` to ${horaCurta(j.fim)}` : ""}` : null;
+  const onde = [j.titulo, j.endereco?.split(",").slice(-2).join(",").trim()].filter(Boolean).join(" · ");
   return (
-    <div className={cn("rounded-lg border px-3 py-2", destaque ? "border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/30" : "border-border-light")}>
-      <div className="flex items-center gap-2">
-        <Link href={`/jobs/${j.id}`} className="text-xs font-semibold text-text-primary hover:underline">
-          {j.ref}
-        </Link>
-        <span className="ml-auto">{j.status ? <ChipDaEtapa e={{ grupo: "job", status: j.status }} /> : null}</span>
-      </div>
-      {j.titulo ? <p className="truncate text-xs text-text-secondary">{j.titulo}</p> : null}
-      <p className="mt-0.5 flex items-center gap-1 text-[11px] text-text-tertiary">
-        <CalendarClock className="h-3 w-3" />
-        {dia(j.data)}
-        {j.inicio ? ` · ${horaCurta(j.inicio)}` : ""}
-        {mostrarParceiro && j.parceiro ? ` · ${j.parceiro}` : ""}
-      </p>
-      {j.endereco ? (
-        <p className="flex items-center gap-1 truncate text-[11px] text-text-tertiary">
-          <MapPin className="h-3 w-3 shrink-0" />
-          <span className="truncate">{j.endereco}</span>
-        </p>
-      ) : null}
-      {j.ticket && /^\d+$/.test(j.ticket) ? (
-        <a className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-text-primary hover:underline" href={`${ZENDESK}${j.ticket}`} target="_blank" rel="noreferrer">
-          Ticket #{j.ticket}
-          <ExternalLink className="h-3 w-3" />
-        </a>
-      ) : null}
+    <Link href={`/jobs/${j.id}`} className="block rounded-xl border border-border-light px-3.5 py-2.5 transition-colors hover:bg-surface-secondary/60">
+      <span className="flex items-center gap-2">
+        <span className="text-[13.5px] font-semibold text-text-primary">{j.ref}</span>
+        <span className="ml-auto">
+          {pilula ? (
+            <Chip tom={pilula.tom}>{pilula.texto}</Chip>
+          ) : j.status ? (
+            <ChipDaEtapa e={{ grupo: "job", status: j.status }} />
+          ) : null}
+        </span>
+      </span>
+      {onde ? <span className="block truncate text-[12.5px] text-text-secondary">{onde}</span> : null}
+      <span className="mt-0.5 flex flex-wrap gap-x-3 text-[12px] text-text-tertiary">
+        {comData ? <span>{dia(j.data)}</span> : null}
+        {janela ? <span>{janela}</span> : null}
+        <span>{j.origem ?? "Fixfy direct"}</span>
+        {j.ticket && /^\d+$/.test(j.ticket) ? <span>Ticket #{j.ticket}</span> : null}
+      </span>
+    </Link>
+  );
+}
+
+function Cabeca({ c, online, sub, children }: { c: ConversaDaCaixa; online: boolean; sub?: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center border-b border-border-light px-4 pb-4 pt-6 text-center">
+      <Avatar c={c} grande online={online} />
+      <p className="mt-2.5 text-[16px] font-semibold text-text-primary">{c.nome}</p>
+      <p className="text-[12.5px] text-text-tertiary">{sub ?? `+${c.contato}`}</p>
+      {children ? <div className="mt-3.5 grid w-full grid-cols-2 gap-2">{children}</div> : null}
     </div>
   );
 }
 
-function Cabeca({ c, online, children }: { c: ConversaDaCaixa; online: boolean; children?: React.ReactNode }) {
+function Abas<T extends string>({ abas, ativa, onTroca }: { abas: [T, string][]; ativa: T; onTroca: (a: T) => void }) {
   return (
-    <div className="flex flex-col items-center border-b border-border-light px-4 pb-4 pt-5 text-center">
-      <Avatar c={c} grande online={online} />
-      <p className="mt-2 text-[15px] font-semibold text-text-primary">{c.nome}</p>
-      <p className="text-xs text-text-tertiary">+{c.contato}</p>
-      <div className="mt-2 flex flex-wrap justify-center gap-1">
-        <ChipDoTipo c={c} />
-        {c.parceiro?.oficio ? <Chip icone={Wrench}>{c.parceiro.oficio}</Chip> : null}
-        {c.cliente?.conta ? <Chip icone={Briefcase}>{c.cliente.conta}</Chip> : null}
-        {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
-      </div>
-      {children ? <div className="mt-3 flex w-full justify-center gap-2">{children}</div> : null}
+    <div className="flex gap-4 overflow-x-auto border-b border-border-light px-4">
+      {abas.map(([k, t]) => (
+        <button
+          key={k}
+          type="button"
+          onClick={() => onTroca(k)}
+          className={cn(
+            "-mb-px whitespace-nowrap border-b-2 py-3 text-[13px] font-medium transition-colors",
+            ativa === k ? "border-text-primary text-text-primary" : "border-transparent text-text-tertiary hover:text-text-secondary",
+          )}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Compliance em chips: vencido em vermelho, vencendo em 30 dias em âmbar, o resto ok. */
+function chipsDeCompliance(docs: DocumentoDoParceiro[], agora: number): { texto: string; tom: Tom }[] {
+  const vivos = docs.filter((d) => !["rejected", "archived"].includes(String(d.status)));
+  if (!vivos.length) return [{ texto: "No documents", tom: "slate" }];
+  const chips: { texto: string; tom: Tom }[] = [];
+  for (const d of vivos) {
+    if (!d.expira) continue;
+    const dias = Math.ceil((new Date(d.expira).getTime() - agora) / DIA_MS);
+    const nome = (d.tipo ?? d.nome).replace(/_/g, " ");
+    if (dias < 0) chips.push({ texto: `${nome} expired`, tom: "red" });
+    else if (dias <= 30) chips.push({ texto: `${nome} ${dias}d left`, tom: "amber" });
+  }
+  const pendentes = vivos.filter((d) => d.status === "pending").length;
+  if (pendentes) chips.push({ texto: `${pendentes} pending review`, tom: "amber" });
+  return chips.length ? chips : [{ texto: "Documents ok", tom: "green" }];
+}
+
+function Arquivos({ c }: { c: ConversaDaCaixa }) {
+  const midias = c.mensagens.filter((m) => m.midiaUrl).reverse();
+  if (!midias.length) return <Vazio texto="No photos or files in this chat yet." />;
+  const fotos = midias.filter((m) => m.tipo === "image" || m.tipo === "sticker");
+  const outros = midias.filter((m) => !(m.tipo === "image" || m.tipo === "sticker"));
+  return (
+    <div className="space-y-3">
+      {fotos.length ? (
+        <div className="grid grid-cols-3 gap-1.5">
+          {fotos.map((m) => (
+            <a key={m.id} href={m.midiaUrl!} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg border border-border-light">
+              {/* eslint-disable-next-line @next/next/no-img-element -- foto da conversa por URL assinada ou da uazapi */}
+              <img src={m.midiaUrl!} alt="" className="h-full w-full object-cover" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+      {outros.map((m) => (
+        <a key={m.id} href={m.midiaUrl!} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-border-light px-3 py-2 text-[13px] text-text-primary hover:bg-surface-secondary/60">
+          <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+          <span className="min-w-0 flex-1 truncate">{m.texto ?? rotulo(m.tipo)}</span>
+          <span className="text-[11px] text-text-tertiary">{new Date(m.criadoEm).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+        </a>
+      ))}
     </div>
   );
 }
@@ -124,56 +207,242 @@ export function Painel({
   onCriar: (t: TipoDoPrefill) => void;
   onOferecer: () => void;
 }) {
-  const [aba, setAba] = useState<Aba>("info");
-
-  if (c.tipo === "parceiro") {
-    const hojeDele = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data) : [];
-    const proximos = c.jobs.filter((j) => !hojeDele.includes(j));
-    return (
-      <div>
-        <Cabeca c={c} online={online}>
-          <Acao icone={Send} variante="primario" onClick={onOferecer}>
-            Offer job
-          </Acao>
-          {c.parceiro ? (
-            <Link href={`/partners/${c.parceiro.id}`}>
-              <Acao icone={ExternalLink}>Open partner</Acao>
-            </Link>
-          ) : null}
-        </Cabeca>
-        <Secao titulo="Today's route">
-          <div className="space-y-2">
-            {hojeDele.length ? hojeDele.map((j, i) => <CartaoDeJob key={j.id} j={j} mostrarParceiro={false} destaque={i === 0} />) : <Vazio texto="No job today." />}
-          </div>
-        </Secao>
-        <Secao titulo={`Upcoming · ${proximos.length}`}>
-          <div className="space-y-2">{proximos.length ? proximos.map((j) => <CartaoDeJob key={j.id} j={j} mostrarParceiro={false} />) : <Vazio texto="Nothing else booked." />}</div>
-        </Secao>
-        <Secao titulo="Partner">
-          <dl className="grid grid-cols-[84px_1fr] gap-x-2 gap-y-1.5 text-xs">
-            <Campo k="Company" v={c.parceiro?.empresa ?? "-"} />
-            <Campo k="Trade" v={c.parceiro?.oficio ?? "-"} />
-            <Campo k="Email" v={c.parceiro?.email ?? "-"} />
-            <Campo k="Status" v={c.parceiro?.status ? rotulo(c.parceiro.status) : "-"} />
-            {c.perfil ? <Campo k="WhatsApp" v={c.perfil} /> : null}
-          </dl>
-        </Secao>
-      </div>
-    );
-  }
-
+  if (c.tipo === "parceiro" && c.parceiro) return <PainelDoParceiro c={c} online={online} onOferecer={onOferecer} />;
   if (c.tipo === "outro" && !c.cliente) return <NovoCliente c={c} online={online} />;
+  return <PainelDoCliente c={c} online={online} onCriar={onCriar} />;
+}
 
-  const abas: [Aba, string, number | null][] = [
-    ["info", "Client", null],
-    ["jobs", "Jobs", c.jobs.length],
-    ["quotes", "Quotes", c.quotes.length],
-    ["faturas", "Invoices", c.faturas.length],
-  ];
-  const emAberto = c.faturas.filter((f) => f.valor - f.pago > 0.01);
+function PainelDoParceiro({ c, online, onOferecer }: { c: ConversaDaCaixa; online: boolean; onOferecer: () => void }) {
+  const [aba, setAba] = useState<AbaParceiro>("parceiro");
+  const [agora] = useState(() => Date.now());
+  const p = c.parceiro!;
+  const rota = c.jobHoje ? c.jobs.filter((j) => j.data === c.jobHoje!.data) : [];
+  const depois = c.jobs.filter((j) => !rota.includes(j));
+  // "Next" é o primeiro da rota que ainda não começou.
+  const proximoId = rota.find((j) => !["in_progress", "final_check", "awaiting_payment", "completed"].includes(j.status))?.id;
+  const sb = p.selfBill;
+  const sub = [p.oficio ?? "Partner", p.area].filter(Boolean).join(" · ");
+
   return (
     <div>
-      <Cabeca c={c} online={online}>
+      <Cabeca c={c} online={online} sub={sub}>
+        <Acao icone={Send} onClick={onOferecer}>
+          Offer a job
+        </Acao>
+        <Link href={`/partners/${p.id}`} className="grid">
+          <Acao icone={ExternalLink}>Open partner</Acao>
+        </Link>
+      </Cabeca>
+      <Abas<AbaParceiro>
+        abas={[
+          ["parceiro", "Partner"],
+          ["jobs", "Jobs"],
+          ["selfbill", "Self-bill"],
+          ["docs", "Docs"],
+          ["arquivos", "Files"],
+        ]}
+        ativa={aba}
+        onTroca={setAba}
+      />
+
+      {aba === "parceiro" ? (
+        <>
+          <Secao titulo="Today's route">
+            <div className="space-y-2">
+              {rota.length ? (
+                rota.map((j) => <CartaoDeJob key={j.id} j={j} proximo={j.id === proximoId} />)
+              ) : (
+                <>
+                  <Vazio texto="No job today." />
+                  {depois[0] ? <CartaoDeJob j={depois[0]} proximo comData /> : null}
+                </>
+              )}
+            </div>
+          </Secao>
+          <Secao titulo="Partner">
+            <Campos>
+              <Campo k="Rating" v={p.nota ? `${p.nota.toFixed(1)} · ${p.jobsFeitos} jobs` : `${p.jobsFeitos} jobs`} />
+              <Campo
+                k="Compliance"
+                v={
+                  <span className="flex flex-wrap gap-1">
+                    {chipsDeCompliance(p.documentos, agora).map((x) => (
+                      <Chip key={x.texto} tom={x.tom}>
+                        {x.texto}
+                      </Chip>
+                    ))}
+                  </span>
+                }
+              />
+              <Campo k="Status" v={p.status ? rotulo(p.status) : "-"} />
+              <Campo
+                k="Reports"
+                v={
+                  p.semRelatorio.length ? (
+                    <span>
+                      {p.semRelatorio.length} missing (
+                      {p.semRelatorio.slice(0, 3).map((j, i) => (
+                        <span key={j.id}>
+                          {i ? ", " : ""}
+                          <Link href={`/jobs/${j.id}`} className="hover:underline">
+                            {j.ref}
+                          </Link>
+                        </span>
+                      ))}
+                      {p.semRelatorio.length > 3 ? "..." : ""})
+                    </span>
+                  ) : (
+                    "All in"
+                  )
+                }
+              />
+              <Campo k="Email" v={p.email ?? "-"} />
+              {c.perfil ? <Campo k="WhatsApp" v={c.perfil} /> : null}
+            </Campos>
+          </Secao>
+          <Secao titulo="Self-bill" acao={<LinkDaSecao href="/finance/selfbill" />}>
+            {sb ? (
+              <Campos>
+                <Campo k="Period" v={sb.semana ?? sb.ref} />
+                <Campo k="To pay" v={libra.format(sb.valor)} />
+                <Campo k="Jobs" v={sb.jobs} />
+                <Campo k="Payday" v={sb.vence ? dia(sb.vence) : "-"} />
+                <Campo k="Status" v={rotulo(sb.status)} />
+              </Campos>
+            ) : (
+              <Vazio texto="Nothing open." />
+            )}
+          </Secao>
+        </>
+      ) : null}
+
+      {aba === "jobs" ? (
+        <Secao titulo={`Upcoming · ${c.jobs.length}`}>
+          <div className="space-y-2">{c.jobs.length ? c.jobs.map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="Nothing booked." />}</div>
+        </Secao>
+      ) : null}
+
+      {aba === "selfbill" ? (
+        <Secao titulo="Open self-bill" acao={<LinkDaSecao href="/finance/selfbill" />}>
+          {sb ? (
+            <Campos>
+              <Campo k="Reference" v={sb.ref} />
+              <Campo k="Period" v={sb.semana ?? "-"} />
+              <Campo k="To pay" v={libra.format(sb.valor)} />
+              <Campo k="Jobs" v={sb.jobs} />
+              <Campo k="Payday" v={sb.vence ? dia(sb.vence) : "-"} />
+              <Campo k="Status" v={rotulo(sb.status)} />
+            </Campos>
+          ) : (
+            <Vazio texto="Nothing open for this partner." />
+          )}
+        </Secao>
+      ) : null}
+
+      {aba === "docs" ? (
+        <Secao titulo={`Documents · ${p.documentos.length}`} acao={<LinkDaSecao href={`/partners/${p.id}`} />}>
+          <div className="space-y-1.5">
+            {p.documentos.length ? (
+              p.documentos.map((d) => {
+                const dias = d.expira ? Math.ceil((new Date(d.expira).getTime() - agora) / DIA_MS) : null;
+                return (
+                  <div key={d.id} className="flex items-center gap-2 rounded-lg border border-border-light px-3 py-2 text-[13px]">
+                    <FileText className="h-4 w-4 shrink-0 text-text-tertiary" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-text-primary">{d.nome}</span>
+                      <span className="block text-[11px] text-text-tertiary">{d.expira ? `Expires ${dia(d.expira.slice(0, 10))}` : "No expiry"}</span>
+                    </span>
+                    {dias != null && dias < 0 ? (
+                      <Chip tom="red">Expired</Chip>
+                    ) : dias != null && dias <= 30 ? (
+                      <Chip tom="amber">{dias}d left</Chip>
+                    ) : (
+                      <Chip tom={d.status === "approved" ? "green" : d.status === "pending" ? "amber" : "slate"}>{rotulo(d.status ?? "")}</Chip>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <Vazio texto="No documents on file." />
+            )}
+          </div>
+        </Secao>
+      ) : null}
+
+      {aba === "arquivos" ? (
+        <Secao titulo="Files from this chat">
+          <Arquivos c={c} />
+        </Secao>
+      ) : null}
+    </div>
+  );
+}
+
+function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: boolean; onCriar: (t: TipoDoPrefill) => void }) {
+  const [aba, setAba] = useState<AbaCliente>("cliente");
+  const cl = c.cliente;
+  const emAberto = c.faturas.filter((f) => f.valor - f.pago > 0.01);
+  const tickets = [...new Map(c.jobs.filter((j) => j.ticket && /^\d+$/.test(j.ticket)).map((j) => [j.ticket!, j])).values()];
+  const origem = cl?.origem ? rotulo(cl.origem) : null;
+  const sub = [c.tipo === "cliente" ? "Client" : "New client", cl?.conta ?? origem].filter(Boolean).join(" · ");
+
+  const listaDeQuotes = (qs: typeof c.quotes) =>
+    qs.length ? (
+      <div className="space-y-2">
+        {qs.map((q) => (
+          <Link key={q.id} href={`/quotes?quoteId=${q.id}`} className="block rounded-xl border border-border-light px-3.5 py-2.5 hover:bg-surface-secondary/60">
+            <span className="flex items-center gap-2">
+              <span className="text-[13.5px] font-semibold text-text-primary">{q.ref}</span>
+              <span className="ml-auto">{q.status ? <ChipDaEtapa e={{ grupo: "quote", status: q.status }} /> : null}</span>
+            </span>
+            {q.titulo ? <span className="block truncate text-[12.5px] text-text-secondary">{q.titulo}</span> : null}
+            <span className="block text-[12px] text-text-tertiary">{libra.format(q.total)}</span>
+          </Link>
+        ))}
+      </div>
+    ) : (
+      <Vazio texto="No quotes yet." />
+    );
+
+  const listaDeFaturas = (fs: typeof c.faturas, vazio: string) =>
+    fs.length ? (
+      <div className="space-y-2">
+        {fs.map((f) => (
+          <div key={f.id} className="rounded-xl border border-border-light px-3.5 py-2.5">
+            <span className="flex items-center gap-2">
+              <Receipt className="h-3.5 w-3.5 text-text-tertiary" />
+              <span className="text-[13.5px] font-semibold text-text-primary">{f.ref}</span>
+              <span className="ml-auto">
+                <Chip tom={f.valor - f.pago <= 0.01 ? "green" : "amber"}>{f.valor - f.pago <= 0.01 ? "Paid" : `${libra.format(f.valor - f.pago)} due`}</Chip>
+              </span>
+            </span>
+            <span className="block text-[12px] text-text-tertiary">
+              {f.job ?? ""} · {libra.format(f.valor)}
+            </span>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <Vazio texto={vazio} />
+    );
+
+  const cartaoDeTicket = (j: JobDaCaixa) => (
+    <a key={j.ticket} href={`${ZENDESK}${j.ticket}`} target="_blank" rel="noreferrer" className="block rounded-xl border border-border-light px-3.5 py-2.5 hover:bg-surface-secondary/60">
+      <span className="flex items-center gap-2">
+        <span className="text-[13.5px] font-semibold text-text-primary">#{j.ticket}</span>
+        <span className="ml-auto inline-flex items-center gap-1 text-[12px] text-text-tertiary">
+          Open in Zendesk
+          <ExternalLink className="h-3 w-3" />
+        </span>
+      </span>
+      <span className="block truncate text-[12.5px] text-text-secondary">{j.titulo ?? j.ref}</span>
+      <span className="block text-[12px] text-text-tertiary">From {j.ref}</span>
+    </a>
+  );
+
+  return (
+    <div>
+      <Cabeca c={c} online={online} sub={sub}>
         <Acao icone={Briefcase} variante="primario" onClick={() => onCriar("job")}>
           Create job
         </Acao>
@@ -181,115 +450,62 @@ export function Painel({
           Create quote
         </Acao>
       </Cabeca>
+      <Abas<AbaCliente>
+        abas={[
+          ["cliente", "Client"],
+          ["jobs", "Jobs"],
+          ["quotes", "Quotes"],
+          ["faturas", "Invoices"],
+          ["ticket", "Ticket"],
+          ["arquivos", "Files"],
+        ]}
+        ativa={aba}
+        onTroca={setAba}
+      />
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border-light px-2">
-        {abas.map(([k, t, n]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setAba(k)}
-            className={cn(
-              "whitespace-nowrap border-b-2 px-2 py-2.5 text-xs font-medium",
-              aba === k ? "border-text-primary text-text-primary" : "border-transparent text-text-tertiary hover:text-text-secondary",
-            )}
-          >
-            {t}
-            {n ? <span className="ml-1 text-text-tertiary">{n}</span> : null}
-          </button>
-        ))}
-      </div>
-
-      {aba === "info" ? (
+      {aba === "cliente" ? (
         <>
           {c.jobHoje ? (
             <Secao titulo="Today">
-              <CartaoDeJob j={c.jobHoje} destaque />
+              <CartaoDeJob j={c.jobHoje} />
             </Secao>
           ) : null}
-          <Secao titulo="Where they are">
-            {c.etapa ? (
-              <div className="flex items-center gap-2 text-xs">
-                <ChipDaEtapa e={c.etapa} />
-                <Link href={c.etapa.grupo === "job" ? `/jobs/${c.etapa.id}` : `/quotes?quoteId=${c.etapa.id}`} className="font-medium text-text-primary hover:underline">
-                  {c.etapa.ref}
-                </Link>
-              </div>
-            ) : (
-              <Vazio texto="No job or quote yet." />
-            )}
+          <Secao titulo="Client" acao={cl ? <LinkDaSecao href={`/clients/${cl.id}`}>Edit</LinkDaSecao> : null}>
+            <Campos>
+              <Campo k="Name" v={cl?.nome || c.nome} />
+              <Campo k="Phone" v={`+${c.contato}`} />
+              <Campo k="Email" v={cl?.email ?? <span className="text-text-tertiary">Ask in chat</span>} />
+              <Campo k="Address" v={cl?.endereco ?? "-"} />
+              <Campo k="Postcode" v={cl?.postcode ?? "-"} />
+              <Campo k="Account" v={cl?.conta ?? "Fixfy (direct)"} />
+              <Campo k="Source" v={[origem, "WhatsApp"].filter(Boolean).join(" · ")} />
+            </Campos>
           </Secao>
-          <Secao titulo="Client" acao={c.cliente ? <Link href={`/clients/${c.cliente.id}`} className="text-xs text-text-primary hover:underline">Open</Link> : null}>
-            {c.cliente ? (
-              <dl className="grid grid-cols-[84px_1fr] gap-x-2 gap-y-1.5 text-xs">
-                <Campo k="Name" v={c.cliente.nome} />
-                <Campo k="Email" v={c.cliente.email ?? <span className="text-text-tertiary">Ask in chat</span>} />
-                <Campo k="Address" v={c.cliente.endereco ?? "-"} />
-                <Campo k="Postcode" v={c.cliente.postcode ?? "-"} />
-                <Campo k="Account" v={c.cliente.conta ?? "Fixfy direct"} />
-                {c.perfil ? <Campo k="WhatsApp" v={c.perfil} /> : null}
-              </dl>
-            ) : null}
+          <Secao titulo="Zendesk">{tickets[0] ? cartaoDeTicket(tickets[0]) : <Vazio texto="No ticket yet. The job form links one." />}</Secao>
+          <Secao titulo="Jobs" acao={c.jobs.length > 2 ? <button type="button" onClick={() => setAba("jobs")} className="text-xs font-medium text-[var(--info-ink)] hover:underline">All {c.jobs.length}</button> : null}>
+            <div className="space-y-2">{c.jobs.length ? c.jobs.slice(0, 2).map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
           </Secao>
-          <Secao titulo="Open invoices">
-            {emAberto.length ? (
-              <div className="space-y-1.5">
-                {emAberto.map((f) => (
-                  <div key={f.id} className="flex items-center justify-between text-xs">
-                    <span className="text-text-primary">{f.ref}</span>
-                    <span className="text-text-secondary">{libra.format(f.valor - f.pago)} due</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Vazio texto="Nothing to pay." />
-            )}
-          </Secao>
+          <Secao titulo="Quotes">{listaDeQuotes(c.quotes.slice(0, 2))}</Secao>
+          <Secao titulo="Invoices">{listaDeFaturas(emAberto, "Nothing to pay.")}</Secao>
         </>
       ) : null}
 
-      {aba === "jobs" ? <div className="space-y-2 p-4">{c.jobs.length ? c.jobs.map((j) => <CartaoDeJob key={j.id} j={j} />) : <Vazio texto="No jobs." />}</div> : null}
-
-      {aba === "quotes" ? (
-        <div className="space-y-2 p-4">
-          {c.quotes.length ? (
-            c.quotes.map((q) => (
-              <Link key={q.id} href={`/quotes?quoteId=${q.id}`} className="block rounded-lg border border-border-light px-3 py-2 hover:bg-surface-secondary/60">
-                <span className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-text-primary">{q.ref}</span>
-                  <span className="ml-auto">{q.status ? <ChipDaEtapa e={{ grupo: "quote", status: q.status }} /> : null}</span>
-                </span>
-                {q.titulo ? <span className="block truncate text-xs text-text-secondary">{q.titulo}</span> : null}
-                <span className="block text-[11px] text-text-tertiary">{libra.format(q.total)}</span>
-              </Link>
-            ))
-          ) : (
-            <Vazio texto="No quotes." />
-          )}
-        </div>
+      {aba === "jobs" ? (
+        <Secao titulo={`Jobs · ${c.jobs.length}`}>
+          <div className="space-y-2">{c.jobs.length ? c.jobs.map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
+        </Secao>
       ) : null}
-
-      {aba === "faturas" ? (
-        <div className="space-y-2 p-4">
-          {c.faturas.length ? (
-            c.faturas.map((f) => (
-              <div key={f.id} className="rounded-lg border border-border-light px-3 py-2">
-                <span className="flex items-center gap-2">
-                  <Receipt className="h-3.5 w-3.5 text-text-tertiary" />
-                  <span className="text-xs font-semibold text-text-primary">{f.ref}</span>
-                  <span className="ml-auto">
-                    <Chip tom={f.valor - f.pago <= 0.01 ? "green" : "amber"}>{rotulo(f.status)}</Chip>
-                  </span>
-                </span>
-                <span className="block text-[11px] text-text-tertiary">
-                  {f.job ?? ""} · {libra.format(f.valor)}
-                  {f.pago > 0.01 ? ` · ${libra.format(f.pago)} paid` : ""}
-                </span>
-              </div>
-            ))
-          ) : (
-            <Vazio texto="No invoices." />
-          )}
-        </div>
+      {aba === "quotes" ? <Secao titulo={`Quotes · ${c.quotes.length}`}>{listaDeQuotes(c.quotes)}</Secao> : null}
+      {aba === "faturas" ? <Secao titulo={`Invoices · ${c.faturas.length}`}>{listaDeFaturas(c.faturas, "No invoices.")}</Secao> : null}
+      {aba === "ticket" ? (
+        <Secao titulo="Zendesk tickets">
+          <div className="space-y-2">{tickets.length ? tickets.map(cartaoDeTicket) : <Vazio texto="No ticket linked to this client's jobs." />}</div>
+        </Secao>
+      ) : null}
+      {aba === "arquivos" ? (
+        <Secao titulo="Files from this chat">
+          <Arquivos c={c} />
+        </Secao>
       ) : null}
     </div>
   );

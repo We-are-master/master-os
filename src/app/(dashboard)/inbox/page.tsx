@@ -40,10 +40,14 @@ type LinhaJob = {
   status: string | null;
   external_ref: string | null;
   partner_name: string | null;
+  scheduled_end_at: string | null;
+  external_source: string | null;
 };
 
 const COLUNAS_JOB =
-  "id, reference, title, partner_id, client_id, client_name, scheduled_date, scheduled_start_at, property_address, status, external_ref, partner_name";
+  "id, reference, title, partner_id, client_id, client_name, scheduled_date, scheduled_start_at, scheduled_end_at, property_address, status, external_ref, external_source, partner_name";
+
+const ORIGEM: Record<string, string> = { housekeep: "Housekeep", checkatrade: "Checkatrade", fantastic: "Fantastic", website: "Website" };
 
 const paraJob = (j: LinhaJob): JobDaCaixa => ({
   id: j.id,
@@ -56,7 +60,11 @@ const paraJob = (j: LinhaJob): JobDaCaixa => ({
   status: j.status ?? "",
   parceiro: j.partner_name,
   cliente: j.client_name,
+  fim: j.scheduled_end_at,
+  origem: j.external_source ? (ORIGEM[j.external_source.toLowerCase()] ?? j.external_source) : null,
 });
+
+const SELF_BILL_FECHADO = ["paid", "rejected", "payout_archived"];
 
 /** Hoje em Londres, AAAA-MM-DD, como `scheduled_date`. */
 const hojeEmLondres = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
@@ -120,7 +128,7 @@ export default async function InboxPage() {
       ? sb.from("partners").select("id, whatsapp, phone").or(filtroTelefone(["whatsapp", "phone"])).limit(200)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     semParceiro.length
-      ? sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id").is("deleted_at", null).or(filtroTelefone(["phone"])).limit(300)
+      ? sb.from("clients").select("id, full_name, email, phone, address, postcode, source_account_id, source").is("deleted_at", null).or(filtroTelefone(["phone"])).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     contatos.length
       ? sb.from("inbox_conversas").select("contato, resolvida_em, tags, presenca, presenca_em").in("contato", contatos)
@@ -147,7 +155,7 @@ export default async function InboxPage() {
 
   const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }] = await Promise.all([
     idsParceiros.length
-      ? sb.from("partners").select("id, contact_name, company_name, trade, email, status").in("id", idsParceiros)
+      ? sb.from("partners").select("id, contact_name, company_name, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes").in("id", idsParceiros)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     idsParceiros.length
       ? sb
@@ -190,6 +198,33 @@ export default async function InboxPage() {
         .limit(300)
     : { data: [] };
 
+  // O que a gaveta do parceiro mostra: documentos, relatórios que faltam e o self-bill em aberto.
+  const [{ data: documentos }, { data: semRelatorio }, { data: selfBills }] = await Promise.all([
+    idsParceiros.length
+      ? sb.from("partner_documents").select("id, partner_id, name, doc_type, status, expires_at").in("partner_id", idsParceiros).order("expires_at", { ascending: true }).limit(300)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    idsParceiros.length
+      ? sb
+          .from("jobs")
+          .select("id, reference, partner_id")
+          .in("partner_id", idsParceiros)
+          .in("status", ["final_check", "awaiting_payment", "completed"])
+          .eq("report_submitted", false)
+          .is("deleted_at", null)
+          .gte("scheduled_date", desde.slice(0, 10))
+          .limit(200)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    idsParceiros.length
+      ? sb
+          .from("self_bills")
+          .select("id, reference, partner_id, net_payout, jobs_count, due_date, status, week_label, created_at")
+          .in("partner_id", idsParceiros)
+          .not("status", "in", `(${SELF_BILL_FECHADO.join(",")})`)
+          .order("created_at", { ascending: false })
+          .limit(100)
+      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+  ]);
+
   const parceiroPorId = new Map((parceiros ?? []).map((p) => [p.id as string, p]));
   const nomeDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.company_name as string | null) ?? "Account"]));
 
@@ -222,6 +257,34 @@ export default async function InboxPage() {
             oficio: (p?.trade as string | null) ?? null,
             email: (p?.email as string | null) ?? null,
             status: (p?.status as string | null) ?? null,
+            nota: Number(p?.rating) > 0 ? Number(p?.rating) : null,
+            jobsFeitos: Number(p?.jobs_completed ?? 0),
+            area:
+              ((p?.included_postcodes as string[] | null) ?? []).slice(0, 4).join(", ") || ((p?.coverage_base_postcode as string | null) ?? null),
+            documentos: (documentos ?? [])
+              .filter((d) => d.partner_id === pid)
+              .map((d) => ({
+                id: d.id as string,
+                nome: (d.name as string | null) ?? "Document",
+                tipo: (d.doc_type as string | null) ?? null,
+                status: (d.status as string | null) ?? null,
+                expira: (d.expires_at as string | null) ?? null,
+              })),
+            semRelatorio: (semRelatorio ?? []).filter((j) => j.partner_id === pid).map((j) => ({ id: j.id as string, ref: (j.reference as string | null) ?? "Job" })),
+            selfBill: (() => {
+              const b = (selfBills ?? []).find((x) => x.partner_id === pid);
+              return b
+                ? {
+                    id: b.id as string,
+                    ref: (b.reference as string | null) ?? "Self-bill",
+                    valor: Number(b.net_payout ?? 0),
+                    jobs: Number(b.jobs_count ?? 0),
+                    vence: (b.due_date as string | null) ?? null,
+                    status: (b.status as string | null) ?? "",
+                    semana: (b.week_label as string | null) ?? null,
+                  }
+                : null;
+            })(),
           },
           cliente: null,
           jobs: jobs.slice(0, 12),
@@ -264,6 +327,7 @@ export default async function InboxPage() {
               postcode: (c.postcode as string | null) ?? null,
               contaId: (c.source_account_id as string | null) ?? null,
               conta: c.source_account_id ? nomeDaConta.get(c.source_account_id as string) ?? null : null,
+              origem: (c.source as string | null) ?? null,
             }
           : null,
         jobs: jobsDoCliente.slice(0, 12),
