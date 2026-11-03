@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
+import { LinkDeJob } from "./link-de-job";
 import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -203,7 +204,7 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
   const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? ` to ${horaCurta(j.fim)}` : ""}` : null;
   const onde = [j.titulo, j.endereco?.split(",").slice(-2).join(",").trim()].filter(Boolean).join(" · ");
   return (
-    <Link href={`/jobs/${j.id}`} className="block rounded-xl border border-border-light px-3.5 py-2.5 transition-colors hover:bg-surface-secondary/60">
+    <LinkDeJob id={j.id} className="block rounded-xl border border-border-light px-3.5 py-2.5 transition-colors hover:bg-surface-secondary/60">
       <span className="flex items-center gap-2">
         <span className="text-[13.5px] font-semibold text-text-primary">{j.ref}</span>
         <span className="ml-auto">
@@ -221,7 +222,7 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
         <span>{j.origem ?? "Direct"}</span>
         {j.ticket && /^\d+$/.test(j.ticket) ? <span>Ticket #{j.ticket}</span> : null}
       </span>
-    </Link>
+    </LinkDeJob>
   );
 }
 
@@ -267,8 +268,8 @@ function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId:
             >
               {feito ? <Check className="h-3.5 w-3.5" /> : noLocal ? <MapPin className="h-3.5 w-3.5" /> : i + 1}
             </span>
-            <Link
-              href={`/jobs/${j.id}`}
+            <LinkDeJob
+              id={j.id}
               className={cn(
                 "min-w-0 flex-1 rounded-xl border px-3 py-2 transition-colors hover:bg-surface-secondary/60",
                 proximo || noLocal ? "border-border bg-card shadow-sm" : "border-border-light",
@@ -299,7 +300,7 @@ function RotaDeHoje({ rota, proximoId, agora }: { rota: JobDaCaixa[]; proximoId:
                 {onde ? <span className="truncate">{onde}</span> : null}
                 <span className="shrink-0">{j.origem ?? "Direct"}</span>
               </span>
-            </Link>
+            </LinkDeJob>
           </mo.li>
         );
       })}
@@ -489,9 +490,9 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
                       {p.semRelatorio.slice(0, 3).map((j, i) => (
                         <span key={j.id}>
                           {i ? ", " : ""}
-                          <Link href={`/jobs/${j.id}`} className="hover:underline">
+                          <LinkDeJob id={j.id} className="hover:underline">
                             {j.ref}
-                          </Link>
+                          </LinkDeJob>
                         </span>
                       ))}
                       {p.semRelatorio.length > 3 ? "..." : ""})
@@ -816,9 +817,9 @@ export function OfertaDeJob({
         {lista.map((j) => (
           <div key={j.id} className="rounded-lg border border-border-light px-3 py-2">
             <div className="flex items-center gap-2">
-              <Link href={`/jobs/${j.id}`} className="text-xs font-semibold text-text-primary hover:underline">
+              <LinkDeJob id={j.id} className="text-xs font-semibold text-text-primary hover:underline">
                 {j.ref}
-              </Link>
+              </LinkDeJob>
               {j.custoParceiro ? (
                 <span className="ml-auto text-[11px] font-medium text-text-secondary">
                   {libra.format(j.custoParceiro)}

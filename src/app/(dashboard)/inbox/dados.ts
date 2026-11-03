@@ -54,7 +54,8 @@ const paraJob = (j: LinhaJob): JobDaCaixa => ({
   data: j.scheduled_date,
   inicio: j.scheduled_start_at,
   endereco: j.property_address,
-  ticket: j.external_ref,
+  // Só é ticket do Zendesk quando veio de lá; Housekeep e Checkatrade guardam o id deles aqui.
+  ticket: j.external_source?.toLowerCase() === "zendesk" ? j.external_ref : null,
   status: j.status ?? "",
   parceiro: j.partner_name,
   cliente: j.client_name,
@@ -189,6 +190,10 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const idsClientes = [...new Set([...clienteDoContato.values()].map((c) => c.id as string))];
   const idsContas = [...new Set(contaDoContato.values())];
 
+  // O ticket de ligações (355). Sem a coluna ainda, vem erro e o Call cai na busca por telefone.
+  const ticketsDeLigacao = idsParceiros.length
+    ? Promise.resolve(sb.from("partners").select("id, zendesk_ticket_id").in("id", idsParceiros).not("zendesk_ticket_id", "is", null))
+    : null;
   const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }, { data: jobsContas }] = await Promise.all([
     idsParceiros.length
       ? sb.from("partners").select("id, contact_name, company_name, avatar_url, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes, trades, coverage_mode, service_radius_miles, uk_coverage_regions, coverage_cities").in("id", idsParceiros)
@@ -264,6 +269,9 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   ]);
 
   const parceiroPorId = new Map((parceiros ?? []).map((p) => [p.id as string, p]));
+  const ticketDoParceiro = new Map<string, string>();
+  const tk = ticketsDeLigacao ? await ticketsDeLigacao : null;
+  if (tk && !tk.error) for (const t of (tk.data ?? []) as Record<string, unknown>[]) ticketDoParceiro.set(t.id as string, String(t.zendesk_ticket_id));
   const nomeDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.company_name as string | null) ?? "Account"]));
   const logoDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.logo_url as string | null) ?? null]));
   const pessoaDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.contact_name as string | null) ?? null]));
@@ -355,6 +363,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
               regioes: (p?.uk_coverage_regions as string[] | null) ?? [],
               cidades: (p?.coverage_cities as string[] | null) ?? [],
             },
+            ticketDeLigacao: ticketDoParceiro.get(pid) ?? null,
           },
           cliente: null,
           jobs: jobs.slice(0, 12),

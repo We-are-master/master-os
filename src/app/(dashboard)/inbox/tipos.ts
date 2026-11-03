@@ -109,6 +109,8 @@ export type ConversaDaCaixa = {
     selfBill: SelfBillDaCaixa | null;
     /** Os últimos self-bills (abertos e fechados), para o PDF e o envio. */
     selfBills: SelfBillDaCaixa[];
+    /** O ticket do Zendesk onde ficam as ligações com ele (o Call abre esse). */
+    ticketDeLigacao: string | null;
   } | null;
   cliente: {
     id: string;

@@ -59,6 +59,7 @@ import {
   PinOff,
   type LucideIcon,
   Phone,
+  Ticket,
 } from "lucide-react";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,7 @@ import { PlayerDeAudio } from "./player-de-audio";
 import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { ligarPeloZendesk } from "./ligar";
+import { LinkDeJob } from "./link-de-job";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
@@ -1018,7 +1020,6 @@ export function CaixaAtendimento({
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 truncate text-[16px] font-semibold text-text-primary">
                 <span className="truncate">{aberta.nome}</span>
-                <ChipDoTipo c={aberta} />
               </p>
               {/* Só um estado: online agora, senão o último sinal (visto ou mensagem). O número fica no painel. */}
               <p className="truncate text-xs text-text-tertiary" title={`+${aberta.contato}`}>
@@ -1042,11 +1043,11 @@ export function CaixaAtendimento({
             </div>
             <div className="relative flex items-center gap-1.5" data-area-do-menu onClick={(e) => e.stopPropagation()}>
               {jobDaConversa(aberta) ? (
-                <Link href={`/jobs/${jobDaConversa(aberta)!.id}`}>
-                  <Acao icone={Link2} title="Open the job">
+                <LinkDeJob id={jobDaConversa(aberta)!.id}>
+                  <Acao icone={Link2} title="View the job">
                     {jobDaConversa(aberta)!.ref}
                   </Acao>
-                </Link>
+                </LinkDeJob>
               ) : aberta.etapa?.grupo === "quote" ? (
                 <Link href={`/quotes?quoteId=${aberta.etapa.id}`}>
                   <Acao icone={Link2} title="Open the quote">
@@ -1055,7 +1056,12 @@ export function CaixaAtendimento({
                 </Link>
               ) : null}
               {aberta.tipo !== "grupo" ? (
-                <Acao icone={Phone} title="Call via Zendesk Talk" onClick={() => void ligarPeloZendesk(aberta.contato)}>
+                <Acao icone={Phone} title={aberta.parceiro?.ticketDeLigacao ? `Open calls ticket #${aberta.parceiro.ticketDeLigacao} in Zendesk` : "Call via Zendesk Talk"} onClick={() =>
+                    void ligarPeloZendesk(
+                      aberta.contato,
+                      aberta.parceiro ? { id: aberta.parceiro.id, ticket: aberta.parceiro.ticketDeLigacao, nome: aberta.parceiro.empresa ?? aberta.nome } : undefined,
+                    ).then(() => router.refresh())
+                  }>
                   Call
                 </Acao>
               ) : null}
@@ -1338,6 +1344,17 @@ export function CaixaAtendimento({
                     {ch.texto}
                   </Chip>
                 </mo.span>
+              ) : null;
+            })()}
+            {(() => {
+              // O ticket do job ao lado do horário: o clique abre o job (o ticket está no modal); Cmd-clique abre o job numa aba.
+              const j = aberta.jobHoje ?? aberta.jobs.find((x) => x.id === jobDaConversa(aberta)?.id) ?? null;
+              return j?.ticket ? (
+                <LinkDeJob id={j.id} title={`${j.ref} · Zendesk ticket #${j.ticket}`} className="inline-flex">
+                  <Chip icone={Ticket} tom="slate">
+                    #{j.ticket}
+                  </Chip>
+                </LinkDeJob>
               ) : null;
             })()}
             {aberta.tags.map((t) => (
