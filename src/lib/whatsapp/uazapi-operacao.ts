@@ -250,6 +250,62 @@ export async function enviarPelaUazapi(para: string, texto: string, respondendo?
   return { wamid, corpo };
 }
 
+export type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean };
+export type InfoDoGrupo = {
+  nome: string | null;
+  descricao: string | null;
+  criadoEm: string | null;
+  /** Quem criou: número (PN), quando o WhatsApp mostra. */
+  criador: string | null;
+  soAdminsFalam: boolean;
+  membros: MembroDoGrupo[];
+};
+
+/**
+ * Os dados do grupo na uazapi (`/group/info`): nome, descrição, quando nasceu,
+ * os membros com nome, foto e admin. Só leitura. `participant_profiles` traz
+ * nome e foto; `Participants`, o admin. O número vem de `pn`/`PhoneNumber`
+ * (o JID costuma ser LID, que não é telefone).
+ */
+export async function infoDoGrupoNaUazapi(contato: string): Promise<InfoDoGrupo> {
+  const res = await fetch(`${baseUrl()}/group/info`, {
+    method: "POST",
+    headers: cabecalho(),
+    body: JSON.stringify({ groupjid: destinoNaUazapi(contato), getInviteLink: false }),
+  });
+  const g = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) throw new EnvioOperacaoError(str(g.error) ?? str(g.message) ?? `uazapi ${res.status}`, res.status);
+  const tel = (v: unknown) => {
+    const d = (str(v) ?? "").split("@")[0].split(":")[0].replace(/\D/g, "");
+    return d.length >= 10 && d.length <= 15 ? d : null;
+  };
+  const perfis = new Map<string, Record<string, unknown>>();
+  for (const p of Array.isArray(g.participant_profiles) ? g.participant_profiles : []) {
+    const r = rec(p);
+    if (r) perfis.set(str(r.lid) ?? str(r.jid) ?? "", r);
+  }
+  const membros: MembroDoGrupo[] = (Array.isArray(g.Participants) ? g.Participants : []).map((x) => {
+    const p = rec(x) ?? {};
+    const perfil = perfis.get(str(p.LID) ?? str(p.JID) ?? "") ?? {};
+    return {
+      numero: tel(p.PhoneNumber) ?? tel(perfil.pn),
+      nome: str(perfil.name) ?? str(p.DisplayName) ?? null,
+      foto: str(perfil.image_preview_url) ?? str(perfil.image_url) ?? null,
+      admin: p.IsAdmin === true || p.IsSuperAdmin === true,
+      dono: p.IsSuperAdmin === true,
+    };
+  });
+  const criado = str(g.GroupCreated);
+  return {
+    nome: str(g.Name),
+    descricao: str(g.Topic),
+    criadoEm: criado && !criado.startsWith("0001") ? criado : null,
+    criador: tel(g.OwnerPN),
+    soAdminsFalam: g.IsAnnounce === true,
+    membros,
+  };
+}
+
 /** Reage a uma mensagem pelo 7983. Emoji vazio tira a reação. */
 export async function reagirPelaUazapi(para: string, wamid: string, emoji: string): Promise<{ wamid: string | null }> {
   const token = process.env.UAZAPI_OPS_TOKEN?.trim();

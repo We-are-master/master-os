@@ -37,7 +37,7 @@ import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
-import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, corDoAutor, horaCurta, nomeDoAutor, type Tom } from "./ui";
+import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, corDoAutor, horaCurta, type Tom } from "./ui";
 import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer, SelfBillDaCaixa } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
@@ -1242,13 +1242,36 @@ function SelfBillsDoParceiro({ p }: { p: ParceiroDaCaixa }) {
   );
 }
 
+type MembroDoGrupo = { numero: string | null; nome: string | null; foto: string | null; admin: boolean; dono: boolean };
+type InfoDoGrupo = { nome: string | null; descricao: string | null; criadoEm: string | null; criador: string | null; soAdminsFalam: boolean; membros: MembroDoGrupo[] };
+
 /**
- * Grupo: quem falou nele (o WhatsApp não manda a lista de membros com a
- * mensagem). Cada um abre a conversa particular, como o "responder no
- * particular" do VOS.
+ * Grupo: os dados do grupo na uazapi (membros com nome, foto e admin, descrição,
+ * quando nasceu) e, de cada membro, quantas mensagens mandou aqui. Sem a uazapi,
+ * fica a lista de quem falou. Cada um abre a conversa particular, como o
+ * "responder no particular" do VOS.
  */
 function PainelDoGrupo({ c, onAbrirContato }: { c: ConversaDaCaixa; onAbrirContato?: (numero: string, nome: string) => void }) {
-  const pessoas = useMemo(() => {
+  // Guardado por grupo: trocar de conversa volta a "carregando" sem setState no efeito.
+  const [carga, setCarga] = useState<{ contato: string; info: InfoDoGrupo | null } | null>(null);
+  const info = carga?.contato === c.contato ? carga.info : null;
+  const estado: "carregando" | "ok" | "erro" = carga?.contato !== c.contato ? "carregando" : info ? "ok" : "erro";
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/inbox/grupo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ acao: "info", contato: c.contato }) })
+      .then(async (r) => {
+        if (!r.ok) throw new Error();
+        const j = (await r.json()) as InfoDoGrupo;
+        if (vivo) setCarga({ contato: c.contato, info: j });
+      })
+      .catch(() => vivo && setCarga({ contato: c.contato, info: null }));
+    return () => {
+      vivo = false;
+    };
+  }, [c.contato]);
+
+  // Quem falou aqui: quantas mensagens e quando foi a última, por número (ou nome, se o WhatsApp escondeu).
+  const falou = useMemo(() => {
     const porChave = new Map<string, { numero: string | null; nome: string | null; n: number; ultima: string }>();
     for (const m of c.mensagens) {
       if (!m.autor) continue;
@@ -1256,43 +1279,87 @@ function PainelDoGrupo({ c, onAbrirContato }: { c: ConversaDaCaixa; onAbrirConta
       const atual = porChave.get(chave);
       porChave.set(chave, { numero: m.autor.numero, nome: m.autor.nome ?? atual?.nome ?? null, n: (atual?.n ?? 0) + 1, ultima: m.criadoEm });
     }
-    return [...porChave.values()].sort((a, b) => b.ultima.localeCompare(a.ultima));
+    return porChave;
   }, [c.mensagens]);
+
+  const pessoas = useMemo(() => {
+    const base: (MembroDoGrupo & { n: number; ultima: string | null })[] = info
+      ? info.membros.map((m) => {
+          const f = (m.numero && falou.get(m.numero)) || null;
+          return { ...m, nome: m.nome ?? f?.nome ?? null, n: f?.n ?? 0, ultima: f?.ultima ?? null };
+        })
+      : [...falou.values()].map((f) => ({ numero: f.numero, nome: f.nome, foto: null, admin: false, dono: false, n: f.n, ultima: f.ultima }));
+    // Admin primeiro, depois quem mais fala, depois o nome.
+    return base.sort((a, b) => Number(b.admin) - Number(a.admin) || b.n - a.n || (a.nome ?? a.numero ?? "").localeCompare(b.nome ?? b.numero ?? ""));
+  }, [info, falou]);
+
+  const criador = info?.criador ? (pessoas.find((p) => p.numero === info.criador)?.nome ?? `+${info.criador}`) : null;
+  const sub = info ? `WhatsApp group · ${info.membros.length} member${info.membros.length === 1 ? "" : "s"}` : "WhatsApp group";
 
   return (
     <>
-      <Cabeca c={c} online={false} sub={`WhatsApp group · ${pessoas.length} ${pessoas.length === 1 ? "person" : "people"} talking`} />
-      <Secao titulo="People in this chat">
-        {pessoas.length ? (
-          <div className="space-y-1">
-            {pessoas.map((p) => (
-              <div key={p.numero ?? p.nome} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
-                <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-secondary text-[11.5px] font-semibold", corDoAutor(p.numero ?? p.nome ?? ""))}>
-                  {(p.nome ?? "#").trim().slice(0, 1).toUpperCase()}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium text-text-primary">{nomeDoAutor(p)}</span>
-                  <span className="block truncate text-[11.5px] text-text-tertiary">
-                    {[p.numero && p.nome ? `+${p.numero}` : null, `${p.n} message${p.n === 1 ? "" : "s"}`, `last ${dia(p.ultima.slice(0, 10))}`].filter(Boolean).join(" · ")}
+      <Cabeca c={c} online={false} sub={sub} />
+      {info && (info.descricao || info.criadoEm || info.soAdminsFalam) ? (
+        <Secao titulo="About">
+          {info.descricao ? <p className="mb-2 line-clamp-6 whitespace-pre-wrap text-[12.5px] leading-relaxed text-text-secondary">{info.descricao}</p> : null}
+          <div className="space-y-1 text-[12px] text-text-tertiary">
+            {info.criadoEm ? (
+              <p>
+                Created {dia(info.criadoEm.slice(0, 10))}
+                {criador ? ` by ${criador}` : ""}
+              </p>
+            ) : null}
+            {info.soAdminsFalam ? <p>Only admins can send messages</p> : null}
+          </div>
+        </Secao>
+      ) : null}
+      <Secao titulo={info ? "Members" : "People in this chat"} extra={pessoas.length ? `· ${pessoas.length}` : undefined}>
+        {estado === "carregando" && !pessoas.length ? (
+          <p className="text-[12px] text-text-tertiary">Loading members...</p>
+        ) : pessoas.length ? (
+          <div className="space-y-0.5">
+            {pessoas.map((p) => {
+              const nome = p.nome ?? (p.numero ? `+${p.numero}` : "Hidden number");
+              return (
+                <div key={p.numero ?? p.nome} className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
+                  {p.foto ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- foto do WhatsApp, URL externa
+                    <img src={p.foto} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface-secondary text-xs font-semibold", corDoAutor(p.numero ?? p.nome ?? ""))}>
+                      {nome.replace(/^\+/, "").trim().slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-[13px] font-medium text-text-primary">{nome}</span>
+                      {p.admin ? <Chip tom="slate">{p.dono ? "Owner" : "Admin"}</Chip> : null}
+                    </span>
+                    <span className="block truncate text-[11.5px] text-text-tertiary">
+                      {[p.numero && p.nome ? `+${p.numero}` : null, p.n ? `${p.n} message${p.n === 1 ? "" : "s"}` : "No messages yet", p.ultima ? `last ${dia(p.ultima.slice(0, 10))}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
                   </span>
-                </span>
-                {p.numero && onAbrirContato ? (
-                  <button
-                    type="button"
-                    onClick={() => onAbrirContato(p.numero!, nomeDoAutor(p))}
-                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
-                    title="Reply privately"
-                  >
-                    <Send className="h-3 w-3" />
-                    Private
-                  </button>
-                ) : null}
-              </div>
-            ))}
+                  {p.numero && onAbrirContato ? (
+                    <button
+                      type="button"
+                      onClick={() => onAbrirContato(p.numero!, nome)}
+                      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+                      title="Reply privately"
+                    >
+                      <Send className="h-3 w-3" />
+                      Private
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <Vazio texto="Nobody has written here yet." />
+          <Vazio texto={estado === "erro" ? "Could not load the members. Nobody has written here yet." : "Nobody has written here yet."} />
         )}
+        {estado === "erro" && pessoas.length ? <p className="mt-2 text-[11.5px] text-text-tertiary">Showing only who wrote here: the member list did not load.</p> : null}
       </Secao>
     </>
   );
