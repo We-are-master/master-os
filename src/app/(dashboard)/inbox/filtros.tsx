@@ -12,6 +12,7 @@ import { Check, Search, SlidersHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
 import { Chip } from "./ui";
+import { Button } from "@/components/ui/button";
 import type { ConversaDaCaixa } from "./tipos";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 
@@ -29,7 +30,7 @@ const TIPOS: [string, string][] = [
   ["parceiro", "Partner"],
   ["cliente", "Client"],
   ["conta", "Account"],
-  ["outro", "Unknown"],
+  ["outro", "Lead"],
   ["grupo", "Group"],
 ];
 
@@ -203,6 +204,13 @@ export function PainelDeFiltros({
           </Grupo>
         ) : null}
         {nada ? <p className="px-3.5 py-4 text-[12px] text-text-tertiary">No filter matches “{q}”.</p> : null}
+      </div>
+      {/* Os filtros já valem ao clicar; o botão só fecha, para não precisar clicar fora. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border-light px-3.5 py-2.5">
+        <span className="text-[12px] text-text-tertiary">{quantosFiltros(filtros) ? `${quantosFiltros(filtros)} selected` : "No filters"}</span>
+        <Button size="sm" onClick={onFechar}>
+          Apply
+        </Button>
       </div>
     </mo.div>
   );
