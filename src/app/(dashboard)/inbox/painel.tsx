@@ -803,14 +803,11 @@ export function OfertaDeJob({
           <input type="checkbox" checked={mandarAqui} onChange={(e) => setMandarAqui(e.target.checked)} />
           Also send it here on WhatsApp
         </label>
-        <p className="w-full text-[11px] text-text-tertiary">
-          Offer opens the usual allocation: {primeiro} gets the email, the app push and the Zendesk note.
-        </p>
       </div>
-      {/* Cabem 10 linhas; com mais, rola e vai carregando de 10 em 10. Com menos, o modal encolhe. */}
+      {/* Sempre do tamanho de 10 linhas (com menos, sobra espaço); com mais, rola e carrega de 10 em 10. */}
       <div
-        className="min-h-0 flex-1 overflow-y-auto"
-        style={emModal ? { maxHeight: LINHA_DA_OFERTA * 10 } : undefined}
+        className={cn("min-h-0 overflow-y-auto", emModal ? "shrink" : "flex-1")}
+        style={emModal ? { height: LINHA_DA_OFERTA * 10 } : undefined}
         onScroll={(e) => {
           const el = e.currentTarget;
           if (el.scrollTop + el.clientHeight > el.scrollHeight - LINHA_DA_OFERTA * 2) setMostrar((n) => (n < lista.length ? n + 10 : n));
