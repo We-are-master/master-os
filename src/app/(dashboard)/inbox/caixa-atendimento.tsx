@@ -43,6 +43,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Send,
   Smartphone,
   Tag,
@@ -73,6 +74,7 @@ import { Modal } from "@/components/ui/modal";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, type Filtros } from "./filtros";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
@@ -340,6 +342,8 @@ export function CaixaAtendimento({
   /** Conversa nova, ainda sem mensagem: some quando o primeiro envio chega do servidor. */
   const [rascunho, setRascunho] = useState<Escolhido | null>(null);
   const [busca, setBusca] = useState("");
+  const [filtros, setFiltros] = useState<Filtros>(FILTROS_VAZIOS);
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | "dono" | null>(null);
   const [gaveta, setGaveta] = useState<Gaveta>(null);
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
@@ -443,6 +447,7 @@ export function CaixaAtendimento({
       if (!passa(c, visao)) return false;
       if (!noPeriodo(c, periodo, agora)) return false;
       if (tipo !== "todas" && c.tipo !== tipo) return false;
+      if (!passaNosFiltros(c, filtros, { naoLida: (x) => naoLidas(x) > 0, esperando: (x) => !resolvida(x) && esperando(x) })) return false;
       if (!q) return true;
       if (qDig.length >= 4 && c.contato.includes(qDig)) return true;
       return [c.nome, c.perfil ?? "", c.parceiro?.empresa ?? "", c.parceiro?.oficio ?? "", c.cliente?.postcode ?? "", ...c.tags, ...c.jobs.flatMap((j) => [j.ref, j.endereco ?? ""])].some(
@@ -456,7 +461,7 @@ export function CaixaAtendimento({
     // Em On site today, quem está atrasado ou em risco sobe.
     const peso = (c: ConversaDaCaixa) => (c.jobHoje ? (chegada(c.jobHoje, agora)?.peso ?? 0) : 0);
     return [...base].sort((a, b) => peso(b) - peso(a));
-  }, [conversas, visao, tipo, busca, periodo, agora]);
+  }, [conversas, visao, tipo, busca, periodo, agora, filtros]);
 
   const aberta =
     conversas.find((c) => c.contato === abertaId) ??
@@ -968,6 +973,35 @@ export function CaixaAtendimento({
               <Search className="h-[18px] w-[18px]" />
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={() => setFiltrosAbertos((v) => !v)}
+            className={cn(
+              "relative ml-1.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-border-light text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+              (filtrosAbertos || quantosFiltros(filtros) > 0) && "border-text-tertiary text-text-primary",
+            )}
+            aria-label="Filters"
+            title="Filters"
+          >
+            <SlidersHorizontal className="h-[18px] w-[18px]" />
+            {quantosFiltros(filtros) ? (
+              <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-[var(--on-brand)]">
+                {quantosFiltros(filtros)}
+              </span>
+            ) : null}
+          </button>
+          <AnimatePresence>
+            {filtrosAbertos ? (
+              <PainelDeFiltros
+                filtros={filtros}
+                onMudar={setFiltros}
+                onFechar={() => setFiltrosAbertos(false)}
+                conversas={conversas}
+                equipe={equipe}
+                tags={tags.map((t) => t.nome)}
+              />
+            ) : null}
+          </AnimatePresence>
           <NovaConversa
             open={novoAberto}
             onFechar={() => setNovoAberto(false)}
@@ -995,6 +1029,7 @@ export function CaixaAtendimento({
             />
           </div>
         </div>
+        <FiltrosAtivos filtros={filtros} onMudar={setFiltros} equipe={equipe} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           {lista.length === 0 ? (
             <p className="px-4 py-6 text-xs text-text-tertiary">{conversas.length === 0 ? "No messages yet. New messages to +44 7983 182332 land here." : "No conversations here."}</p>
