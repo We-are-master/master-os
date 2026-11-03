@@ -44,6 +44,103 @@ const DIA_MS = 86_400_000;
 type AbaParceiro = "parceiro" | "jobs" | "selfbill" | "docs" | "arquivos";
 type AbaCliente = "cliente" | "jobs" | "quotes" | "faturas" | "ticket" | "arquivos";
 
+type Periodo = "hoje" | "amanha" | "semana" | "proxima" | "mes" | "todos";
+const PERIODOS: [Periodo, string][] = [
+  ["hoje", "Today"],
+  ["amanha", "Tomorrow"],
+  ["semana", "This week"],
+  ["proxima", "Next week"],
+  ["mes", "This month"],
+  ["todos", "All"],
+];
+
+/** Hoje em Londres como AAAA-MM-DD, e somar dias sem fuso no meio. */
+const hojeEmLondres = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+const somarDias = (dia: string, n: number) => {
+  const d = new Date(`${dia}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/** [início, fim] do período, inclusive. Semana de segunda a domingo. */
+function faixa(p: Periodo, hoje: string): [string, string] | null {
+  const dow = (new Date(`${hoje}T12:00:00Z`).getUTCDay() + 6) % 7;
+  const segunda = somarDias(hoje, -dow);
+  switch (p) {
+    case "hoje":
+      return [hoje, hoje];
+    case "amanha":
+      return [somarDias(hoje, 1), somarDias(hoje, 1)];
+    case "semana":
+      return [segunda, somarDias(segunda, 6)];
+    case "proxima":
+      return [somarDias(segunda, 7), somarDias(segunda, 13)];
+    case "mes": {
+      const [a, m] = hoje.split("-").map(Number);
+      const fim = new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
+      return [`${hoje.slice(0, 7)}-01`, fim];
+    }
+    case "todos":
+      return null;
+  }
+}
+
+/**
+ * A aba Jobs do parceiro e do cliente: chips de período com a contagem de
+ * cada um, e os jobs do período em ordem de data. Sem job no período escolhido,
+ * diz qual é o próximo para não parecer que não há nada.
+ */
+function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: string; inicial: Periodo }) {
+  const [periodo, setPeriodo] = useState<Periodo>(inicial);
+  const hoje = hojeEmLondres();
+  const doPeriodo = (p: Periodo) => {
+    const f = faixa(p, hoje);
+    return jobs
+      .filter((j) => !f || (j.data != null && j.data >= f[0] && j.data <= f[1]))
+      .sort((a, b) => (p === "todos" ? (b.data ?? "").localeCompare(a.data ?? "") : (a.data ?? "").localeCompare(b.data ?? "") || (a.inicio ?? "").localeCompare(b.inicio ?? "")));
+  };
+  const lista = doPeriodo(periodo);
+  const proximo = jobs.filter((j) => j.data && j.data >= hoje).sort((a, b) => (a.data ?? "").localeCompare(b.data ?? ""))[0];
+
+  return (
+    <div className="px-4 py-3">
+      <div className="mb-3 flex flex-wrap gap-1">
+        {PERIODOS.map(([k, t]) => {
+          const n = doPeriodo(k).length;
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setPeriodo(k)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 text-[11.5px] font-medium transition-colors",
+                periodo === k ? "border-transparent bg-primary text-[var(--on-brand)]" : "border-border-light text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+              )}
+            >
+              {t}
+              <span className={cn("tabular-nums", periodo === k ? "opacity-80" : n ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="space-y-2">
+        {lista.length ? (
+          lista.map((j) => <CartaoDeJob key={j.id} j={j} comData={periodo !== "hoje" && periodo !== "amanha"} />)
+        ) : (
+          <div className="rounded-lg border border-dashed border-border-light px-3 py-3 text-[12.5px] text-text-tertiary">
+            {jobs.length ? `Nothing ${PERIODOS.find((x) => x[0] === periodo)![1].toLowerCase()}.` : vazio}
+            {proximo && periodo !== "todos" ? (
+              <button type="button" className="mt-1 block font-medium text-text-primary hover:underline" onClick={() => setPeriodo("todos")}>
+                Next: {proximo.ref} on {dia(proximo.data)}
+              </button>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Secao({ titulo, acao, children }: { titulo: string; acao?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="border-b border-border-light px-4 py-4">
@@ -317,9 +414,7 @@ function PainelDoParceiro({ c, online, onOferecer }: { c: ConversaDaCaixa; onlin
       ) : null}
 
       {aba === "jobs" ? (
-        <Secao titulo={`Upcoming · ${c.jobs.length}`}>
-          <div className="space-y-2">{c.jobs.length ? c.jobs.map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="Nothing booked." />}</div>
-        </Secao>
+        <JobsPorPeriodo key={c.contato} jobs={c.jobs} inicial="semana" vazio="Nothing booked from today on." />
       ) : null}
 
       {aba === "selfbill" ? (
@@ -491,9 +586,7 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
       ) : null}
 
       {aba === "jobs" ? (
-        <Secao titulo={`Jobs · ${c.jobs.length}`}>
-          <div className="space-y-2">{c.jobs.length ? c.jobs.map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
-        </Secao>
+        <JobsPorPeriodo key={c.contato} jobs={c.jobs} inicial="todos" vazio="No jobs yet. Create one from this chat." />
       ) : null}
       {aba === "quotes" ? <Secao titulo={`Quotes · ${c.quotes.length}`}>{listaDeQuotes(c.quotes)}</Secao> : null}
       {aba === "faturas" ? <Secao titulo={`Invoices · ${c.faturas.length}`}>{listaDeFaturas(c.faturas, "No invoices.")}</Secao> : null}
