@@ -34,7 +34,10 @@ export type JobDaCaixa = {
 };
 
 export type DocumentoDoParceiro = { id: string; nome: string; tipo: string | null; status: string | null; expira: string | null };
-export type SelfBillDaCaixa = { id: string; ref: string; valor: number; jobs: number; vence: string | null; status: string; semana: string | null };
+export type SelfBillDaCaixa = { id: string; ref: string; valor: number; jobs: number; vence: string | null; status: string; semana: string | null; enviadoEm: string | null };
+
+/** Onde o parceiro atende: raio a partir de um postcode, lista de postcodes ou regiões/cidades. */
+export type CoberturaDoParceiro = { modo: string | null; raioMilhas: number | null; base: string | null; postcodes: string[]; regioes: string[]; cidades: string[] };
 
 export type QuoteDaCaixa = { id: string; ref: string; titulo: string | null; status: string; total: number };
 export type FaturaDaCaixa = { id: string; ref: string; job: string | null; status: string; valor: number; pago: number };
@@ -94,11 +97,16 @@ export type ConversaDaCaixa = {
     nota: number | null;
     jobsFeitos: number;
     area: string | null;
+    /** Todos os ofícios do cadastro, o principal primeiro. */
+    oficios: string[];
+    cobertura: CoberturaDoParceiro;
     documentos: DocumentoDoParceiro[];
     /** Jobs dele já feitos sem relatório. */
     semRelatorio: { id: string; ref: string }[];
     /** O self-bill em aberto mais recente. */
     selfBill: SelfBillDaCaixa | null;
+    /** Os últimos self-bills (abertos e fechados), para o PDF e o envio. */
+    selfBills: SelfBillDaCaixa[];
   } | null;
   cliente: {
     id: string;

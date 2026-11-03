@@ -1236,7 +1236,6 @@ export function CaixaAtendimento({
           </div>
 
           <div className="flex flex-wrap items-center gap-1 border-b border-border-light bg-card px-4 py-1.5 empty:hidden">
-            {aberta.parceiro?.oficio ? <Chip icone={Wrench}>{aberta.parceiro.oficio}</Chip> : null}
             {aberta.cliente?.conta ? <Chip icone={Users}>{aberta.cliente.conta}</Chip> : null}
             {aberta.etapa ? <ChipDaEtapa e={aberta.etapa} /> : null}
             {aberta.jobHoje ? <ChipDaEtapa e={{ grupo: "job", status: aberta.jobHoje.status }} /> : null}

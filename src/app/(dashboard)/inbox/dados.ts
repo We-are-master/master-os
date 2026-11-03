@@ -176,7 +176,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
 
   const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }, { data: jobsContas }] = await Promise.all([
     idsParceiros.length
-      ? sb.from("partners").select("id, contact_name, company_name, avatar_url, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes").in("id", idsParceiros)
+      ? sb.from("partners").select("id, contact_name, company_name, avatar_url, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes, trades, coverage_mode, service_radius_miles, uk_coverage_regions, coverage_cities").in("id", idsParceiros)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     idsParceiros.length
       ? sb
@@ -241,11 +241,10 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     idsParceiros.length
       ? sb
           .from("self_bills")
-          .select("id, reference, partner_id, net_payout, jobs_count, due_date, status, week_label, created_at")
+          .select("id, reference, partner_id, net_payout, jobs_count, due_date, status, week_label, created_at, email_sent_at")
           .in("partner_id", idsParceiros)
-          .not("status", "in", `(${SELF_BILL_FECHADO.join(",")})`)
           .order("created_at", { ascending: false })
-          .limit(100)
+          .limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
 
@@ -304,20 +303,28 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
                 expira: (d.expires_at as string | null) ?? null,
               })),
             semRelatorio: (semRelatorio ?? []).filter((j) => j.partner_id === pid).map((j) => ({ id: j.id as string, ref: (j.reference as string | null) ?? "Job" })),
-            selfBill: (() => {
-              const b = (selfBills ?? []).find((x) => x.partner_id === pid);
-              return b
-                ? {
-                    id: b.id as string,
-                    ref: (b.reference as string | null) ?? "Self-bill",
-                    valor: Number(b.net_payout ?? 0),
-                    jobs: Number(b.jobs_count ?? 0),
-                    vence: (b.due_date as string | null) ?? null,
-                    status: (b.status as string | null) ?? "",
-                    semana: (b.week_label as string | null) ?? null,
-                  }
-                : null;
+            ...(() => {
+              const meus = (selfBills ?? []).filter((x) => x.partner_id === pid).map((b) => ({
+                id: b.id as string,
+                ref: (b.reference as string | null) ?? "Self-bill",
+                valor: Number(b.net_payout ?? 0),
+                jobs: Number(b.jobs_count ?? 0),
+                vence: (b.due_date as string | null) ?? null,
+                status: (b.status as string | null) ?? "",
+                semana: (b.week_label as string | null) ?? null,
+                enviadoEm: (b.email_sent_at as string | null) ?? null,
+              }));
+              return { selfBill: meus.find((b) => !SELF_BILL_FECHADO.includes(b.status)) ?? null, selfBills: meus.slice(0, 6) };
             })(),
+            oficios: [...new Set([p?.trade as string | null, ...((p?.trades as string[] | null) ?? [])].filter((t): t is string => !!t))],
+            cobertura: {
+              modo: (p?.coverage_mode as string | null) ?? null,
+              raioMilhas: (p?.service_radius_miles as number | null) ?? null,
+              base: (p?.coverage_base_postcode as string | null) ?? null,
+              postcodes: (p?.included_postcodes as string[] | null) ?? [],
+              regioes: (p?.uk_coverage_regions as string[] | null) ?? [],
+              cidades: (p?.coverage_cities as string[] | null) ?? [],
+            },
           },
           cliente: null,
           jobs: jobs.slice(0, 12),

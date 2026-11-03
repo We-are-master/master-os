@@ -33,7 +33,7 @@ import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
 import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, chegada, horaCurta, type Tom } from "./ui";
-import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer } from "./tipos";
+import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer, SelfBillDaCaixa } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
 const libra = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
@@ -415,7 +415,6 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
   const depois = c.jobs.filter((j) => !rota.includes(j));
   // "Next" é o primeiro da rota que ainda não começou.
   const proximoId = rota.find((j) => !["in_progress", "final_check", "awaiting_payment", "completed"].includes(j.status))?.id;
-  const sb = p.selfBill;
   const sub = [p.oficio ?? "Partner", p.area].filter(Boolean).join(" · ");
 
   return (
@@ -502,18 +501,8 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
               {c.perfil ? <Campo k="WhatsApp" v={c.perfil} /> : null}
             </Campos>
           </Secao>
-          <Secao titulo="Self-bill" acao={<LinkDaSecao href="/finance/selfbill" />}>
-            {sb ? (
-              <Campos>
-                <Campo k="Period" v={sb.semana ?? sb.ref} />
-                <Campo k="To pay" v={libra.format(sb.valor)} />
-                <Campo k="Jobs" v={sb.jobs} />
-                <Campo k="Payday" v={sb.vence ? dia(sb.vence) : "-"} />
-                <Campo k="Status" v={rotulo(sb.status)} />
-              </Campos>
-            ) : (
-              <Vazio texto="Nothing open." />
-            )}
+          <Secao titulo="Trades & coverage" acao={<LinkDaSecao href={`/partners/${p.id}`} />}>
+            <Cobertura p={p} />
           </Secao>
         </>
       ) : null}
@@ -522,22 +511,7 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
         <JobsPorPeriodo key={c.contato} jobs={c.jobs} inicial="semana" vazio="Nothing booked from today on." />
       ) : null}
 
-      {aba === "selfbill" ? (
-        <Secao titulo="Open self-bill" acao={<LinkDaSecao href="/finance/selfbill" />}>
-          {sb ? (
-            <Campos>
-              <Campo k="Reference" v={sb.ref} />
-              <Campo k="Period" v={sb.semana ?? "-"} />
-              <Campo k="To pay" v={libra.format(sb.valor)} />
-              <Campo k="Jobs" v={sb.jobs} />
-              <Campo k="Payday" v={sb.vence ? dia(sb.vence) : "-"} />
-              <Campo k="Status" v={rotulo(sb.status)} />
-            </Campos>
-          ) : (
-            <Vazio texto="Nothing open for this partner." />
-          )}
-        </Secao>
-      ) : null}
+      {aba === "selfbill" ? <SelfBillsDoParceiro key={p.id} p={p} /> : null}
 
       {aba === "docs" ? (
         <Secao titulo={`Documents · ${p.documentos.length}`} acao={<LinkDaSecao href={`/partners/${p.id}`} />}>
@@ -983,5 +957,143 @@ export function GavetaDeCriar({
         </Acao>
       </div>
     </div>
+  );
+}
+
+type ParceiroDaCaixa = NonNullable<ConversaDaCaixa["parceiro"]>;
+
+/** Ofícios e onde atende, no formato que o cadastro guarda (raio, postcodes ou regiões). */
+function Cobertura({ p }: { p: ParceiroDaCaixa }) {
+  const cob = p.cobertura;
+  const lugares = [...cob.postcodes, ...cob.regioes, ...cob.cidades.map((c) => c.replace(/\b\w/g, (l) => l.toUpperCase()))];
+  const raio = cob.raioMilhas ? `${cob.raioMilhas} mi${cob.base ? ` from ${cob.base}` : ""}` : cob.base ? `From ${cob.base}` : null;
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="mb-1.5 text-[11.5px] text-text-tertiary">Trades</p>
+        {p.oficios.length ? (
+          <span className="flex flex-wrap gap-1">
+            {p.oficios.map((t, i) => (
+              <Chip key={t} tom={i ? "slate" : "blue"}>
+                {t}
+              </Chip>
+            ))}
+          </span>
+        ) : (
+          <Vazio texto="No trade on file." />
+        )}
+      </div>
+      <div>
+        <p className="mb-1.5 text-[11.5px] text-text-tertiary">Coverage</p>
+        {raio || lugares.length ? (
+          <span className="flex flex-wrap gap-1">
+            {raio ? <Chip icone={MapPin}>{raio}</Chip> : null}
+            {lugares.slice(0, 12).map((l) => (
+              <Chip key={l}>{l}</Chip>
+            ))}
+            {lugares.length > 12 ? <Chip>+{lugares.length - 12}</Chip> : null}
+          </span>
+        ) : (
+          <Vazio texto="No coverage on file." />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** O self-bill em aberto e os últimos, com o PDF e o envio ao parceiro (e-mail com o PDF, como no Finance). */
+function SelfBillsDoParceiro({ p }: { p: ParceiroDaCaixa }) {
+  const sb = p.selfBill;
+  const [confirmar, setConfirmar] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState<string | null>(null);
+  const [enviados, setEnviados] = useState<Record<string, string>>({});
+
+  async function enviar(b: SelfBillDaCaixa) {
+    if (confirmar !== b.id) {
+      setConfirmar(b.id);
+      return;
+    }
+    setConfirmar(null);
+    setEnviando(b.id);
+    try {
+      const r = await fetch("/api/self-bills/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selfBillIds: [b.id] }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { sent?: number; skipped?: { reason: string }[]; error?: string };
+      if (!r.ok || !j.sent) throw new Error(j.skipped?.[0]?.reason ?? j.error ?? "Not sent");
+      setEnviados((e) => ({ ...e, [b.id]: new Date().toISOString() }));
+      toast.success(`${b.ref} sent to ${p.email ?? "the partner"}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Not sent");
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  return (
+    <>
+      <Secao titulo="Open self-bill" acao={<LinkDaSecao href="/finance/selfbill" />}>
+        {sb ? (
+          <Campos>
+            <Campo k="Reference" v={sb.ref} />
+            <Campo k="Period" v={sb.semana ?? "-"} />
+            <Campo k="To pay" v={libra.format(sb.valor)} />
+            <Campo k="Jobs" v={sb.jobs} />
+            <Campo k="Payday" v={sb.vence ? dia(sb.vence) : "-"} />
+            <Campo k="Status" v={rotulo(sb.status)} />
+          </Campos>
+        ) : (
+          <Vazio texto="Nothing open for this partner." />
+        )}
+      </Secao>
+      <Secao titulo={`Statements · ${p.selfBills.length}`}>
+        <div className="space-y-1.5">
+          {p.selfBills.length ? (
+            p.selfBills.map((b) => {
+              const enviadoEm = enviados[b.id] ?? b.enviadoEm;
+              return (
+                <div key={b.id} className="flex items-center gap-2 rounded-lg border border-border-light px-3 py-2 text-[13px]">
+                  <Receipt className="h-4 w-4 shrink-0 text-text-tertiary" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-text-primary">
+                      {b.ref} · {libra.format(b.valor)}
+                    </span>
+                    <span className="block truncate text-[11px] text-text-tertiary">
+                      {[b.semana, rotulo(b.status), enviadoEm ? `Sent ${dia(enviadoEm.slice(0, 10))}` : "Not sent"].filter(Boolean).join(" · ")}
+                    </span>
+                  </span>
+                  <a
+                    href={`/api/self-bills/${b.id}/pdf?inline=1`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="grid h-7 shrink-0 place-items-center rounded-md px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+                  >
+                    PDF
+                  </a>
+                  <button
+                    type="button"
+                    disabled={!!enviando || !p.email}
+                    title={p.email ? `Email the PDF to ${p.email}` : "No email on file"}
+                    onClick={() => void enviar(b)}
+                    onBlur={() => setConfirmar((c) => (c === b.id ? null : c))}
+                    className={cn(
+                      "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium transition-colors disabled:opacity-45",
+                      confirmar === b.id ? "bg-primary text-[var(--on-brand)]" : "text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+                    )}
+                  >
+                    <Send className="h-3 w-3" />
+                    {enviando === b.id ? "Sending..." : confirmar === b.id ? "Confirm" : enviadoEm ? "Resend" : "Send"}
+                  </button>
+                </div>
+              );
+            })
+          ) : (
+            <Vazio texto="No self-bill yet." />
+          )}
+        </div>
+      </Secao>
+    </>
   );
 }

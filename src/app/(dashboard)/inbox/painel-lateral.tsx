@@ -138,7 +138,7 @@ export function AtendimentoLateral() {
         {aberto ? (
           <mo.aside
             key="atendimento-lateral"
-            className="cx fixed bottom-0 right-0 top-12 z-40 flex w-[400px] max-w-[100vw] flex-col border-l border-border-light bg-card shadow-2xl"
+            className="cx fixed bottom-0 right-0 top-0 z-[60] flex w-[400px] max-w-[100vw] flex-col border-l border-border-light bg-card shadow-2xl"
             initial={{ x: 32, opacity: 0 }}
             animate={{ x: 0, opacity: 1, transition: tempo("lg") }}
             exit={{ x: 32, opacity: 0, transition: tempo("md", "saida") }}
