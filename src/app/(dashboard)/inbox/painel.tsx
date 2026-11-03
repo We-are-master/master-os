@@ -28,8 +28,11 @@ import {
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { LinkDeJob } from "./link-de-job";
 import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import { ReportsPendentes } from "./reports-pendentes";
 import { createClient } from "@/services/clients";
+import { listActiveAccountsForFilter, type FilterableAccount } from "@/services/accounts";
 import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -630,6 +633,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
   const [achados, setAchados] = useState<ContatoAchado[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [ligando, setLigando] = useState<string | null>(null);
+  const [aConfirmar, setAConfirmar] = useState<ContatoAchado | null>(null);
 
   useEffect(() => {
     const termo = q.trim();
@@ -658,7 +662,6 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
   }, [q]);
 
   async function ligar(a: ContatoAchado) {
-    if (!confirm(`Link +${c.contato} to ${a.nome} (${ROTULO_DO_ACHADO[a.tipo].texto})? Their record keeps its own phone number.`)) return;
     setLigando(a.id);
     try {
       const r = await fetch("/api/inbox/vincular", {
@@ -673,6 +676,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not link");
       setLigando(null);
+      setAConfirmar(null);
     }
   }
 
@@ -700,7 +704,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
                   </p>
                   {a.sub ? <p className="truncate text-[11px] text-text-tertiary">{a.sub}</p> : null}
                 </div>
-                <Acao icone={Link2} onClick={() => void ligar(a)} disabled={ligando !== null}>
+                <Acao icone={Link2} onClick={() => setAConfirmar(a)} disabled={ligando !== null}>
                   {ligando === a.id ? "Linking..." : "Link"}
                 </Acao>
               </li>
@@ -712,6 +716,44 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
       ) : (
         <p className="text-[11.5px] text-text-tertiary">Type a name, company, postcode or phone.</p>
       )}
+      <Modal
+        open={aConfirmar !== null}
+        onClose={() => (ligando ? null : setAConfirmar(null))}
+        title="Link this conversation"
+        subtitle={`+${c.contato}${c.perfil ? ` · ${c.perfil}` : ""}`}
+        size="sm"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" type="button" onClick={() => setAConfirmar(null)} disabled={ligando !== null}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="button" onClick={() => aConfirmar && void ligar(aConfirmar)} disabled={ligando !== null}>
+              {ligando ? "Linking..." : "Link"}
+            </Button>
+          </div>
+        }
+      >
+        {aConfirmar ? (
+          <div className="space-y-3 px-4 py-4 sm:px-6">
+            <div className="flex items-center gap-3 rounded-xl border border-border-light bg-surface-hover/40 px-3 py-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-hover text-[12px] font-semibold text-text-secondary">
+                {aConfirmar.nome.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase()}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1.5">
+                  <span className="truncate text-[13px] font-semibold text-text-primary">{aConfirmar.nome}</span>
+                  <Chip tom={ROTULO_DO_ACHADO[aConfirmar.tipo].tom}>{ROTULO_DO_ACHADO[aConfirmar.tipo].texto}</Chip>
+                </p>
+                {aConfirmar.sub ? <p className="truncate text-[11.5px] text-text-tertiary">{aConfirmar.sub}</p> : null}
+              </div>
+            </div>
+            <ul className="space-y-1.5 text-[12.5px] text-text-secondary">
+              <li>This conversation moves to {aConfirmar.nome}, with their details and jobs in the panel.</li>
+              <li>Their record keeps its own phone number. Nothing is sent to them.</li>
+            </ul>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
@@ -723,10 +765,25 @@ function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
   const [endereco, setEndereco] = useState("");
   const [postcode, setPostcode] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [contas, setContas] = useState<FilterableAccount[]>([]);
+  const [conta, setConta] = useState("");
+
+  // A conta é quem recebe os jobs desse cliente; a Fixfy (cliente direto) vem marcada.
+  useEffect(() => {
+    void listActiveAccountsForFilter().then((l) => {
+      setContas(l);
+      const fixfy = l.find((a) => /^fixfy\b/i.test(a.name));
+      setConta((atual) => atual || fixfy?.id || "");
+    });
+  }, []);
 
   async function salvar() {
     if (!nome.trim()) {
       toast.error("Add the client's name");
+      return;
+    }
+    if (!conta) {
+      toast.error("Pick the account");
       return;
     }
     setSalvando(true);
@@ -739,6 +796,7 @@ function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
         postcode: postcode.trim().toUpperCase() || undefined,
         client_type: "residential",
         source: "direct",
+        source_account_id: conta,
         status: "active",
       });
       toast.success("Client added. They move to Clients after their first job.");
@@ -762,6 +820,13 @@ function NovoCliente({ c, online }: { c: ConversaDaCaixa; online: boolean }) {
           This inbox is for clients and partners. Sales and B2B stay in Zendesk. If this person already booked with us, add them here.
         </p>
         <div className="space-y-2">
+          <Select
+            aria-label="Account"
+            value={conta}
+            onChange={(e) => setConta(e.target.value)}
+            className="h-9 text-xs"
+            options={[{ value: "", label: contas.length ? "Account" : "Loading accounts..." }, ...contas.map((a) => ({ value: a.id, label: a.name }))]}
+          />
           <input className={campo} placeholder="Full name" value={nome} onChange={(e) => setNome(e.target.value)} />
           <input className={campo} placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <input className={campo} placeholder="Address" value={endereco} onChange={(e) => setEndereco(e.target.value)} />

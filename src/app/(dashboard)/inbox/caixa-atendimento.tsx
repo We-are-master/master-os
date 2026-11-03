@@ -306,6 +306,9 @@ const Titulo = ({ children, acao }: { children: React.ReactNode; acao?: React.Re
   </p>
 );
 
+/** A seção Pipeline da lateral (quotes e jobs por etapa) volta quando o dono pedir. */
+const MOSTRAR_PIPELINE = false;
+
 export function CaixaAtendimento({
   conversas: doServidor,
   tags: tagsDoServidor,
@@ -842,6 +845,9 @@ export function CaixaAtendimento({
         {criandoView ? <div className="mx-1 mt-1 rounded-lg border border-border-light bg-card p-2">{criadorDeTag(null)}</div> : null}
         {!tags.length && !criandoView ? <p className="px-2.5 py-1 text-[12px] text-text-tertiary">No tags yet.</p> : null}
 
+        {/* Pipeline fora da lateral por ora (dono, 03/11). */}
+        {MOSTRAR_PIPELINE ? (
+          <>
         <Titulo
           acao={
             <button type="button" onClick={alternarEtapas} className="inline-flex items-center gap-1 normal-case tracking-normal text-text-tertiary hover:text-text-primary">
@@ -878,6 +884,8 @@ export function CaixaAtendimento({
                 apagado={!nEtapa("job", e.status)}
               />
             ))}
+          </>
+        ) : null}
           </>
         ) : null}
 
