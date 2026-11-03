@@ -10,6 +10,7 @@
  * é cliente ou parceiro; venda e B2B ficam no Zendesk.
  */
 
+import { equipeDaInbox, type MembroDaEquipe } from "@/lib/inbox/equipe";
 import { ehGrupo } from "@/lib/inbox/grupo";
 import { createServiceClient } from "@/lib/supabase/service";
 import { OPS_PHONE_NUMBER_ID, finalDoNumero } from "@/lib/whatsapp/operacao";
@@ -82,7 +83,7 @@ async function estadosDasConversas(sb: ReturnType<typeof createServiceClient>, c
   if (!contatos.length) return { data: [] as Record<string, unknown>[], error: null };
   const base = "contato, resolvida_em, arquivada_em, excluida_em, tags, presenca, presenca_em";
   let ultimo: { data: Record<string, unknown>[] | null; error: { message: string } | null } = { data: null, error: null };
-  for (const colunas of [`${base}, lida_em, nao_lida, fixada_em, nome`, `${base}, lida_em, nao_lida, fixada_em`, base]) {
+  for (const colunas of [`${base}, lida_em, nao_lida, fixada_em, nome, atribuida_a`, `${base}, lida_em, nao_lida, fixada_em, nome`, `${base}, lida_em, nao_lida, fixada_em`, base]) {
     const r = await sb.from("inbox_conversas").select(colunas).in("contato", contatos);
     ultimo = { data: (r.data ?? null) as Record<string, unknown>[] | null, error: r.error };
     if (!r.error) return ultimo;
@@ -96,6 +97,8 @@ export type DadosDaCaixa = {
   paraOferecer: JobParaOferecer[];
   semJanela: boolean;
   estadoPronto: boolean;
+  /** Quem pode assumir conversa: o Workforce ativo com login. */
+  equipe: MembroDaEquipe[];
 };
 
 /** Monta a caixa inteira: a página /inbox e o painel lateral (/api/inbox/lista) leem daqui. */
@@ -103,6 +106,8 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const sb = createServiceClient();
   const desde = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const hoje = hojeEmLondres();
+  // Em paralelo com o resto: quem pode assumir conversa.
+  const equipeAPromessa = equipeDaInbox(sb);
   const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por_nome, partner_id, criado_em";
   const mensagensDesde = (colunas: string) =>
     sb.from("wa_mensagens").select(colunas).eq("phone_number_id", OPS_PHONE_NUMBER_ID()).gte("criado_em", desde).order("criado_em", { ascending: true }).limit(4000);
@@ -223,7 +228,8 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
           .select("id, reference, title, scheduled_date, scheduled_start_at, property_address, client_name, partner_cost, job_type, hourly_partner_rate, scope")
           .is("partner_id", null)
           .is("deleted_at", null)
-          .in("status", ["unassigned", "auto_assigning"])
+          // Só o que está em Unassigned; Finding partner já está sendo oferecido pelo app.
+          .eq("status", "unassigned")
           .order("scheduled_date", { ascending: true, nullsFirst: false })
           .limit(80)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -294,6 +300,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
         lidaEm: (estado?.lida_em as string | null) ?? null,
         naoLida: Boolean(estado?.nao_lida),
         fixadaEm: (estado?.fixada_em as string | null) ?? null,
+        atribuidaA: (estado?.atribuida_a as string | null) ?? null,
         org: null as ConversaDaCaixa["org"],
       };
 
@@ -451,6 +458,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     };
   });
 
+  const equipe = await equipeAPromessa;
   // Pela uazapi não há janela de 24h: a caixa sempre deixa escrever.
   return {
     conversas,
@@ -458,5 +466,6 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     paraOferecer,
     semJanela: provedorDaOperacao() === "uazapi",
     estadoPronto: !semEstado,
+    equipe,
   };
 }

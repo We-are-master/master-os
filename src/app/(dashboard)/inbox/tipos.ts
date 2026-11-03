@@ -88,6 +88,8 @@ export type ConversaDaCaixa = {
   naoLida: boolean;
   /** Fixada no topo da lista. */
   fixadaEm: string | null;
+  /** Quem do Workforce assumiu a conversa (profiles.id). */
+  atribuidaA: string | null;
   /** A empresa a que o contato pertence (parceiro ou conta): nome e logo. O avatar segue ela. */
   org: { nome: string; logo: string | null } | null;
   parceiro: {

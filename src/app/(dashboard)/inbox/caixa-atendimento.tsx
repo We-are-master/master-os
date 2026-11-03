@@ -70,6 +70,9 @@ import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { ligarPeloZendesk } from "./ligar";
 import { LinkDeJob } from "./link-de-job";
+import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
+import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
@@ -84,6 +87,8 @@ type Visao =
   | { k: "todas" }
   | { k: "hoje" }
   | { k: "tag"; nome: string }
+  | { k: "pessoa"; id: string }
+  | { k: "sem_dono" }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
 type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro" | "grupo";
 type Periodo = "hoje" | "semana" | "mes" | "60d";
@@ -179,6 +184,10 @@ function passa(c: ConversaDaCaixa, v: Visao): boolean {
       return Boolean(c.jobHoje);
     case "tag":
       return c.tags.includes(v.nome);
+    case "pessoa":
+      return !resolvida(c) && c.atribuidaA === v.id;
+    case "sem_dono":
+      return !resolvida(c) && !c.atribuidaA;
     case "etapa":
       return c.etapa?.grupo === v.grupo && c.etapa.status === v.status;
   }
@@ -207,6 +216,7 @@ function conversaRascunho(e: Escolhido): ConversaDaCaixa {
     lidaEm: null,
     naoLida: false,
     fixadaEm: null,
+    atribuidaA: null,
     org: null,
     parceiro: null,
     cliente: null,
@@ -248,10 +258,12 @@ function ItemDaLateral({
   rotulo,
   n,
   apagado,
+  avatar,
 }: {
   ativo: boolean;
   onClick: () => void;
   icone?: LucideIcon;
+  avatar?: React.ReactNode;
   ponto?: Tom;
   rotulo: string;
   n: number;
@@ -269,10 +281,22 @@ function ItemDaLateral({
     >
       {ativo ? <mo.span layoutId="inbox-lateral-ativa" transition={tempo("lg")} className="absolute -left-2 inset-y-1.5 w-[3px] rounded-r-full bg-primary" /> : null}
       {Icone ? <Icone className={cn("h-4 w-4 shrink-0", ativo ? "text-text-primary" : "text-text-tertiary")} /> : null}
+      {avatar}
       {ponto ? <span className={cn("ml-1 mr-0.5 h-2 w-2 shrink-0 rounded-full", PONTO[ponto])} /> : null}
       <span className="truncate">{rotulo}</span>
       <span className={cn("ml-auto text-[11.5px] tabular-nums", ativo ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
     </button>
+  );
+}
+
+/** A pessoa da equipe: foto do perfil ou iniciais, do tamanho de um ícone. */
+function AvatarDaEquipe({ m }: { m: MembroDaEquipe }) {
+  const iniciais = m.nome.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  return m.avatar ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={m.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+  ) : (
+    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary/10 text-[9px] font-semibold text-primary">{iniciais}</span>
   );
 }
 
@@ -291,6 +315,7 @@ export function CaixaAtendimento({
   semJanela = false,
   estadoPronto = true,
   inicial = null,
+  equipe = [],
 }: {
   conversas: ConversaDaCaixa[];
   tags: TagDaCaixa[];
@@ -299,6 +324,8 @@ export function CaixaAtendimento({
   estadoPronto?: boolean;
   /** /inbox?c=<número>: abre direto nessa conversa (vem do painel lateral). */
   inicial?: string | null;
+  /** Quem pode assumir conversa: o Workforce ativo com login. */
+  equipe?: MembroDaEquipe[];
 }) {
   const router = useRouter();
   const [visao, setVisao] = useState<Visao>({ k: "abertas" });
@@ -312,7 +339,7 @@ export function CaixaAtendimento({
   /** Conversa nova, ainda sem mensagem: some quando o primeiro envio chega do servidor. */
   const [rascunho, setRascunho] = useState<Escolhido | null>(null);
   const [busca, setBusca] = useState("");
-  const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | null>(null);
+  const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | "dono" | null>(null);
   const [gaveta, setGaveta] = useState<Gaveta>(null);
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
   const [scope, setScope] = useState("");
@@ -323,7 +350,7 @@ export function CaixaAtendimento({
   const [local, setLocal] = useState<
     Record<
       string,
-      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null }
+      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null; atribuidaA?: string | null }
     >
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
@@ -404,6 +431,7 @@ export function CaixaAtendimento({
       cliente: n((c) => !fora(c) && c.tipo === "cliente"),
       outro: n((c) => !fora(c) && c.tipo === "outro"),
       grupo: n((c) => !fora(c) && c.tipo === "grupo"),
+      semDono: n((c) => passa(c, { k: "sem_dono" })),
     };
   }, [conversas]);
 
@@ -439,9 +467,13 @@ export function CaixaAtendimento({
       ? { conta: "Accounts", parceiro: "Partners", cliente: "Clients", outro: "Unknown", grupo: "Groups" }[tipo]
       : visao.k === "tag"
         ? visao.nome
+        : visao.k === "pessoa"
+          ? (equipe.find((m) => m.id === visao.id)?.nome ?? "Team")
+          : visao.k === "sem_dono"
+            ? "Unassigned"
         : visao.k === "etapa"
           ? rotuloDaEtapa(visao)
-          : { abertas: "Open", esperando: "Needs reply", hoje: "On site today", todas: "All", resolvidas: "Resolved", arquivadas: "Archived", excluidas: "Deleted" }[visao.k];
+          : { abertas: "Open", esperando: "Needs reply", hoje: "On site today", todas: "All", resolvidas: "Resolved", arquivadas: "Archived", excluidas: "Deleted" }[visao.k as "abertas"];
   const presenca = aberta ? presencaAgora(aberta, agora) : null;
 
   function irPara(v: Visao) {
@@ -570,6 +602,19 @@ export function CaixaAtendimento({
     }
   }
 
+  async function atribuir(c: ConversaDaCaixa, para: string | null) {
+    setMenu(null);
+    setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], atribuidaA: para } }));
+    try {
+      await postarConversa({ contato: c.contato, acao: "atribuir", para });
+      toast.success(para ? `Assigned to ${equipe.find((m) => m.id === para)?.nome ?? "them"}` : "Unassigned");
+      router.refresh();
+    } catch (e) {
+      setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], atribuidaA: c.atribuidaA } }));
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    }
+  }
+
   async function alternarTag(c: ConversaDaCaixa, nome: string) {
     const novas = c.tags.includes(nome) ? c.tags.filter((t) => t !== nome) : [...c.tags, nome];
     setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], tags: novas } }));
@@ -688,6 +733,23 @@ export function CaixaAtendimento({
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="On site today" n={contagem.hoje} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "todas"} onClick={() => irPara({ k: "todas" })} icone={Layers} rotulo="All" n={contagem.todas} />
 
+        {equipe.length ? (
+          <>
+            <Titulo>Team</Titulo>
+            <ItemDaLateral ativo={mesmaVisao(visao, { k: "sem_dono" })} onClick={() => irPara({ k: "sem_dono" })} icone={UserRound} rotulo="Unassigned" n={contagem.semDono} />
+            {equipe.map((m) => (
+              <ItemDaLateral
+                key={m.id}
+                ativo={mesmaVisao(visao, { k: "pessoa", id: m.id })}
+                onClick={() => irPara({ k: "pessoa", id: m.id })}
+                avatar={<AvatarDaEquipe m={m} />}
+                rotulo={m.nome}
+                n={conversas.filter((c) => passa(c, { k: "pessoa", id: m.id })).length}
+              />
+            ))}
+          </>
+        ) : null}
+
         <Titulo>Contacts</Titulo>
         <ItemDaLateral
           ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "conta"}
@@ -750,14 +812,14 @@ export function CaixaAtendimento({
                 "grid h-6 w-6 place-items-center rounded-md border border-border-light bg-card text-text-tertiary hover:border-border hover:text-text-primary disabled:opacity-40",
                 criandoView && "bg-surface-tertiary text-text-primary",
               )}
-              aria-label="New view"
-              title={estadoPronto ? "New view" : "Needs migration 354"}
+              aria-label="New tag"
+              title={estadoPronto ? "New tag" : "Needs migration 354"}
             >
               <Plus className="h-3.5 w-3.5" />
             </button>
           }
         >
-          Views
+          Tags
         </Titulo>
         {tags.map((t) => (
           <div key={t.nome} className="group relative">
@@ -772,15 +834,15 @@ export function CaixaAtendimento({
               type="button"
               onClick={() => void apagarView(t.nome)}
               className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded bg-surface-secondary p-0.5 text-text-tertiary hover:text-[var(--bad-ink)] group-hover:block"
-              aria-label={`Delete view ${t.nome}`}
-              title="Delete view"
+              aria-label={`Delete tag ${t.nome}`}
+              title="Delete tag"
             >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
         ))}
         {criandoView ? <div className="mx-1 mt-1 rounded-lg border border-border-light bg-card p-2">{criadorDeTag(null)}</div> : null}
-        {!tags.length && !criandoView ? <p className="px-2.5 py-1 text-[12px] text-text-tertiary">No views yet.</p> : null}
+        {!tags.length && !criandoView ? <p className="px-2.5 py-1 text-[12px] text-text-tertiary">No tags yet.</p> : null}
 
         <Titulo
           acao={
@@ -908,20 +970,24 @@ export function CaixaAtendimento({
           />
         </div>
         {/* O que a lista mostra, numa linha só: a view (a lateral escolhe) e o período. */}
-        <div className="flex h-10 shrink-0 items-center px-4">
-          <label className="relative inline-flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-[12.5px] font-medium text-text-secondary hover:text-text-primary">
-            <span>
-              {tituloDaVisao}, {periodo === "hoje" ? "today" : periodo === "semana" ? "last 7 days" : periodo === "mes" ? "last 30 days" : "last 60 days"} · {lista.length}
-            </span>
-            <ChevronDown className="h-3.5 w-3.5" />
-            <select value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Period">
-              {PERIODOS.map(([k]) => (
-                <option key={k} value={k}>
-                  {k === "60d" ? "Last 60 days" : k === "hoje" ? "Today" : k === "semana" ? "Last 7 days" : "Last 30 days"}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="flex h-11 shrink-0 items-center gap-2 px-4">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-text-secondary">
+            {tituloDaVisao} · {lista.length}
+          </span>
+          <div className="w-[128px] shrink-0">
+            <Select
+              aria-label="Period"
+              value={periodo}
+              onChange={(e) => setPeriodo(e.target.value as Periodo)}
+              className="h-8 text-[12.5px]"
+              options={[
+                { value: "hoje", label: "Today" },
+                { value: "semana", label: "Last 7 days" },
+                { value: "mes", label: "Last 30 days" },
+                { value: "60d", label: "Last 60 days" },
+              ]}
+            />
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {lista.length === 0 ? (
@@ -1054,6 +1120,25 @@ export function CaixaAtendimento({
                     {aberta.etapa.ref}
                   </Acao>
                 </Link>
+              ) : null}
+              {equipe.length ? (
+                <Acao
+                  icone={aberta.atribuidaA ? undefined : UserPlus}
+                  ativo={menu === "dono"}
+                  title={
+                    aberta.atribuidaA
+                      ? `${equipe.find((m) => m.id === aberta.atribuidaA)?.nome ?? "Someone"} has this conversation. Click to change`
+                      : "Assign this conversation"
+                  }
+                  onClick={() => setMenu((m) => (m === "dono" ? null : "dono"))}
+                  disabled={!estadoPronto}
+                >
+                  {(() => {
+                    // Só o rosto de quem assumiu: o nome do contato precisa do espaço do cabeçalho.
+                    const dono = equipe.find((m) => m.id === aberta.atribuidaA);
+                    return dono ? <AvatarDaEquipe m={dono} /> : null;
+                  })()}
+                </Acao>
               ) : null}
               {aberta.tipo !== "grupo" ? (
                 <Acao icone={Phone} title={aberta.parceiro?.ticketDeLigacao ? `Open calls ticket #${aberta.parceiro.ticketDeLigacao} in Zendesk` : "Call via Zendesk Talk"} onClick={() =>
@@ -1225,6 +1310,31 @@ export function CaixaAtendimento({
               ) : null}
               </AnimatePresence>
 
+              <AnimatePresence>
+              {menu === "dono" ? (
+                <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                  <p className="px-2 pb-1 pt-0.5 text-[11px] font-medium text-text-tertiary">Assign to</p>
+                  {equipe.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => void atribuir(aberta, m.id)}
+                      className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-text-primary hover:bg-surface-secondary", aberta.atribuidaA === m.id && "bg-surface-tertiary font-medium")}
+                    >
+                      <AvatarDaEquipe m={m} />
+                      <span className="flex-1 truncate">{m.nome}</span>
+                      {aberta.atribuidaA === m.id ? <Check className="h-3.5 w-3.5 text-text-secondary" /> : null}
+                    </button>
+                  ))}
+                  {aberta.atribuidaA ? (
+                    <button type="button" onClick={() => void atribuir(aberta, null)} className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-border-light px-2 py-1.5 text-left text-[13px] text-text-secondary hover:bg-surface-secondary">
+                      <X className="h-3.5 w-3.5" />
+                      Unassign
+                    </button>
+                  ) : null}
+                </mo.div>
+              ) : null}
+              </AnimatePresence>
               <AnimatePresence>
               {menu === "mais" ? (
                 <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
@@ -1490,16 +1600,6 @@ export function CaixaAtendimento({
               onFechar={fecharGaveta}
               onContinuar={continuar}
             />
-          ) : gaveta?.k === "oferecer" && aberta.tipo === "parceiro" ? (
-            <OfertaDeJob
-              c={aberta}
-              jobs={paraOferecer}
-              onFechar={fecharGaveta}
-              onEnviado={() => {
-                fecharGaveta();
-                router.refresh();
-              }}
-            />
           ) : (
             <Painel key={aberta.contato} c={aberta} agora={agora} online={Boolean(presenca)} onCriar={abrirCriar} onOferecer={() => setGaveta({ k: "oferecer" })}
               onAbrirContato={(numero, nome) => abrirNumero({ numero, nome, tipo: "numero" })}
@@ -1507,6 +1607,21 @@ export function CaixaAtendimento({
           )
         ) : null}
       </aside>
+      {/* Offer a job: modal só com os jobs em Unassigned, o painel continua atrás. */}
+      {aberta?.tipo === "parceiro" ? (
+        <Modal open={gaveta?.k === "oferecer"} onClose={fecharGaveta} title={`Offer a job to ${aberta.nome.startsWith("+") ? "this partner" : aberta.nome.split(" ")[0]}`} subtitle={`${paraOferecer.length} unassigned job${paraOferecer.length === 1 ? "" : "s"}`} size="lg">
+          <OfertaDeJob
+            emModal
+            c={aberta}
+            jobs={paraOferecer}
+            onFechar={fecharGaveta}
+            onEnviado={() => {
+              fecharGaveta();
+              router.refresh();
+            }}
+          />
+        </Modal>
+      ) : null}
       <AnimatePresence>
         {(() => {
           const c = menuDaLinha ? conversas.find((x) => x.contato === menuDaLinha.contato) : null;

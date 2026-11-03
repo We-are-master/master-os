@@ -145,6 +145,26 @@ async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<str
   return (achado?.id as string | undefined) ?? null;
 }
 
+/**
+ * Recibo de entrega/leitura (evento `messages_update` da uazapi): os ids das
+ * mensagens e o estado novo. Só nos interessa o que saiu daqui.
+ */
+export function extrairReciboUazapi(payload: unknown): { ids: string[]; status: "delivered" | "read" } | null {
+  const p = rec(payload);
+  if (!p) return null;
+  const tipo = String(p.EventType ?? p.eventType ?? p.event_type ?? "").toLowerCase();
+  if (!tipo.includes("messages_update") && !tipo.includes("receipt")) return null;
+  const ev = rec(p.event) ?? rec(p.data) ?? p;
+  const brutos = ev.MessageIDs ?? ev.MessageIds ?? ev.messageIds ?? ev.messageids ?? ev.ids;
+  const ids = (Array.isArray(brutos) ? brutos : [ev.MessageID ?? ev.messageid ?? ev.id])
+    .map((x) => (typeof x === "string" ? x.split(":").pop()! : null))
+    .filter((x): x is string => !!x);
+  const estado = String(ev.Type ?? ev.type ?? p.state ?? ev.state ?? "").toLowerCase();
+  const status = estado.includes("read") || estado.includes("played") ? "read" : estado.includes("deliver") ? "delivered" : null;
+  if (!ids.length || !status) return null;
+  return { ids, status };
+}
+
 /** Grava um evento da uazapi. Reentrega não duplica, pelo wamid. */
 export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): Promise<string> {
   const presenca = extrairPresencaUazapi(payload);
@@ -154,6 +174,20 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
       .upsert({ contato: presenca.contato, presenca: presenca.estado, presenca_em: new Date().toISOString() }, { onConflict: "contato" });
     if (error) console.error("[uazapi-operacao] presença", error.message);
     return `presença ${presenca.estado}`;
+  }
+  const recibo = extrairReciboUazapi(payload);
+  if (recibo) {
+    // Nunca volta de "read" para "delivered": recibo atrasado não desfaz o azul.
+    const de = recibo.status === "read" ? ["sending", "sent", "delivered"] : ["sending", "sent"];
+    const { error } = await sb
+      .from("wa_mensagens")
+      .update({ status: recibo.status })
+      .eq("phone_number_id", OPS_PHONE_NUMBER_ID())
+      .eq("direcao", "saida")
+      .in("wamid", recibo.ids)
+      .in("status", de);
+    if (error) console.error("[uazapi-operacao] recibo", error.message);
+    return `recibo ${recibo.status} (${recibo.ids.length})`;
   }
   const m = extrairMensagemUazapi(payload);
   if ("pular" in m) return m.pular;

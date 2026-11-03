@@ -16,7 +16,6 @@ import { AnimatePresence, motion as mo } from "framer-motion";
 import {
   Briefcase,
   CalendarClock,
-  ChevronDown,
   Check,
   ExternalLink,
   FileText,
@@ -30,6 +29,7 @@ import {
 } from "lucide-react";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { LinkDeJob } from "./link-de-job";
+import { Select } from "@/components/ui/select";
 import { ReportsPendentes } from "./reports-pendentes";
 import { createClient } from "@/services/clients";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
@@ -110,19 +110,16 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
 
   return (
     <div className="px-4 py-3">
-      {/* O período num dropdown, com a contagem de cada um nas opções. */}
-      <label className="relative mb-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border-light bg-card px-2.5 py-1 text-[12.5px] font-medium text-text-primary hover:bg-surface-secondary/60">
-        <span>{PERIODOS.find((x) => x[0] === periodo)![1]}</span>
-        <span className="rounded-full bg-surface-secondary px-1.5 text-[11px] font-semibold tabular-nums text-text-secondary">{lista.length}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" />
-        <select value={periodo} onChange={(e) => setPeriodo(e.target.value as Periodo)} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Period">
-          {PERIODOS.map(([k, t]) => (
-            <option key={k} value={k}>
-              {t} ({doPeriodo(k).length})
-            </option>
-          ))}
-        </select>
-      </label>
+      {/* O período no dropdown padrão, com a contagem de cada um nas opções. */}
+      <div className="mb-3 w-[180px]">
+        <Select
+          aria-label="Period"
+          value={periodo}
+          onChange={(e) => setPeriodo(e.target.value as Periodo)}
+          className="h-8 text-[12.5px]"
+          options={PERIODOS.map(([k, t]) => ({ value: k, label: `${t} (${doPeriodo(k).length})` }))}
+        />
+      </div>
       <div className="space-y-2">
         {lista.length ? (
           lista.map((j) => <CartaoDeJob key={j.id} j={j} comData={periodo !== "hoje" && periodo !== "amanha"} />)
@@ -310,7 +307,7 @@ function Cabeca({ c, online, sub, children }: { c: ConversaDaCaixa; online: bool
           <p className="truncate text-[12px] text-text-tertiary">{sub ?? `+${c.contato}`}</p>
         </div>
       </div>
-      {children ? <div className="mt-2.5 grid grid-cols-2 gap-2">{children}</div> : null}
+      {children ? <div className="mt-2.5 grid auto-cols-fr grid-flow-col gap-2">{children}</div> : null}
     </div>
   );
 }
@@ -429,9 +426,6 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
         <Acao icone={Send} onClick={onOferecer}>
           Offer a job
         </Acao>
-        <Link href={`/partners/${p.id}`} className="grid">
-          <Acao icone={ExternalLink}>Open partner</Acao>
-        </Link>
       </Cabeca>
       <Abas<AbaParceiro>
         abas={[
@@ -744,11 +738,14 @@ export function OfertaDeJob({
   jobs,
   onFechar,
   onEnviado,
+  emModal = false,
 }: {
   c: ConversaDaCaixa;
   jobs: JobParaOferecer[];
   onFechar: () => void;
   onEnviado: () => void;
+  /** Dentro de um Modal: o título e o fechar ficam com o modal. */
+  emModal?: boolean;
 }) {
   const [busca, setBusca] = useState("");
   const [escolhido, setEscolhido] = useState<JobParaOferecer | null>(null);
@@ -779,8 +776,8 @@ export function OfertaDeJob({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border-light px-4 py-3">
+    <div className={cn("flex flex-col", emModal ? "h-[min(70dvh,640px)]" : "h-full")}>
+      <div className={cn("flex items-center gap-2 border-b border-border-light px-4 py-3", emModal && "hidden")}>
         <Send className="h-4 w-4 text-text-primary" />
         <p className="flex-1 text-[15px] font-semibold text-text-primary">Offer a job to {primeiro}</p>
         <button type="button" onClick={onFechar} className="text-text-tertiary hover:text-text-primary" aria-label="Close">
