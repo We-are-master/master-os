@@ -1099,7 +1099,7 @@ export function CaixaAtendimento({
           />
         </div>
         {/* All · Partners · Clients com a contagem da view: o mesmo filtro de Contacts da lateral. */}
-        <div className="shrink-0 px-4 pb-2.5">
+        <div className="shrink-0 px-4 py-3">
           <SeletorDeTipo
             ativo={tipoRapido}
             onTroca={(t) => setFiltros((f) => ({ ...f, tipos: t === "todas" ? [] : t === "parceiro" ? ["parceiro"] : [...TIPOS_CLIENTE] }))}
