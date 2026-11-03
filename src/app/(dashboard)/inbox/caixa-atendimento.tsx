@@ -59,7 +59,6 @@ import {
   Pin,
   PinOff,
   type LucideIcon,
-  Ticket,
 } from "lucide-react";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -75,7 +74,7 @@ import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, type Filtros } from "./filtros";
-import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
+import { Acao, Avatar, Chip, JOB_FEITO, ChipDaEtapa, ChipDoTipo, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -193,6 +192,13 @@ function passa(c: ConversaDaCaixa, v: Visao): boolean {
   }
 }
 /** O job que a conversa trata: o de hoje, senão o atual do cliente, senão o próximo do parceiro. */
+/** Os jobs ainda abertos e com data da conversa, do mais próximo para o mais longe. */
+function jobsAbertos(c: ConversaDaCaixa) {
+  return c.jobs
+    .filter((j) => j.data && !JOB_FEITO.has(j.status))
+    .sort((a, b) => (a.data ?? "").localeCompare(b.data ?? "") || (a.inicio ?? "~").localeCompare(b.inicio ?? "~"));
+}
+
 function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
   if (c.jobHoje) return c.jobHoje;
   if (c.etapa?.grupo === "job") return c.etapa;
@@ -344,7 +350,7 @@ export function CaixaAtendimento({
   const [busca, setBusca] = useState("");
   const [filtros, setFiltros] = useState<Filtros>(FILTROS_VAZIOS);
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
-  const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | "dono" | null>(null);
+  const [menu, setMenu] = useState<"acoes" | "tags" | "mais" | "dono" | "jobs" | null>(null);
   const [gaveta, setGaveta] = useState<Gaveta>(null);
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
   const [scope, setScope] = useState("");
@@ -1150,7 +1156,13 @@ export function CaixaAtendimento({
               </p>
             </div>
             <div className="relative flex items-center gap-1.5" data-area-do-menu onClick={(e) => e.stopPropagation()}>
-              {jobDaConversa(aberta) ? (
+              {jobsAbertos(aberta).length > 1 ? (
+                // Mais de um job aberto: um botão só, e a lista com data no dropdown.
+                <Acao icone={Link2} ativo={menu === "jobs"} onClick={() => setMenu((m) => (m === "jobs" ? null : "jobs"))} title="Open jobs">
+                  Jobs ({jobsAbertos(aberta).length})
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Acao>
+              ) : jobDaConversa(aberta) ? (
                 <LinkDeJob id={jobDaConversa(aberta)!.id}>
                   <Acao icone={Link2} title="View the job">
                     {jobDaConversa(aberta)!.ref}
@@ -1343,6 +1355,24 @@ export function CaixaAtendimento({
               </AnimatePresence>
 
               <AnimatePresence>
+              {menu === "jobs" ? (
+                <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top left" }} className="absolute left-0 top-10 z-30 max-h-[360px] w-[380px] overflow-y-auto rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
+                  <p className="px-2 pb-1 pt-0.5 text-[11px] font-medium text-text-tertiary">Open jobs</p>
+                  {jobsAbertos(aberta).map((j) => (
+                    <LinkDeJob key={j.id} id={j.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-secondary">
+                      <span className="w-[86px] shrink-0 text-[12px] tabular-nums text-text-secondary">
+                        <span className="block font-medium text-text-primary">{new Date(`${j.data}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</span>
+                        {j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "Any time"}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium text-text-primary">{j.titulo ?? j.ref}</span>
+                        <span className="block truncate text-[11.5px] text-text-tertiary">{j.ref}</span>
+                      </span>
+                      <ChipDaEtapa e={{ grupo: "job", status: j.status }} />
+                    </LinkDeJob>
+                  ))}
+                </mo.div>
+              ) : null}
               {menu === "dono" ? (
                 <mo.div {...flutuante("bottom")} style={{ transformOrigin: "top right" }} className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-border-light bg-card p-1.5 shadow-lg">
                   <p className="px-2 pb-1 pt-0.5 text-[11px] font-medium text-text-tertiary">Assign to</p>
@@ -1486,17 +1516,6 @@ export function CaixaAtendimento({
                     {ch.texto}
                   </Chip>
                 </mo.span>
-              ) : null;
-            })()}
-            {(() => {
-              // O ticket do job ao lado do horário: o clique abre o job (o ticket está no modal); Cmd-clique abre o job numa aba.
-              const j = aberta.jobHoje ?? aberta.jobs.find((x) => x.id === jobDaConversa(aberta)?.id) ?? null;
-              return j?.ticket ? (
-                <LinkDeJob id={j.id} title={`${j.ref} · Zendesk ticket #${j.ticket}`} className="inline-flex">
-                  <Chip icone={Ticket} tom="slate">
-                    #{j.ticket}
-                  </Chip>
-                </LinkDeJob>
               ) : null;
             })()}
             {aberta.tags.map((t) => (
