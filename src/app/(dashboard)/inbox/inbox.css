@@ -164,7 +164,7 @@
 .cx .cmp-salva{display:block;width:100%;text-align:left;border:0;background:none;border-radius:8px;padding:7px 8px;cursor:pointer;color:var(--ink);font-size:12.5px;line-height:1.45;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada);}
 .cx .cmp-salva b{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:1px;}
 .cx .cmp-salva:hover,.cx .cmp-salva.on{background:var(--panel-2);transition-duration:var(--vos-dur-xs);}
-.cx .cmp-anexar{left:0;right:0;padding:6px;display:flex;flex-direction:column;max-height:460px;}
+.cx .cmp-anexar{left:0;right:auto;width:min(460px,100%);padding:6px;display:flex;flex-direction:column;max-height:460px;}
 .cx .cmp-anexar-busca{display:flex;align-items:center;gap:7px;margin:0 4px 6px;padding:0 9px;height:32px;border:1px solid var(--line);border-radius:8px;color:var(--ink-3);}
 .cx .cmp-anexar-busca:focus-within{border-color:var(--ink-3);}
 .cx .cmp-anexar-busca input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:12.5px;color:var(--ink);}
