@@ -104,6 +104,7 @@ import { cn, formatCurrency, formatCurrencyPrecise, formatDate, getErrorMessage 
 import { getAdjacentJobId } from "@/lib/jobs-nav-queue";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { toast } from "sonner";
+import { abrirConversaNoAtendimento } from "@/lib/inbox/abrir-conversa";
 import { getJob, getJobDetailBundle, updateJob } from "@/services/jobs";
 import { getClient } from "@/services/clients";
 import { getAccount } from "@/services/accounts";
@@ -832,19 +833,6 @@ function extractReportMediaUrls(notes: string | null | undefined): string[] {
   if (!text.trim()) return [];
   const hits = text.match(/https?:\/\/[^\s)]+/g) ?? [];
   return hits.filter((u) => /\.(png|jpe?g|webp|gif)$/i.test(u));
-}
-
-/** `https://wa.me/{digits}` — same rules as partners list (UK 07… → 44…). */
-function whatsAppHrefFromPhoneForJob(raw: string | null | undefined): string | null {
-  if (!raw?.trim()) return null;
-  let d = raw.replace(/\D/g, "");
-  if (!d) return null;
-  if (d.startsWith("00")) d = d.slice(2);
-  if ((d.length === 10 || d.length === 11) && d.startsWith("0")) {
-    d = `44${d.slice(1)}`;
-  }
-  if (d.length < 8 || d.length > 15) return null;
-  return `https://wa.me/${d}`;
 }
 
 function JobHeaderWhatsAppIcon({ className }: { className?: string }) {
@@ -8331,7 +8319,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                 {job.job_type === "hourly" ? <Clock className="h-3 w-3 shrink-0" /> : <Lock className="h-3 w-3 shrink-0" />}
                                 {pricingModeLabel(job.job_type === "hourly" ? "hourly" : "fixed")}
                               </span>
-                              {job.catalog_band_label?.trim() ? (
+                              {/* "Hourly (min 1 hour)" repete o Smart Price (ou contradiz o Fixed): só faixa de verdade (EPC, FRA) vira chip. */}
+                              {job.catalog_band_label?.trim() && !/^hourly\b/i.test(job.catalog_band_label.trim()) ? (
                                 <span className={"inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
                               ) : null}
                               <span
@@ -8474,28 +8463,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     ) : null}
                     {jobHeaderContact && (jobHeaderContact.phone || jobHeaderContact.email) ? (
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-snug">
-                        {jobHeaderContact.phone ? (() => {
-                          const waHref = whatsAppHrefFromPhoneForJob(jobHeaderContact.phone);
-                          return (
-                            <span className="inline-flex min-w-0 items-center gap-1 text-text-secondary">
-                              {waHref ? (
-                                <a
-                                  href={waHref}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="shrink-0 text-[#25D366] hover:opacity-90"
-                                  title="WhatsApp"
-                                  aria-label="Open WhatsApp chat"
-                                >
-                                  <JobHeaderWhatsAppIcon className="h-3 w-3" />
-                                </a>
-                              ) : null}
-                              <a href={`tel:${jobHeaderContact.phone!.replace(/\s/g, "")}`} className="font-medium hover:underline">
-                                {jobHeaderContact.phone}
-                              </a>
-                            </span>
-                          );
-                        })() : null}
+                        {jobHeaderContact.phone ? (
+                          // O número abre a conversa no Atendimento lateral (7983), não o WhatsApp de fora.
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!abrirConversaNoAtendimento(jobHeaderContact.phone, job.client_name || "Client")) {
+                                toast.error("This number does not look like a WhatsApp number");
+                              }
+                            }}
+                            className="inline-flex min-w-0 items-center gap-1 font-medium text-text-secondary hover:text-text-primary hover:underline"
+                            title="Open the conversation in Atendimento"
+                          >
+                            <JobHeaderWhatsAppIcon className="h-3 w-3 shrink-0 text-[#25D366]" />
+                            {jobHeaderContact.phone}
+                          </button>
+                        ) : null}
                         {jobHeaderContact.email ? (
                           <a
                             href={`mailto:${jobHeaderContact.email}`}

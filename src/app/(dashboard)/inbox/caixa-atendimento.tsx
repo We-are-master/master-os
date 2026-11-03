@@ -57,6 +57,7 @@ import {
   MessageSquarePlus,
   Pin,
   PinOff,
+  Pencil,
   Reply,
   Smile,
   type LucideIcon,
@@ -72,9 +73,9 @@ import { LinkDeJob } from "./link-de-job";
 import { Modal } from "@/components/ui/modal";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
-import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, SEM_DONO, type Filtros } from "./filtros";
-import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
+import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, SeletorDeTipo, type TipoRapido, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -90,26 +91,8 @@ type Visao =
   | { k: "sem_dono" }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
 type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro" | "grupo";
-type Periodo = "tudo" | "hoje" | "semana" | "mes";
-/** O seletor de período do Atendimento do VOS: segmentado, All por padrão. */
-const PERIODOS: [Periodo, string, number][] = [
-  ["tudo", "All", Infinity],
-  ["hoje", "Today", 0],
-  ["semana", "Week", 7],
-  ["mes", "Month", 30],
-];
-/** A conversa teve mensagem dentro do período (hoje = desde a meia-noite de Londres). */
-function noPeriodo(c: ConversaDaCaixa, p: Periodo, agora: number): boolean {
-  if (p === "tudo") return true;
-  const ultima = c.mensagens[c.mensagens.length - 1]?.criadoEm;
-  if (!ultima) return false;
-  if (p === "hoje") {
-    const fmt = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Europe/London" });
-    return fmt(new Date(ultima)) === fmt(new Date(agora));
-  }
-  const dias = PERIODOS.find((x) => x[0] === p)![2];
-  return agora - new Date(ultima).getTime() <= dias * 86_400_000;
-}
+/** "Clients" no seletor rápido: cliente, conta e lead juntos (só parceiro e grupo ficam de fora). */
+const TIPOS_CLIENTE = ["cliente", "conta", "outro"] as const;
 type Gaveta = { k: "criar"; tipo: TipoDoPrefill } | { k: "oferecer" } | null;
 
 const JANELA_MS = 24 * 60 * 60 * 1000;
@@ -207,7 +190,7 @@ function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
   return c.tipo === "parceiro" ? (c.jobs[0] ?? null) : null;
 }
 /** A conversa vazia de quem ainda não recebeu nada: o composer manda, o refresh traz o resto. */
-function conversaRascunho(e: Escolhido): ConversaDaCaixa {
+export function conversaRascunho(e: Escolhido): ConversaDaCaixa {
   return {
     contato: e.numero,
     nome: e.nome,
@@ -316,16 +299,16 @@ function AvatarDaEquipe({ m }: { m: MembroDaEquipe }) {
 function AvatarDeQuemMandou({ m }: { m: MensagemDaCaixa }) {
   if (m.origem === "celular" || !m.quem)
     return (
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface-tertiary text-text-tertiary" title={m.origem === "celular" ? "Sent from the phone" : "Fixfy"}>
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-surface-tertiary text-text-tertiary" title={m.origem === "celular" ? "Sent from the phone" : "Fixfy"}>
         <Smartphone className="h-4 w-4" />
       </span>
     );
   const iniciais = m.quem.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return m.quemAvatar ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={m.quemAvatar} alt={m.quem} title={m.quem} className="h-8 w-8 shrink-0 rounded-full object-cover" />
+    <img src={m.quemAvatar} alt={m.quem} title={m.quem} className="h-9 w-9 shrink-0 rounded-full object-cover" />
   ) : (
-    <span title={m.quem} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+    <span title={m.quem} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
       {iniciais}
     </span>
   );
@@ -367,7 +350,6 @@ export function CaixaAtendimento({
   const router = useRouter();
   const [visao, setVisao] = useState<Visao>({ k: "abertas" });
   const [tipo, setTipo] = useState<Tipo>("todas");
-  const [periodo, setPeriodo] = useState<Periodo>("tudo");
   const [abertaId, setAbertaId] = useState<string | null>(inicial);
   const [buscaAberta, setBuscaAberta] = useState(false);
   /** O menu do botão direito numa linha da lista. */
@@ -389,11 +371,13 @@ export function CaixaAtendimento({
   const [local, setLocal] = useState<
     Record<
       string,
-      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null; atribuidaA?: string | null }
+      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null; atribuidaA?: string | null; nome?: string }
     >
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
+  /** Nome em edição no cabeçalho da conversa (null = só leitura). */
+  const [renomeando, setRenomeando] = useState<string | null>(null);
   /** O menu de tag no modo "New tag": um formulário curto em vez da busca. */
   const [formTag, setFormTag] = useState(false);
   const [criandoView, setCriandoView] = useState(false);
@@ -584,7 +568,6 @@ export function CaixaAtendimento({
     const qDig = q.replace(/\D/g, "");
     const base = conversas.filter((c) => {
       if (!passa(c, visao)) return false;
-      if (!noPeriodo(c, periodo, agora)) return false;
       if (tipo !== "todas" && c.tipo !== tipo) return false;
       if (!passaNosFiltros(c, filtros, { naoLida: (x) => naoLidas(x) > 0, esperando: (x) => !resolvida(x) && esperando(x) })) return false;
       if (!q) return true;
@@ -600,25 +583,25 @@ export function CaixaAtendimento({
     // Em On site today, quem está atrasado ou em risco sobe.
     const peso = (c: ConversaDaCaixa) => (c.jobHoje ? (chegada(c.jobHoje, agora)?.peso ?? 0) : 0);
     return [...base].sort((a, b) => peso(b) - peso(a));
-  }, [conversas, visao, tipo, busca, periodo, agora, filtros]);
+  }, [conversas, visao, tipo, busca, agora, filtros]);
+
+  const tipoRapido: TipoRapido | null = !filtros.tipos.length
+    ? "todas"
+    : filtros.tipos.length === 1 && filtros.tipos[0] === "parceiro"
+      ? "parceiro"
+      : filtros.tipos.length === TIPOS_CLIENTE.length && TIPOS_CLIENTE.every((t) => filtros.tipos.includes(t))
+        ? "cliente"
+        : null;
+  const nRapido = useMemo(() => {
+    const naView = conversas.filter((c) => passa(c, visao));
+    return { todas: naView.length, parceiro: naView.filter((c) => c.tipo === "parceiro").length, cliente: naView.filter((c) => (TIPOS_CLIENTE as readonly string[]).includes(c.tipo)).length };
+  }, [conversas, visao]);
 
   const aberta =
     conversas.find((c) => c.contato === abertaId) ??
     (rascunho && rascunho.numero === abertaId ? conversaRascunho(rascunho) : null) ??
     lista[0] ??
     null;
-  const tituloDaVisao =
-    tipo !== "todas"
-      ? { conta: "Accounts", parceiro: "Partners", cliente: "Clients", outro: "Unknown", grupo: "Groups" }[tipo]
-      : visao.k === "tag"
-        ? visao.nome
-        : visao.k === "pessoa"
-          ? (equipe.find((m) => m.id === visao.id)?.nome ?? "Team")
-          : visao.k === "sem_dono"
-            ? "Unassigned"
-        : visao.k === "etapa"
-          ? rotuloDaEtapa(visao)
-          : { abertas: "Open", esperando: "Needs reply", hoje: "On site today", todas: "All", resolvidas: "Resolved", arquivadas: "Archived", excluidas: "Deleted" }[visao.k as "abertas"];
   const presenca = aberta ? presencaAgora(aberta, agora) : null;
 
   function irPara(v: Visao) {
@@ -761,6 +744,22 @@ export function CaixaAtendimento({
       router.refresh();
     } catch (e) {
       setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], atribuidaA: c.atribuidaA } }));
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    }
+  }
+
+  /** Nome escolhido pela equipe. Parceiro e grupo não entram: parceiro segue a empresa, grupo o WhatsApp. Vazio volta ao nome do cadastro. */
+  async function renomear(c: ConversaDaCaixa, nome: string) {
+    setRenomeando(null);
+    const limpo = nome.trim().slice(0, 80);
+    if (limpo === c.nome) return;
+    if (limpo) setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], nome: limpo } }));
+    try {
+      await postarConversa({ contato: c.contato, acao: "renomear", nome: limpo });
+      toast.success(limpo ? "Renamed" : "Name reset");
+      router.refresh();
+    } catch (e) {
+      setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], nome: c.nome } }));
       toast.error(e instanceof Error ? e.message : "Could not save");
     }
   }
@@ -1051,7 +1050,9 @@ export function CaixaAtendimento({
               </mo.div>
             ) : (
               <mo.div key="titulo" className="relative flex h-full min-w-0 flex-1 items-center" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: tempo("md") }} exit={{ opacity: 0, transition: tempo("xs", "saida") }}>
-                <h2 className="text-[16px] font-bold tracking-tight text-text-primary">Conversations</h2>
+                <h2 className="text-[16px] font-bold tracking-tight text-text-primary">
+                  Conversations <span className="ml-1 text-[13px] font-medium tabular-nums text-text-tertiary">{lista.length}</span>
+                </h2>
                 <span className="absolute bottom-0 left-0 h-[2px] w-[118px] rounded-full bg-text-primary" aria-hidden />
               </mo.div>
             )}
@@ -1116,28 +1117,13 @@ export function CaixaAtendimento({
             onEnviado={() => router.refresh()}
           />
         </div>
-        {/* O que a lista mostra, numa linha só: a view (a lateral escolhe) e o período. */}
-        <div className="flex h-11 shrink-0 items-center gap-2 px-4">
-          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-text-secondary">
-            {tituloDaVisao} · {lista.length}
-          </span>
-          <div role="tablist" aria-label="Period" className="flex shrink-0 items-center rounded-lg bg-surface-tertiary p-0.5">
-            {PERIODOS.map(([k, t]) => (
-              <button
-                key={k}
-                type="button"
-                role="tab"
-                aria-selected={periodo === k}
-                onClick={() => setPeriodo(k)}
-                className={cn(
-                  "h-6 rounded-md px-2 text-[11.5px] font-medium transition-colors",
-                  periodo === k ? "bg-card text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary",
-                )}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+        {/* All · Partners · Clients com a contagem da view: o mesmo filtro de Contacts da lateral. */}
+        <div className="shrink-0 px-4 py-3">
+          <SeletorDeTipo
+            ativo={tipoRapido}
+            onTroca={(t) => setFiltros((f) => ({ ...f, tipos: t === "todas" ? [] : t === "parceiro" ? ["parceiro"] : [...TIPOS_CLIENTE] }))}
+            n={nRapido}
+          />
         </div>
         <FiltrosAtivos filtros={filtros} onMudar={setFiltros} equipe={equipe} />
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1185,7 +1171,8 @@ export function CaixaAtendimento({
                       {quandoNaLista(ultima.criadoEm, agora)}
                     </span>
                   </span>
-                  <span className="mt-0.5 flex items-center gap-1">
+                  {/* Altura fixa do chip: com ou sem chip, toda linha da lista tem a mesma altura. */}
+                  <span className="mt-0.5 flex h-[22px] items-center gap-1">
                     {p === "digitando" || p === "gravando" ? (
                       <span className="min-w-0 flex-1 truncate text-[12.5px] text-emerald-600">{p === "digitando" ? "typing..." : "recording audio..."}</span>
                     ) : (
@@ -1240,7 +1227,37 @@ export function CaixaAtendimento({
             <Avatar c={aberta} tamanho="md" online={Boolean(presenca)} canal />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 truncate text-[16px] font-semibold text-text-primary">
-                <span className="truncate">{aberta.nome}</span>
+                {renomeando !== null ? (
+                  <input
+                    autoFocus
+                    value={renomeando}
+                    maxLength={80}
+                    aria-label="Conversation name"
+                    placeholder={aberta.perfil ?? `+${aberta.contato}`}
+                    onChange={(e) => setRenomeando(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={() => void renomear(aberta, renomeando)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setRenomeando(null);
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-[16px] font-semibold text-text-primary outline-none focus:border-primary"
+                  />
+                ) : aberta.tipo === "parceiro" || aberta.tipo === "grupo" ? (
+                  <span className="truncate" title={aberta.tipo === "parceiro" ? "Partner chats use the company name. Change it on the partner." : undefined}>
+                    {aberta.nome}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setRenomeando(aberta.nome)}
+                    title="Click to rename"
+                    className="group/nome inline-flex min-w-0 items-center gap-1.5 rounded-md text-left hover:text-primary"
+                  >
+                    <span className="truncate">{aberta.nome}</span>
+                    <Pencil className="h-3.5 w-3.5 shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover/nome:opacity-100" />
+                  </button>
+                )}
               </p>
               {/* Só um estado: online agora, senão o último sinal (visto ou mensagem). O número fica no painel. */}
               <p className="truncate text-xs text-text-tertiary" title={`+${aberta.contato}`}>

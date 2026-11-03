@@ -418,7 +418,8 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
           ...base,
           tipo: "parceiro",
           org: p?.company_name ? { nome: p.company_name as string, logo: (p.avatar_url as string | null) ?? null } : null,
-          nome: (p?.contact_name as string | null) || (p?.company_name as string | null) || base.perfil || `+${contato}`,
+          // Parceiro aparece sempre pelo nome da empresa; a pessoa só se não houver empresa.
+          nome: (p?.company_name as string | null) || (p?.contact_name as string | null) || base.perfil || `+${contato}`,
           parceiro: {
             id: pid,
             empresa: (p?.company_name as string | null) ?? null,
@@ -523,10 +524,11 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
         ...base,
         tipo: contaId ? "conta" : jobsDoCliente.length || estado?.vinculo_tipo === "cliente" ? "cliente" : "outro",
         org: contaId ? { nome: nomeDaConta.get(contaId) ?? "Account", logo: logoDaConta.get(contaId) ?? null } : null,
+        // O nome dado à mão na caixa (ou o do lead ligado) vence o do cadastro.
         nome:
+          (estado?.nome as string | null) ||
           (c?.full_name as string | null) ||
           (contaId && !c ? pessoaDaConta.get(contaId) : null) ||
-          (estado?.vinculo_tipo === "lead" ? (estado.nome as string | null) : null) ||
           base.perfil ||
           `+${contato}`,
         parceiro: null,

@@ -29,6 +29,18 @@ function paraWhatsApp(bruto: unknown): string | null {
 
 const POR_TIPO = 6;
 
+type LinhaDeParceiro = { id: unknown; company_name: unknown; contact_name: unknown; trade: unknown; whatsapp: unknown; phone: unknown; status: unknown };
+
+/** Mesma empresa cadastrada duas vezes (um active e um onboarding) aparece uma vez só, o active primeiro. */
+function umPorEmpresa<T extends LinhaDeParceiro>(linhas: T[]): T[] {
+  const porEmpresa = new Map<string, T>();
+  for (const p of [...linhas].sort((a, b) => Number(b.status === "active") - Number(a.status === "active"))) {
+    const chave = String(p.company_name ?? "").trim().toLowerCase() || `id:${String(p.id)}`;
+    if (!porEmpresa.has(chave)) porEmpresa.set(chave, p);
+  }
+  return [...porEmpresa.values()];
+}
+
 export async function GET(req: NextRequest) {
   const s = await staffDaInbox();
   if (s instanceof NextResponse) return s;
@@ -42,7 +54,9 @@ export async function GET(req: NextRequest) {
 
   const [contas, parceiros, clientes, leads] = await Promise.all([
     s.sb.from("accounts").select("id, company_name, contact_name, contact_number").or(ou(["company_name", "contact_name"], ["contact_number"])).limit(POR_TIPO),
-    s.sb.from("partners").select("id, contact_name, company_name, trade, whatsapp, phone").or(ou(["contact_name", "company_name"], ["whatsapp", "phone"])).limit(POR_TIPO),
+    // Só quem trabalha ou está entrando; inactive e needs_attention ficam fora. O vínculo é pelo id,
+    // então quando o onboarding vira active a conversa continua ligada.
+    s.sb.from("partners").select("id, contact_name, company_name, trade, whatsapp, phone, status").in("status", ["active", "onboarding"]).or(ou(["contact_name", "company_name"], ["whatsapp", "phone"])).limit(POR_TIPO),
     s.sb.from("clients").select("id, full_name, phone, postcode").is("deleted_at", null).or(ou(["full_name", "postcode"], ["phone"])).limit(POR_TIPO),
     s.sb.from("site_leads").select("id, full_name, phone, postcode, created_at").or(ou(["full_name", "postcode"], ["phone"])).order("created_at", { ascending: false }).limit(POR_TIPO),
   ]);
@@ -55,11 +69,12 @@ export async function GET(req: NextRequest) {
       sub: a.contact_name ? ((a.company_name as string | null) ?? null) : null,
       numero: paraWhatsApp(a.contact_number),
     })),
-    ...(parceiros.data ?? []).map((p) => ({
+    ...umPorEmpresa(parceiros.data ?? []).map((p) => ({
       tipo: "parceiro" as const,
       id: p.id as string,
-      nome: (p.contact_name as string | null) || (p.company_name as string | null) || "Partner",
-      sub: [p.company_name, p.trade].filter(Boolean).join(" · ") || null,
+      // A empresa é o nome; quem atende vai embaixo, com o ofício.
+      nome: (p.company_name as string | null) || (p.contact_name as string | null) || "Partner",
+      sub: [p.company_name ? p.contact_name : null, p.trade].filter(Boolean).join(" · ") || null,
       numero: paraWhatsApp(p.whatsapp) ?? paraWhatsApp(p.phone),
     })),
     ...(clientes.data ?? []).map((c) => ({
