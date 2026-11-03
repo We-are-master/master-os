@@ -29,11 +29,26 @@ const ABAS: [Aba, string][] = [
   ["cliente", "Clients"],
 ];
 
+const LARGURA_PADRAO = 400;
+const LARGURA_MIN = 340;
+const LARGURA_MAX = 760;
+const CHAVE_LARGURA = "inbox-lateral-largura";
+
 type Lista = { conversas: ConversaDaCaixa[]; semJanela: boolean; estadoPronto: boolean };
 
 export function AtendimentoLateral() {
   const pathname = usePathname();
   const [aberto, setAberto] = useState(false);
+  // Lembra a largura que a pessoa deixou (só conveniência deste navegador). O painel
+  // nasce fechado, então ler no primeiro render não dá diferença com o servidor.
+  const [largura, setLargura] = useState(() => {
+    try {
+      const w = Number(typeof window === "undefined" ? 0 : localStorage.getItem(CHAVE_LARGURA));
+      return w >= LARGURA_MIN && w <= LARGURA_MAX ? w : LARGURA_PADRAO;
+    } catch {
+      return LARGURA_PADRAO;
+    }
+  });
   const [dados, setDados] = useState<Lista | null>(null);
   const [aba, setAba] = useState<Aba>("todas");
   const [busca, setBusca] = useState("");
@@ -81,6 +96,17 @@ export function AtendimentoLateral() {
     return () => document.removeEventListener("keydown", tecla);
   }, [aberto]);
 
+  // Encaixado como no VOS: a página abre espaço do tamanho do painel.
+  const visivel = aberto && !(pathname === "/inbox" || pathname.startsWith("/inbox/"));
+  useEffect(() => {
+    const raiz = document.documentElement;
+    if (visivel) raiz.style.setProperty("--inbox-lateral", `${largura}px`);
+    else raiz.style.removeProperty("--inbox-lateral");
+    return () => {
+      raiz.style.removeProperty("--inbox-lateral");
+    };
+  }, [visivel, largura]);
+
   // Na própria /inbox o painel não faz sentido.
   if (pathname === "/inbox" || pathname.startsWith("/inbox/")) return null;
 
@@ -94,6 +120,27 @@ export function AtendimentoLateral() {
     if (!q) return true;
     return [c.nome, c.contato, c.org?.nome ?? "", ...c.tags].some((v) => v.toLowerCase().includes(q));
   });
+
+  function arrastar(e: React.PointerEvent) {
+    e.preventDefault();
+    const raiz = document.documentElement;
+    raiz.dataset.arrastando = "1";
+    let ultima = largura;
+    const mover = (ev: PointerEvent) => {
+      ultima = Math.min(LARGURA_MAX, Math.max(LARGURA_MIN, window.innerWidth - ev.clientX));
+      setLargura(ultima);
+    };
+    const soltar = () => {
+      delete raiz.dataset.arrastando;
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      try {
+        localStorage.setItem(CHAVE_LARGURA, String(ultima));
+      } catch {}
+    };
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+  }
 
   function abrir(c: ConversaDaCaixa) {
     setContato(c.contato);
@@ -139,11 +186,22 @@ export function AtendimentoLateral() {
         {aberto ? (
           <mo.aside
             key="atendimento-lateral"
-            className="cx fixed bottom-0 right-0 top-0 z-[60] flex w-[400px] max-w-[100vw] flex-col border-l border-border-light bg-card shadow-2xl"
+            className="cx fixed bottom-0 right-0 top-0 z-[60] flex max-w-[100vw] flex-col border-l border-border-light bg-card shadow-2xl lg:shadow-none"
+            style={{ width: largura }}
             initial={{ x: 32, opacity: 0 }}
             animate={{ x: 0, opacity: 1, transition: tempo("lg") }}
             exit={{ x: 32, opacity: 0, transition: tempo("md", "saida") }}
           >
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize inbox"
+              onPointerDown={arrastar}
+              onDoubleClick={() => setLargura(LARGURA_PADRAO)}
+              className="group absolute -left-1.5 bottom-0 top-0 z-10 hidden w-3 cursor-col-resize lg:block"
+            >
+              <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-primary/40 group-active:bg-primary" />
+            </div>
             <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border-light px-4">
               {contato && conversa ? (
                 <>

@@ -803,3 +803,10 @@ main :is(.leading-tight) { line-height: 1.3; }
     transform: scale(0.99);
   }
 }
+
+/* Arrastando a borda do Inbox lateral: nada anima e nada seleciona até soltar. */
+html[data-arrastando] * {
+  transition: none !important;
+  user-select: none;
+  cursor: col-resize;
+}

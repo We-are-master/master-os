@@ -58,6 +58,7 @@ import {
   Pin,
   PinOff,
   type LucideIcon,
+  Phone,
 } from "lucide-react";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
@@ -66,6 +67,7 @@ import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
 import { NovoContato, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
+import { ligarPeloZendesk } from "./ligar";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, chegada, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
@@ -1039,6 +1041,9 @@ export function CaixaAtendimento({
                   </Acao>
                 </Link>
               ) : null}
+              <Acao icone={Phone} title="Call via Zendesk Talk" onClick={() => void ligarPeloZendesk(aberta.contato)}>
+                Call
+              </Acao>
               <Acao icone={Tag} ativo={menu === "tags"} onClick={() => setMenu((m) => (m === "tags" ? null : "tags"))} disabled={!estadoPronto}>
                 Tag
               </Acao>

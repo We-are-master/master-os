@@ -60,7 +60,8 @@ export default function DashboardLayoutClient({
                 <Sidebar />
                 <div
                   className={cn(
-                    "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left] duration-300 ease-in-out",
+                    // --inbox-lateral: largura do Inbox lateral aberto; a página encolhe em vez de ficar por baixo.
+                    "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left,margin-right] duration-300 ease-in-out lg:mr-[var(--inbox-lateral,0px)]",
                     collapsed ? "lg:ml-[66px]" : "lg:ml-[216px]",
                   )}
                 >
