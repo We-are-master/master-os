@@ -33,10 +33,11 @@ type Item = {
 };
 type Valor = "cliente" | "parceiro" | "nenhum";
 
-const VALORES: [Valor, string][] = [
-  ["cliente", "Client price"],
-  ["parceiro", "Partner pay"],
-  ["nenhum", "No price"],
+// Rótulo do botão e a linha que ele põe na mensagem, para não ter dúvida do que vai.
+const VALORES: [Valor, string, string][] = [
+  ["cliente", "What the client pays", "Adds “Price: £…”, plus the portal link for accounts."],
+  ["parceiro", "What the partner gets", "Adds “You get: £…”, plus the report link if it is still missing."],
+  ["nenhum", "No price", "No price line. Use it when you only share the details."],
 ];
 
 export const valorPadrao = (tipo: TipoDeContato): Valor =>
@@ -177,10 +178,11 @@ export function AnexarJob({
           }}
         />
       </div>
+      <p className="cmp-anexar-rotulo">Price in the message</p>
       <div
         className="cmp-anexar-valor"
         role="radiogroup"
-        aria-label="Price to include"
+        aria-label="Price in the message"
       >
         {VALORES.map(([k, t]) => (
           <button
@@ -195,6 +197,7 @@ export function AnexarJob({
           </button>
         ))}
       </div>
+      <p className="cmp-anexar-dica">{VALORES.find(([k]) => k === valor)?.[2]}</p>
       <div className="cmp-anexar-lista">
         {itens === null ? (
           <p className="cmp-anexar-vazio">
