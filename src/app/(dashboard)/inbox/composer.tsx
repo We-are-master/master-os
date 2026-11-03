@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
+import { FileText, ImagePlus, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
 import { toast } from "sonner";
 import { Acao, IconeWhatsApp } from "./ui";
 import type { MensagemDaCaixa, TipoDeContato } from "./tipos";
@@ -138,6 +138,8 @@ export function Composer({
     return () => window.removeEventListener(EVENTO_RASCUNHO, ouvir);
   }, [contato]);
   const [arquivo, setArquivo] = useState<File | null>(null);
+  // Arrastar um arquivo para cima do campo: conta entradas e saídas, porque cada filho dispara as suas.
+  const [arrastando, setArrastando] = useState(0);
   const [previa, setPrevia] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [emojis, setEmojis] = useState(false);
@@ -331,7 +333,34 @@ export function Composer({
   }
 
   return (
-    <div ref={caixa} className="wa-composer relative">
+    <div
+      ref={caixa}
+      className="wa-composer relative"
+      onDragEnter={(e) => {
+        if (gravando || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setArrastando((n) => n + 1);
+      }}
+      onDragOver={(e) => {
+        if (gravando || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={() => setArrastando((n) => Math.max(0, n - 1))}
+      onDrop={(e) => {
+        if (gravando || !e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setArrastando(0);
+        if (e.dataTransfer.files.length > 1) toast.message("One file at a time. Attached the first one.");
+        escolher(e.dataTransfer.files[0]);
+      }}
+    >
+      {arrastando > 0 ? (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-[inherit] border-2 border-dashed border-[var(--accent)] bg-card/90 text-[13px] font-semibold text-[var(--accent)]">
+          <ImagePlus size={16} />
+          Drop to attach
+        </div>
+      ) : null}
       <div className="top">
         <span className="ch">
           <IconeWhatsApp className="h-[13px] w-[13px] text-[#25D366]" />
