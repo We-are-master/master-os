@@ -116,7 +116,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const hoje = hojeEmLondres();
   // Em paralelo com o resto: quem pode assumir conversa.
   const equipeAPromessa = equipeDaInbox(sb);
-  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por, enviado_por_nome, partner_id, criado_em";
+  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por, enviado_por_nome, partner_id, criado_em, citada:bruto->>quoted, alvo:bruto->>reaction, alvo_chave:bruto->content->key->>id";
   const mensagensDesde = (colunas: string) =>
     sb.from("wa_mensagens").select(colunas).eq("phone_number_id", OPS_PHONE_NUMBER_ID()).gte("criado_em", desde).order("criado_em", { ascending: true }).limit(4000);
   // Sem a 355 aplicada não há autor: a caixa carrega igual, só sem o nome de quem falou no grupo.
@@ -139,11 +139,20 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     for (const p of data ?? []) fotoDe.set(p.id as string, (p.avatar_url as string | null) ?? null);
   }
 
+  // Reação não é balão: guarda à parte (por alvo) e pendura na mensagem depois.
+  const reacoesBrutas: { alvo: string; emoji: string | null; deNos: boolean; quem: string | null; chave: string }[] = [];
   const porContato = new Map<string, MensagemDaCaixa[]>();
   const nomeDoPerfil = new Map<string, string>();
   const parceiroDoContato = new Map<string, string>();
   for (const l of linhas ?? []) {
     const contato = l.contato as string;
+    if (l.tipo === "reaction") {
+      const alvo = (l.alvo as string | null) || (l.alvo_chave as string | null);
+      const deNos = l.direcao === "saida";
+      const quem = deNos ? ((l.enviado_por_nome as string | null) ?? null) : ((l.autor_nome as string | null) ?? (l.contato_nome as string | null) ?? null);
+      if (alvo) reacoesBrutas.push({ alvo, emoji: (l.texto as string | null) ?? null, deNos, quem, chave: deNos ? "nos" : `${(l.autor as string | null) ?? contato}` });
+      continue;
+    }
     if (!porContato.has(contato)) porContato.set(contato, []);
     const midia = (l.midia_id as string | null) ?? null;
     porContato.get(contato)!.push({
@@ -160,9 +169,30 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       quemAvatar: l.enviado_por ? (fotoDe.get(l.enviado_por as string) ?? null) : null,
       criadoEm: l.criado_em as string,
       autor: ehGrupo(contato) && l.direcao === "entrada" ? { numero: (l.autor as string | null) ?? null, nome: (l.autor_nome as string | null) ?? null } : null,
+      wamid: (l.wamid as string | null) ?? null,
+      // Por enquanto o wamid da citada; vira a mensagem logo abaixo, quando ela está na conversa.
+      citada: l.citada ? { id: l.citada as string, texto: "", deNos: false, quem: null } : null,
     });
     if (l.contato_nome) nomeDoPerfil.set(contato, l.contato_nome as string);
     if (l.partner_id) parceiroDoContato.set(contato, l.partner_id as string);
+  }
+  // Citadas e reações acham a mensagem pelo wamid (a uazapi às vezes manda "dono:id").
+  const semDonoDoId = (w: string) => w.split(":").pop()!;
+  const porWamid = new Map<string, MensagemDaCaixa>();
+  for (const lista of porContato.values()) for (const m of lista) if (m.wamid) porWamid.set(semDonoDoId(m.wamid), m);
+  for (const lista of porContato.values())
+    for (const m of lista) {
+      if (!m.citada) continue;
+      const c = porWamid.get(semDonoDoId(m.citada.id));
+      m.citada = c ? { id: c.id, texto: c.texto ?? `[${c.tipo}]`, deNos: c.direcao === "saida", quem: c.direcao === "saida" ? c.quem : (c.autor?.nome ?? null) } : null;
+    }
+  // A última reação de cada pessoa vale (as linhas já vêm em ordem); emoji vazio tira.
+  const ultimaReacao = new Map<string, (typeof reacoesBrutas)[number]>();
+  for (const r of reacoesBrutas) ultimaReacao.set(`${semDonoDoId(r.alvo)}|${r.chave}`, r);
+  for (const r of ultimaReacao.values()) {
+    const m = porWamid.get(semDonoDoId(r.alvo));
+    if (!m || !r.emoji) continue;
+    (m.reacoes ??= []).push({ emoji: r.emoji, deNos: r.deNos, quem: r.quem });
   }
   const contatos = [...porContato.keys()];
 

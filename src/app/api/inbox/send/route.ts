@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
   let params: string[] = [];
   let arquivo: File | null = null;
   let tipoPedido: string | null = null;
+  /** wamid da mensagem que esta responde (Reply). Só texto pela uazapi. */
+  let respondendo: string | undefined;
 
   if (multipart) {
     const form = await req.formData();
@@ -60,7 +62,8 @@ export async function POST(req: NextRequest) {
     if (!pelaUazapi) return NextResponse.json({ error: "Files go out only through the uazapi number" }, { status: 400 });
     if (arquivo.size > LIMITE_BYTES) return NextResponse.json({ error: "File is over 4 MB" }, { status: 413 });
   } else {
-    const corpo = (await req.json().catch(() => ({}))) as { contato?: string; texto?: string; template?: string; params?: string[] };
+    const corpo = (await req.json().catch(() => ({}))) as { contato?: string; texto?: string; template?: string; params?: string[]; respondendo?: string };
+    respondendo = typeof corpo.respondendo === "string" && corpo.respondendo.trim() ? corpo.respondendo.trim() : undefined;
     contato = String(corpo.contato ?? "").replace(/\D/g, "");
     texto = String(corpo.texto ?? "").trim();
     nomeTemplate = corpo.template as TemplateOperacao | undefined;
@@ -119,7 +122,7 @@ export async function POST(req: NextRequest) {
       midia = `storage:${caminho}`;
       textoDaLinha = texto || (tipo === "document" ? arquivo.name || ROTULO[tipo] : ROTULO[tipo]);
     } else if (pelaUazapi) {
-      ({ wamid, corpo: enviado } = await enviarPelaUazapi(contato, texto));
+      ({ wamid, corpo: enviado } = await enviarPelaUazapi(contato, texto, respondendo));
     } else {
       ({ wamid, corpo: enviado } = await enviarPelaOperacao({
         para: contato,
@@ -144,7 +147,8 @@ export async function POST(req: NextRequest) {
         enviado_por: s.userId,
         enviado_por_nome: s.nome,
         partner_id: anterior?.partner_id ?? null,
-        bruto: enviado,
+        // `quoted` igual ao que o webhook grava quando o contato responde: a tela acha a citada pelo mesmo campo.
+        bruto: respondendo && pelaUazapi && !arquivo ? { ...enviado, quoted: respondendo } : enviado,
       })
       .select("*")
       .single();

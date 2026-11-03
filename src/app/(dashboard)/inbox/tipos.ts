@@ -18,6 +18,12 @@ export type MensagemDaCaixa = {
   criadoEm: string;
   /** Em grupo, quem mandou a mensagem que entrou: número (null se escondido) e nome. */
   autor?: { numero: string | null; nome: string | null } | null;
+  /** O id do WhatsApp: é por ele que a tela reage e responde. */
+  wamid?: string | null;
+  /** A mensagem que esta responde (Reply), quando está na conversa. */
+  citada?: { id: string; texto: string; deNos: boolean; quem: string | null } | null;
+  /** Reações no balão: a última de cada pessoa, sem as retiradas. */
+  reacoes?: { emoji: string; deNos: boolean; quem: string | null }[];
 };
 
 export type JobDaCaixa = {

@@ -110,6 +110,8 @@ export function Composer({
   onEnviado,
   onPendente,
   onResolvida,
+  respondendo = null,
+  onCancelarResposta,
 }: {
   contato: string;
   nome: string;
@@ -121,6 +123,9 @@ export function Composer({
   /** A mensagem entra na conversa na hora; o envio corre por trás. */
   onPendente?: (m: MensagemDaCaixa) => void;
   onResolvida?: (id: string, erro?: string) => void;
+  /** A mensagem que o Reply do balão escolheu: vai citada no envio de texto. */
+  respondendo?: MensagemDaCaixa | null;
+  onCancelarResposta?: () => void;
 }) {
   const [texto, setTexto] = useState("");
   // Texto pronto vindo do painel (pedido de report): entra na caixa, quem envia é a pessoa.
@@ -162,6 +167,11 @@ export function Composer({
 
   useEffect(() => setAtiva(0), [busca]);
 
+  // Escolheu responder: o cursor vai para o campo.
+  useEffect(() => {
+    if (respondendo) requestAnimationFrame(() => campo.current?.focus());
+  }, [respondendo]);
+
   // A miniatura do anexo de imagem.
   useEffect(() => {
     if (!arquivo || !arquivo.type.startsWith("image/")) {
@@ -194,9 +204,21 @@ export function Composer({
   const focar = () => requestAnimationFrame(() => campo.current?.focus());
 
   /** Põe a bolha na conversa já, com "sending", e devolve o id para resolver depois. */
-  function pendente(tipoMsg: string, conteudo: string | null, midiaUrl: string | null): string {
+  function pendente(tipoMsg: string, conteudo: string | null, midiaUrl: string | null, citada?: MensagemDaCaixa | null): string {
     const id = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    onPendente?.({ id, direcao: "saida", origem: "os", tipo: tipoMsg, texto: conteudo, midiaUrl, status: "sending", erro: null, quem: "You", criadoEm: new Date().toISOString() });
+    onPendente?.({
+      id,
+      direcao: "saida",
+      origem: "os",
+      tipo: tipoMsg,
+      texto: conteudo,
+      midiaUrl,
+      status: "sending",
+      erro: null,
+      quem: "You",
+      criadoEm: new Date().toISOString(),
+      citada: citada ? { id: citada.id, texto: citada.texto ?? `[${citada.tipo}]`, deNos: citada.direcao === "saida", quem: citada.quem } : null,
+    });
     return id;
   }
 
@@ -218,11 +240,14 @@ export function Composer({
     const conteudo = texto.trim();
     const anexo = arquivo;
     const tipoMsg = !anexo ? "text" : anexo.type.startsWith("image/") ? "image" : anexo.type.startsWith("video/") ? "video" : "document";
-    const id = pendente(tipoMsg, conteudo || (anexo && tipoMsg === "document" ? anexo.name : null), anexo ? URL.createObjectURL(anexo) : null);
+    // Reply só vai em texto: a uazapi cita pelo `replyid` do /send/text.
+    const citada = !anexo && respondendo?.wamid ? respondendo : null;
+    const id = pendente(tipoMsg, conteudo || (anexo && tipoMsg === "document" ? anexo.name : null), anexo ? URL.createObjectURL(anexo) : null, citada);
     setTexto("");
     setArquivo(null);
+    onCancelarResposta?.();
     focar();
-    void correr(id, anexo ? postarArquivo(contato, anexo, conteudo) : postarJson({ contato, texto: conteudo }));
+    void correr(id, anexo ? postarArquivo(contato, anexo, conteudo) : postarJson({ contato, texto: conteudo, ...(citada ? { respondendo: citada.wamid } : {}) }));
   }
 
   async function enviarGravacao() {
@@ -320,6 +345,22 @@ export function Composer({
         {gravando ? <FaixaDeGravacao gravador={gravador} onEnviar={() => void enviarGravacao()} arrasteRef={faixa} /> : null}
       </Recolher>
 
+      <Recolher aberto={!!respondendo && !gravando}>
+        {respondendo ? (
+          <div className="mx-3 mt-2 flex items-start gap-2 rounded-lg border-l-[3px] border-[var(--accent)] bg-surface-secondary px-2.5 py-1.5">
+            <span className="min-w-0 flex-1">
+              <span className="block text-[11.5px] font-semibold text-[var(--accent)]">
+                Replying to {respondendo.direcao === "saida" ? (respondendo.quem ?? "You") : (respondendo.autor?.nome ?? nome)}
+              </span>
+              <span className="line-clamp-2 text-[12px] text-text-secondary">{respondendo.texto ?? `[${respondendo.tipo}]`}</span>
+            </span>
+            <button type="button" onClick={onCancelarResposta} className="shrink-0 text-text-tertiary hover:text-text-primary" aria-label="Cancel reply">
+              <X size={14} />
+            </button>
+          </div>
+        ) : null}
+      </Recolher>
+
       <Recolher aberto={!!arquivo && !gravando}>
         {arquivo ? (
           <div className="cmp-anexo">
@@ -348,6 +389,11 @@ export function Composer({
           escolher(f);
         }}
         onKeyDown={(e) => {
+          if (e.key === "Escape" && respondendo && busca === null) {
+            e.preventDefault();
+            onCancelarResposta?.();
+            return;
+          }
           if (busca !== null && salvas.length) {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();

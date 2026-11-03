@@ -58,6 +58,8 @@ import {
   MessageSquarePlus,
   Pin,
   PinOff,
+  Reply,
+  Smile,
   type LucideIcon,
 } from "lucide-react";
 import { guardarPrefill, type TipoDoPrefill } from "@/lib/inbox/prefill";
@@ -325,6 +327,9 @@ function AvatarDeQuemMandou({ m }: { m: MensagemDaCaixa }) {
   );
 }
 
+/** As reações de um clique, as mesmas do WhatsApp. */
+const REACOES_RAPIDAS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
 const Titulo = ({ children, acao }: { children: React.ReactNode; acao?: React.ReactNode }) => (
   // A linha em cima separa cada grupo da lateral, como no VOS.
   <p className="mx-1 mt-3 flex items-center border-t border-border-light px-1.5 pb-1.5 pt-3.5 text-[12.5px] font-medium text-text-tertiary">
@@ -391,6 +396,12 @@ export function CaixaAtendimento({
   const [apagadas, setApagadas] = useState<Set<string>>(new Set());
   /** Mensagens que acabaram de sair daqui: aparecem na hora, antes do servidor confirmar. */
   const [pendentes, setPendentes] = useState<Record<string, MensagemDaCaixa[]>>({});
+  /** Reply escolhido no balão; vale só na conversa em que foi escolhido. */
+  const [respondendo, setRespondendo] = useState<{ contato: string; m: MensagemDaCaixa } | null>(null);
+  /** O balão com o seletor de reação aberto. */
+  const [reagindo, setReagindo] = useState<string | null>(null);
+  /** A nossa reação mudada aqui, até o servidor trazer a linha (null = tirada). */
+  const [minhaReacao, setMinhaReacao] = useState<Record<string, string | null>>({});
 
   const conversas = useMemo(
     () => doServidor.map((c) => (local[c.contato] ? ({ ...c, ...local[c.contato] } as ConversaDaCaixa) : c)),
@@ -419,6 +430,105 @@ export function CaixaAtendimento({
     return () => clearInterval(t);
   }, [router]);
 
+
+  // Clique fora do seletor de reação fecha.
+  useEffect(() => {
+    if (!reagindo) return;
+    const fechar = (e: MouseEvent) => {
+      if (e.composedPath().some((el) => el instanceof HTMLElement && el.dataset.reacoes !== undefined)) return;
+      setReagindo(null);
+    };
+    document.addEventListener("mousedown", fechar);
+    return () => document.removeEventListener("mousedown", fechar);
+  }, [reagindo]);
+
+  /** As reações do balão, com a nossa trocada pelo que acabou de ser clicado. */
+  const reacoesDe = (m: MensagemDaCaixa) => {
+    const base = m.reacoes ?? [];
+    if (!(m.id in minhaReacao)) return base;
+    const nova = minhaReacao[m.id];
+    return [...base.filter((r) => !r.deNos), ...(nova ? [{ emoji: nova, deNos: true, quem: "You" }] : [])];
+  };
+
+  async function reagir(contato: string, m: MensagemDaCaixa, emoji: string) {
+    setReagindo(null);
+    if (!m.wamid) return;
+    // O mesmo emoji de novo tira a reação, como no celular.
+    const novo = reacoesDe(m).find((r) => r.deNos)?.emoji === emoji ? "" : emoji;
+    setMinhaReacao((p) => ({ ...p, [m.id]: novo || null }));
+    try {
+      const res = await fetch("/api/inbox/reagir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contato, wamid: m.wamid, emoji: novo }) });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? `Failed (${res.status})`);
+      router.refresh();
+    } catch (e) {
+      setMinhaReacao((p) => {
+        const resto = { ...p };
+        delete resto[m.id];
+        return resto;
+      });
+      toast.error(e instanceof Error ? e.message : "Could not react");
+    }
+  }
+
+  /** React e Reply ao lado do balão, no hover, como no WhatsApp Web. */
+  function acoesDoBalao(m: MensagemDaCaixa, contato: string) {
+    if (!m.wamid || m.id.startsWith("tmp-") || gaveta?.k === "criar") return null;
+    const aberto = reagindo === m.id;
+    return (
+      <span
+        data-reacoes
+        className={cn(
+          "relative flex shrink-0 items-center gap-0.5 self-center opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100",
+          aberto && "opacity-100",
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setReagindo(aberto ? null : m.id)}
+          className="grid h-7 w-7 place-items-center rounded-full text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary"
+          aria-label="React"
+          title="React"
+        >
+          <Smile className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setRespondendo({ contato, m })}
+          className="grid h-7 w-7 place-items-center rounded-full text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary"
+          aria-label="Reply"
+          title="Reply"
+        >
+          <Reply className="h-4 w-4" />
+        </button>
+        <AnimatePresence>
+          {aberto ? (
+            <mo.span
+              {...flutuante("top")}
+              className={cn(
+                "absolute bottom-full z-20 mb-1 flex items-center gap-0.5 rounded-full border border-border-light bg-card px-1.5 py-1 shadow-lg",
+                m.direcao === "entrada" ? "left-0" : "right-0",
+              )}
+            >
+              {REACOES_RAPIDAS.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => void reagir(contato, m, e)}
+                  className={cn(
+                    "grid h-8 w-8 place-items-center rounded-full text-[18px] transition-transform hover:scale-125 hover:bg-surface-secondary",
+                    reacoesDe(m).some((r) => r.deNos && r.emoji === e) && "bg-surface-tertiary",
+                  )}
+                >
+                  {e}
+                </button>
+              ))}
+            </mo.span>
+          ) : null}
+        </AnimatePresence>
+      </span>
+    );
+  }
 
   useEffect(() => {
     if (!menu) return;
@@ -1577,6 +1687,7 @@ export function CaixaAtendimento({
                 return (
                   <mo.div
                     key={m.id}
+                    id={`msg-${m.id}`}
                     layout="position"
                     initial={{ opacity: 0, y: 10, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1588,16 +1699,17 @@ export function CaixaAtendimento({
                         <span className="rounded-full bg-surface-tertiary px-3 py-1 text-[11.5px] font-medium text-text-secondary">{diaDaMensagemOuHoje(m.criadoEm)}</span>
                       </div>
                     ) : null}
-                    <div className={cn("flex items-end gap-2", m.direcao === "entrada" ? "justify-start" : "justify-end")}>
+                    <div className={cn("group/msg flex items-end gap-2", m.direcao === "entrada" ? "justify-start" : "justify-end", reacoesDe(m).length && "pb-3")}>
                       {m.direcao === "entrada" ? (
                         <span className={cn(antes?.direcao === "entrada" && !novoDia && todas[i + 1]?.direcao === "entrada" ? "invisible" : "")}>
                           <Avatar c={aberta} canal />
                         </span>
                       ) : null}
+                      {m.direcao === "saida" ? acoesDoBalao(m, aberta.contato) : null}
                       <div
                         onClick={() => marcar(m)}
                         className={cn(
-                          "max-w-[68%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-snug shadow-[0_1px_0_rgba(10,10,31,0.04)]",
+                          "relative max-w-[68%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-snug shadow-[0_1px_0_rgba(10,10,31,0.04)]",
                           m.direcao === "entrada"
                             ? "rounded-bl-md border border-border-light bg-card text-text-primary"
                             : "rounded-br-md bg-primary text-[var(--on-brand)]",
@@ -1611,6 +1723,24 @@ export function CaixaAtendimento({
                             {nomeDoAutor(m.autor)}
                             {m.autor.numero && m.autor.nome ? <span className="ml-1.5 font-normal text-text-tertiary">+{m.autor.numero}</span> : null}
                           </p>
+                        ) : null}
+                        {m.citada ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              document.getElementById(`msg-${m.citada!.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                            }}
+                            className={cn(
+                              "mb-1 block w-full rounded-lg border-l-[3px] px-2 py-1 text-left text-[12px]",
+                              m.direcao === "saida" ? "border-white/60 bg-white/15" : "border-[var(--accent)] bg-surface-secondary",
+                            )}
+                          >
+                            <span className={cn("block text-[11px] font-semibold", m.direcao === "entrada" && "text-[var(--accent)]")}>
+                              {m.citada.deNos ? (m.citada.quem ?? "You") : (m.citada.quem ?? aberta.nome)}
+                            </span>
+                            <span className="line-clamp-2 opacity-80">{m.citada.texto}</span>
+                          </button>
                         ) : null}
                         <Midia m={m} />
                         <div className="flex flex-wrap items-end justify-end gap-x-2.5">
@@ -1628,7 +1758,20 @@ export function CaixaAtendimento({
                         {m.status === "failed" ? (
                           <p className="mt-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px] font-medium text-[#ffd2c2]">Not delivered{m.erro ? `: ${m.erro}` : ""}</p>
                         ) : null}
+                        {reacoesDe(m).length ? (
+                          <span
+                            title={reacoesDe(m).map((r) => `${r.emoji} ${r.deNos ? (r.quem ?? "You") : (r.quem ?? aberta.nome)}`).join("\n")}
+                            className={cn(
+                              "absolute -bottom-3.5 flex items-center gap-0.5 rounded-full border border-border-light bg-card px-1.5 py-px text-[12px] leading-5 text-text-secondary shadow-sm",
+                              m.direcao === "entrada" ? "left-3" : "right-3",
+                            )}
+                          >
+                            {[...new Set(reacoesDe(m).map((r) => r.emoji))].join("")}
+                            {reacoesDe(m).length > 1 ? <span className="ml-0.5 text-[10.5px] tabular-nums">{reacoesDe(m).length}</span> : null}
+                          </span>
+                        ) : null}
                       </div>
+                      {m.direcao === "entrada" ? acoesDoBalao(m, aberta.contato) : null}
                       {m.direcao === "saida" ? (
                         // Em sequência da mesma pessoa, o avatar fica só no último balão.
                         <span className={cn(todas[i + 1]?.direcao === "saida" && todas[i + 1]?.quem === m.quem && todas[i + 1]?.origem === m.origem && new Date(todas[i + 1].criadoEm).toDateString() === new Date(m.criadoEm).toDateString() ? "invisible" : "")}>
@@ -1644,6 +1787,8 @@ export function CaixaAtendimento({
           </div>
 
           <Composer
+            respondendo={respondendo?.contato === aberta.contato ? respondendo.m : null}
+            onCancelarResposta={() => setRespondendo(null)}
             contato={aberta.contato}
             nome={aberta.nome}
             tipo={aberta.tipo}

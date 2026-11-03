@@ -52,6 +52,8 @@ const TIPO: Record<string, string> = {
   document: "document", documentmessage: "document",
   sticker: "sticker", stickermessage: "sticker",
   location: "location", locationmessage: "location",
+  // Reação não vira balão: a tela pendura o emoji na mensagem que `bruto.reaction` aponta.
+  reaction: "reaction", reactionmessage: "reaction",
 };
 
 const ROTULO: Record<string, string> = {
@@ -227,13 +229,14 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
 }
 
 /** Manda texto pelo 7983 via uazapi. Devolve o id que o webhook também usa. */
-export async function enviarPelaUazapi(para: string, texto: string): Promise<{ wamid: string; corpo: Record<string, unknown> }> {
+export async function enviarPelaUazapi(para: string, texto: string, respondendo?: string): Promise<{ wamid: string; corpo: Record<string, unknown> }> {
   const token = process.env.UAZAPI_OPS_TOKEN?.trim();
   if (!token) throw new EnvioOperacaoError("UAZAPI_OPS_TOKEN is not set");
   const numero = para.replace(/\D/g, "");
   if (numero.length < 11) throw new EnvioOperacaoError(`Invalid WhatsApp number: ${para}`);
 
-  const corpo = { number: destinoNaUazapi(numero), text: texto };
+  // `replyid` cita a mensagem respondida, como o "Reply" do celular.
+  const corpo = { number: destinoNaUazapi(numero), text: texto, ...(respondendo ? { replyid: respondendo } : {}) };
   const res = await fetch(`${baseUrl()}/send/text`, {
     method: "POST",
     headers: { token, "Content-Type": "application/json", Accept: "application/json" },
@@ -245,6 +248,21 @@ export async function enviarPelaUazapi(para: string, texto: string): Promise<{ w
     throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
   }
   return { wamid, corpo };
+}
+
+/** Reage a uma mensagem pelo 7983. Emoji vazio tira a reação. */
+export async function reagirPelaUazapi(para: string, wamid: string, emoji: string): Promise<{ wamid: string | null }> {
+  const token = process.env.UAZAPI_OPS_TOKEN?.trim();
+  if (!token) throw new EnvioOperacaoError("UAZAPI_OPS_TOKEN is not set");
+  const numero = para.replace(/\D/g, "");
+  const res = await fetch(`${baseUrl()}/message/react`, {
+    method: "POST",
+    headers: { token, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ number: destinoNaUazapi(numero), text: emoji, id: wamid }),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
+  return { wamid: str(json.messageid) ?? str(json.messageId) ?? str(rec(json.key)?.id) ?? str(json.id) };
 }
 
 /**
