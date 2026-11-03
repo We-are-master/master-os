@@ -104,10 +104,10 @@ type Gaveta = { k: "criar"; tipo: TipoDoPrefill } | { k: "oferecer" } | null;
 
 const JANELA_MS = 24 * 60 * 60 * 1000;
 const CHAVE_ETAPAS = "fixfy:inbox:etapas";
-const SO_ROTULO = new Set(["Photo", "Voice note", "Video", "Audio", "Sticker"]);
+export const SO_ROTULO = new Set(["Photo", "Voice note", "Video", "Audio", "Sticker"]);
 
 /** "10h", "2d", "12:54" hoje: o tempo da lista, como no VOS. */
-const quandoNaLista = (iso: string, agora: number) => {
+export const quandoNaLista = (iso: string, agora: number) => {
   const min = Math.max(0, Math.round((agora - new Date(iso).getTime()) / 60_000));
   if (min < 1) return "now";
   if (min < 60) return `${min}m`;
@@ -116,7 +116,7 @@ const quandoNaLista = (iso: string, agora: number) => {
   const d = Math.floor(min / 1440);
   return d < 1 ? `${Math.round(min / 60)}h` : d < 7 ? `${d}d` : new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 };
-const diaDaMensagemOuHoje = (iso: string) => {
+export const diaDaMensagemOuHoje = (iso: string) => {
   const dia = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Europe/London" });
   const hoje = new Date();
   const ontem = new Date(hoje.getTime() - 86_400_000);
@@ -140,7 +140,7 @@ const naoRespondidas = (c: ConversaDaCaixa) => {
   return n;
 };
 /** O contador da lista: entradas depois da última leitura (ou da nossa última resposta). "Mark as unread" vale 1. */
-const naoLidas = (c: ConversaDaCaixa) => {
+export const naoLidas = (c: ConversaDaCaixa) => {
   let n = 0;
   for (let i = c.mensagens.length - 1; i >= 0; i--) {
     const m = c.mensagens[i];
@@ -155,7 +155,7 @@ const resolvida = (c: ConversaDaCaixa) => Boolean(c.resolvidaEm && (!c.ultimaEnt
 const arquivada = (c: ConversaDaCaixa) => Boolean(c.arquivadaEm);
 /** Excluída some até o contato escrever de novo (como no WhatsApp). */
 const excluida = (c: ConversaDaCaixa) => Boolean(c.excluidaEm && (!c.ultimaEntradaEm || c.ultimaEntradaEm <= c.excluidaEm));
-const fora = (c: ConversaDaCaixa) => arquivada(c) || excluida(c);
+export const fora = (c: ConversaDaCaixa) => arquivada(c) || excluida(c);
 const janelaAberta = (c: ConversaDaCaixa) => Boolean(c.ultimaEntradaEm && Date.now() - new Date(c.ultimaEntradaEm).getTime() < JANELA_MS);
 
 function passa(c: ConversaDaCaixa, v: Visao): boolean {
@@ -286,18 +286,21 @@ export function CaixaAtendimento({
   paraOferecer,
   semJanela = false,
   estadoPronto = true,
+  inicial = null,
 }: {
   conversas: ConversaDaCaixa[];
   tags: TagDaCaixa[];
   paraOferecer: JobParaOferecer[];
   semJanela?: boolean;
   estadoPronto?: boolean;
+  /** /inbox?c=<número>: abre direto nessa conversa (vem do painel lateral). */
+  inicial?: string | null;
 }) {
   const router = useRouter();
   const [visao, setVisao] = useState<Visao>({ k: "abertas" });
   const [tipo, setTipo] = useState<Tipo>("todas");
   const [periodo, setPeriodo] = useState<Periodo>("60d");
-  const [abertaId, setAbertaId] = useState<string | null>(null);
+  const [abertaId, setAbertaId] = useState<string | null>(inicial);
   const [buscaAberta, setBuscaAberta] = useState(false);
   /** O menu do botão direito numa linha da lista. */
   const [menuDaLinha, setMenuDaLinha] = useState<{ contato: string; x: number; y: number } | null>(null);
@@ -1429,7 +1432,7 @@ export function CaixaAtendimento({
  * já traz a mesma mensagem (mesmo tipo, e mesmo texto se for texto); as que
  * falharam ficam, para a pessoa ver que não foi.
  */
-function comPendentes(doServidor: MensagemDaCaixa[], pendentes: MensagemDaCaixa[] | undefined): MensagemDaCaixa[] {
+export function comPendentes(doServidor: MensagemDaCaixa[], pendentes: MensagemDaCaixa[] | undefined): MensagemDaCaixa[] {
   if (!pendentes?.length) return doServidor;
   const vivas = pendentes.filter(
     (p) =>
@@ -1446,7 +1449,7 @@ function comPendentes(doServidor: MensagemDaCaixa[], pendentes: MensagemDaCaixa[
 }
 
 /** O estado da mensagem que saiu, em ícone: relógio, um tique, dois, dois azuis, alerta. */
-function Tique({ status }: { status: string | null }) {
+export function Tique({ status }: { status: string | null }) {
   if (status === "sending") return <Clock3 className="h-3 w-3" aria-label="Sending" />;
   if (status === "failed") return <CircleAlert className="h-3 w-3 text-[#ffb59a]" aria-label="Failed" />;
   if (status === "read") return <CheckCheck className="h-3.5 w-3.5 text-sky-300" aria-label="Read" />;
@@ -1454,7 +1457,7 @@ function Tique({ status }: { status: string | null }) {
   return <Check className="h-3.5 w-3.5" aria-label="Sent" />;
 }
 
-function Midia({ m }: { m: MensagemDaCaixa }) {
+export function Midia({ m }: { m: MensagemDaCaixa }) {
   if (!m.midiaUrl) return null;
   if (m.tipo === "image" || m.tipo === "sticker") {
     return (

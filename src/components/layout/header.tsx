@@ -1,5 +1,6 @@
 "use client";
 
+import { AtendimentoLateral } from "@/app/(dashboard)/inbox/painel-lateral";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { useProfile } from "@/hooks/use-profile";
@@ -503,6 +504,7 @@ export function Header() {
         >
           <History className="h-[15px] w-[15px]" />
         </Link>
+        <AtendimentoLateral />
         <NotificationsMenu />
         <div className="mx-0.5 hidden h-6 w-px bg-border sm:mx-1 sm:block" />
         <div className="flex items-center gap-2.5 pl-1">
