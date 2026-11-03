@@ -388,7 +388,7 @@ export function CaixaAtendimento({
     setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], resolvidaEm: fechar ? new Date().toISOString() : null } }));
     try {
       await postarConversa({ contato: c.contato, acao: fechar ? "resolver" : "reabrir" });
-      toast.success(fechar ? "Resolved. It reopens when they write again." : "Reopened");
+      toast.success(fechar ? "Conversation resolved" : "Reopened");
       if (fechar) {
         // Vai para a próxima aberta da lista, como no VOS.
         const proxima = lista.find((x) => x.contato !== c.contato && !resolvida(x));
@@ -419,7 +419,7 @@ export function CaixaAtendimento({
     try {
       await postarConversa({ contato: c.contato, acao });
       toast.success(
-        acao === "arquivar" ? "Archived. Find it under Archived." : acao === "excluir" ? "Deleted. It comes back if they write again." : "Back in the inbox",
+        acao === "arquivar" ? "Conversation archived" : acao === "excluir" ? "Conversation deleted" : "Conversation restored",
       );
       router.refresh();
     } catch (e) {
@@ -552,11 +552,11 @@ export function CaixaAtendimento({
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
         <p className="px-2.5 pb-2 pt-1.5 text-[17px] font-bold tracking-tight text-text-primary">Inbox</p>
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "abertas" }) && tipo === "todas"} onClick={() => irPara({ k: "abertas" })} icone={Inbox} rotulo="Open" n={contagem.abertas} />
-        <ItemDaLateral ativo={mesmaVisao(visao, { k: "esperando" })} onClick={() => irPara({ k: "esperando" })} icone={Clock} rotulo="Awaiting reply" n={contagem.esperando} />
-        <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="Job today" n={contagem.hoje} />
+        <ItemDaLateral ativo={mesmaVisao(visao, { k: "esperando" })} onClick={() => irPara({ k: "esperando" })} icone={Clock} rotulo="Needs reply" n={contagem.esperando} />
+        <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="On site today" n={contagem.hoje} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "todas"} onClick={() => irPara({ k: "todas" })} icone={Layers} rotulo="All" n={contagem.todas} />
 
-        <Titulo>Who</Titulo>
+        <Titulo>Contacts</Titulo>
         <ItemDaLateral
           ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "parceiro"}
           onClick={() => {
@@ -584,7 +584,7 @@ export function CaixaAtendimento({
             setTipo("outro");
           }}
           icone={UserRound}
-          rotulo="Not on file"
+          rotulo="Unknown"
           n={contagem.outro}
         />
 
@@ -638,7 +638,7 @@ export function CaixaAtendimento({
             </button>
           }
         >
-          Stages
+          Pipeline
         </Titulo>
         {verEtapas ? (
           <>
@@ -682,7 +682,7 @@ export function CaixaAtendimento({
         <div className="flex items-end gap-4 border-b border-border-light px-4 pt-3">
           {(
             [
-              ["todas", "Conversations"],
+              ["todas", "All"],
               ["parceiro", "Partners"],
               ["cliente", "Clients"],
             ] as const
@@ -711,7 +711,6 @@ export function CaixaAtendimento({
           </div>
         </div>
         <div className="flex items-center gap-1 px-4 pb-2 text-[12px] text-text-secondary">
-          <span className="text-text-tertiary">Showing</span>
           <select
             value={periodo}
             onChange={(e) => setPeriodo(e.target.value as Periodo)}
@@ -724,11 +723,11 @@ export function CaixaAtendimento({
               </option>
             ))}
           </select>
-          <span className="text-text-tertiary">· most recent</span>
+          <span className="text-text-tertiary">· Newest first</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto border-t border-border-light">
           {lista.length === 0 ? (
-            <p className="px-4 py-6 text-xs text-text-tertiary">{conversas.length === 0 ? "No messages yet. New messages to +44 7983 182332 land here." : "Nothing in this view."}</p>
+            <p className="px-4 py-6 text-xs text-text-tertiary">{conversas.length === 0 ? "No messages yet. New messages to +44 7983 182332 land here." : "No conversations here."}</p>
           ) : null}
           {lista.map((c) => {
             const ultima = c.mensagens[c.mensagens.length - 1];
@@ -883,7 +882,7 @@ export function CaixaAtendimento({
                       <ItemDoMenu
                         icone={Archive}
                         titulo="Archive"
-                        sub="Stays archived until you restore it"
+                        sub="Kept until you restore it"
                         onClick={() => {
                           setMenu(null);
                           void mover(aberta, "arquivar");
@@ -892,7 +891,7 @@ export function CaixaAtendimento({
                       <ItemDoMenu
                         icone={Trash2}
                         titulo="Delete"
-                        sub="Back when they write. Messages kept"
+                        sub="Returns on their next message"
                         onClick={() => {
                           setMenu(null);
                           if (confirm(`Delete the conversation with ${aberta.nome} from the inbox? Messages are kept and it comes back if they write again.`))
@@ -901,7 +900,7 @@ export function CaixaAtendimento({
                       />
                     </>
                   ) : null}
-                  {fora(aberta) ? <p className="px-2 py-1.5 text-xs text-text-tertiary">Use Restore to bring it back first.</p> : null}
+                  {fora(aberta) ? <p className="px-2 py-1.5 text-xs text-text-tertiary">Restore it first to archive or delete.</p> : null}
                   {!estadoPronto ? <p className="px-2 py-1.5 text-xs text-text-tertiary">Needs migration 354.</p> : null}
                 </div>
               ) : null}
@@ -955,7 +954,7 @@ export function CaixaAtendimento({
                     <ItemDoMenu
                       icone={resolvida(aberta) ? RotateCcw : CheckCheck}
                       titulo={resolvida(aberta) ? "Reopen" : "Resolve"}
-                      sub="Reopens by itself when they write"
+                      sub="Reopens on their next message"
                       onClick={() => {
                         setMenu(null);
                         void resolver(aberta, !resolvida(aberta));
@@ -1073,7 +1072,7 @@ export function CaixaAtendimento({
             contato={aberta.contato}
             nome={aberta.nome}
             tipo={aberta.tipo}
-            canal={`${aberta.tipo === "parceiro" ? "Partners" : aberta.tipo === "cliente" ? "Clients" : "Operations"} · 7983${semJanela ? " via uazapi" : ""}`}
+            canal="Operations · +44 7983 182332"
             janelaAberta={janelaAberta(aberta)}
             semJanela={semJanela}
             onEnviado={() => router.refresh()}
@@ -1087,7 +1086,7 @@ export function CaixaAtendimento({
           />
         </section>
       ) : (
-        <section className="flex items-center justify-center bg-surface-secondary/50 p-6 text-center text-sm text-text-tertiary">Pick a conversation.</section>
+        <section className="flex items-center justify-center bg-surface-secondary/50 p-6 text-center text-sm text-text-tertiary">Select a conversation</section>
       )}
 
       {/* Quem está falando, ou a gaveta por cima. */}

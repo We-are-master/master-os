@@ -210,7 +210,7 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
       <span className="mt-0.5 flex flex-wrap gap-x-3 text-[12px] text-text-tertiary">
         {comData ? <span>{dia(j.data)}</span> : null}
         {janela ? <span>{janela}</span> : null}
-        <span>{j.origem ?? "Fixfy direct"}</span>
+        <span>{j.origem ?? "Direct"}</span>
         {j.ticket && /^\d+$/.test(j.ticket) ? <span>Ticket #{j.ticket}</span> : null}
       </span>
     </Link>
@@ -262,7 +262,7 @@ function chipsDeCompliance(docs: DocumentoDoParceiro[], agora: number): { texto:
   }
   const pendentes = vivos.filter((d) => d.status === "pending").length;
   if (pendentes) chips.push({ texto: `${pendentes} pending review`, tom: "amber" });
-  return chips.length ? chips : [{ texto: "Documents ok", tom: "green" }];
+  return chips.length ? chips : [{ texto: "Documents valid", tom: "green" }];
 }
 
 function Arquivos({ c }: { c: ConversaDaCaixa }) {
@@ -389,7 +389,7 @@ function PainelDoParceiro({ c, online, onOferecer }: { c: ConversaDaCaixa; onlin
                       {p.semRelatorio.length > 3 ? "..." : ""})
                     </span>
                   ) : (
-                    "All in"
+                    "Up to date"
                   )
                 }
               />
@@ -576,7 +576,7 @@ function PainelDoCliente({ c, online, onCriar }: { c: ConversaDaCaixa; online: b
               <Campo k="Source" v={[origem, "WhatsApp"].filter(Boolean).join(" · ")} />
             </Campos>
           </Secao>
-          <Secao titulo="Zendesk">{tickets[0] ? cartaoDeTicket(tickets[0]) : <Vazio texto="No ticket yet. The job form links one." />}</Secao>
+          <Secao titulo="Zendesk">{tickets[0] ? cartaoDeTicket(tickets[0]) : <Vazio texto="No Zendesk ticket linked yet." />}</Secao>
           <Secao titulo="Jobs" acao={c.jobs.length > 2 ? <button type="button" onClick={() => setAba("jobs")} className="text-xs font-medium text-[var(--info-ink)] hover:underline">All {c.jobs.length}</button> : null}>
             <div className="space-y-2">{c.jobs.length ? c.jobs.slice(0, 2).map((j) => <CartaoDeJob key={j.id} j={j} comData />) : <Vazio texto="No jobs yet. Create one from this chat." />}</div>
           </Secao>
@@ -785,7 +785,7 @@ export function OfertaDeJob({
               try {
                 await avisarAqui({ ...j, porHora }, Number.isFinite(custo) && custo > 0 ? custo : null);
               } catch (e) {
-                toast.error(e instanceof Error ? `Assigned, but the WhatsApp failed: ${e.message}` : "Assigned, but the WhatsApp failed");
+                toast.error(e instanceof Error ? `Assigned, but the WhatsApp failed: ${e.message}` : "Job assigned. The WhatsApp message failed");
               }
             }
             toast.success(`${j.ref} assigned to ${primeiro}`);
