@@ -50,6 +50,8 @@ import {
   Users,
   Wrench,
   X,
+  MapPin,
+  TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import { SearchInput } from "@/components/ui/input";
@@ -59,7 +61,7 @@ import "./inbox.css";
 import { Composer } from "./composer";
 import { PlayerDeAudio } from "./player-de-audio";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
-import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
 import { Acao, Avatar, Chip, ChipDaEtapa, ChipDoTipo, PONTO, TONS, iconeDaEtapa, presencaAgora, tomValido, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
@@ -168,6 +170,37 @@ function jobDaConversa(c: ConversaDaCaixa): { id: string; ref: string } | null {
   return c.tipo === "parceiro" ? (c.jobs[0] ?? null) : null;
 }
 const mesmaVisao = (a: Visao, b: Visao) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Trabalho terminado: a etiqueta de chegada some. */
+const JOB_FEITO = new Set(["final_check", "awaiting_payment", "completed", "cancelled", "deleted"]);
+const MIN = 60_000;
+const atraso = (ms: number) => {
+  const m = Math.max(1, Math.round(ms / MIN));
+  if (m < 60) return `+${m}m`;
+  if (m >= 120) return "+2h+";
+  return `+1h${String(m - 60).padStart(2, "0")}`;
+};
+
+/**
+ * A chegada do job de hoje, na lista: muda sozinha com o relógio. At risk nos
+ * últimos 30 min da janela sem começar; Late quando a janela fechou (sem fim de
+ * janela: 15 e 30 min depois do início).
+ */
+function chegada(j: JobDaCaixa, agora: number): { tom: Tom; icone: LucideIcon; texto: string; title: string; peso: number } | null {
+  if (JOB_FEITO.has(j.status)) return null;
+  const janela = j.inicio ? `${horaCurta(j.inicio)}${j.fim ? `–${horaCurta(j.fim)}` : ""}` : "";
+  if (j.status === "in_progress") return { tom: "green", icone: MapPin, texto: "On site", title: "Partner on site", peso: 0 };
+  const ini = j.inicio ? new Date(j.inicio).getTime() : null;
+  const fim = j.fim ? new Date(j.fim).getTime() : null;
+  const limite = fim ?? (ini !== null ? ini + 30 * MIN : null);
+  const risco = fim !== null ? fim - 30 * MIN : ini !== null ? ini + 15 * MIN : null;
+  if (j.status === "late" || (limite !== null && agora >= limite)) {
+    const passou = limite !== null && agora > limite ? agora - limite : 0;
+    return { tom: "red", icone: TriangleAlert, texto: passou ? `Late ${atraso(passou)}` : "Late", title: `Late · not started${janela ? `, window ${janela}` : ""}`, peso: 2 };
+  }
+  if (risco !== null && agora >= risco) return { tom: "amber", icone: TriangleAlert, texto: `At risk ${janela}`, title: `At risk · window closes ${j.fim ? horaCurta(j.fim) : "soon"}, not started`, peso: 1 };
+  return { tom: "blue", icone: CalendarClock, texto: `Today${janela ? ` ${janela}` : ""}`, title: `Arrival window today${janela ? ` ${janela}` : ""}`, peso: 0 };
+}
 
 async function postarConversa(corpo: Record<string, unknown>) {
   const res = await fetch("/api/inbox/conversa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });
@@ -312,7 +345,7 @@ export function CaixaAtendimento({
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase();
     const qDig = q.replace(/\D/g, "");
-    return conversas.filter((c) => {
+    const base = conversas.filter((c) => {
       if (!passa(c, visao)) return false;
       if (!noPeriodo(c, periodo, agora)) return false;
       if (tipo !== "todas" && c.tipo !== tipo) return false;
@@ -322,6 +355,10 @@ export function CaixaAtendimento({
         (v) => v.toLowerCase().includes(q),
       );
     });
+    if (visao.k !== "hoje") return base;
+    // Em On site today, quem está atrasado ou em risco sobe.
+    const peso = (c: ConversaDaCaixa) => (c.jobHoje ? (chegada(c.jobHoje, agora)?.peso ?? 0) : 0);
+    return [...base].sort((a, b) => peso(b) - peso(a));
   }, [conversas, visao, tipo, busca, periodo, agora]);
 
   const aberta = conversas.find((c) => c.contato === abertaId) ?? lista[0] ?? null;
@@ -778,11 +815,14 @@ export function CaixaAtendimento({
                   <span className="mt-1.5 flex flex-wrap items-center gap-1">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
-                    {c.jobHoje ? (
-                      <Chip icone={CalendarClock} tom="blue">
-                        Today{c.jobHoje.inicio ? ` ${horaCurta(c.jobHoje.inicio)}` : ""}
-                      </Chip>
-                    ) : null}
+                    {(() => {
+                      const ch = c.jobHoje ? chegada(c.jobHoje, agora) : null;
+                      return ch ? (
+                        <Chip icone={ch.icone} tom={ch.tom} title={ch.title}>
+                          {ch.texto}
+                        </Chip>
+                      ) : null;
+                    })()}
                     {c.tags.slice(0, 2).map((t) => (
                       <Chip key={t} icone={Tag} tom={corDaTag(t)}>
                         {t}
@@ -806,20 +846,24 @@ export function CaixaAtendimento({
                 <span className="truncate">{aberta.nome}</span>
                 <ChipDoTipo c={aberta} />
               </p>
-              <p className="truncate text-xs text-text-tertiary">
+              {/* Só um estado: online agora, senão o último sinal (visto ou mensagem). O número fica no painel. */}
+              <p className="truncate text-xs text-text-tertiary" title={`+${aberta.contato}`}>
                 {presenca === "digitando" ? (
-                  <span className="text-emerald-600">typing...</span>
+                  <span className="font-medium text-emerald-600">Typing...</span>
                 ) : presenca === "gravando" ? (
-                  <span className="text-emerald-600">recording audio...</span>
+                  <span className="font-medium text-emerald-600">Recording audio...</span>
                 ) : presenca === "online" ? (
-                  <span className="text-emerald-600">online</span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-emerald-600">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                    Online
+                  </span>
+                ) : aberta.presencaEm && (!aberta.ultimaEntradaEm || aberta.presencaEm > aberta.ultimaEntradaEm) ? (
+                  `Last seen ${haQuanto(aberta.presencaEm, agora)}`
                 ) : aberta.ultimaEntradaEm ? (
-                  `last message ${haQuanto(aberta.ultimaEntradaEm, agora)}`
+                  `Last message ${haQuanto(aberta.ultimaEntradaEm, agora)}`
                 ) : (
-                  "no reply yet"
+                  "No reply yet"
                 )}
-                {" · "}+{aberta.contato}
-                {aberta.perfil && aberta.perfil !== aberta.nome ? ` · WhatsApp: ${aberta.perfil}` : ""}
               </p>
             </div>
             <div className="relative flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>

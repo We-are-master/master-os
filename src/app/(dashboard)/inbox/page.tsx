@@ -155,7 +155,7 @@ export default async function InboxPage() {
 
   const [{ data: parceiros }, { data: jobsParceiros }, { data: jobsClientes }, { data: quotes }, { data: contas }, { data: semDono }] = await Promise.all([
     idsParceiros.length
-      ? sb.from("partners").select("id, contact_name, company_name, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes").in("id", idsParceiros)
+      ? sb.from("partners").select("id, contact_name, company_name, avatar_url, trade, email, status, rating, jobs_completed, coverage_base_postcode, included_postcodes").in("id", idsParceiros)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     idsParceiros.length
       ? sb
@@ -174,7 +174,7 @@ export default async function InboxPage() {
     idsClientes.length
       ? sb.from("quotes").select("id, reference, title, client_id, status, total_value, created_at").in("client_id", idsClientes).order("created_at", { ascending: false }).limit(300)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    idsContas.length ? sb.from("accounts").select("id, company_name").in("id", idsContas) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    idsContas.length ? sb.from("accounts").select("id, company_name, logo_url").in("id", idsContas) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     // Jobs sem parceiro, para o "Offer job" de uma conversa de parceiro.
     idsParceiros.length
       ? sb
@@ -227,6 +227,7 @@ export default async function InboxPage() {
 
   const parceiroPorId = new Map((parceiros ?? []).map((p) => [p.id as string, p]));
   const nomeDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.company_name as string | null) ?? "Account"]));
+  const logoDaConta = new Map((contas ?? []).map((a) => [a.id as string, (a.logo_url as string | null) ?? null]));
 
   const conversas: ConversaDaCaixa[] = [...porContato.entries()]
     .map(([contato, mensagens]): ConversaDaCaixa => {
@@ -243,6 +244,7 @@ export default async function InboxPage() {
         tags: (estado?.tags as string[] | null) ?? [],
         presenca: (estado?.presenca as string | null) ?? null,
         presencaEm: (estado?.presenca_em as string | null) ?? null,
+        org: null as ConversaDaCaixa["org"],
       };
 
       const pid = parceiroDoContato.get(contato);
@@ -252,6 +254,7 @@ export default async function InboxPage() {
         return {
           ...base,
           tipo: "parceiro",
+          org: p?.company_name ? { nome: p.company_name as string, logo: (p.avatar_url as string | null) ?? null } : null,
           nome: (p?.contact_name as string | null) || (p?.company_name as string | null) || base.perfil || `+${contato}`,
           parceiro: {
             id: pid,
@@ -318,6 +321,9 @@ export default async function InboxPage() {
       return {
         ...base,
         tipo: jobsDoCliente.length ? "cliente" : "outro",
+        org: c?.source_account_id
+          ? { nome: nomeDaConta.get(c.source_account_id as string) ?? "Account", logo: logoDaConta.get(c.source_account_id as string) ?? null }
+          : null,
         nome: (c?.full_name as string | null) || base.perfil || `+${contato}`,
         parceiro: null,
         cliente: c

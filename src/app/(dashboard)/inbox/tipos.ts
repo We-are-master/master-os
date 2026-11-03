@@ -77,6 +77,8 @@ export type ConversaDaCaixa = {
   tags: string[];
   presenca: string | null;
   presencaEm: string | null;
+  /** A empresa a que o contato pertence (parceiro ou conta): nome e logo. O avatar segue ela. */
+  org: { nome: string; logo: string | null } | null;
   parceiro: {
     id: string;
     empresa: string | null;

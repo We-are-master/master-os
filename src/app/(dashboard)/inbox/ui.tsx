@@ -219,9 +219,16 @@ export function Avatar({
           c.tipo === "parceiro" && "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200",
           c.tipo === "cliente" && "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200",
           c.tipo === "outro" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+          c.org?.logo && "overflow-hidden bg-white ring-1 ring-border-light dark:bg-white",
         )}
+        title={c.org?.nome}
       >
-        {iniciais(c.nome)}
+        {c.org?.logo ? (
+          // eslint-disable-next-line @next/next/no-img-element -- logo de bucket/URL externa, tamanho fixo
+          <img src={c.org.logo} alt={c.org.nome} className="h-full w-full object-contain p-0.5" />
+        ) : (
+          iniciais(c.org?.nome ?? c.nome)
+        )}
       </span>
       {canal ? (
         <span

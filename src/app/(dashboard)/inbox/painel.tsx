@@ -45,13 +45,13 @@ type AbaParceiro = "parceiro" | "jobs" | "selfbill" | "docs" | "arquivos";
 type AbaCliente = "cliente" | "jobs" | "quotes" | "faturas" | "ticket" | "arquivos";
 
 type Periodo = "hoje" | "amanha" | "semana" | "proxima" | "mes" | "todos";
-const PERIODOS: [Periodo, string][] = [
-  ["hoje", "Today"],
-  ["amanha", "Tomorrow"],
-  ["semana", "This week"],
-  ["proxima", "Next week"],
-  ["mes", "This month"],
-  ["todos", "All"],
+const PERIODOS: [Periodo, string, string][] = [
+  ["hoje", "Today", "Today"],
+  ["amanha", "Tomorrow", "Tmrw"],
+  ["semana", "This week", "Week"],
+  ["proxima", "Next week", "Next wk"],
+  ["mes", "This month", "Month"],
+  ["todos", "All", "All"],
 ];
 
 /** Hoje em Londres como AAAA-MM-DD, e somar dias sem fuso no meio. */
@@ -104,21 +104,26 @@ function JobsPorPeriodo({ jobs, vazio, inicial }: { jobs: JobDaCaixa[]; vazio: s
 
   return (
     <div className="px-4 py-3">
-      <div className="mb-3 flex flex-wrap gap-1">
-        {PERIODOS.map(([k, t]) => {
+      {/* Uma linha só: o número em cima, o período embaixo, num trilho cinza. */}
+      <div className="mb-3 grid grid-cols-6 gap-0.5 rounded-lg bg-surface-secondary p-0.5" role="tablist" aria-label="Period">
+        {PERIODOS.map(([k, t, curto]) => {
           const n = doPeriodo(k).length;
+          const on = periodo === k;
           return (
             <button
               key={k}
               type="button"
+              role="tab"
+              aria-selected={on}
+              title={t}
               onClick={() => setPeriodo(k)}
               className={cn(
-                "inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 text-[11.5px] font-medium transition-colors",
-                periodo === k ? "border-transparent bg-primary text-[var(--on-brand)]" : "border-border-light text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+                "flex min-w-0 flex-col items-center rounded-md py-1 transition-colors",
+                on ? "bg-card text-text-primary shadow-sm ring-1 ring-border-light" : "text-text-tertiary hover:text-text-primary",
               )}
             >
-              {t}
-              <span className={cn("tabular-nums", periodo === k ? "opacity-80" : n ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
+              <span className={cn("text-[13px] font-semibold leading-4 tabular-nums", on ? "text-primary" : n ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
+              <span className="w-full truncate text-center text-[10px] font-medium leading-3">{curto}</span>
             </button>
           );
         })}
@@ -219,11 +224,15 @@ export function CartaoDeJob({ j, proximo = false, comData = false }: { j: JobDaC
 
 function Cabeca({ c, online, sub, children }: { c: ConversaDaCaixa; online: boolean; sub?: string; children?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center border-b border-border-light px-4 pb-4 pt-6 text-center">
-      <Avatar c={c} grande online={online} />
-      <p className="mt-2.5 text-[16px] font-semibold text-text-primary">{c.nome}</p>
-      <p className="text-[12.5px] text-text-tertiary">{sub ?? `+${c.contato}`}</p>
-      {children ? <div className="mt-3.5 grid w-full grid-cols-2 gap-2">{children}</div> : null}
+    <div className="border-b border-border-light px-4 py-3">
+      <div className="flex items-center gap-3">
+        <Avatar c={c} tamanho="md" online={online} />
+        <div className="min-w-0">
+          <p className="truncate text-[14.5px] font-semibold text-text-primary">{c.nome}</p>
+          <p className="truncate text-[12px] text-text-tertiary">{sub ?? `+${c.contato}`}</p>
+        </div>
+      </div>
+      {children ? <div className="mt-2.5 grid grid-cols-2 gap-2">{children}</div> : null}
     </div>
   );
 }
