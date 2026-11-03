@@ -196,7 +196,8 @@ function ItemDaLateral({
 }
 
 const Titulo = ({ children, acao }: { children: React.ReactNode; acao?: React.ReactNode }) => (
-  <p className="flex items-center px-2.5 pb-1 pt-4 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+  // A linha em cima separa cada grupo da lateral, como no VOS.
+  <p className="mx-1 mt-3 flex items-center border-t border-border-light px-1.5 pb-1 pt-3 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
     <span className="flex-1">{children}</span>
     {acao}
   </p>
@@ -573,11 +574,19 @@ export function CaixaAtendimento({
 
         <Titulo
           acao={
-            estadoPronto ? (
-              <button type="button" onClick={() => setCriandoView((v) => !v)} className="rounded p-0.5 text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary" aria-label="New view" title="New view">
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            ) : null
+            <button
+              type="button"
+              onClick={() => setCriandoView((v) => !v)}
+              disabled={!estadoPronto}
+              className={cn(
+                "grid h-5 w-5 place-items-center rounded text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary disabled:opacity-40",
+                criandoView && "bg-surface-tertiary text-text-primary",
+              )}
+              aria-label="New view"
+              title={estadoPronto ? "New view" : "Needs migration 354"}
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           }
         >
           Views
@@ -602,19 +611,8 @@ export function CaixaAtendimento({
             </button>
           </div>
         ))}
-        {criandoView ? (
-          <div className="mx-1 mt-1 rounded-lg border border-border-light bg-card p-2">{criadorDeTag(null)}</div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setCriandoView(true)}
-            disabled={!estadoPronto}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-text-tertiary hover:bg-surface-secondary hover:text-text-secondary disabled:opacity-50"
-          >
-            <Plus className="h-4 w-4" />
-            {tags.length ? "New view" : "New view, e.g. Follow up"}
-          </button>
-        )}
+        {criandoView ? <div className="mx-1 mt-1 rounded-lg border border-border-light bg-card p-2">{criadorDeTag(null)}</div> : null}
+        {!tags.length && !criandoView ? <p className="px-2.5 py-1 text-[12px] text-text-tertiary">No views yet.</p> : null}
 
         <Titulo
           acao={
