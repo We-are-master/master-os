@@ -947,7 +947,7 @@ export function CaixaAtendimento({
                   setMenuDaLinha({ contato: c.contato, x: e.clientX, y: e.clientY });
                 }}
                 className={cn(
-                  "relative flex w-full gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
+                  "relative flex w-full gap-3 border-b border-border-light px-3.5 py-2.5 text-left transition-colors hover:bg-surface-secondary/70",
                   ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
