@@ -18,9 +18,22 @@ import { fixfyAccountId } from "@/lib/certificado/regra";
 
 export type ValorDoAnexo = "cliente" | "parceiro" | "nenhum";
 
-export type GrupoDoAnexo = "contato" | "outros" | "quotes";
+export type AbaDoAnexo = "contato" | "jobs" | "quotes";
 
-export type ItemDaBusca = { tipo: "job" | "quote"; grupo: GrupoDoAnexo; id: string; ref: string; titulo: string | null; endereco: string | null; data: string | null; status: string };
+export type ItemDaBusca = {
+  tipo: "job" | "quote";
+  id: string;
+  ref: string;
+  titulo: string | null;
+  endereco: string | null;
+  /** Job: o dia marcado. Quote: o dia em que nasceu. */
+  data: string | null;
+  /** Janela de chegada do job, em Londres. */
+  janela: string | null;
+  status: string;
+  /** Job: o parceiro (ou o cliente, na aba do parceiro). Quote: o cliente. */
+  quem: string | null;
+};
 
 const libras = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : typeof v === "string" && Number(v) > 0 ? Number(v) : null);
@@ -28,66 +41,75 @@ const limpo = (v: unknown): string | null => (typeof v === "string" && v.trim() 
 /** Busca no ilike: tira o que o PostgREST lê como sintaxe do `or`. */
 const termo = (q: string) => q.replace(/[%,()*\\]/g, " ").trim().slice(0, 60);
 
-const CAMPOS_JOB = "id, reference, title, property_address, scheduled_date, status, created_at";
-const CAMPOS_QUOTE = "id, reference, title, property_address, status, created_at";
+const CAMPOS_JOB = "id, reference, title, property_address, scheduled_date, scheduled_start_at, scheduled_end_at, status, partner_name, client_name, created_at";
+const CAMPOS_QUOTE = "id, reference, title, property_address, postcode, status, client_name, created_at";
+
+const hhmm = (iso: unknown) => {
+  if (typeof iso !== "string") return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/London" }).format(d);
+};
 
 /**
- * Três grupos, nesta ordem: os jobs de quem está na conversa, os outros jobs
- * que a busca achou e as quotes. Sem busca, só o que é do contato.
+ * Uma aba por vez:
+ *   contato  os jobs de quem está na conversa (parceiro: os alocados a ele;
+ *            cliente: os dele), a data mais distante primeiro.
+ *   jobs     qualquer job; sem busca, os mais novos.
+ *   quotes   qualquer quote; sem busca, as do cliente da conversa, ou as mais novas.
  */
 export async function buscarParaAnexar(sb: SupabaseClient, corpo: Record<string, unknown>): Promise<ItemDaBusca[]> {
   const q = termo(String(corpo.q ?? ""));
+  const aba: AbaDoAnexo = corpo.aba === "jobs" || corpo.aba === "quotes" ? corpo.aba : "contato";
   const parceiroId = limpo(corpo.parceiroId);
   const clienteId = limpo(corpo.clienteId);
-  const dono = parceiroId ? { col: "partner_id", id: parceiroId } : clienteId ? { col: "client_id", id: clienteId } : null;
-  if (!q && !dono) return [];
   const ou = `reference.ilike.%${q}%,client_name.ilike.%${q}%,property_address.ilike.%${q}%,title.ilike.%${q}%`;
 
+  if (aba === "quotes") {
+    let qs = sb.from("quotes").select(CAMPOS_QUOTE).is("deleted_at", null).order("created_at", { ascending: false }).limit(20);
+    if (q) qs = qs.or(ou);
+    else if (clienteId) qs = qs.eq("client_id", clienteId);
+    const { data } = await qs;
+    return (data ?? []).map((r) => ({
+      tipo: "quote",
+      id: r.id as string,
+      ref: (r.reference as string | null) ?? "Quote",
+      titulo: (r.title as string | null) ?? null,
+      endereco: (r.property_address as string | null) ?? (r.postcode as string | null) ?? null,
+      data: ((r.created_at as string | null) ?? "").slice(0, 10) || null,
+      janela: null,
+      status: (r.status as string | null) ?? "",
+      quem: (r.client_name as string | null) ?? null,
+    }));
+  }
+
+  const dono = parceiroId ? { col: "partner_id", id: parceiroId } : clienteId ? { col: "client_id", id: clienteId } : null;
+  if (aba === "contato" && !dono) return [];
   // Jobs pela data marcada, a mais distante primeiro: o que vem pela frente aparece antes do histórico.
-  const jobs = () =>
-    sb
-      .from("jobs")
-      .select(CAMPOS_JOB)
-      .is("deleted_at", null)
-      .order("scheduled_date", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false });
-
-  let doContato = dono ? jobs().eq(dono.col, dono.id).limit(10) : null;
-  if (doContato && q) doContato = doContato.or(ou);
-  const outros = q ? jobs().or(ou).limit(18) : null;
-  // Quote: as do cliente sem busca; com busca, qualquer uma que case. Parceiro não tem quote dele aqui.
-  let quotes = sb.from("quotes").select(CAMPOS_QUOTE).is("deleted_at", null).order("created_at", { ascending: false }).limit(6);
-  quotes = q ? quotes.or(ou) : clienteId ? quotes.eq("client_id", clienteId) : null!;
-
-  const [a, b, c] = await Promise.all([doContato ?? { data: [] }, outros ?? { data: [] }, quotes ?? { data: [] }]);
-  const job = (grupo: GrupoDoAnexo) => (r: Record<string, unknown>): ItemDaBusca => ({
-    tipo: "job",
-    grupo,
-    id: r.id as string,
-    ref: (r.reference as string | null) ?? "Job",
-    titulo: (r.title as string | null) ?? null,
-    endereco: (r.property_address as string | null) ?? null,
-    data: (r.scheduled_date as string | null) ?? null,
-    status: (r.status as string | null) ?? "",
+  let js = sb
+    .from("jobs")
+    .select(CAMPOS_JOB)
+    .is("deleted_at", null)
+    .order("scheduled_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (aba === "contato") js = js.eq(dono!.col, dono!.id);
+  if (q) js = js.or(ou);
+  const { data } = await js;
+  return (data ?? []).map((r) => {
+    const a = hhmm(r.scheduled_start_at), b = hhmm(r.scheduled_end_at);
+    return {
+      tipo: "job",
+      id: r.id as string,
+      ref: (r.reference as string | null) ?? "Job",
+      titulo: (r.title as string | null) ?? null,
+      endereco: (r.property_address as string | null) ?? null,
+      data: (r.scheduled_date as string | null) ?? null,
+      janela: a && b ? `${a} to ${b}` : a,
+      status: (r.status as string | null) ?? "",
+      // Na aba do parceiro o nome dele é redundante; o do cliente ajuda a achar.
+      quem: (aba === "contato" && parceiroId ? (r.client_name as string | null) : (r.partner_name as string | null)) ?? null,
+    };
   });
-  const meus = (a.data ?? []).map(job("contato"));
-  const ja = new Set(meus.map((x) => x.id));
-  return [
-    ...meus,
-    ...(b.data ?? []).filter((r) => !ja.has(r.id as string)).slice(0, 8).map(job("outros")),
-    ...(c.data ?? []).map(
-      (r): ItemDaBusca => ({
-        tipo: "quote",
-        grupo: "quotes",
-        id: r.id as string,
-        ref: (r.reference as string | null) ?? "Quote",
-        titulo: (r.title as string | null) ?? null,
-        endereco: (r.property_address as string | null) ?? null,
-        data: null,
-        status: (r.status as string | null) ?? "",
-      }),
-    ),
-  ];
 }
 
 /** Conta de verdade (não a Fixfy direct) ganha o link do portal. */
