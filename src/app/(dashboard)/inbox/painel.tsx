@@ -801,7 +801,7 @@ export function OfertaDeJob({
         </div>
         <label className="flex items-center gap-1.5 text-text-secondary">
           <input type="checkbox" checked={mandarAqui} onChange={(e) => setMandarAqui(e.target.checked)} />
-          Also send it here on WhatsApp
+          Notify on WhatsApp
         </label>
       </div>
       {/* Sempre do tamanho de 10 linhas (com menos, sobra espaço); com mais, rola e carrega de 10 em 10. */}
