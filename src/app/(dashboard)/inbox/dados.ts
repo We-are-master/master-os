@@ -411,10 +411,14 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
                 semana: (b.week_label as string | null) ?? null,
                 enviadoEm: (b.email_sent_at as string | null) ?? null,
               }));
-              // Esta semana: o self-bill que cobre hoje (ou o período segunda a domingo, se ainda não nasceu).
-              const doPeriodo = (selfBills ?? []).find(
-                (x) => x.partner_id === pid && x.week_start && x.week_end && (x.week_start as string) <= hoje && hoje <= (x.week_end as string),
+              // O próximo self-bill a pagar: o em aberto com o vencimento mais perto (de hoje em diante);
+              // sem nenhum, o do período que cobre hoje; sem esse, segunda a domingo desta semana.
+              const abertos = (selfBills ?? []).filter(
+                (x) => x.partner_id === pid && !SELF_BILL_FECHADO.includes(x.status as string) && x.status !== "payout_cancelled" && x.week_start && x.week_end,
               );
+              const doPeriodo =
+                abertos.filter((x) => ((x.due_date as string | null) ?? "") >= hoje).sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))[0] ??
+                abertos.find((x) => (x.week_start as string) <= hoje && hoje <= (x.week_end as string));
               const de = (doPeriodo?.week_start as string | undefined) ?? segunda;
               const ate = (doPeriodo?.week_end as string | undefined) ?? somarDias(segunda, 6);
               const planejado = semana
@@ -428,6 +432,8 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
                   confirmado: doPeriodo ? Number(doPeriodo.net_payout ?? 0) : 0,
                   pagamento: (doPeriodo?.due_date as string | null) ?? null,
                   ref: (doPeriodo?.reference as string | null) ?? null,
+                  de,
+                  ate,
                 },
               };
             })(),

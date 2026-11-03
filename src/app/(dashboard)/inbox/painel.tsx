@@ -194,6 +194,12 @@ function pilulaDoJob(j: JobDaCaixa, proximo: boolean): { texto: string; tom: Tom
   return null;
 }
 
+/** "26 Oct to 8 Nov". */
+function periodoCurto(de: string, ate: string) {
+  const f = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return `${f(de)} to ${f(ate)}`;
+}
+
 /** "Fri 7 Nov". */
 const diaDaSemana = (d: string) =>
   new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
@@ -431,8 +437,13 @@ function PainelDoParceiro({ c, agora, online, onOferecer }: { c: ConversaDaCaixa
               />
             </Campos>
           </Secao>
-          <Secao titulo="Self-bill this week" acao={<LinkDaSecao href="/finance/selfbill">Open</LinkDaSecao>}>
+          <Secao
+            titulo="Next self-bill"
+            extra={<span className="text-[11.5px] font-normal text-text-tertiary">· {periodoCurto(p.estaSemana.de, p.estaSemana.ate)}</span>}
+            acao={<LinkDaSecao href="/finance/selfbill">Open</LinkDaSecao>}
+          >
             <Campos>
+              {p.estaSemana.ref ? <Campo k="Self-bill" v={p.estaSemana.ref} /> : null}
               <Campo k="Planned" v={libra.format(p.estaSemana.planejado)} />
               <Campo k="Confirmed" v={libra.format(p.estaSemana.confirmado)} />
               <Campo k="Payday" v={p.estaSemana.pagamento ? diaDaSemana(p.estaSemana.pagamento) : "Not set yet"} />

@@ -115,7 +115,8 @@ export type ConversaDaCaixa = {
     /** Os últimos self-bills (abertos e fechados), para o PDF e o envio. */
     selfBills: SelfBillDaCaixa[];
     /** Self-bill desta semana: o custo dos jobs dela, o que já está confirmado na nota e o dia do pagamento. */
-    estaSemana: { planejado: number; confirmado: number; pagamento: string | null; ref: string | null };
+    /** O próximo self-bill a pagar (período, planejado pelos jobs, confirmado pelo self-bill). */
+    estaSemana: { planejado: number; confirmado: number; pagamento: string | null; ref: string | null; de: string; ate: string };
     /** O ticket do Zendesk onde ficam as ligações com ele (o Call abre esse). */
     ticketDeLigacao: string | null;
   } | null;
