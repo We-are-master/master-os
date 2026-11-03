@@ -47,6 +47,7 @@ export function AnexarJob({
   const [q, setQ] = useState("");
   const [valor, setValor] = useState<Valor>(valorPadrao(tipo));
   const [itens, setItens] = useState<Item[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
   const [ativa, setAtiva] = useState(0);
   const [montando, setMontando] = useState<string | null>(null);
   const pedido = useRef(0);
@@ -61,13 +62,17 @@ export function AnexarJob({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ acao: "buscar", q, parceiroId, clienteId }),
         });
-        const d = (await r.json()) as { itens?: Item[] };
-        if (n === pedido.current) {
-          setItens(d.itens ?? []);
-          setAtiva(0);
-        }
+        const d = (await r.json().catch(() => ({}))) as { itens?: Item[] };
+        if (n !== pedido.current) return;
+        // Sem sessão a rota devolve 401: dizer isso, não "nenhum job".
+        setErro(r.status === 401 ? "Your session expired. Sign in again to load jobs." : r.ok ? null : "Could not load jobs and quotes.");
+        setItens(d.itens ?? []);
+        setAtiva(0);
       } catch {
-        if (n === pedido.current) setItens([]);
+        if (n === pedido.current) {
+          setErro("Could not load jobs and quotes.");
+          setItens([]);
+        }
       }
     }, q ? 250 : 0);
     return () => clearTimeout(t);
@@ -129,6 +134,8 @@ export function AnexarJob({
           <p className="cmp-anexar-vazio">
             <Loader2 size={13} className="animate-spin" /> Loading…
           </p>
+        ) : erro ? (
+          <p className="cmp-anexar-vazio">{erro}</p>
         ) : !lista.length ? (
           <p className="cmp-anexar-vazio">{q ? `Nothing matches “${q}”.` : "No jobs or quotes for this contact yet. Search above."}</p>
         ) : (
