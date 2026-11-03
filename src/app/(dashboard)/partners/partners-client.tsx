@@ -1,5 +1,6 @@
 "use client";
 
+import { ContatosDoWhatsApp } from "@/components/partners/contatos-do-whatsapp";
 import { PartnerJobCcEmails } from "@/components/partners/partner-job-cc-emails";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import type { ListResult } from "@/services/base";
@@ -5532,6 +5533,7 @@ function PartnerDetailDrawer({
     { id: "financial", label: "Finance", hint: "Review financial information and balances." },
     { id: "jobs", label: "Jobs", hint: "Review jobs linked to this partner.", count: realJobsCount },
     { id: "selfbills", label: "Self-bills", hint: "Review self-billing documents issued for this partner's work.", count: selfBills.length },
+    { id: "contacts", label: "Contacts", hint: "WhatsApp numbers linked to this partner in the inbox." },
   ];
 
   return (
@@ -6457,6 +6459,10 @@ function PartnerDetailDrawer({
               </div>
             ) : null}
           </div>
+        )}
+
+        {tab === "contacts" && partner && (
+          <ContatosDoWhatsApp tipo="parceiro" id={partner.id} nome={partner.company_name || partner.contact_name || "this partner"} />
         )}
 
         {/* ========== JOBS ========== */}

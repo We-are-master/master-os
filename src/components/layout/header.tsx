@@ -1,14 +1,13 @@
 "use client";
 
+import { AtendimentoLateral } from "@/app/(dashboard)/inbox/painel-lateral";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/hooks/use-sidebar";
 import { useProfile } from "@/hooks/use-profile";
 import { Avatar } from "@/components/ui/avatar";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Menu, LogOut, Sun, Sparkles,
-  Search, X, History, Check, Minus,
-} from "lucide-react";
+import { Sun, X, Check, Minus } from "lucide-react";
+import { ClockCounterClockwise, List, MagnifyingGlass, SignOut, Sparkle } from "@phosphor-icons/react";
 import type { Style } from "@/hooks/use-theme";
 import { NotificationsMenu } from "@/components/layout/notifications-menu";
 import { Badge } from "@/components/ui/badge";
@@ -238,7 +237,7 @@ function GlobalSearch() {
 
   const searchInput = (ref: RefObject<HTMLInputElement | null>, autoFocus?: boolean) => (
     <div className="relative flex items-center">
-      <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
+      <MagnifyingGlass className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
       <input
         ref={ref}
         autoFocus={autoFocus}
@@ -274,7 +273,7 @@ function GlobalSearch() {
       {/* Desktop */}
       <div ref={containerRef} className="relative hidden md:block">
         <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
+          <MagnifyingGlass className="pointer-events-none absolute left-3 h-[13px] w-[13px] text-text-secondary" />
           <input
             ref={inputRef}
             value={query}
@@ -329,7 +328,7 @@ function GlobalSearch() {
         className="flex h-[27px] w-[27px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-tertiary md:hidden"
         aria-label="Search"
       >
-        <Search className="h-5 w-5" />
+        <MagnifyingGlass className="h-5 w-5" />
       </button>
 
       {mobileOpen ? (
@@ -381,8 +380,8 @@ function ThemeMenu() {
     };
   }, [open]);
 
-  const styleOptions: { value: Style; label: string; icon: typeof Sun }[] = [
-    { value: "default", label: "Default", icon: Sparkles },
+  const styleOptions: { value: Style; label: string; icon: typeof Sun | typeof Sparkle }[] = [
+    { value: "default", label: "Default", icon: Sparkle },
     { value: "minimal", label: "Minimal", icon: Minus },
   ];
 
@@ -394,7 +393,7 @@ function ThemeMenu() {
   }: {
     active: boolean;
     label: string;
-    Icon: typeof Sun;
+    Icon: typeof Sun | typeof Sparkle;
     onClick: () => void;
   }) => (
     <button
@@ -423,7 +422,7 @@ function ThemeMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <Sparkles className="h-[15px] w-[15px]" />
+        <Sparkle className="h-[15px] w-[15px]" />
       </button>
 
       <AnimatePresence>
@@ -483,7 +482,7 @@ export function Header() {
           onClick={toggleMobile}
           className="lg:hidden h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-secondary hover:bg-surface-tertiary transition-colors"
         >
-          <Menu className="h-5 w-5" />
+          <List className="h-5 w-5" />
         </button>
         <GlobalSearch />
       </div>
@@ -501,8 +500,9 @@ export function Header() {
           title="Audit log"
           aria-label="Audit log"
         >
-          <History className="h-[15px] w-[15px]" />
+          <ClockCounterClockwise className="h-[15px] w-[15px]" />
         </Link>
+        <AtendimentoLateral />
         <NotificationsMenu />
         <div className="mx-0.5 hidden h-6 w-px bg-border sm:mx-1 sm:block" />
         <div className="flex items-center gap-2.5 pl-1">
@@ -520,7 +520,7 @@ export function Header() {
           className="h-[27px] w-[27px] rounded-lg flex items-center justify-center text-text-tertiary hover:bg-danger-light hover:text-red-500 transition-colors"
           title="Sign out"
         >
-          <LogOut className="h-[15px] w-[15px]" />
+          <SignOut className="h-[15px] w-[15px]" />
         </button>
       </div>
     </motion.header>

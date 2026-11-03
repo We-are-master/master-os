@@ -1,5 +1,6 @@
 "use client";
 
+import { lerPrefill, type PrefillDaConversa } from "@/lib/inbox/prefill";
 import { aceitaQuotes } from "@/lib/partner-aceita-quotes";
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense, useLayoutEffect, Fragment, useId } from "react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -799,6 +800,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
   const [kanbanMoveSaving, setKanbanMoveSaving] = useState(false);
   const [biddingSlaRollup, setBiddingSlaRollup] = useState<BiddingSlaRollup | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  /** Vindo da Inbox (`?new=inbox`): o formulário abre com a conta, o cliente e o scope da conversa. */
+  const [createPrefill, setCreatePrefill] = useState<{ chave: number; dados: PrefillDaConversa } | null>(null);
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
   const [manualReviewQuote, setManualReviewQuote] = useState<Quote | null>(null);
   const [manualReviewSnapshot, setManualReviewSnapshot] = useState<ManualQuoteReviewSnapshot | null>(null);
@@ -917,6 +920,18 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
       cancelled = true;
     };
   }, [searchParams, loading, router]);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "inbox") return;
+    const dados = lerPrefill("quote");
+    if (dados) setCreatePrefill({ chave: Date.now(), dados });
+    // O mesmo caminho do botão "Create a quote": convite a parceiros, com o tipo de trabalho.
+    createQuoteIntentRef.current = "routing_invite";
+    setCreateFormVariant("routing_minimal");
+    setRoutingCreateEntry("bidding");
+    setCreateOpen(true);
+    router.replace("/quotes", { scroll: false });
+  }, [searchParams, router]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -2682,6 +2697,7 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
                 createQuoteIntentRef.current = "routing_invite";
                 setCreateFormVariant("routing_minimal");
                 setRoutingCreateEntry("bidding");
+                setCreatePrefill(null);
                 setCreateOpen(true);
               }}
               title="Create a quote"
@@ -3114,7 +3130,8 @@ function QuotesPageContent({ initialData }: QuotesClientProps = {}) {
         </div>
         <div className="min-h-0 overflow-hidden">
           <CreateQuoteForm
-            key={`${createFormVariant}-${routingCreateEntry}`}
+            key={`${createFormVariant}-${routingCreateEntry}-${createPrefill?.chave ?? "novo"}`}
+            prefill={createPrefill?.dados ?? null}
             variant={createFormVariant}
             routingCollectTrade={routingCreateEntry === "bidding"}
             onSubmit={handleCreate}
@@ -8695,7 +8712,9 @@ function CreateQuoteForm({
   variant = "full",
   continuationSubmitting = false,
   routingCollectTrade = false,
+  prefill = null,
 }: {
+  prefill?: PrefillDaConversa | null;
   onSubmit?: (
     d: Partial<Quote>,
     options?: { manualLineItems?: ProposalLineRow[]; oneShotBiddingPartnerIds?: string[]; sendToCustomer?: boolean; generateOnly?: boolean },
@@ -8720,9 +8739,9 @@ function CreateQuoteForm({
 }) {
   const [quoteType, setQuoteType] = useState<"internal" | "partner">("internal");
   const [form, setForm] = useState({ title: "", total_value: "", catalog_service_id: "" });
-  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>(prefill?.cliente ?? { client_name: "", property_address: "" });
   const [lineItems, setLineItems] = useState<ProposalLineRow[]>(() => seedManualProposalLines(""));
-  const [scopeText, setScopeText] = useState("");
+  const [scopeText, setScopeText] = useState(prefill?.scope ?? "");
   const [startDate1, setStartDate1] = useState("");
   const [startDate2, setStartDate2] = useState("");
   const [depositPercent, setDepositPercent] = useState("50");
@@ -8745,12 +8764,12 @@ function CreateQuoteForm({
   const quoteTypePrevRef = useRef(quoteType);
   const [accountRows, setAccountRows] = useState<Account[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [addContactClient, setAddContactClient] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState(prefill?.contaId ?? "");
+  const [addContactClient, setAddContactClient] = useState(Boolean(prefill?.contaId && prefill.cliente.client_id));
   /** Free-text work address when there is no contact on the quote — stored only on the quote row, not as an account property. */
-  const [manualSiteAddress, setManualSiteAddress] = useState("");
+  const [manualSiteAddress, setManualSiteAddress] = useState(prefill?.cliente.property_address ?? "");
   /** Mandatory Zendesk-ticket linkage — either paste an id or auto-create a new ticket. */
-  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
+  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: prefill?.ticketId ?? "", noTicket: false });
   const update = (f: string, v: string) => setForm((p) => ({ ...p, [f]: v }));
   const selectedAccountLabel = useMemo(() => {
     const a = accountRows.find((x) => x.id === selectedAccountId);
@@ -8849,7 +8868,11 @@ function CreateQuoteForm({
     setQuoteType("internal");
   }, [variant]);
 
+  /** Só limpa quando a conta muda de fato: na montagem apagava o cliente e o endereço vindos da Inbox. */
+  const contaAnterior = useRef(selectedAccountId);
   useEffect(() => {
+    if (contaAnterior.current === selectedAccountId) return;
+    contaAnterior.current = selectedAccountId;
     setClientAddress({ client_name: "", property_address: "" });
     setManualSiteAddress("");
   }, [selectedAccountId]);

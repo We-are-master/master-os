@@ -1,5 +1,6 @@
 "use client";
 
+import { lerPrefill, type PrefillDaConversa } from "@/lib/inbox/prefill";
 import { splitEqually } from "@/lib/invoice-payment-plan";
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -1036,6 +1037,15 @@ function JobsPageContent() {
   /** Assign modal opened from the Partner column of the list. */
   const [assignTarget, setAssignTarget] = useState<{ id: string; reference: string; initialPartnerId?: string } | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  /** Vindo da Inbox (`?new=inbox`): o modal abre com o cliente e o scope da conversa. */
+  const [createPrefill, setCreatePrefill] = useState<{ chave: number; dados: PrefillDaConversa } | null>(null);
+  useEffect(() => {
+    if (searchParams.get("new") !== "inbox") return;
+    const dados = lerPrefill("job");
+    if (dados) setCreatePrefill({ chave: Date.now(), dados });
+    setCreateOpen(true);
+    router.replace("/jobs", { scroll: false });
+  }, [searchParams, router]);
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   /** "all" · account_id (corporate account) */
@@ -3560,7 +3570,7 @@ function JobsPageContent() {
             <ToolbarIconButton icon={Download} label="Export" onClick={() => setExportOpen(true)} />
             {/* Botão de colunas da tabela mora aqui, não numa coluna da tabela (dono, 18/10/2026). */}
             <div id="jobs-column-picker" className="contents" />
-            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreateOpen(true)}>New Job</Button>
+            <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => { setCreatePrefill(null); setCreateOpen(true); }}>New Job</Button>
           </div>
         </PageHeader>
 
@@ -4150,7 +4160,7 @@ function JobsPageContent() {
         />
       )}
 
-      <CreateJobModal open={createOpen} onClose={() => setCreateOpen(false)} onCreate={handleCreate} />
+      <CreateJobModal key={createPrefill?.chave ?? "novo"} prefill={createPrefill?.dados ?? null} open={createOpen} onClose={() => { setCreateOpen(false); setCreatePrefill(null); }} onCreate={handleCreate} />
       <Modal
         open={kanbanMove !== null}
         onClose={() => {
@@ -4264,8 +4274,9 @@ const CREATE_JOB_STEPS: { id: JobCreateModalSectionId; label: string }[] = [
   { id: "access", label: "Charges" },
 ];
 
-function CreateJobModal({ open, onClose, onCreate }: {
+function CreateJobModal({ open, onClose, onCreate, prefill = null }: {
   open: boolean;
+  prefill?: PrefillDaConversa | null;
   onClose: () => void;
   onCreate: (
     data: Partial<Job>,
@@ -4304,7 +4315,7 @@ function CreateJobModal({ open, onClose, onCreate }: {
     end_time: "17:00",
     job_type: "fixed",
     rate_basis: "fixed",
-    scope: "",
+    scope: prefill?.scope ?? "",
     report_link: "",
     hourly_client_rate: "",
     hourly_partner_rate: "",
@@ -4323,8 +4334,8 @@ function CreateJobModal({ open, onClose, onCreate }: {
   const [partnerSearch, setPartnerSearch] = useState("");
   const [sitePhotoFiles, setSitePhotoFiles] = useState<File[]>([]);
   const sitePhotosInputId = useId();
-  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>({ client_name: "", property_address: "" });
-  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: "", noTicket: false });
+  const [clientAddress, setClientAddress] = useState<ClientAndAddressValue>(prefill?.cliente ?? { client_name: "", property_address: "" });
+  const [zendesk, setZendesk] = useState<ZendeskTicketFieldValue>({ ticketId: prefill?.ticketId ?? "", noTicket: false });
   const [paymentPlanEnabled, setPaymentPlanEnabled] = useState(false);
   /** Avulso parcelado: cobrar cada parcela sozinho, por e-mail, na data. */
   const [instalmentsAutoCharge, setInstalmentsAutoCharge] = useState(true);

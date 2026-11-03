@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -31,6 +32,12 @@ export default function DashboardLayoutClient({
   const [mobileOpen, setMobileOpen] = useState(false);
   const profileState = useProfileLoader();
   const themeState = useThemeProvider();
+  // A /inbox ocupa a tela toda, como o Atendimento do VOS: sem cabeçalho nem margem.
+  const telaCheia = usePathname()?.startsWith("/inbox") ?? false;
+  // Na /inbox o menu começa fechado (só ícones, com o botão de expandir); fora dela, volta aberto.
+  useEffect(() => {
+    setCollapsed(telaCheia);
+  }, [telaCheia]);
 
   const toggle = useCallback(() => setCollapsed((p) => !p), []);
   const toggleMobile = useCallback(() => setMobileOpen((p) => !p), []);
@@ -53,12 +60,18 @@ export default function DashboardLayoutClient({
                 <Sidebar />
                 <div
                   className={cn(
-                    "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left] duration-300 ease-in-out",
+                    // --inbox-lateral: largura do Inbox lateral aberto; a página encolhe em vez de ficar por baixo.
+                    "ml-0 flex min-w-0 flex-col h-screen overflow-x-hidden transition-[margin-left,margin-right] duration-300 ease-in-out lg:mr-[var(--inbox-lateral,0px)]",
                     collapsed ? "lg:ml-[66px]" : "lg:ml-[216px]",
                   )}
                 >
-                  <Header />
-                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-[14px] pt-5 pb-24 sm:px-6 sm:pb-14">
+                  {telaCheia ? null : <Header />}
+                  <main
+                    className={cn(
+                      "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
+                      telaCheia ? "p-0" : "px-[14px] pt-5 pb-24 sm:px-6 sm:pb-14",
+                    )}
+                  >
                     {children}
                   </main>
                   <MasterBrainAssistant />

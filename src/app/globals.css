@@ -786,3 +786,27 @@ main :is(.leading-tight) { line-height: 1.3; }
 .pulse-strip--bare .ins-card {
   padding-top: 12px !important;
 }
+
+/* Toque nos botões do app todo: afunda um pouco ao clicar e volta com mola curta.
+   Só em botão de verdade (não em linhas de lista largas) e nunca com movimento reduzido. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(button, [role="button"], a[class*="btn"]):not(:disabled):not([aria-disabled="true"]) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  :where(button, [role="button"], a[class*="btn"]):not(:disabled):not([aria-disabled="true"]):active {
+    transform: scale(0.96);
+    transition-duration: 60ms;
+  }
+  :where(button.w-full, [role="button"].w-full):not(:disabled):active {
+    transform: scale(0.99);
+  }
+}
+
+/* Arrastando a borda do Inbox lateral: nada anima e nada seleciona até soltar. */
+html[data-arrastando] * {
+  transition: none !important;
+  user-select: none;
+  cursor: col-resize;
+}

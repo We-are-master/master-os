@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatBritishDate } from "@/lib/utils/date";
 import Link from "next/link";
-import { ExternalLink, CalendarClock, UserPlus } from "lucide-react";
+import { ExternalLink, CalendarClock, UserPlus, Ticket } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,11 +27,13 @@ export function JobQuickModal({
   isOpen,
   onClose,
   onChanged,
+  size = "md",
 }: {
   jobId: string | null;
   isOpen: boolean;
   onClose: () => void;
   onChanged?: (job: Job) => void;
+  size?: "md" | "lg";
 }) {
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
@@ -97,7 +99,7 @@ export function JobQuickModal({
         onClose={onClose}
         title={job ? normalizeTypeOfWork(job.title) || job.title : "Job"}
         subtitle={job?.reference}
-        size="md"
+        size={size}
       >
         <div className="space-y-4 p-4">
           {loading ? (
@@ -190,13 +192,24 @@ export function JobQuickModal({
                   >
                     {job.partner_id ? "Change partner" : "Assign partner"}
                   </Button>
+                  {job.external_source === "zendesk" && job.external_ref ? (
+                    <a
+                      href={`https://fixfy.zendesk.com/agent/tickets/${job.external_ref}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border-light px-2.5 text-[12.5px] font-medium text-text-secondary hover:bg-surface-hover"
+                    >
+                      <Ticket className="h-3.5 w-3.5" />
+                      Ticket #{job.external_ref}
+                    </a>
+                  ) : null}
                   <Link
                     href={`/jobs/${job.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] font-medium text-primary hover:underline"
                   >
-                    Open job
+                    {size === "lg" ? "Open job card" : "Open job"}
                     <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
                 </div>

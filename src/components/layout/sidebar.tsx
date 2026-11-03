@@ -10,99 +10,72 @@ import { useCompanyLogos, resolveAppLogoUrl } from "@/hooks/use-company-logos";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { CaretLeft, X } from "@phosphor-icons/react";
 import {
-  LayoutGrid,
-  Inbox,
-  FileText,
-  Briefcase,
-  Calendar,
-  GitBranch,
-  Building2,
-  Users,
-  UsersRound,
-  Building,
-  Receipt,
-  Wallet,
-  Settings,
-  ChevronLeft,
-  X,
-  Layers,
-  UserCircle,
-  CircleDollarSign,
-  FileCheck,
-  CalendarClock,
-  Wrench,
-  History,
-  ContactRound,
-  MessageSquare,
-  MailPlus,
-  MapPin,
-  GraduationCap,
-  type LucideIcon,
-  SquareKanban,
-  Bot,
+  Broadcast,
+  Buildings,
+  Calculator,
+  CalendarDots,
+  ChatsCircle,
+  ClockCounterClockwise,
+  Coins,
+  CurrencyGbp,
+  EnvelopeSimple,
+  Funnel,
   Gauge,
-  Scale,
+  GearSix,
+  GitBranch,
+  GraduationCap,
+  HardHat,
+  IdentificationBadge,
+  MapPin,
+  Receipt,
+  Robot,
+  Scales,
+  SquaresFour,
   Tag,
-} from "lucide-react";
+  Toolbox,
+  Tray,
+  UserCircle,
+  Users,
+  Wallet,
+  Wrench,
+  type Icon as PhosphorIcon,
+} from "@phosphor-icons/react";
 
-const iconMap: Record<string, LucideIcon> = {
-  "grid-2x2": LayoutGrid,
-  inbox: Inbox,
-  "file-text": FileText,
-  briefcase: Briefcase,
-  calendar: Calendar,
+// Phosphor (21st.dev/community/icons): contorno parado, cheio no item ativo.
+const iconMap: Record<string, PhosphorIcon> = {
+  "grid-2x2": SquaresFour,
+  inbox: Tray,
+  "file-text": Calculator,
+  briefcase: Toolbox,
+  calendar: Broadcast,
   "git-branch": GitBranch,
-  "building-2": Building2,
-  users: Users,
-  "users-2": UsersRound,
-  building: Building,
+  "building-2": Buildings,
+  users: HardHat,
+  "users-2": Users,
+  building: Buildings,
   receipt: Receipt,
   wallet: Wallet,
-  "file-check": FileCheck,
-  "calendar-clock": CalendarClock,
-  settings: Settings,
+  "file-check": Coins,
+  "calendar-clock": CalendarDots,
+  settings: GearSix,
   "user-circle": UserCircle,
-  "circle-dollar-sign": CircleDollarSign,
+  "circle-dollar-sign": CurrencyGbp,
   wrench: Wrench,
-  history: History,
-  contact: ContactRound,
-  "message-square": MessageSquare,
-  kanban: SquareKanban,
-  bot: Bot,
+  history: ClockCounterClockwise,
+  contact: IdentificationBadge,
+  "message-square": ChatsCircle,
+  kanban: Funnel,
+  bot: Robot,
   gauge: Gauge,
-  scale: Scale,
+  scale: Scales,
   tag: Tag,
-  "mail-plus": MailPlus,
+  "mail-plus": EnvelopeSimple,
   "map-pin": MapPin,
   "graduation-cap": GraduationCap,
 };
 
-/** Logos (SVG inline para herdar currentColor) para Partners, Accounts */
-function LogoPartners({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-function LogoAccounts({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect x="2" y="3" width="20" height="14" rx="2" />
-      <path d="M8 21h8" />
-      <path d="M12 17v4" />
-    </svg>
-  );
-}
-
-const navLogoComponents: Record<string, (props: { className?: string }) => React.ReactElement> = {
-  "/partners": LogoPartners,
-  "/accounts": LogoAccounts,
-};
 
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
 // /agents e /services são abas do Settings (14/10/2026); o menu salvo no banco ainda os traz.
@@ -134,10 +107,9 @@ function NavLink({
   const rowHighlight = nested ? selfActive : selfActive || isParentOfActive;
   const showStripe = selfActive;
 
-  const Icon = iconMap[item.icon] || LayoutGrid;
-  const LogoComponent = navLogoComponents[item.href];
+  const Icon = iconMap[item.icon] || SquaresFour;
   const iconClassName = cn(
-    "h-4 w-4 shrink-0 transition-colors",
+    "h-[17px] w-[17px] shrink-0 transition-colors",
     rowHighlight ? "text-nav-text-strong" : "text-nav-text group-hover:text-nav-text-strong"
   );
 
@@ -164,11 +136,7 @@ function NavLink({
             )}
           />
         )}
-        {LogoComponent ? (
-          <LogoComponent className={iconClassName} />
-        ) : (
-          <Icon className={iconClassName} />
-        )}
+        <Icon className={iconClassName} weight={rowHighlight ? "fill" : "regular"} />
         {/* initial={false}: ao recarregar o nome já nasce visível. Com a animação de entrada
             o HTML do servidor vinha com opacidade 0 e o menu ficava só com ícones até o JS. */}
         <AnimatePresence initial={false}>
@@ -211,7 +179,8 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
   }, [logoSrc, resolved, style]);
 
   const title = logos.companyName?.trim() || APP_NAME;
-  const showCustom = Boolean(logoSrc && !imgErr);
+  // Fechada, a lateral mostra só o ícone: a logo cadastrada é a marca inteira e espremida vira "fixfy" ilegível.
+  const showCustom = Boolean(logoSrc && !imgErr && !collapsed);
 
   return (
     <Link href="/" className={cn("flex items-center min-w-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40", collapsed ? "justify-center" : "gap-2.5")}>
@@ -230,7 +199,8 @@ function SidebarBrand({ collapsed }: { collapsed: boolean }) {
       ) : (
         <>
           {collapsed ? (
-            <img src="/favicon.svg" alt={title} width={32} height={32} className="h-8 w-8 shrink-0 rounded-[8px]" />
+            // Menu recolhido: só o símbolo (engrenagem e chave), branco, sem a palavra (dono, 03/11/2026).
+            <img src="/fixfy-icon-white.png" alt={title} width={30} height={30} className="h-[30px] w-[30px] shrink-0 object-contain" />
           ) : (
             // A logo de sempre (branca com "fy" laranja), recortada e no tamanho em que aparecia
             // antes (dono, 25/10/2026: "não a original"). width/height no HTML: nasce no tamanho certo.
@@ -357,7 +327,7 @@ export function Sidebar() {
               animate={{ rotate: opts.collapsed ? 180 : 0 }}
               transition={{ duration: 0.3 }}
             >
-              <ChevronLeft className="h-4 w-4" />
+              <CaretLeft className="h-4 w-4" />
             </motion.div>
           </button>
         </div>
