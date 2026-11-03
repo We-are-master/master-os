@@ -36,7 +36,6 @@ import {
   ArrowDownLeft,
   ArchiveRestore,
   Inbox,
-  Layers,
   MoreHorizontal,
   Link2,
   MessageSquare,
@@ -74,7 +73,7 @@ import { Modal } from "@/components/ui/modal";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, rotuloDaEtapa, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
-import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, type Filtros } from "./filtros";
+import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, SEM_DONO, type Filtros } from "./filtros";
 import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
@@ -268,8 +267,11 @@ function ItemDaLateral({
   n,
   apagado,
   avatar,
+  marcado,
 }: {
   ativo: boolean;
+  /** Filtro ligado (Team, Contacts, Tags): liga e desliga, soma por cima da view. */
+  marcado?: boolean;
   onClick: () => void;
   icone?: LucideIcon;
   avatar?: React.ReactNode;
@@ -284,16 +286,17 @@ function ItemDaLateral({
       onClick={onClick}
       className={cn(
         "relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13.5px] transition-colors",
-        ativo ? "bg-surface-tertiary font-semibold text-text-primary" : "text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+        ativo || marcado ? "bg-surface-tertiary font-semibold text-text-primary" : "text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
         apagado && !ativo && "opacity-55",
       )}
     >
       {ativo ? <mo.span layoutId="inbox-lateral-ativa" transition={tempo("lg")} className="absolute -left-2 inset-y-1.5 w-[3px] rounded-r-full bg-primary" /> : null}
-      {Icone ? <Icone className={cn("h-4 w-4 shrink-0", ativo ? "text-text-primary" : "text-text-tertiary")} /> : null}
+      {Icone ? <Icone className={cn("h-4 w-4 shrink-0", ativo || marcado ? "text-text-primary" : "text-text-tertiary")} /> : null}
       {avatar}
       {ponto ? <span className={cn("ml-1 mr-0.5 h-2 w-2 shrink-0 rounded-full", PONTO[ponto])} /> : null}
       <span className="truncate">{rotulo}</span>
-      <span className={cn("ml-auto text-[11.5px] tabular-nums", ativo ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
+      {marcado ? <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-text-primary" aria-label="Filter on" /> : null}
+      <span className={cn("text-[11.5px] tabular-nums", !marcado && "ml-auto", ativo || marcado ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
     </button>
   );
 }
@@ -623,6 +626,11 @@ export function CaixaAtendimento({
     setTipo("todas");
   }
 
+  /** Team, Contacts e Tags da lateral ligam e desligam o mesmo filtro do botão Filters. */
+  function alternar(k: "tipos" | "donos" | "tags", v: string) {
+    setFiltros((f) => ({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] }));
+  }
+
   /** Abre a conversa do número escolhido em New conversation: a que já existe, senão um rascunho. */
   function abrirNumero(e: Escolhido) {
     const existe = conversas.find((c) => c.contato === e.numero);
@@ -873,17 +881,18 @@ export function CaixaAtendimento({
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "abertas" }) && tipo === "todas"} onClick={() => irPara({ k: "abertas" })} icone={Inbox} rotulo="Open" n={contagem.abertas} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "esperando" })} onClick={() => irPara({ k: "esperando" })} icone={Clock} rotulo="Needs reply" n={contagem.esperando} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="On site today" n={contagem.hoje} />
-        <ItemDaLateral ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "todas"} onClick={() => irPara({ k: "todas" })} icone={Layers} rotulo="All" n={contagem.todas} />
+        {/* Sem "All": fazia o mesmo que Open. Resolved, Archived e Deleted ficam embaixo. */}
 
         {equipe.length ? (
           <>
             <Titulo>Team</Titulo>
-            <ItemDaLateral ativo={mesmaVisao(visao, { k: "sem_dono" })} onClick={() => irPara({ k: "sem_dono" })} icone={UserRound} rotulo="Unassigned" n={contagem.semDono} />
+            <ItemDaLateral ativo={false} marcado={filtros.donos.includes(SEM_DONO)} onClick={() => alternar("donos", SEM_DONO)} icone={UserRound} rotulo="Unassigned" n={contagem.semDono} />
             {equipe.map((m) => (
               <ItemDaLateral
                 key={m.id}
-                ativo={mesmaVisao(visao, { k: "pessoa", id: m.id })}
-                onClick={() => irPara({ k: "pessoa", id: m.id })}
+                ativo={false}
+                marcado={filtros.donos.includes(m.id)}
+                onClick={() => alternar("donos", m.id)}
                 avatar={<AvatarDaEquipe m={m} />}
                 rotulo={m.nome}
                 n={conversas.filter((c) => passa(c, { k: "pessoa", id: m.id })).length}
@@ -893,56 +902,17 @@ export function CaixaAtendimento({
         ) : null}
 
         <Titulo>Contacts</Titulo>
-        <ItemDaLateral
-          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "conta"}
-          onClick={() => {
-            setVisao({ k: "todas" });
-            setTipo("conta");
-          }}
-          icone={Building2}
-          rotulo="Accounts"
-          n={contagem.conta}
-        />
-        <ItemDaLateral
-          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "parceiro"}
-          onClick={() => {
-            setVisao({ k: "todas" });
-            setTipo("parceiro");
-          }}
-          icone={Wrench}
-          rotulo="Partners"
-          n={contagem.parceiro}
-        />
-        <ItemDaLateral
-          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "cliente"}
-          onClick={() => {
-            setVisao({ k: "todas" });
-            setTipo("cliente");
-          }}
-          icone={Home}
-          rotulo="Clients"
-          n={contagem.cliente}
-        />
-        <ItemDaLateral
-          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "outro"}
-          onClick={() => {
-            setVisao({ k: "todas" });
-            setTipo("outro");
-          }}
-          icone={UserRound}
-          rotulo="Unknown"
-          n={contagem.outro}
-        />
-        <ItemDaLateral
-          ativo={mesmaVisao(visao, { k: "todas" }) && tipo === "grupo"}
-          onClick={() => {
-            setVisao({ k: "todas" });
-            setTipo("grupo");
-          }}
-          icone={Users}
-          rotulo="Groups"
-          n={contagem.grupo}
-        />
+        {(
+          [
+            ["conta", Building2, "Accounts"],
+            ["parceiro", Wrench, "Partners"],
+            ["cliente", Home, "Clients"],
+            ["outro", UserRound, "Leads"],
+            ["grupo", Users, "Groups"],
+          ] as const
+        ).map(([k, icone, rotulo]) => (
+          <ItemDaLateral key={k} ativo={false} marcado={filtros.tipos.includes(k)} onClick={() => alternar("tipos", k)} icone={icone} rotulo={rotulo} n={contagem[k]} />
+        ))}
 
         <Titulo
           acao={
@@ -966,8 +936,9 @@ export function CaixaAtendimento({
         {tags.map((t) => (
           <div key={t.nome} className="group relative">
             <ItemDaLateral
-              ativo={mesmaVisao(visao, { k: "tag", nome: t.nome })}
-              onClick={() => irPara({ k: "tag", nome: t.nome })}
+              ativo={false}
+              marcado={filtros.tags.includes(t.nome)}
+              onClick={() => alternar("tags", t.nome)}
               icone={Tag}
               rotulo={t.nome}
               n={nTag(t.nome)}

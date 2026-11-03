@@ -42,7 +42,7 @@ const ESTADOS: [string, string][] = [
 ];
 
 /** "none" em donos é Unassigned. */
-const SEM_DONO = "none";
+export const SEM_DONO = "none";
 
 export const quantosFiltros = (f: Filtros) => f.tipos.length + f.oficios.length + f.donos.length + f.estados.length + f.tags.length;
 
