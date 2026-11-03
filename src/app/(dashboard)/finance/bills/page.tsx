@@ -97,7 +97,7 @@ export default function BillsPage() {
   /** Linhas marcadas: chave da linha → ids de todas as cobranças dela (série inteira). */
   const [selectedRows, setSelectedRows] = useState<Record<string, string[]>>({});
   const [deleting, setDeleting] = useState(false);
-  const [view, setView] = useState<"list" | "timeline">("list");
+  const [view, setView] = useState<"list" | "timeline">("timeline");
 
   const archiveSeriesMonthLabel = useMemo(
     () => new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" }),
@@ -620,8 +620,8 @@ export default function BillsPage() {
             value={view}
             onChange={(v) => setView(v as "list" | "timeline")}
             options={[
-              { id: "list", label: "List" },
               { id: "timeline", label: "Timeline" },
+              { id: "list", label: "List" },
             ]}
           />
         </div>
