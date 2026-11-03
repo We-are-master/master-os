@@ -29,6 +29,7 @@ import {
   Wrench,
   XCircle,
   type LucideIcon,
+  MessageCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { rotuloDaEtapa, type ConversaDaCaixa, type EtapaDaConversa } from "./tipos";
@@ -180,13 +181,30 @@ const iniciais = (nome: string) =>
         .map((p) => p[0]?.toUpperCase())
         .join("");
 
-export function Avatar({ c, grande = false, online = false }: { c: ConversaDaCaixa; grande?: boolean; online?: boolean }) {
+/**
+ * Avatar da conversa, como no VOS: iniciais na cor de quem é (parceiro, cliente,
+ * outro), o selo verde do WhatsApp embaixo e o ponto de online em cima.
+ */
+export function Avatar({
+  c,
+  grande = false,
+  tamanho,
+  online = false,
+  canal = false,
+}: {
+  c: ConversaDaCaixa;
+  grande?: boolean;
+  tamanho?: "sm" | "md";
+  online?: boolean;
+  canal?: boolean;
+}) {
+  const t = grande ? "lg" : (tamanho ?? "sm");
   return (
     <span className="relative shrink-0">
       <span
         className={cn(
           "flex items-center justify-center rounded-full font-semibold",
-          grande ? "h-14 w-14 text-base" : "h-9 w-9 text-xs",
+          t === "lg" ? "h-14 w-14 text-base" : t === "md" ? "h-10 w-10 text-[13px]" : "h-9 w-9 text-xs",
           c.tipo === "parceiro" && "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200",
           c.tipo === "cliente" && "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200",
           c.tipo === "outro" && "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
@@ -194,7 +212,19 @@ export function Avatar({ c, grande = false, online = false }: { c: ConversaDaCai
       >
         {iniciais(c.nome)}
       </span>
-      {online ? <span className={cn("absolute bottom-0 right-0 rounded-full border-2 border-card bg-emerald-500", grande ? "h-3.5 w-3.5" : "h-2.5 w-2.5")} /> : null}
+      {canal ? (
+        <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-card bg-[#25D366]">
+          <MessageCircle className="h-2 w-2 fill-white text-white" />
+        </span>
+      ) : null}
+      {online ? (
+        <span
+          className={cn(
+            "absolute rounded-full border-2 border-card bg-emerald-500",
+            canal ? "-right-0.5 -top-0.5 h-3 w-3" : t === "lg" ? "bottom-0 right-0 h-3.5 w-3.5" : "bottom-0 right-0 h-2.5 w-2.5",
+          )}
+        />
+      ) : null}
     </span>
   );
 }

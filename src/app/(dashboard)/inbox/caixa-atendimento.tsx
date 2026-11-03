@@ -28,6 +28,11 @@ import {
   FileText,
   Home,
   Archive,
+  Clock3,
+  CircleAlert,
+  Check,
+  ArrowUpRight,
+  ArrowDownLeft,
   ArchiveRestore,
   Inbox,
   Layers,
@@ -93,13 +98,23 @@ const JANELA_MS = 24 * 60 * 60 * 1000;
 const CHAVE_ETAPAS = "fixfy:inbox:etapas";
 const SO_ROTULO = new Set(["Photo", "Voice note", "Video", "Audio", "Sticker"]);
 
-const hora = (iso: string) => {
-  const d = new Date(iso);
-  const mesmoDia = d.toDateString() === new Date().toDateString();
-  return d.toLocaleString(
-    "en-GB",
-    mesmoDia ? { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" } : { timeZone: "Europe/London", day: "numeric", month: "short" },
-  );
+/** "10h", "2d", "12:54" hoje: o tempo da lista, como no VOS. */
+const quandoNaLista = (iso: string, agora: number) => {
+  const min = Math.max(0, Math.round((agora - new Date(iso).getTime()) / 60_000));
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  const mesmoDia = new Date(iso).toDateString() === new Date(agora).toDateString();
+  if (mesmoDia) return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+  const d = Math.floor(min / 1440);
+  return d < 1 ? `${Math.round(min / 60)}h` : d < 7 ? `${d}d` : new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+};
+const diaDaMensagemOuHoje = (iso: string) => {
+  const dia = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const hoje = new Date();
+  const ontem = new Date(hoje.getTime() - 86_400_000);
+  if (dia(new Date(iso)) === dia(hoje)) return "Today";
+  if (dia(new Date(iso)) === dia(ontem)) return "Yesterday";
+  return diaDaMensagem(iso);
 };
 const diaDaMensagem = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { timeZone: "Europe/London", weekday: "long", day: "numeric", month: "short" });
 const haQuanto = (iso: string, agora: number) => {
@@ -182,22 +197,23 @@ function ItemDaLateral({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
-        ativo ? "bg-surface-tertiary font-medium text-text-primary" : "text-text-secondary hover:bg-surface-secondary",
+        "relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13.5px] transition-colors",
+        ativo ? "bg-surface-tertiary font-semibold text-text-primary" : "text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
         apagado && !ativo && "opacity-55",
       )}
     >
-      {Icone ? <Icone className="h-4 w-4 shrink-0 text-text-tertiary" /> : null}
+      {ativo ? <span className="absolute -left-2 inset-y-1.5 w-[3px] rounded-r-full bg-primary" /> : null}
+      {Icone ? <Icone className={cn("h-4 w-4 shrink-0", ativo ? "text-text-primary" : "text-text-tertiary")} /> : null}
       {ponto ? <span className={cn("ml-1 mr-0.5 h-2 w-2 shrink-0 rounded-full", PONTO[ponto])} /> : null}
       <span className="truncate">{rotulo}</span>
-      <span className="ml-auto text-[11px] text-text-tertiary">{n}</span>
+      <span className={cn("ml-auto text-[11.5px] tabular-nums", ativo ? "text-text-primary" : "text-text-tertiary")}>{n}</span>
     </button>
   );
 }
 
 const Titulo = ({ children, acao }: { children: React.ReactNode; acao?: React.ReactNode }) => (
   // A linha em cima separa cada grupo da lateral, como no VOS.
-  <p className="mx-1 mt-3 flex items-center border-t border-border-light px-1.5 pb-1 pt-3 text-[10.5px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+  <p className="mx-1 mt-3 flex items-center border-t border-border-light px-1.5 pb-1.5 pt-3.5 text-[12.5px] font-medium text-text-tertiary">
     <span className="flex-1">{children}</span>
     {acao}
   </p>
@@ -534,7 +550,7 @@ export function CaixaAtendimento({
     <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_300px] overflow-hidden bg-card">
       {/* Lateral */}
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
-        <p className="px-2.5 pb-1 pt-1.5 text-[15px] font-semibold text-text-primary">Inbox</p>
+        <p className="px-2.5 pb-2 pt-1.5 text-[17px] font-bold tracking-tight text-text-primary">Inbox</p>
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "abertas" }) && tipo === "todas"} onClick={() => irPara({ k: "abertas" })} icone={Inbox} rotulo="Open" n={contagem.abertas} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "esperando" })} onClick={() => irPara({ k: "esperando" })} icone={Clock} rotulo="Awaiting reply" n={contagem.esperando} />
         <ItemDaLateral ativo={mesmaVisao(visao, { k: "hoje" })} onClick={() => irPara({ k: "hoje" })} icone={CalendarClock} rotulo="Job today" n={contagem.hoje} />
@@ -579,7 +595,7 @@ export function CaixaAtendimento({
               onClick={() => setCriandoView((v) => !v)}
               disabled={!estadoPronto}
               className={cn(
-                "grid h-5 w-5 place-items-center rounded text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary disabled:opacity-40",
+                "grid h-6 w-6 place-items-center rounded-md border border-border-light bg-card text-text-tertiary hover:border-border hover:text-text-primary disabled:opacity-40",
                 criandoView && "bg-surface-tertiary text-text-primary",
               )}
               aria-label="New view"
@@ -663,44 +679,52 @@ export function CaixaAtendimento({
 
       {/* Conversas */}
       <section className="flex min-h-0 flex-col border-r border-border-light">
-        <div className="flex items-center px-4 pb-2 pt-3.5">
-          <h2 className="flex-1 text-[17px] font-semibold text-text-primary">Conversations</h2>
-        </div>
-        <div className="px-4 pb-2">
-          <SearchInput placeholder="Search name, number, job ref, tag" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        </div>
-        <div className="mx-4 mb-2 grid grid-cols-3 rounded-lg bg-surface-secondary p-0.5">
+        <div className="flex items-end gap-4 border-b border-border-light px-4 pt-3">
           {(
             [
-              ["todas", "All"],
+              ["todas", "Conversations"],
               ["parceiro", "Partners"],
               ["cliente", "Clients"],
             ] as const
-          ).map(([k, t]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setTipo(k)}
-              className={cn("rounded-md py-1.5 text-xs font-medium transition-colors", tipo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary")}
-            >
-              {t} <span className="font-normal text-text-tertiary">{conversas.filter((c) => passa(c, visao) && noPeriodo(c, periodo, agora) && (k === "todas" || c.tipo === k)).length}</span>
-            </button>
-          ))}
+          ).map(([k, t]) => {
+            const n = conversas.filter((c) => passa(c, visao) && noPeriodo(c, periodo, agora) && (k === "todas" || c.tipo === k)).length;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setTipo(k)}
+                className={cn(
+                  "relative pb-2.5 text-[14px] font-semibold transition-colors",
+                  tipo === k ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary",
+                )}
+              >
+                {t}
+                <span className="ml-1 text-[11px] font-medium text-text-tertiary">{n}</span>
+                {tipo === k ? <span className="absolute inset-x-0 -bottom-px h-[2px] rounded-full bg-primary" /> : null}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex gap-1.5 px-4 pb-2.5">
-          {PERIODOS.map(([k, t]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setPeriodo(k)}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
-                periodo === k ? "border-primary bg-primary text-[var(--on-brand)]" : "border-border-light text-text-secondary hover:bg-surface-secondary",
-              )}
-            >
-              {t}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 px-4 pb-2 pt-2.5">
+          <div className="min-w-0 flex-1">
+            <SearchInput placeholder="Search name, number, job ref, tag" value={busca} onChange={(e) => setBusca(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex items-center gap-1 px-4 pb-2 text-[12px] text-text-secondary">
+          <span className="text-text-tertiary">Showing</span>
+          <select
+            value={periodo}
+            onChange={(e) => setPeriodo(e.target.value as Periodo)}
+            className="cursor-pointer rounded-md bg-transparent py-0.5 pr-1 font-medium text-text-primary outline-none hover:bg-surface-secondary"
+            aria-label="Period"
+          >
+            {PERIODOS.map(([k]) => (
+              <option key={k} value={k}>
+                {k === "60d" ? "Last 60 days" : k === "hoje" ? "Today" : k === "semana" ? "Last 7 days" : "Last 30 days"}
+              </option>
+            ))}
+          </select>
+          <span className="text-text-tertiary">· most recent</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto border-t border-border-light">
           {lista.length === 0 ? (
@@ -717,27 +741,42 @@ export function CaixaAtendimento({
                 type="button"
                 onClick={() => abrir(c)}
                 className={cn(
-                  "relative flex w-full gap-2.5 border-b border-border-light/60 px-4 py-2.5 text-left transition-colors hover:bg-surface-secondary/60",
-                  ativa && "bg-surface-tertiary/70 hover:bg-surface-tertiary/70",
+                  "relative flex w-full gap-3 border-b border-border-light/60 px-4 py-3 text-left transition-colors hover:bg-surface-secondary/70",
+                  ativa && "bg-surface-tertiary/80 hover:bg-surface-tertiary/80",
                 )}
               >
-                {ativa ? <span className="absolute inset-y-0 left-0 w-[3px] bg-text-primary" /> : null}
-                <Avatar c={c} online={Boolean(p)} />
+                {ativa ? <span className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary" /> : null}
+                <Avatar c={c} tamanho="md" online={Boolean(p)} canal />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[13px] font-semibold text-text-primary">{c.nome}</span>
+                    <span className={cn("truncate text-[14px] text-text-primary", n > 0 ? "font-bold" : "font-semibold")}>{c.nome}</span>
                     {resolvida(c) ? <CheckCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : null}
-                    <span className="ml-auto shrink-0 text-[11px] text-text-tertiary">{hora(ultima.criadoEm)}</span>
-                    {n > 0 ? <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-text-primary px-1 text-[10.5px] text-card">{n}</span> : null}
+                    <span className={cn("ml-auto shrink-0 text-[11.5px] tabular-nums", n > 0 ? "font-semibold text-[var(--accent)]" : "text-text-tertiary")}>
+                      {quandoNaLista(ultima.criadoEm, agora)}
+                    </span>
                   </span>
-                  <span className={cn("block truncate text-xs", p === "digitando" || p === "gravando" ? "text-emerald-600" : "text-text-secondary")}>
-                    {p === "digitando"
-                      ? "typing..."
-                      : p === "gravando"
-                        ? "recording audio..."
-                        : `${ultima.direcao === "saida" ? "You: " : ""}${ultima.texto ?? `[${ultima.tipo}]`}`}
+                  <span className="mt-0.5 flex items-center gap-1">
+                    {p === "digitando" || p === "gravando" ? (
+                      <span className="truncate text-[12.5px] text-emerald-600">{p === "digitando" ? "typing..." : "recording audio..."}</span>
+                    ) : (
+                      <>
+                        {ultima.direcao === "saida" ? (
+                          <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                        ) : (
+                          <ArrowDownLeft className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+                        )}
+                        <span className={cn("truncate text-[12.5px]", n > 0 ? "font-medium text-text-primary" : "text-text-secondary")}>
+                          {ultima.texto ?? `[${ultima.tipo}]`}
+                        </span>
+                      </>
+                    )}
+                    {n > 0 ? (
+                      <span className="ml-auto flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10.5px] font-semibold text-white">
+                        {n}
+                      </span>
+                    ) : null}
                   </span>
-                  <span className="mt-1 flex flex-wrap items-center gap-1">
+                  <span className="mt-1.5 flex flex-wrap items-center gap-1">
                     <ChipDoTipo c={c} />
                     {c.etapa ? <ChipDaEtapa e={c.etapa} /> : null}
                     {c.jobHoje ? (
@@ -762,9 +801,12 @@ export function CaixaAtendimento({
       {aberta ? (
         <section className="flex min-h-0 flex-col bg-surface-secondary/50">
           <div className="flex items-center gap-3 border-b border-border-light bg-card px-4 py-2.5">
-            <Avatar c={aberta} online={Boolean(presenca)} />
+            <Avatar c={aberta} tamanho="md" online={Boolean(presenca)} canal />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[15px] font-semibold text-text-primary">{aberta.nome}</p>
+              <p className="flex items-center gap-2 truncate text-[16px] font-semibold text-text-primary">
+                <span className="truncate">{aberta.nome}</span>
+                <ChipDoTipo c={aberta} />
+              </p>
               <p className="truncate text-xs text-text-tertiary">
                 {presenca === "digitando" ? (
                   <span className="text-emerald-600">typing...</span>
@@ -802,20 +844,21 @@ export function CaixaAtendimento({
                 <Acao icone={RotateCcw} onClick={() => void resolver(aberta, false)} disabled={!estadoPronto}>
                   Reopen
                 </Acao>
-              ) : (
-                <Acao icone={CheckCheck} onClick={() => void resolver(aberta, true)} disabled={!estadoPronto}>
-                  Resolve
-                </Acao>
-              )}
+              ) : null}
               {fora(aberta) ? (
                 <Acao icone={ArchiveRestore} onClick={() => void mover(aberta, "restaurar")} disabled={!estadoPronto}>
                   Restore
                 </Acao>
               ) : null}
-              <Acao icone={Plus} variante="primario" onClick={() => setMenu((m) => (m === "acoes" ? null : "acoes"))}>
+              <Acao icone={Plus} ativo={menu === "acoes"} onClick={() => setMenu((m) => (m === "acoes" ? null : "acoes"))}>
                 Actions
                 <ChevronDown className="h-3.5 w-3.5" />
               </Acao>
+              {!resolvida(aberta) ? (
+                <Acao icone={CheckCheck} variante="primario" onClick={() => void resolver(aberta, true)} disabled={!estadoPronto}>
+                  Resolve
+                </Acao>
+              ) : null}
               <Acao icone={MoreHorizontal} title="More" ativo={menu === "mais"} onClick={() => setMenu((m) => (m === "mais" ? null : "mais"))} />
 
               {menu === "tags" ? (
@@ -935,8 +978,7 @@ export function CaixaAtendimento({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 border-b border-border-light bg-card px-4 py-1.5">
-            <ChipDoTipo c={aberta} />
+          <div className="flex flex-wrap items-center gap-1 border-b border-border-light bg-card px-4 py-1.5 empty:hidden">
             {aberta.parceiro?.oficio ? <Chip icone={Wrench}>{aberta.parceiro.oficio}</Chip> : null}
             {aberta.cliente?.conta ? <Chip icone={Users}>{aberta.cliente.conta}</Chip> : null}
             {aberta.etapa ? <ChipDaEtapa e={aberta.etapa} /> : null}
@@ -982,37 +1024,43 @@ export function CaixaAtendimento({
                   <div key={m.id}>
                     {novoDia ? (
                       <div className="my-2 flex justify-center">
-                        <span className="rounded-full border border-border-light bg-card px-2.5 py-0.5 text-[11px] text-text-tertiary">{diaDaMensagem(m.criadoEm)}</span>
+                        <span className="rounded-full bg-surface-tertiary px-3 py-1 text-[11.5px] font-medium text-text-secondary">{diaDaMensagemOuHoje(m.criadoEm)}</span>
                       </div>
                     ) : null}
-                    <div className={cn("flex", m.direcao === "entrada" ? "justify-start" : "justify-end")}>
+                    <div className={cn("flex items-end gap-2", m.direcao === "entrada" ? "justify-start" : "justify-end")}>
+                      {m.direcao === "entrada" ? (
+                        <span className={cn(antes?.direcao === "entrada" && !novoDia && todas[i + 1]?.direcao === "entrada" ? "invisible" : "")}>
+                          <Avatar c={aberta} canal />
+                        </span>
+                      ) : null}
                       <div
                         onClick={() => marcar(m)}
                         className={cn(
-                          "max-w-[68%] rounded-xl px-3 py-2 text-[13px] leading-snug",
-                          m.direcao === "entrada" ? "border border-border-light bg-card text-text-primary" : "bg-info-light text-[var(--info-ink)]",
+                          "max-w-[68%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-snug shadow-[0_1px_0_rgba(10,10,31,0.04)]",
+                          m.direcao === "entrada"
+                            ? "rounded-bl-md border border-border-light bg-card text-text-primary"
+                            : "rounded-br-md bg-primary text-[var(--on-brand)]",
                           marcavel && "cursor-pointer hover:ring-1 hover:ring-text-tertiary",
                           marcadas.has(m.id) && "ring-2 ring-text-primary hover:ring-2 hover:ring-text-primary",
                         )}
                       >
-                        {m.origem === "os" && m.quem ? <p className="mb-0.5 text-[11px] font-medium opacity-80">{m.quem}</p> : null}
+                        {m.origem !== "contato" && m.quem ? <p className="mb-0.5 text-[11.5px] font-semibold text-[var(--accent)]">{m.quem}</p> : null}
                         <Midia m={m} />
-                        {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? (
-                          <p className="whitespace-pre-wrap break-words">{m.texto}</p>
-                        ) : m.midiaUrl ? null : (
-                          <p className="opacity-70">[{m.tipo}]</p>
-                        )}
-                        <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px] opacity-70">
-                          {m.origem === "celular" ? (
-                            <>
-                              <Smartphone className="h-3 w-3" />
-                              Phone app ·
-                            </>
-                          ) : null}
-                          {horaCurta(m.criadoEm)}
-                          {m.direcao === "saida" && m.status ? ` · ${m.status}` : ""}
-                        </p>
-                        {m.status === "failed" ? <p className="mt-0.5 text-[11px] text-[var(--bad-ink)]">Not delivered{m.erro ? `: ${m.erro}` : ""}</p> : null}
+                        <div className="flex flex-wrap items-end justify-end gap-x-2.5">
+                          {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? (
+                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.texto}</p>
+                          ) : m.midiaUrl ? null : (
+                            <p className="min-w-0 flex-1 opacity-70">[{m.tipo}]</p>
+                          )}
+                          <span className="ml-auto inline-flex shrink-0 translate-y-0.5 items-center gap-1 text-[10.5px] tabular-nums opacity-65">
+                            {m.origem === "celular" ? <Smartphone className="h-3 w-3" aria-label="Sent from the phone app" /> : null}
+                            {horaCurta(m.criadoEm)}
+                            {m.direcao === "saida" ? <Tique status={m.status} /> : null}
+                          </span>
+                        </div>
+                        {m.status === "failed" ? (
+                          <p className="mt-1 rounded-md bg-white/15 px-1.5 py-0.5 text-[11px] font-medium text-[#ffd2c2]">Not delivered{m.erro ? `: ${m.erro}` : ""}</p>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1095,6 +1143,15 @@ function comPendentes(doServidor: MensagemDaCaixa[], pendentes: MensagemDaCaixa[
       ),
   );
   return vivas.length ? [...doServidor, ...vivas] : doServidor;
+}
+
+/** O estado da mensagem que saiu, em ícone: relógio, um tique, dois, dois azuis, alerta. */
+function Tique({ status }: { status: string | null }) {
+  if (status === "sending") return <Clock3 className="h-3 w-3" aria-label="Sending" />;
+  if (status === "failed") return <CircleAlert className="h-3 w-3 text-[#ffb59a]" aria-label="Failed" />;
+  if (status === "read") return <CheckCheck className="h-3.5 w-3.5 text-sky-300" aria-label="Read" />;
+  if (status === "delivered") return <CheckCheck className="h-3.5 w-3.5" aria-label="Delivered" />;
+  return <Check className="h-3.5 w-3.5" aria-label="Sent" />;
 }
 
 function Midia({ m }: { m: MensagemDaCaixa }) {
