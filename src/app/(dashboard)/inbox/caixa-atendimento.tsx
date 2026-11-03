@@ -70,7 +70,6 @@ import { PlayerDeAudio } from "./player-de-audio";
 import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { LinkDeJob } from "./link-de-job";
-import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
@@ -92,15 +91,17 @@ type Visao =
   | { k: "sem_dono" }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
 type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro" | "grupo";
-type Periodo = "hoje" | "semana" | "mes" | "60d";
+type Periodo = "tudo" | "hoje" | "semana" | "mes";
+/** O seletor de período do Atendimento do VOS: segmentado, All por padrão. */
 const PERIODOS: [Periodo, string, number][] = [
+  ["tudo", "All", Infinity],
   ["hoje", "Today", 0],
   ["semana", "Week", 7],
   ["mes", "Month", 30],
-  ["60d", "60d", 60],
 ];
 /** A conversa teve mensagem dentro do período (hoje = desde a meia-noite de Londres). */
 function noPeriodo(c: ConversaDaCaixa, p: Periodo, agora: number): boolean {
+  if (p === "tudo") return true;
   const ultima = c.mensagens[c.mensagens.length - 1]?.criadoEm;
   if (!ultima) return false;
   if (p === "hoje") {
@@ -363,7 +364,7 @@ export function CaixaAtendimento({
   const router = useRouter();
   const [visao, setVisao] = useState<Visao>({ k: "abertas" });
   const [tipo, setTipo] = useState<Tipo>("todas");
-  const [periodo, setPeriodo] = useState<Periodo>("60d");
+  const [periodo, setPeriodo] = useState<Periodo>("tudo");
   const [abertaId, setAbertaId] = useState<string | null>(inicial);
   const [buscaAberta, setBuscaAberta] = useState(false);
   /** O menu do botão direito numa linha da lista. */
@@ -1149,19 +1150,22 @@ export function CaixaAtendimento({
           <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-text-secondary">
             {tituloDaVisao} · {lista.length}
           </span>
-          <div className="w-[128px] shrink-0">
-            <Select
-              aria-label="Period"
-              value={periodo}
-              onChange={(e) => setPeriodo(e.target.value as Periodo)}
-              className="h-8 text-[12.5px]"
-              options={[
-                { value: "hoje", label: "Today" },
-                { value: "semana", label: "Last 7 days" },
-                { value: "mes", label: "Last 30 days" },
-                { value: "60d", label: "Last 60 days" },
-              ]}
-            />
+          <div role="tablist" aria-label="Period" className="flex shrink-0 items-center rounded-lg bg-surface-tertiary p-0.5">
+            {PERIODOS.map(([k, t]) => (
+              <button
+                key={k}
+                type="button"
+                role="tab"
+                aria-selected={periodo === k}
+                onClick={() => setPeriodo(k)}
+                className={cn(
+                  "h-6 rounded-md px-2 text-[11.5px] font-medium transition-colors",
+                  periodo === k ? "bg-card text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary",
+                )}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
         <FiltrosAtivos filtros={filtros} onMudar={setFiltros} equipe={equipe} />
