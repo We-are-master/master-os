@@ -125,8 +125,20 @@ async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<str
 
 /** Grava um evento da uazapi. Reentrega não duplica, pelo wamid. */
 export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): Promise<string> {
+  const presenca = extrairPresencaUazapi(payload);
+  if (presenca) {
+    const { error } = await sb
+      .from("inbox_conversas")
+      .upsert({ contato: presenca.contato, presenca: presenca.estado, presenca_em: new Date().toISOString() }, { onConflict: "contato" });
+    if (error) console.error("[uazapi-operacao] presença", error.message);
+    return `presença ${presenca.estado}`;
+  }
   const m = extrairMensagemUazapi(payload);
   if ("pular" in m) return m.pular;
+  // Sem "baixar mídia" ligado na instância o evento chega sem URL: pede uma.
+  if (!m.midiaUrl && ["image", "audio", "video", "document", "sticker"].includes(m.tipo)) {
+    m.midiaUrl = await urlDaMidia(m.wamid);
+  }
   const { error } = await sb.from("wa_mensagens").upsert(
     {
       wamid: m.wamid,
@@ -168,4 +180,107 @@ export async function enviarPelaUazapi(para: string, texto: string): Promise<{ w
     throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
   }
   return { wamid, corpo };
+}
+
+/**
+ * Presença do contato (online, digitando, saiu). O uazapiGO repassa o evento
+ * do WhatsApp Web, que muda de forma entre versões; lê o que der e ignora o
+ * resto. Grupo fica fora como nas mensagens.
+ */
+export function extrairPresencaUazapi(payload: unknown): { contato: string; estado: "online" | "digitando" | "gravando" | "offline" } | null {
+  const p = rec(payload) ?? {};
+  const evento = String(p.EventType ?? p.event ?? "").toLowerCase();
+  if (!evento.includes("presence")) return null;
+  const e = rec(p.event) ?? rec(p.data) ?? rec(p.presence) ?? p;
+  const jid = str(e.From) ?? str(e.from) ?? str(e.Chat) ?? str(e.chat) ?? str(e.chatid) ?? str(e.Sender) ?? str(e.id) ?? str(p.chatid) ?? "";
+  if (!jid || jid.endsWith("@g.us")) return null;
+  const contato = jid.split("@")[0].split(":")[0].replace(/\D/g, "");
+  if (contato.length < 10) return null;
+  const bruto = String(e.State ?? e.state ?? e.Presence ?? e.presence ?? e.lastKnownPresence ?? "").toLowerCase();
+  if (e.Unavailable === true || bruto === "unavailable") return { contato, estado: "offline" };
+  if (bruto === "composing") return { contato, estado: "digitando" };
+  if (bruto === "recording") return { contato, estado: "gravando" };
+  if (bruto === "available" || bruto === "paused" || e.Unavailable === false) return { contato, estado: "online" };
+  return null;
+}
+
+function cabecalho(): Record<string, string> {
+  const token = process.env.UAZAPI_OPS_TOKEN?.trim();
+  if (!token) throw new EnvioOperacaoError("UAZAPI_OPS_TOKEN is not set");
+  return { token, "Content-Type": "application/json", Accept: "application/json" };
+}
+
+/** Pede à uazapi a URL de uma mídia recebida. Sem ela, a mensagem fica só com o rótulo. */
+async function urlDaMidia(messageid: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${baseUrl()}/message/download`, {
+      method: "POST",
+      headers: cabecalho(),
+      body: JSON.stringify({ id: messageid, return_link: true }),
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return str(json.fileURL) ?? str(json.fileUrl) ?? str(json.url) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export type TipoDeMidia = "image" | "video" | "document" | "ptt" | "audio";
+
+/**
+ * Manda arquivo pelo 7983. A legenda vai em `text` (a uazapi ignora `caption`
+ * em silêncio; o VOS aprendeu isso com 202 legendas perdidas). Voz é `ptt`:
+ * chega como áudio gravado, não como arquivo.
+ */
+export async function enviarMidiaPelaUazapi(
+  para: string,
+  tipo: TipoDeMidia,
+  url: string,
+  legenda?: string,
+  nomeDoArquivo?: string,
+): Promise<{ wamid: string; corpo: Record<string, unknown> }> {
+  const numero = para.replace(/\D/g, "");
+  if (numero.length < 11) throw new EnvioOperacaoError(`Invalid WhatsApp number: ${para}`);
+  const corpo = {
+    number: numero,
+    type: tipo,
+    file: url,
+    ...(legenda ? { text: legenda } : {}),
+    ...(nomeDoArquivo ? { docName: nomeDoArquivo } : {}),
+  };
+  const res = await fetch(`${baseUrl()}/send/media`, { method: "POST", headers: cabecalho(), body: JSON.stringify(corpo) });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const wamid = str(json.messageid) ?? str(json.messageId) ?? str(rec(json.key)?.id) ?? str(json.id);
+  if (!res.ok || !wamid) {
+    throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
+  }
+  return { wamid, corpo: { ...corpo, file: "(signed url)" } };
+}
+
+/** O 7983 está conectado agora? Lê o estado da instância na uazapi. */
+export async function statusDaInstancia(): Promise<{ conectado: boolean; estado: string }> {
+  try {
+    const res = await fetch(`${baseUrl()}/instance/status`, { headers: cabecalho(), cache: "no-store" });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const inst = rec(json.instance) ?? {};
+    const st = rec(json.status) ?? {};
+    const estado = String(inst.status ?? json.status ?? "unknown");
+    const conectado = st.connected === true || estado === "connected";
+    return { conectado, estado: conectado ? "connected" : estado };
+  } catch {
+    return { conectado: false, estado: "unreachable" };
+  }
+}
+
+/** Avisa o WhatsApp que a conversa foi lida (os dois tiques azuis do lado do contato). */
+export async function marcarLidaNaUazapi(contato: string): Promise<void> {
+  try {
+    await fetch(`${baseUrl()}/chat/read`, {
+      method: "POST",
+      headers: cabecalho(),
+      body: JSON.stringify({ number: `${contato.replace(/\D/g, "")}@s.whatsapp.net`, read: true }),
+    });
+  } catch {
+    /* best effort */
+  }
 }

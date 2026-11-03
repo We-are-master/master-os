@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -31,6 +32,8 @@ export default function DashboardLayoutClient({
   const [mobileOpen, setMobileOpen] = useState(false);
   const profileState = useProfileLoader();
   const themeState = useThemeProvider();
+  // A /inbox ocupa a tela toda, como o Atendimento do VOS: sem cabeçalho nem margem.
+  const telaCheia = usePathname()?.startsWith("/inbox") ?? false;
 
   const toggle = useCallback(() => setCollapsed((p) => !p), []);
   const toggleMobile = useCallback(() => setMobileOpen((p) => !p), []);
@@ -57,8 +60,13 @@ export default function DashboardLayoutClient({
                     collapsed ? "lg:ml-[66px]" : "lg:ml-[216px]",
                   )}
                 >
-                  <Header />
-                  <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-[14px] pt-5 pb-24 sm:px-6 sm:pb-14">
+                  {telaCheia ? null : <Header />}
+                  <main
+                    className={cn(
+                      "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
+                      telaCheia ? "p-0" : "px-[14px] pt-5 pb-24 sm:px-6 sm:pb-14",
+                    )}
+                  >
                     {children}
                   </main>
                   <MasterBrainAssistant />
