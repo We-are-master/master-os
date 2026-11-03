@@ -8,13 +8,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { staffDaInbox } from "@/lib/inbox/staff";
 import { equipeDaInbox } from "@/lib/inbox/equipe";
+import { ehGrupo } from "@/lib/inbox/grupo";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   const s = await staffDaInbox();
   if (s instanceof NextResponse) return s;
-  const corpo = (await req.json().catch(() => ({}))) as { contato?: string; acao?: string; tags?: unknown; para?: unknown };
+  const corpo = (await req.json().catch(() => ({}))) as { contato?: string; acao?: string; tags?: unknown; para?: unknown; nome?: unknown };
   const contato = String(corpo.contato ?? "").replace(/\D/g, "");
   if (!contato) return NextResponse.json({ error: "contato is required" }, { status: 400 });
 
@@ -38,6 +39,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only Workforce members can take a conversation" }, { status: 400 });
     }
     patch = { atribuida_a: para, atribuida_em: para ? agora : null };
+  } else if (corpo.acao === "renomear") {
+    // Nome dado pela equipe; vazio volta ao nome do cadastro. Parceiro segue a empresa e grupo o WhatsApp, então não renomeiam aqui.
+    if (ehGrupo(contato)) return NextResponse.json({ error: "Groups take their name from WhatsApp" }, { status: 400 });
+    patch = { nome: String(corpo.nome ?? "").trim().slice(0, 80) || null };
   } else return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 
   const { data, error } = await s.sb

@@ -57,6 +57,7 @@ import {
   MessageSquarePlus,
   Pin,
   PinOff,
+  Pencil,
   Reply,
   Smile,
   type LucideIcon,
@@ -370,11 +371,13 @@ export function CaixaAtendimento({
   const [local, setLocal] = useState<
     Record<
       string,
-      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null; atribuidaA?: string | null }
+      { resolvidaEm?: string | null; arquivadaEm?: string | null; excluidaEm?: string | null; tags?: string[]; lidaEm?: string | null; naoLida?: boolean; fixadaEm?: string | null; atribuidaA?: string | null; nome?: string }
     >
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
   const [novaTag, setNovaTag] = useState("");
+  /** Nome em edição no cabeçalho da conversa (null = só leitura). */
+  const [renomeando, setRenomeando] = useState<string | null>(null);
   /** O menu de tag no modo "New tag": um formulário curto em vez da busca. */
   const [formTag, setFormTag] = useState(false);
   const [criandoView, setCriandoView] = useState(false);
@@ -741,6 +744,22 @@ export function CaixaAtendimento({
       router.refresh();
     } catch (e) {
       setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], atribuidaA: c.atribuidaA } }));
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    }
+  }
+
+  /** Nome escolhido pela equipe. Parceiro e grupo não entram: parceiro segue a empresa, grupo o WhatsApp. Vazio volta ao nome do cadastro. */
+  async function renomear(c: ConversaDaCaixa, nome: string) {
+    setRenomeando(null);
+    const limpo = nome.trim().slice(0, 80);
+    if (limpo === c.nome) return;
+    if (limpo) setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], nome: limpo } }));
+    try {
+      await postarConversa({ contato: c.contato, acao: "renomear", nome: limpo });
+      toast.success(limpo ? "Renamed" : "Name reset");
+      router.refresh();
+    } catch (e) {
+      setLocal((l) => ({ ...l, [c.contato]: { ...l[c.contato], nome: c.nome } }));
       toast.error(e instanceof Error ? e.message : "Could not save");
     }
   }
@@ -1208,7 +1227,37 @@ export function CaixaAtendimento({
             <Avatar c={aberta} tamanho="md" online={Boolean(presenca)} canal />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 truncate text-[16px] font-semibold text-text-primary">
-                <span className="truncate">{aberta.nome}</span>
+                {renomeando !== null ? (
+                  <input
+                    autoFocus
+                    value={renomeando}
+                    maxLength={80}
+                    aria-label="Conversation name"
+                    placeholder={aberta.perfil ?? `+${aberta.contato}`}
+                    onChange={(e) => setRenomeando(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={() => void renomear(aberta, renomeando)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setRenomeando(null);
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-border bg-card px-1.5 py-0.5 text-[16px] font-semibold text-text-primary outline-none focus:border-primary"
+                  />
+                ) : aberta.tipo === "parceiro" || aberta.tipo === "grupo" ? (
+                  <span className="truncate" title={aberta.tipo === "parceiro" ? "Partner chats use the company name. Change it on the partner." : undefined}>
+                    {aberta.nome}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setRenomeando(aberta.nome)}
+                    title="Click to rename"
+                    className="group/nome inline-flex min-w-0 items-center gap-1.5 rounded-md text-left hover:text-primary"
+                  >
+                    <span className="truncate">{aberta.nome}</span>
+                    <Pencil className="h-3.5 w-3.5 shrink-0 text-text-tertiary opacity-0 transition-opacity group-hover/nome:opacity-100" />
+                  </button>
+                )}
               </p>
               {/* Só um estado: online agora, senão o último sinal (visto ou mensagem). O número fica no painel. */}
               <p className="truncate text-xs text-text-tertiary" title={`+${aberta.contato}`}>

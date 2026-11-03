@@ -1,7 +1,8 @@
 /**
  * Liga um número que o cadastro não reconhece a quem ele é: parceiro, cliente,
  * conta ou lead. Fica em inbox_conversas (355), sem mexer no telefone do
- * cadastro; a caixa passa a tratar a conversa como desse cadastro.
+ * cadastro; a caixa passa a tratar a conversa como desse cadastro. Ligar
+ * apaga o nome dado à mão: a conversa passa a seguir o nome do cadastro.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
   const { error } = await s.sb
     .from("inbox_conversas")
     .upsert(
-      { contato, vinculo_tipo: tipo, vinculo_id: id, ...(tipo === "lead" && nome ? { nome } : {}), atualizado_em: new Date().toISOString() },
+      { contato, vinculo_tipo: tipo, vinculo_id: id, nome: tipo === "lead" ? nome : null, atualizado_em: new Date().toISOString() },
       { onConflict: "contato" },
     );
   if (error) {
