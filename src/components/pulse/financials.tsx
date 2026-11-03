@@ -908,12 +908,14 @@ function StatusDot({ color }: { color: string }) {
  */
 /** O valor com a margem em % ao lado, menor, na cor de como está contra a meta. */
 function ComMargem({ valor, margem }: { valor: string; margem: MargemDoPeriodo }) {
-  if (margem.pct == null) return <>{valor}</>;
+  // nowrap (03/11/2026): o navegador quebra linha depois do "-", e "-£1,435 -44%" virava
+  // "-" / "£1,435 -" / "44%" no card estreito. Valor e % ficam inteiros; a % desce junta se faltar espaço.
+  if (margem.pct == null) return <span className="whitespace-nowrap">{valor}</span>;
   const cor = margem.situacao === "abaixo" ? "text-fx-red" : "text-fx-green";
   return (
     <>
-      {valor}
-      <span className={cn("ml-1.5 text-[13px] font-semibold tabular-nums", cor)}>{margem.pct}%</span>
+      <span className="whitespace-nowrap">{valor}</span>{" "}
+      <span className={cn("ml-0.5 whitespace-nowrap text-[13px] font-semibold tabular-nums", cor)}>{margem.pct}%</span>
     </>
   );
 }
