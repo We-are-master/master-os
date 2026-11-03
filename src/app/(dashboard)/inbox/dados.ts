@@ -308,7 +308,8 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
           .from("jobs")
           .select("id, reference, partner_id")
           .in("partner_id", idsParceiros)
-          .in("status", ["final_check", "awaiting_payment", "completed"])
+          // Só job ainda aberto: o que já fechou (completed) não se cobra mais.
+          .in("status", ["final_check", "awaiting_payment"])
           .eq("report_submitted", false)
           .is("deleted_at", null)
           .gte("scheduled_date", desde.slice(0, 10))
