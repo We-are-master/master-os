@@ -11,7 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion as mo } from "framer-motion";
-import { ArrowDownLeft, ArrowLeft, ArrowUpRight, MessageCircle, Search, X } from "lucide-react";
+import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Search, X } from "lucide-react";
+import { ChatsCircle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import "./inbox.css";
 import { Composer } from "./composer";
@@ -118,7 +119,7 @@ export function AtendimentoLateral() {
         title="Inbox"
         aria-label="Inbox"
       >
-        <MessageCircle className="h-[15px] w-[15px]" />
+        <ChatsCircle className="h-[16px] w-[16px]" />
         <AnimatePresence>
           {comNaoLidas > 0 ? (
             <mo.span
