@@ -15,11 +15,9 @@ import { toast } from "sonner";
 import { AnimatePresence, motion as mo } from "framer-motion";
 import {
   Briefcase,
-  CalendarClock,
   Check,
   ExternalLink,
   FileText,
-  Home,
   MapPin,
   Receipt,
   Search,
@@ -776,7 +774,7 @@ export function OfertaDeJob({
   }
 
   return (
-    <div className={cn("flex flex-col", emModal ? "h-[min(70dvh,640px)]" : "h-full")}>
+    <div className={cn("flex flex-col", emModal ? "max-h-[min(70dvh,640px)]" : "h-full")}>
       <div className={cn("flex items-center gap-2 border-b border-border-light px-4 py-3", emModal && "hidden")}>
         <Send className="h-4 w-4 text-text-primary" />
         <p className="flex-1 text-[15px] font-semibold text-text-primary">Offer a job to {primeiro}</p>
@@ -784,64 +782,57 @@ export function OfertaDeJob({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="space-y-2 border-b border-border-light px-4 py-3 text-xs">
-        <p className="rounded-lg bg-info-light px-3 py-2 text-[var(--info-ink)]">
-          Same as assigning in Jobs: the job is booked to {primeiro}, who gets the email, the app push and the Zendesk note on the ticket.
-        </p>
-        <label className="flex items-center gap-2 text-text-secondary">
-          <input type="checkbox" checked={mandarAqui} onChange={(e) => setMandarAqui(e.target.checked)} />
-          Also send the job here on WhatsApp
-        </label>
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-text-tertiary" />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-light px-4 py-2.5 text-xs">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-text-tertiary" />
           <input
-            className="w-full rounded-lg border border-border-light bg-card py-2 pl-8 pr-2.5 text-xs text-text-primary placeholder:text-text-tertiary"
+            className="w-full rounded-lg border border-border-light bg-card py-1.5 pl-8 pr-2.5 text-xs text-text-primary placeholder:text-text-tertiary"
             placeholder="Search ref, address, client"
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
           />
         </div>
+        <label className="flex items-center gap-1.5 text-text-secondary">
+          <input type="checkbox" checked={mandarAqui} onChange={(e) => setMandarAqui(e.target.checked)} />
+          Also send it here on WhatsApp
+        </label>
+        <p className="w-full text-[11px] text-text-tertiary">
+          Offer opens the usual allocation: {primeiro} gets the email, the app push and the Zendesk note.
+        </p>
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
-        {lista.length === 0 ? <Vazio texto="No unassigned jobs." /> : null}
-        {lista.map((j) => (
-          <div key={j.id} className="rounded-lg border border-border-light px-3 py-2">
-            <div className="flex items-center gap-2">
-              <LinkDeJob id={j.id} className="text-xs font-semibold text-text-primary hover:underline">
-                {j.ref}
-              </LinkDeJob>
+      <div className="flex-1 overflow-y-auto">
+        {lista.length === 0 ? (
+          <div className="p-4">
+            <Vazio texto="No dated jobs waiting for a partner." />
+          </div>
+        ) : null}
+        <ul className="divide-y divide-border-light">
+          {lista.map((j) => (
+            <li key={j.id} className="flex items-center gap-3 px-4 py-2 hover:bg-surface-secondary/50">
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2">
+                  <LinkDeJob id={j.id} className="text-[13px] font-semibold text-text-primary hover:underline">
+                    {j.ref}
+                  </LinkDeJob>
+                  {j.status ? <ChipDaEtapa e={{ grupo: "job", status: j.status }} /> : null}
+                  <span className="truncate text-[12.5px] text-text-secondary">{j.titulo}</span>
+                </p>
+                <p className="truncate text-[11.5px] text-text-tertiary">
+                  {[`${dia(j.data)}${j.inicio ? ` ${horaCurta(j.inicio)}` : ""}`, j.endereco?.split(",").slice(-1)[0]?.trim(), j.cliente].filter(Boolean).join(" · ")}
+                </p>
+              </div>
               {j.custoParceiro ? (
-                <span className="ml-auto text-[11px] font-medium text-text-secondary">
+                <span className="shrink-0 text-[12px] font-medium tabular-nums text-text-secondary">
                   {libra.format(j.custoParceiro)}
                   {j.porHora ? "/h" : ""}
                 </span>
               ) : null}
-            </div>
-            {j.titulo ? <p className="truncate text-xs text-text-secondary">{j.titulo}</p> : null}
-            <p className="flex items-center gap-1 text-[11px] text-text-tertiary">
-              <CalendarClock className="h-3 w-3" />
-              {dia(j.data)}
-              {j.inicio ? ` · ${horaCurta(j.inicio)}` : ""}
-            </p>
-            {j.endereco ? (
-              <p className="flex items-center gap-1 truncate text-[11px] text-text-tertiary">
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">{j.endereco}</span>
-              </p>
-            ) : null}
-            {j.cliente ? (
-              <p className="flex items-center gap-1 truncate text-[11px] text-text-tertiary">
-                <Home className="h-3 w-3 shrink-0" />
-                {j.cliente}
-              </p>
-            ) : null}
-            <div className="mt-2 flex justify-end">
               <Acao icone={Send} variante="primario" onClick={() => setEscolhido(j)}>
-                Offer to {primeiro}
+                Offer
               </Acao>
-            </div>
-          </div>
-        ))}
+            </li>
+          ))}
+        </ul>
       </div>
       {escolhido && c.parceiro ? (
         <AssignPartnerModal

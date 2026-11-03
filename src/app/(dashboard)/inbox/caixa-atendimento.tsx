@@ -1609,7 +1609,7 @@ export function CaixaAtendimento({
       </aside>
       {/* Offer a job: modal só com os jobs em Unassigned, o painel continua atrás. */}
       {aberta?.tipo === "parceiro" ? (
-        <Modal open={gaveta?.k === "oferecer"} onClose={fecharGaveta} title={`Offer a job to ${aberta.nome.startsWith("+") ? "this partner" : aberta.nome.split(" ")[0]}`} subtitle={`${paraOferecer.length} unassigned job${paraOferecer.length === 1 ? "" : "s"}`} size="lg">
+        <Modal open={gaveta?.k === "oferecer"} onClose={fecharGaveta} title={`Offer a job to ${aberta.nome.startsWith("+") ? "this partner" : aberta.nome.split(" ")[0]}`} subtitle={`${paraOferecer.length} dated job${paraOferecer.length === 1 ? "" : "s"} without a partner`} size="lg">
           <OfertaDeJob
             emModal
             c={aberta}

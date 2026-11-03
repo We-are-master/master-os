@@ -225,11 +225,12 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
     idsParceiros.length
       ? sb
           .from("jobs")
-          .select("id, reference, title, scheduled_date, scheduled_start_at, property_address, client_name, partner_cost, job_type, hourly_partner_rate, scope")
+          .select("id, reference, title, status, scheduled_date, scheduled_start_at, property_address, client_name, partner_cost, job_type, hourly_partner_rate, scope")
           .is("partner_id", null)
           .is("deleted_at", null)
-          // Só o que está em Unassigned; Finding partner já está sendo oferecido pelo app.
-          .eq("status", "unassigned")
+          // Sem parceiro e com data: Unassigned e Finding partner. On hold e rascunho ficam de fora.
+          .in("status", ["unassigned", "auto_assigning"])
+          .not("scheduled_date", "is", null)
           .order("scheduled_date", { ascending: true, nullsFirst: false })
           .limit(80)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -452,6 +453,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       inicio: (j.scheduled_start_at as string | null) ?? null,
       endereco: (j.property_address as string | null) ?? null,
       cliente: (j.client_name as string | null) ?? null,
+      status: (j.status as string | null) ?? "",
       custoParceiro: Number.isFinite(custo) && custo > 0 ? custo : null,
       porHora,
       scope: (j.scope as string | null) ?? null,

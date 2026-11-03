@@ -56,6 +56,7 @@ export type JobParaOferecer = {
   custoParceiro: number | null;
   porHora: boolean;
   scope: string | null;
+  status: string;
 };
 
 /**
