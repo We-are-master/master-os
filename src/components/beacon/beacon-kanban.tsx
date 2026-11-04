@@ -25,6 +25,8 @@ import { fetchBeaconBoardJobs } from "@/lib/beacon-jobs";
 import { effectiveJobStatusForDisplay } from "@/lib/job-partner-assign";
 import { batchResolveClientAccountLogoUrls } from "@/lib/client-linked-account-label";
 import { normalizeTypeOfWork } from "@/lib/type-of-work";
+import { abrirConversaNoAtendimento } from "@/lib/inbox/abrir-conversa";
+import { IconeWhatsApp } from "@/app/(dashboard)/inbox/ui";
 import { getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
 
 type KanbanJob = {
@@ -127,6 +129,8 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   const [partnerAvatars, setPartnerAvatars] = useState<Record<string, string | null>>({});
   /** clients.id → linked account logo_url (source_account). */
   const [accountLogoByClientId, setAccountLogoByClientId] = useState<Record<string, string | null>>({});
+  /** Telefone do cliente, para o ícone do WhatsApp abrir a conversa no Atendimento lateral. */
+  const [phoneByClientId, setPhoneByClientId] = useState<Record<string, string | null>>({});
   /** Stage being hovered during a drag — drives the drop-target highlight. */
   const [dragOverStageId, setDragOverStageId] = useState<StageId | null>(null);
   /** Job ids currently mid-flight to the API; cards show a busy state while saving. */
@@ -291,16 +295,23 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
     const clientIds = [...new Set(jobs.map((j) => j.client_id).filter(Boolean))] as string[];
     if (clientIds.length === 0) {
       setAccountLogoByClientId({});
+      setPhoneByClientId({});
       return;
     }
     let cancelled = false;
     void (async () => {
       const supabase = getSupabase();
-      const map = await batchResolveClientAccountLogoUrls(supabase, clientIds);
+      const [map, { data: phones }] = await Promise.all([
+        batchResolveClientAccountLogoUrls(supabase, clientIds),
+        supabase.from("clients").select("id, phone").in("id", clientIds),
+      ]);
       if (cancelled) return;
       const next: Record<string, string | null> = {};
       for (const id of clientIds) next[id] = map.get(id) ?? null;
       setAccountLogoByClientId(next);
+      const tel: Record<string, string | null> = {};
+      for (const c of (phones ?? []) as Array<{ id: string; phone?: string | null }>) tel[c.id] = c.phone?.trim() || null;
+      setPhoneByClientId(tel);
     })();
     return () => {
       cancelled = true;
@@ -442,6 +453,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
                             ? accountLogoByClientId[j.client_id]?.trim() || null
                             : null
                         }
+                        clientPhone={j.client_id ? phoneByClientId[j.client_id] ?? null : null}
                         marginThresholds={marginThresholds}
                       />
                     ))
@@ -488,6 +500,7 @@ function KanbanCard({
   onAssignClick,
   partnerAvatarUrl,
   accountLogoUrl,
+  clientPhone,
   marginThresholds,
 }: {
   job: KanbanJob;
@@ -498,6 +511,7 @@ function KanbanCard({
   onAssignClick?: (job: Pick<KanbanJob, "id" | "reference">) => void;
   partnerAvatarUrl?: string | null;
   accountLogoUrl?: string | null;
+  clientPhone?: string | null;
   marginThresholds: MarginThresholds;
 }) {
   const typeOfWorkLabel = normalizeTypeOfWork(job.title) || job.title;
@@ -670,6 +684,24 @@ function KanbanCard({
             >
               {marginPct}%
             </span>
+          ) : null}
+          {clientPhone ? (
+            // Abre a conversa do cliente no Atendimento lateral (7983), sem sair do quadro.
+            <button
+              type="button"
+              aria-label="Open the client conversation"
+              title="Open the client conversation"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!abrirConversaNoAtendimento(clientPhone, job.client_name || "Client", "cliente")) {
+                  toast.error("This number does not look like a WhatsApp number");
+                }
+              }}
+              className="-mr-1 self-center rounded-md p-0.5 text-[#25D366] transition-colors hover:bg-[#25D366]/10"
+            >
+              <IconeWhatsApp className="h-3.5 w-3.5" />
+            </button>
           ) : null}
         </div>
       </div>
