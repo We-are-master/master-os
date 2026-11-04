@@ -12,6 +12,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion as mo } from "framer-motion";
 import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Search, X } from "lucide-react";
+import { useSomDeChegada } from "./sons";
+import { SeletorDeSom } from "./seletor-de-som";
 import { ChatsCircle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import "./inbox.css";
@@ -118,6 +120,9 @@ export function AtendimentoLateral() {
       raiz.style.removeProperty("--inbox-lateral");
     };
   }, [visivel, largura]);
+
+  // O som toca em qualquer tela, inclusive na /inbox (a caixa e o painel não tocam a mesma mensagem duas vezes).
+  useSomDeChegada(dados?.conversas);
 
   // Na própria /inbox o painel não faz sentido.
   if (pathname === "/inbox" || pathname.startsWith("/inbox/")) return null;
@@ -236,6 +241,7 @@ export function AtendimentoLateral() {
                   <span className="text-[16px] font-bold tracking-tight text-text-primary">Inbox</span>
                   {comNaoLidas ? <span className="rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-bold leading-[18px] text-white">{comNaoLidas}</span> : null}
                   <span className="flex-1" />
+                  <SeletorDeSom />
                 </>
               )}
               <Link
