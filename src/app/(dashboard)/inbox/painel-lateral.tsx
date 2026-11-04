@@ -219,7 +219,10 @@ export function AtendimentoLateral() {
                   <button type="button" onClick={() => setContato(null)} className="-ml-1 grid h-8 w-8 place-items-center rounded-lg text-text-secondary hover:bg-surface-secondary" aria-label="Back">
                     <ArrowLeft className="h-4 w-4" />
                   </button>
-                  <Avatar c={conversa} tamanho="sm" canal />
+                  {/* O Avatar se prende no topo (self-start); aqui ele fica no meio, entre o nome e o número. */}
+                  <span className="flex self-center">
+                    <Avatar c={conversa} tamanho="sm" canal />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14px] font-semibold text-text-primary">{conversa.nome}</span>
                     <span className="block truncate text-[11.5px] text-text-tertiary">{conversa.org?.nome ?? `+${conversa.contato}`}</span>
