@@ -13,7 +13,8 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { FileText, ImagePlus, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
+import { ClipboardList, FileText, ImagePlus, MessageSquareQuote, Paperclip, Send, Smile, X } from "lucide-react";
+import { AnexarJob } from "./anexar-job";
 import { toast } from "sonner";
 import { Acao, IconeWhatsApp } from "./ui";
 import type { MensagemDaCaixa, TipoDeContato } from "./tipos";
@@ -112,6 +113,8 @@ export function Composer({
   onResolvida,
   respondendo = null,
   onCancelarResposta,
+  parceiroId = null,
+  clienteId = null,
 }: {
   contato: string;
   nome: string;
@@ -126,6 +129,9 @@ export function Composer({
   /** A mensagem que o Reply do balão escolheu: vai citada no envio de texto. */
   respondendo?: MensagemDaCaixa | null;
   onCancelarResposta?: () => void;
+  /** Quem está na conversa, para o "Attach job or quote" listar o que é dele. */
+  parceiroId?: string | null;
+  clienteId?: string | null;
 }) {
   const [texto, setTexto] = useState("");
   // Texto pronto vindo do painel (pedido de report): entra na caixa, quem envia é a pessoa.
@@ -143,6 +149,7 @@ export function Composer({
   const [previa, setPrevia] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [emojis, setEmojis] = useState(false);
+  const [anexarJob, setAnexarJob] = useState(false);
   const [ativa, setAtiva] = useState(0);
   const [assunto, setAssunto] = useState("");
   const campo = useRef<HTMLTextAreaElement>(null);
@@ -163,6 +170,7 @@ export function Composer({
     setTexto("");
     setArquivo(null);
     setEmojis(false);
+    setAnexarJob(false);
     gravador.descartar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contato]);
@@ -193,15 +201,24 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [texto]);
 
-  // Clique fora fecha o teclado de emoji.
+  // Clique fora fecha o teclado de emoji e o "Attach job or quote".
   useEffect(() => {
-    if (!emojis) return;
+    if (!emojis && !anexarJob) return;
     const fechar = (e: MouseEvent) => {
-      if (!caixa.current?.contains(e.target as Node)) setEmojis(false);
+      if (caixa.current?.contains(e.target as Node)) return;
+      setEmojis(false);
+      setAnexarJob(false);
     };
     document.addEventListener("mousedown", fechar);
     return () => document.removeEventListener("mousedown", fechar);
-  }, [emojis]);
+  }, [emojis, anexarJob]);
+
+  // O texto do job ou da quote entra no fim do que já estava escrito.
+  const inserirAnexo = (t: string) => {
+    setTexto((v) => (v.trim() ? `${v.trimEnd()}\n\n${t}` : t));
+    setAnexarJob(false);
+    focar();
+  };
 
   const focar = () => requestAnimationFrame(() => campo.current?.focus());
 
@@ -475,6 +492,10 @@ export function Composer({
       </AnimatePresence>
 
       <AnimatePresence>
+        {anexarJob && !gravando ? <AnexarJob tipo={tipo} parceiroId={parceiroId} clienteId={clienteId} onInserir={inserirAnexo} /> : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {emojis ? (
           <motion.div key="emojis" className="cmp-pop w-[320px]" {...flutuante("top")}>
             <TecladoDeEmoji onPick={(em) => setTexto((v) => v + em)} />
@@ -500,7 +521,10 @@ export function Composer({
             title="Emoji"
             aria-label="Emoji"
             disabled={enviando || gravando}
-            onClick={() => setEmojis((v) => !v)}
+            onClick={() => {
+              setAnexarJob(false);
+              setEmojis((v) => !v);
+            }}
           >
             <Smile size={16} />
           </button>
@@ -526,6 +550,19 @@ export function Composer({
             }}
           >
             <MessageSquareQuote size={16} />
+          </button>
+          <button
+            type="button"
+            className={"attach" + (anexarJob ? " on" : "")}
+            title="Attach job or quote details"
+            aria-label="Attach job or quote"
+            disabled={enviando || gravando}
+            onClick={() => {
+              setEmojis(false);
+              setAnexarJob((v) => !v);
+            }}
+          >
+            <ClipboardList size={16} />
           </button>
           {/* Clique grava de mãos livres; segurar grava enquanto segura (soltar envia, arrastar cancela ou trava). */}
           <BotaoDoMicrofone gravador={gravador} onEnviar={() => void enviarGravacao()} arrasteRef={faixa} disabled={enviando} />
