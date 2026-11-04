@@ -225,7 +225,10 @@ export function AtendimentoLateral() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14px] font-semibold text-text-primary">{conversa.nome}</span>
-                    <span className="block truncate text-[11.5px] text-text-tertiary">{conversa.org?.nome ?? `+${conversa.contato}`}</span>
+                    {/* A empresa só quando não é o próprio nome (parceiro já vem com o nome da empresa); o número sempre. */}
+                    <span className="block truncate text-[11.5px] text-text-tertiary">
+                      {[conversa.org?.nome && conversa.org.nome.trim().toLowerCase() !== conversa.nome.trim().toLowerCase() ? conversa.org.nome : null, `+${conversa.contato}`].filter(Boolean).join(" · ")}
+                    </span>
                   </span>
                 </>
               ) : (
