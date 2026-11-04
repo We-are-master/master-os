@@ -222,6 +222,49 @@ export function IconeWhatsApp({ className }: { className?: string }) {
 }
 
 /**
+ * O avatar de quem a busca achou (Link, New conversation): a logo da conta em
+ * círculo (cliente: a conta a que pertence), a foto do parceiro, ou as
+ * iniciais na cor do tipo.
+ */
+export function AvatarDoAchado({
+  a,
+  tamanho = "sm",
+}: {
+  a: { tipo: "conta" | "parceiro" | "cliente" | "lead"; nome: string; logo?: string | null; logoDe?: string | null };
+  tamanho?: "sm" | "md";
+}) {
+  return (
+    <span
+      title={a.logoDe ?? undefined}
+      className={cn(
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold",
+        tamanho === "md" ? "h-9 w-9 text-xs" : "h-7 w-7 text-[10.5px]",
+        a.logo
+          ? "bg-white ring-1 ring-border-light"
+          : a.tipo === "conta"
+            ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+            : a.tipo === "parceiro"
+              ? "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+              : a.tipo === "cliente"
+                ? "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-200"
+                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+      )}
+    >
+      {a.logo ? (
+        // eslint-disable-next-line @next/next/no-img-element -- logo de bucket/URL externa, tamanho fixo
+        <img src={a.logo} alt={a.logoDe ?? ""} className="h-full w-full object-cover" />
+      ) : (
+        iniciais(a.nome)
+      )}
+    </span>
+  );
+}
+
+/** A linha de baixo de quem a busca achou: o postcode primeiro, depois o resto. */
+export const linhaDoAchado = (a: { postcode?: string | null; sub: string | null }, ...mais: (string | null | undefined)[]) =>
+  [...mais, a.postcode, a.sub].filter(Boolean).join(" · ");
+
+/**
  * Avatar da conversa, como no VOS: iniciais na cor de quem é (parceiro, cliente,
  * outro), o selo verde do WhatsApp embaixo e o ponto de online em cima.
  */
