@@ -165,9 +165,9 @@
 .cx .cmp-salva b{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:1px;}
 .cx .cmp-salva:hover,.cx .cmp-salva.on{background:var(--panel-2);transition-duration:var(--vos-dur-xs);}
 .cx .cmp-anexar{left:0;right:auto;width:min(460px,100%);padding:6px;display:flex;flex-direction:column;max-height:460px;}
-.cx .cmp-anexar-busca{display:flex;align-items:center;gap:7px;margin:0 4px 6px;padding:0 9px;height:32px;border:1px solid var(--line);border-radius:8px;color:var(--ink-3);}
+.cx .cmp-anexar-busca{display:flex;align-items:center;gap:7px;margin:0 4px 6px;padding:0 11px;height:38px;border:1px solid var(--line);border-radius:8px;color:var(--ink-3);}
 .cx .cmp-anexar-busca:focus-within{border-color:var(--ink-3);}
-.cx .cmp-anexar-busca input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:12.5px;color:var(--ink);}
+.cx .cmp-anexar-busca input{flex:1;min-width:0;border:0;background:none;outline:none;font-size:13px;color:var(--ink);}
 .cx .cmp-anexar-abas{display:flex;gap:2px;margin:0 4px 8px;padding:2px;border-radius:9px;background:var(--panel-2);}
 .cx .cmp-anexar-abas button{flex:1;border:0;background:none;border-radius:7px;padding:5px 8px;font-size:12px;font-weight:500;color:var(--ink-2);cursor:pointer;transition:background-color var(--vos-dur-sm) var(--vos-curva-entrada),color var(--vos-dur-sm) var(--vos-curva-entrada);}
 .cx .cmp-anexar-abas button.on{background:var(--panel);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgb(0 0 0 / .08);}

@@ -31,9 +31,9 @@ type Item = {
 type Valor = "cliente" | "parceiro" | "nenhum";
 
 const VALORES: [Valor, string][] = [
-  ["cliente", "What the client pays"],
-  ["parceiro", "What the partner gets"],
-  ["nenhum", "No price"],
+  ["cliente", "Client price"],
+  ["parceiro", "Partner payout"],
+  ["nenhum", "Hide pricing"],
 ];
 
 export const valorPadrao = (tipo: TipoDeContato): Valor => (tipo === "parceiro" || tipo === "grupo" ? "parceiro" : tipo === "outro" ? "nenhum" : "cliente");
@@ -242,8 +242,8 @@ export function AnexarJob({
         )}
       </div>
       <div className="cmp-anexar-preco">
-        <span className="cmp-anexar-rotulo">Price in the message</span>
-        <div className="cmp-anexar-valor" role="radiogroup" aria-label="Price in the message">
+        <span className="cmp-anexar-rotulo">Pricing</span>
+        <div className="cmp-anexar-valor" role="radiogroup" aria-label="Pricing">
           {VALORES.map(([k, t]) => (
             <button key={k} type="button" role="radio" aria-checked={valor === k} className={valor === k ? "on" : ""} onClick={() => setValor(k)}>
               {t}
