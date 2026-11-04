@@ -20,6 +20,7 @@ import { createClient } from "@/services/clients";
 import { listActiveAccountsForFilter, type FilterableAccount } from "@/services/accounts";
 import { cn } from "@/lib/utils";
 import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
+import { AvatarDoAchado, linhaDoAchado } from "./ui";
 
 export type Escolhido = { numero: string; nome: string; tipo: ContatoAchado["tipo"] | "numero" | "grupo" };
 
@@ -380,7 +381,7 @@ export function NovaConversa({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13.5px] font-medium text-text-primary">{escolhido.nome}</span>
               <span className="block truncate text-[11.5px] text-text-tertiary">
-                {[ROTULO[escolhido.tipo], escolhido.sub, `+${escolhido.numero}`].filter(Boolean).join(" · ")}
+                {[linhaDoAchado(escolhido, ROTULO[escolhido.tipo]), `+${escolhido.numero}`].filter(Boolean).join(" · ")}
               </span>
             </span>
             <button
@@ -424,7 +425,7 @@ export function NovaConversa({
                 onSalvo={(n, nomeDele) => {
                   setCriandoContato(false);
                   if (modo === "grupo") return incluir(n, nomeDele);
-                  setEscolhido({ tipo: "cliente", id: n, nome: nomeDele, sub: "New client", numero: n });
+                  setEscolhido({ tipo: "cliente", id: n, nome: nomeDele, sub: "New client", numero: n, postcode: null, logo: null, logoDe: null });
                   setNome(nomeDele);
                   setNumero(`+${n}`);
                   setQ("");
@@ -471,7 +472,6 @@ export function NovaConversa({
                     </button>
                   ) : null}
                   {lista.map((a) => {
-                    const Icone = ICONE[a.tipo];
                     return (
                       <button
                         key={`${a.tipo}-${a.id}`}
@@ -480,12 +480,10 @@ export function NovaConversa({
                         onClick={() => escolher(a)}
                         className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-secondary disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
                       >
-                        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-surface-secondary text-text-secondary">
-                          <Icone className="h-3.5 w-3.5" />
-                        </span>
+                        <AvatarDoAchado a={a} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[13px] font-medium text-text-primary">{a.nome}</span>
-                          <span className="block truncate text-[11.5px] text-text-tertiary">{[ROTULO[a.tipo], a.sub].filter(Boolean).join(" · ")}</span>
+                          <span className="block truncate text-[11.5px] text-text-tertiary">{linhaDoAchado(a, ROTULO[a.tipo])}</span>
                         </span>
                         <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">{a.numero ? `+${a.numero}` : "No phone"}</span>
                       </button>

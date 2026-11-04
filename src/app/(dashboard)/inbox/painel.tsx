@@ -37,7 +37,7 @@ import type { ContatoAchado } from "@/app/api/inbox/contatos/route";
 import type { TipoDoPrefill } from "@/lib/inbox/prefill";
 import { cn } from "@/lib/utils";
 import { tempo } from "./movimento";
-import { Acao, Avatar, Chip, ChipDaEtapa, JOB_FEITO, corDoAutor, horaCurta, type Tom } from "./ui";
+import { Acao, Avatar, AvatarDoAchado, Chip, linhaDoAchado, ChipDaEtapa, JOB_FEITO, corDoAutor, horaCurta, type Tom } from "./ui";
 import type { ConversaDaCaixa, DocumentoDoParceiro, JobDaCaixa, JobParaOferecer, SelfBillDaCaixa } from "./tipos";
 
 export const ZENDESK = "https://fixfy.zendesk.com/agent/tickets/";
@@ -733,12 +733,13 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
           <ul className="divide-y divide-border-light rounded-lg border border-border-light">
             {achados.map((a) => (
               <li key={`${a.tipo}-${a.id}`} className="flex items-center gap-2 px-2.5 py-2">
+                <AvatarDoAchado a={a} />
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5">
                     <span className="truncate text-[12.5px] font-medium text-text-primary">{a.nome}</span>
                     <Chip tom={ROTULO_DO_ACHADO[a.tipo].tom}>{ROTULO_DO_ACHADO[a.tipo].texto}</Chip>
                   </p>
-                  {a.sub ? <p className="truncate text-[11px] text-text-tertiary">{a.sub}</p> : null}
+                  {linhaDoAchado(a) ? <p className="truncate text-[11px] text-text-tertiary">{linhaDoAchado(a)}</p> : null}
                 </div>
                 <Acao icone={Link2} onClick={() => setAConfirmar(a)} disabled={ligando !== null}>
                   {ligando === a.id ? "Linking..." : "Link"}
@@ -780,7 +781,7 @@ function VincularContato({ c }: { c: ConversaDaCaixa }) {
                   <span className="truncate text-[13px] font-semibold text-text-primary">{aConfirmar.nome}</span>
                   <Chip tom={ROTULO_DO_ACHADO[aConfirmar.tipo].tom}>{ROTULO_DO_ACHADO[aConfirmar.tipo].texto}</Chip>
                 </p>
-                {aConfirmar.sub ? <p className="truncate text-[11.5px] text-text-tertiary">{aConfirmar.sub}</p> : null}
+                {linhaDoAchado(aConfirmar) ? <p className="truncate text-[11.5px] text-text-tertiary">{linhaDoAchado(aConfirmar)}</p> : null}
               </div>
             </div>
             <ul className="space-y-1.5 text-[12.5px] text-text-secondary">
