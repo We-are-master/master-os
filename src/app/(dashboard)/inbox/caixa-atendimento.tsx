@@ -75,6 +75,8 @@ import { Modal } from "@/components/ui/modal";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
+import { useSomDeChegada } from "./sons";
+import { SeletorDeSom } from "./seletor-de-som";
 import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, SEM_DONO, type Filtros } from "./filtros";
 import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, SeletorDeTipo, type TipoRapido, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
@@ -396,6 +398,7 @@ export function CaixaAtendimento({
     () => doServidor.map((c) => (local[c.contato] ? ({ ...c, ...local[c.contato] } as ConversaDaCaixa) : c)),
     [doServidor, local],
   );
+  useSomDeChegada(conversas);
   const tags = useMemo(() => {
     const m = new Map(tagsDoServidor.map((t) => [t.nome, t]));
     for (const t of tagsNovas) m.set(t.nome, t);
@@ -1082,6 +1085,7 @@ export function CaixaAtendimento({
               <Search className="h-[18px] w-[18px]" />
             </button>
           ) : null}
+          <SeletorDeSom className="ml-1.5" />
           <button
             type="button"
             onClick={() => setFiltrosAbertos((v) => !v)}
