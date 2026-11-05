@@ -9,18 +9,15 @@ import { useProfile } from "@/hooks/use-profile";
 import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 import { PulseHead } from "@/components/pulse/pulse-head";
 import { PulseCurrencyProvider } from "@/lib/pulse-currency";
-import { LiveOperations } from "@/components/pulse/live-operations";
-import { MonthGoal } from "@/components/pulse/month-goal";
+import { MonthHealth } from "@/components/pulse/month-health";
+import { NeedsYouToday } from "@/components/pulse/needs-you-today";
 import { PulseCeoProvider } from "@/components/pulse/pulse-ceo-data";
 import { MonthFunnel } from "@/components/pulse/month-funnel";
-import { MoneyReceivable } from "@/components/pulse/money-receivable";
 import { MonthBurnUp, RevenueBySource } from "@/components/pulse/month-charts";
-import { Financials } from "@/components/pulse/financials";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
 import { LiveBoard } from "@/components/pulse/live-board";
 import { TopAccounts } from "@/components/pulse/top-accounts";
-import { PulseStrip } from "@/components/pulse/pulse-strip";
 
 const CeoFinancialDashboard = dynamic(
   () =>
@@ -55,21 +52,11 @@ function PulseInner() {
             <CeoFinancialDashboard />
           ) : (
             <PulseCeoProvider>
-              <MonthGoal />
-              {/* Faixas (15/10/2026): cada grupo de números numa peça só, com divisórias, em vez de 16 cartões soltos. */}
-              <PulseStrip title="Operations" hint="Jobs right now, by stage.">
-                <LiveOperations />
-              </PulseStrip>
-              {/* Lado a lado só com espaço (05/11/2026): com o Atendimento lateral aberto, empilha e os 5 números não se espremem. */}
-              <div className="grid grid-cols-1 gap-3 @6xl:grid-cols-[1.35fr_1fr]">
-                <PulseStrip title="Period results" hint="Revenue, costs and margin for the selected period.">
-                  <Financials />
-                </PulseStrip>
-                <PulseStrip title="Receivables" hint="Unpaid invoices: what is open, what is overdue and what platforms pay on their own cycle.">
-                  <MoneyReceivable />
-                </PulseStrip>
-              </div>
+              {/* Saúde num olhar (dono, 05/11/2026): frase do mês + Sales, Profit e Cash com semáforo.
+                  Substitui a meta, a faixa de operação e as faixas de resultado e a receber. */}
+              <MonthHealth />
               <MonthFunnel />
+              <NeedsYouToday />
               <div className="grid grid-cols-1 @3xl:grid-cols-[1.6fr_1fr] gap-4 @3xl:items-start">
                 <TodaysFlow />
                 <AlertsFeed />
