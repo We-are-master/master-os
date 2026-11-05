@@ -13,7 +13,7 @@
 import { equipeDaInbox, type MembroDaEquipe } from "@/lib/inbox/equipe";
 import { ehGrupo } from "@/lib/inbox/grupo";
 import { createServiceClient } from "@/lib/supabase/service";
-import { OPS_PHONE_NUMBER_ID, finalDoNumero } from "@/lib/whatsapp/operacao";
+import { OPS_PHONE_NUMBER_ID, filtroDoNumero, finalDoNumero } from "@/lib/whatsapp/operacao";
 import { provedorDaOperacao } from "@/lib/whatsapp/uazapi-operacao";
 import {
   JOB_FECHADO,
@@ -198,7 +198,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
 
   // Parceiro cadastrado depois da primeira mensagem não tem partner_id na linha: acha pelo telefone.
   const semParceiro = contatos.filter((c) => !ehGrupo(c) && !parceiroDoContato.has(c) && finalDoNumero(c).length >= 10);
-  const filtroTelefone = (campos: string[]) => semParceiro.flatMap((c) => campos.map((f) => `${f}.ilike.%${finalDoNumero(c).slice(-9)}%`)).join(",");
+  const filtroTelefone = (campos: string[]) => semParceiro.flatMap((c) => campos.map((f) => filtroDoNumero(f, c))).join(",");
   const [{ data: parceirosPorTelefone }, { data: clientes }, { data: estados, error: semEstado }, { data: tags }, { data: contasPorTelefone }] = await Promise.all([
     semParceiro.length
       ? sb.from("partners").select("id, whatsapp, phone").or(filtroTelefone(["whatsapp", "phone"])).limit(200)
