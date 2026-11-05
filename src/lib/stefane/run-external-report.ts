@@ -19,6 +19,7 @@ import {
   formaDoFormularioAPI,
   slotsDeFoto,
   confirmarSubmissao,
+  pendenciasNoFormulario,
 } from "./housekeep-api";
 import {
   photoSlotsForTemplate,
@@ -706,17 +707,15 @@ async function executarEnvio(
    * formulário deles e a mão.
    */
   const pularMinimo = Boolean(opcoes?.ignorarMinimoDeFotos && opcoes?.simular);
-  if (faltas.length > 0 && !pularMinimo) {
-    // Cinco linhas cabem no card. O resto vira contagem, porque a lista inteira
-    // de treze campos empurra o motivo para fora da tela e ninguém lê nenhum.
-    const mostrar = faltas.slice(0, 5).join("; ");
-    const resto = faltas.length > 5 ? ` and ${faltas.length - 5} more` : "";
-    const motivo = `the client platform requires more photos. ${mostrar}${resto}`;
-    await gravarMotivo(supabase, jobId, motivo);
-    return { estado: "nao_elegivel", motivo };
-  }
+  /**
+   * Faltar foto num cômodo NÃO barra mais (dono, 05/11/2026: "duplica até
+   * encaixar, não podemos falhar"). O envio repete fotos do mesmo campo, ou da
+   * mesma metade quando o cômodo veio vazio, até o mínimo deles. O que barra
+   * é uma metade inteira sem foto, e isso `motivoNaoElegivel` já pega antes.
+   */
+  void pularMinimo;
   if (faltas.length > 0) {
-    console.log(`[stefane] ensaio ignorando o nosso mínimo: ${faltas.join("; ")}`);
+    console.log(`[stefane] ${j.reference}: completando com fotos repetidas: ${faltas.join("; ")}`);
   }
 
   /**
@@ -845,9 +844,16 @@ async function executarEnvio(
    * relatório para trás. Vale a pena o falso negativo, porque retentar é
    * barato e um relatório perdido não volta.
    */
-  const motivo = res.ok
+  const motivoBase = res.ok
     ? "the submit went through on screen but the client platform has no report: it did not land"
     : res.motivo;
+  // O que ficou faltando LÁ, lido da API deles: é o que a tela precisa mostrar
+  // para alguém arrumar em um minuto, em vez de um erro genérico.
+  const relido = opcoes?.simular ? null : await buscarFormulario(link).catch(() => null);
+  const pendencias = relido?.ok ? pendenciasNoFormulario(relido.form) : [];
+  const motivo = pendencias.length
+    ? `missing on Housekeep: ${pendencias.slice(0, 4).join("; ")}${pendencias.length > 4 ? ` and ${pendencias.length - 4} more` : ""} (${motivoBase})`
+    : motivoBase;
 
   // Dry run não conta tentativa nem grava erro: ele não tocou na Housekeep.
   if (opcoes?.simular) {

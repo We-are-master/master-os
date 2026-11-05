@@ -42,7 +42,7 @@ import {
   HOUSEKEEP_SECOES_FOTO,
   textoEmUmaLinha,
 } from "./housekeep-report-form";
-import { buscarFormulario, confirmarSubmissao, type FormularioHousekeep } from "./housekeep-api";
+import { buscarFormulario, confirmarSubmissao, slotsDeFoto, type FormularioHousekeep } from "./housekeep-api";
 
 /** Fotos de um envio: antes e depois, na ordem dos dois blocos do formulário. */
 export type FotosDoEnvio = {
@@ -112,6 +112,25 @@ async function baixarFotos(
 }
 
 /**
+ * Repete as fotos até chegar em `n` (dono, 05/11/2026: "quando faltar,
+ * duplica até encaixar").
+ *
+ * A Housekeep exige um mínimo por campo (sala 5, cozinha 5...). Parceiro que
+ * tirou 4, ou foto que não baixou, não pode virar relatório recusado: repetir
+ * uma foto do mesmo lugar é aceito por eles e resolve.
+ */
+function completarAte(anexos: Anexo[], n: number, teto: number): Anexo[] {
+  if (anexos.length === 0 || anexos.length >= n) return anexos;
+  const alvo = Math.min(n, teto);
+  const out = [...anexos];
+  for (let i = 0; out.length < alvo; i++) {
+    const a = anexos[i % anexos.length];
+    out.push({ ...a, name: a.name.replace(/(\.\w+)$/, `-copy${out.length + 1}$1`) });
+  }
+  return out;
+}
+
+/**
  * Onde está cada campo de arquivo da página: seção da sanfona e rótulo do bloco.
  *
  * Por RÓTULO e não por índice porque índice é promessa que a página não fez: o
@@ -157,7 +176,8 @@ async function anexarPorComodo(
   fotos: Record<string, string[]>,
   prefixoLog: string,
   maxPorChave: Record<string, number> = {},
-  jaTemFotos: (secao: string, rotulo: string) => boolean = () => false,
+  pularDe: (metade: "antes" | "depois", chave: string) => number = () => 0,
+  faltaDe: (metade: "antes" | "depois", chave: string) => number = () => 0,
 ): Promise<string[]> {
   const blocos = await mapaDosBlocos(page);
   const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
@@ -172,11 +192,17 @@ async function anexarPorComodo(
       semLugar.push(chave);
       continue;
     }
-    if (jaTemFotos(alvo.secao, rotulo)) {
-      console.log(`[stefane] ${prefixoLog}: "${rotulo}" já tem foto lá, não anexa de novo`);
+    const metade = prefixoLog === "after" ? "depois" : "antes";
+    const pular = pularDe(metade, chave);
+    if (pular === Number.POSITIVE_INFINITY) {
+      console.log(`[stefane] ${prefixoLog}: "${rotulo}" já está completo lá, não anexa de novo`);
       continue;
     }
-    const anexos = await baixarFotos(urls, `${prefixoLog}/${chave}`, maxPorChave[chave]);
+    const falta = faltaDe(metade, chave);
+    const teto = maxPorChave[chave] ?? HOUSEKEEP_FOTOS.maximoPorBloco;
+    // Tudo nosso já subiu e ainda falta: repete as nossas, não as que estão lá.
+    const fonte = urls.slice(pular).length ? urls.slice(pular) : urls;
+    const anexos = completarAte(await baixarFotos(fonte, `${prefixoLog}/${chave}`, teto), falta, teto);
     if (anexos.length === 0) continue;
     await inputs.nth(alvo.indice).setInputFiles(anexos, { timeout: 60_000 });
     console.log(`[stefane] ${prefixoLog}: ${anexos.length} foto(s) em "${alvo.rotulo.slice(0, 40)}"`);
@@ -196,20 +222,76 @@ async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise
 }
 
 /**
- * Quantas fotos o campo já tem LÁ, segundo a API deles (05/11/2026).
+ * Quantas das NOSSAS fotos pular neste campo, pelo que a API deles já tem.
  *
  * Cada tentativa anexava tudo de novo por cima do que a anterior já tinha
  * subido: o JOB-9815 terminou com 12 fotos de antes e 6 de depois para 2 e 1
- * do parceiro. Campo de foto com qualquer arquivo já é campo feito; anexar de
- * novo só duplica.
+ * do parceiro. E pular o campo só porque "já tem foto" também erra: o JOB-9817
+ * ficou com 4 de 5 na sala e a tentativa seguinte não completaria nunca.
+ *
+ * Campo no mínimo deles (ou acima) = completo, pula tudo. Campo pela metade =
+ * pula o que já subiu e manda o resto. Campo vazio = manda tudo.
  */
-function fotosJaNoForm(form: FormularioHousekeep | null, secao: string, rotulo: string): number {
+function fotosParaPular(form: FormularioHousekeep | null, metade: "antes" | "depois", chave: string): number {
   if (!form) return 0;
-  const norm = (t: string) => t.trim().toLowerCase();
-  const q = form.perguntas.find(
-    (p) => p.tipo === "document" && norm(p.secao) === norm(secao) && norm(p.texto).startsWith(norm(rotulo)),
-  );
-  return Array.isArray(q?.resposta) ? q.resposta.length : 0;
+  const slot = slotsDeFoto(form).find((s) => s.metade === metade && s.chave === chave);
+  if (!slot || slot.temLa === 0) return 0;
+  return slot.temLa >= Math.max(1, slot.min) ? Number.POSITIVE_INFINITY : slot.temLa;
+}
+
+/** Quantas fotos ainda faltam para o mínimo deles neste campo (0 = nada). */
+function fotosQueFaltam(form: FormularioHousekeep | null, metade: "antes" | "depois", chave: string): number {
+  if (!form) return 0;
+  const slot = slotsDeFoto(form).find((s) => s.metade === metade && s.chave === chave);
+  return slot ? Math.max(0, slot.min - slot.temLa) : 0;
+}
+
+/**
+ * Cômodo que a Housekeep exige e o parceiro não fotografou recebe as fotos da
+ * mesma metade (dono, 05/11/2026: não pode falhar por coisa simples). O
+ * `completarAte` depois repete até o mínimo do campo.
+ */
+function cobrirComodosVazios(
+  form: FormularioHousekeep | null,
+  metade: "antes" | "depois",
+  mapa: Record<string, string[]>,
+): Record<string, string[]> {
+  if (!form) return mapa;
+  const todas = Object.values(mapa).flat();
+  if (todas.length === 0) return mapa;
+  const out = { ...mapa };
+  for (const slot of slotsDeFoto(form)) {
+    if (slot.metade !== metade || slot.min <= 0 || slot.chave === "all") continue;
+    if ((out[slot.chave]?.length ?? 0) === 0) {
+      console.log(`[stefane] ${metade}: "${slot.rotulo}" sem foto do parceiro, usa as da mesma metade`);
+      out[slot.chave] = todas;
+    }
+  }
+  return out;
+}
+
+/**
+ * Espera a Housekeep mostrar o mínimo de foto em todo campo antes do Submit.
+ *
+ * O upload é processado do lado deles depois do `setInputFiles`, e com 50
+ * fotos uma folga fixa de 3 segundos não basta: o JOB-9817 foi submetido com
+ * 4 de 5 na sala e a Housekeep nunca carimbou. Devolve o que ainda falta, ou
+ * lista vazia quando está tudo lá.
+ */
+async function esperarFotosLa(page: Page, url: string, limiteMs = 90_000): Promise<string[]> {
+  const fim = Date.now() + limiteMs;
+  let faltas: string[] = ["unknown"];
+  while (Date.now() < fim) {
+    const lido = await buscarFormulario(url).catch(() => null);
+    if (lido?.ok) {
+      faltas = slotsDeFoto(lido.form)
+        .filter((s) => s.min > 0 && s.temLa < s.min)
+        .map((s) => `${s.metade === "antes" ? "before" : "after"} · ${s.rotulo}: ${s.temLa} of ${s.min}`);
+      if (faltas.length === 0) return [];
+    }
+    await page.waitForTimeout(5000);
+  }
+  return faltas;
 }
 
 /**
@@ -486,7 +568,8 @@ export async function submeterRelatorioHousekeep(args: {
     // ele se o preenchimento já falhou acima.
     const lido = args.fotos ? await buscarFormulario(args.url).catch(() => null) : null;
     const formAtual = lido?.ok ? lido.form : null;
-    const jaTem = (secao: string, rotulo: string) => fotosJaNoForm(formAtual, secao, rotulo) > 0;
+    const pularDe = (metade: "antes" | "depois", chave: string) => fotosParaPular(formAtual, metade, chave);
+    const faltaDe = (metade: "antes" | "depois", chave: string) => fotosQueFaltam(formAtual, metade, chave);
     if (args.fotos) {
       /**
        * Limpeza sobe cômodo a cômodo; trade continua com os dois baldes.
@@ -501,8 +584,8 @@ export async function submeterRelatorioHousekeep(args: {
         forma === "limpeza" && (args.fotos.antesPorComodo || args.fotos.depoisPorComodo);
       if (porComodo) {
         const teto = args.fotos.maxPorChave ?? {};
-        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before", teto, jaTem);
-        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after", teto, jaTem);
+        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, cobrirComodosVazios(formAtual, "antes", args.fotos.antesPorComodo ?? {}), "before", teto, pularDe, faltaDe);
+        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, cobrirComodosVazios(formAtual, "depois", args.fotos.depoisPorComodo ?? {}), "after", teto, pularDe, faltaDe);
         const perdidos = [...new Set([...perdidosA, ...perdidosD])];
         if (perdidos.length) {
           console.warn(`[stefane] cômodo(s) sem bloco correspondente na página: ${perdidos.join(", ")}`);
@@ -527,14 +610,17 @@ export async function submeterRelatorioHousekeep(args: {
           segundos: seg(),
         };
       } else {
-        const temAntes = jaTem("Start job", "Before photos");
-        const temDepois = jaTem("Finish job", "After photos");
-        if (temAntes || temDepois) {
-          console.log(`[stefane] fotos já lá: antes ${temAntes ? "sim" : "não"}, depois ${temDepois ? "sim" : "não"}`);
+        const pularAntes = pularDe("antes", "all");
+        const pularDepois = pularDe("depois", "all");
+        if (pularAntes || pularDepois) {
+          console.log(`[stefane] fotos já lá: antes pula ${pularAntes}, depois pula ${pularDepois}`);
         }
+        const fonteAntes = Number.isFinite(pularAntes) && args.fotos.antes.slice(pularAntes).length ? args.fotos.antes.slice(pularAntes) : pularAntes === Number.POSITIVE_INFINITY ? [] : args.fotos.antes;
+        const fonteDepois = Number.isFinite(pularDepois) && args.fotos.depois.slice(pularDepois).length ? args.fotos.depois.slice(pularDepois) : pularDepois === Number.POSITIVE_INFINITY ? [] : args.fotos.depois;
+        const tetoTrade = HOUSEKEEP_FOTOS.maximoPorBloco;
         const [antes, depois] = await Promise.all([
-          temAntes ? Promise.resolve([]) : baixarFotos(args.fotos.antes, "before"),
-          temDepois ? Promise.resolve([]) : baixarFotos(args.fotos.depois, "after"),
+          baixarFotos(fonteAntes, "before").then((a) => completarAte(a, faltaDe("antes", "all"), tetoTrade)),
+          baixarFotos(fonteDepois, "after").then((a) => completarAte(a, faltaDe("depois", "all"), tetoTrade)),
         ]);
         await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
         await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
@@ -669,6 +755,18 @@ export async function submeterRelatorioHousekeep(args: {
           `${estado.invalidos} invalid field(s), not submitted`,
         segundos: seg(),
       };
+    }
+
+    // Submit só com o mínimo de foto já registrado do lado deles.
+    if (args.fotos) {
+      const faltas = await esperarFotosLa(page, args.url);
+      if (faltas.length) {
+        return {
+          ok: false,
+          motivo: `photos not on the client platform yet, did not submit: ${faltas.slice(0, 3).join("; ")}`,
+          segundos: seg(),
+        };
+      }
     }
 
     await page.locator('button[type="submit"]').first().click({ timeout: 10_000 });
