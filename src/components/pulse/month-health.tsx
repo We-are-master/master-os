@@ -115,18 +115,16 @@ export function MonthHealth() {
   const sinalCaixa: Sinal | null = !r ? null : r.vencido.valor <= 0 ? "ok" : pctVencido < 30 ? "watch" : "bad";
 
   // A frase do topo: só o que pede atenção, em ordem de gravidade.
-  // Cada parte da frase: rótulo curto, valor em destaque e o complemento (05/11/2026: "mais clean").
-  const avisos: Array<{ rotulo: string; valor?: string; resto?: string }> = [];
-  if (d && meta) avisos.push(atras > 0 ? { rotulo: "Revenue", valor: m(atras), resto: "below target" } : { rotulo: "Revenue", resto: "on target" });
-  if (d && fixos > 0)
+  // A frase do topo no formato do dono (05/11/2026): valor em destaque e o complemento, sem rótulo.
+  const avisos: Array<{ chave: string; valor?: string; resto: string }> = [];
+  if (d && meta) avisos.push(atras > 0 ? { chave: "receita", valor: m(atras), resto: "below revenue target" } : { chave: "receita", resto: "Revenue on target" });
+  if (d && fixos > 0) avisos.push(resultado < 0 ? { chave: "empate", valor: m(-resultado), resto: "to break even" } : { chave: "empate", resto: "Break even reached" });
+  if (r)
     avisos.push(
-      resultado >= 0
-        ? { rotulo: "Fixed costs", resto: "covered" }
-        : bruto >= fixosAteHoje
-          ? { rotulo: "Fixed costs", valor: m(-resultado), resto: "left to cover" }
-          : { rotulo: "Net profit", valor: m(fixosAteHoje - bruto), resto: "behind" },
+      r.vencido.valor > 0
+        ? { chave: "vencido", valor: m(r.vencido.valor), resto: `overdue · ${r.vencido.n} invoice${r.vencido.n === 1 ? "" : "s"}` }
+        : { chave: "vencido", resto: "Nothing overdue" },
     );
-  if (r) avisos.push(r.vencido.valor > 0 ? { rotulo: "Overdue", valor: m(r.vencido.valor), resto: `in ${r.vencido.n} invoice${r.vencido.n === 1 ? "" : "s"}` } : { rotulo: "Invoices", resto: "nothing overdue" });
   const piores = [sinalVendas, sinalLucro, sinalCaixa];
   const geral: Sinal = piores.includes("bad") ? "bad" : piores.includes("watch") ? "watch" : "ok";
   const tintaTopo = geral === "bad" ? "bg-fx-red-50 text-fx-red" : geral === "watch" ? "bg-fx-amber-50 text-fx-amber" : "bg-fx-green-50 text-fx-green";
@@ -140,10 +138,9 @@ export function MonthHealth() {
             <>
               <span className="font-semibold">{nomeDoMes}</span>
               {avisos.map((x) => (
-                <span key={x.rotulo} className="ml-3 inline-flex items-baseline gap-1 border-l border-current/20 pl-3">
-                  <span className="opacity-75">{x.rotulo}</span>
+                <span key={x.chave} className="ml-3 inline-flex items-baseline gap-1 border-l border-current/20 pl-3">
                   {x.valor ? <span className="font-semibold tabular-nums">{x.valor}</span> : null}
-                  {x.resto ? <span className="opacity-75">{x.resto}</span> : null}
+                  <span className={x.valor ? "opacity-80" : undefined}>{x.resto}</span>
                 </span>
               ))}
             </>
