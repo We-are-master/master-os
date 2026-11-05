@@ -46,12 +46,12 @@ function useReceberEmAberto(): Receber | null {
   return d;
 }
 
-function Card({ n, titulo, sinal, rotulo, dica, children }: { n: number; titulo: string; sinal: Sinal | null; rotulo: string; dica: string; children: React.ReactNode }) {
+function Card({ titulo, sinal, rotulo, dica, children }: { titulo: string; sinal: Sinal | null; rotulo: string; dica: string; children: React.ReactNode }) {
   return (
     <section aria-label={titulo} className="min-w-0 rounded-xl border border-fx-line bg-card px-4 py-3">
       <div className="flex items-center justify-between gap-2 text-[12px] font-semibold text-text-secondary">
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-          <span className="text-text-tertiary">{n}</span> {titulo}
+          {titulo}
           <FixfyHintIcon text={dica} placement="bottom-start" />
         </span>
         {sinal ? (
@@ -93,6 +93,7 @@ export function MonthHealth() {
   const pctHoje = (dia / ultimoDia) * 100;
   const esperadoHoje = meta ? (meta * dia) / ultimoDia : 0;
   const atras = meta ? esperadoHoje - receita : 0;
+  const ticketMedio = d && d.jobs > 0 ? receita / d.jobs : 0;
   const sinalVendas: Sinal | null = !d || !meta ? null : atras <= 0 ? "ok" : atras <= esperadoHoje * 0.15 ? "watch" : "bad";
 
   // 2. Lucro: a mesma conta da barra da meta.
@@ -105,6 +106,8 @@ export function MonthHealth() {
   // isso não é prejuízo. Compara com a fração dos fixos que já correu até hoje.
   const fixosAteHoje = (fixos * dia) / ultimoDia;
   const sinalLucro: Sinal | null = !d ? null : resultado >= 0 || bruto >= fixosAteHoje ? "ok" : bruto >= fixosAteHoje * 0.8 ? "watch" : "bad";
+
+  const pctLucroBar = meta ? Math.min(pct, (Math.max(0, bruto) / meta) * 100) : 0;
 
   // 3. Caixa
   const aberto = r ? r.aguardando.valor + r.vencido.valor : 0;
@@ -144,7 +147,6 @@ export function MonthHealth() {
 
       <div className="grid grid-cols-1 gap-3 @3xl:grid-cols-3">
         <Card
-          n={1}
           titulo="Sales"
           sinal={sinalVendas}
           rotulo={sinalVendas === "ok" ? "On pace" : "Behind"}
@@ -162,10 +164,16 @@ export function MonthHealth() {
             <>
               <div className="relative mt-3 h-2 rounded-full bg-fx-paper-2">
                 <div className="absolute inset-y-0 left-0 rounded-full bg-fx-navy" style={{ width: `${pct}%` }} />
+                {/* O lucro bruto anda junto da venda, em verde, na mesma escala da meta. */}
+                <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green" style={{ width: `${pctLucroBar}%` }} />
                 <span aria-hidden className="absolute -top-1 h-4 w-0.5 rounded-full bg-fx-red" style={{ left: `${pctHoje}%` }} />
               </div>
               <p className="mt-2 text-[12px] text-text-tertiary tabular-nums">
                 {Math.round(pct)}% · should be {m(esperadoHoje)} today · {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
+              </p>
+              <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-fx-green tabular-nums">
+                <i aria-hidden className="inline-block h-1.5 w-3 rounded-full bg-fx-green" />
+                Gross profit {m(bruto)}
               </p>
             </>
           ) : d ? (
@@ -173,10 +181,13 @@ export function MonthHealth() {
               Choose the monthly target in Settings
             </Link>
           ) : null}
+          <div className="mt-2.5 space-y-1">
+            <Linha rotulo="Jobs" valor={d ? String(d.jobs) : "—"} />
+            <Linha rotulo="Average ticket" valor={d ? m(ticketMedio) : "—"} />
+          </div>
         </Card>
 
         <Card
-          n={2}
           titulo="Profit"
           sinal={sinalLucro}
           rotulo={sinalLucro === "ok" ? "On pace" : sinalLucro === "watch" ? "Tight" : "Behind"}
@@ -187,14 +198,13 @@ export function MonthHealth() {
           </p>
           <div className="mt-2.5 space-y-1">
             <Linha rotulo="Revenue" valor={d ? m(receita) : "—"} />
-            <Linha rotulo="− Job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
-            <Linha rotulo={`= Gross profit${d ? ` ${Math.round(margem)}%` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
-            <Linha rotulo="− Fixed costs" valor={d ? m(fixos) : "—"} tom="text-text-secondary font-normal" />
+            <Linha rotulo="Job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
+            <Linha rotulo={`Gross profit${d ? ` ${Math.round(margem)}%` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
+            <Linha rotulo="Fixed costs" valor={d ? m(fixos) : "—"} tom="text-text-secondary font-normal" />
           </div>
         </Card>
 
         <Card
-          n={3}
           titulo="Cash"
           sinal={sinalCaixa}
           rotulo={sinalCaixa === "ok" ? "Healthy" : "Chase"}
