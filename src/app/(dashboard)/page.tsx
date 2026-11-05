@@ -60,7 +60,8 @@ function PulseInner() {
               <PulseStrip title="Operations" hint="Jobs right now, by stage.">
                 <LiveOperations />
               </PulseStrip>
-              <div className="grid grid-cols-1 gap-3 @5xl:grid-cols-[1.35fr_1fr]">
+              {/* Lado a lado só com espaço (05/11/2026): com o Atendimento lateral aberto, empilha e os 5 números não se espremem. */}
+              <div className="grid grid-cols-1 gap-3 @6xl:grid-cols-[1.35fr_1fr]">
                 <PulseStrip title="Period results" hint="Revenue, costs and margin for the selected period.">
                   <Financials />
                 </PulseStrip>
