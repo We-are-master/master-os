@@ -28,9 +28,14 @@ import { normalizeTypeOfWork } from "@/lib/type-of-work";
 import { abrirConversaNoAtendimento } from "@/lib/inbox/abrir-conversa";
 import { IconeWhatsApp } from "@/app/(dashboard)/inbox/ui";
 import { getJobScheduleTimingKind } from "@/components/shared/job-schedule-timing-chip";
+import { relatorioFalhou } from "@/lib/stefane/report-failed";
 
 type KanbanJob = {
   id: string;
+  /** Envio à plataforma do cliente: com erro e sem envio = "Report failed" no card. */
+  external_report_error?: string | null;
+  external_report_submitted_at?: string | null;
+  external_report_manual_at?: string | null;
   reference: string;
   title: string;
   status: JobStatus;
@@ -216,7 +221,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
   const loadJobs = useCallback(
     async (signal?: { cancelled: boolean }) => {
       const baseCols =
-        "id, reference, title, scope, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost";
+        "id, reference, title, scope, status, partner_id, partner_ids, client_id, client_name, property_address, partner_name, scheduled_date, scheduled_start_at, scheduled_end_at, client_price, extras_amount, partner_cost, external_report_error, external_report_submitted_at, external_report_manual_at";
 
       const load = async (cols: string) =>
         fetchBeaconBoardJobs(filters, cols, { includeCancelled: false });
@@ -585,7 +590,17 @@ function KanbanCard({
       )}
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
-        <StatusPill status={job.status} job={job} />
+        <span className="inline-flex items-center gap-1 shrink-0">
+          {relatorioFalhou(job) ? (
+            <span
+              className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
+              title={`Report not on the client platform: ${job.external_report_error}`}
+            >
+              Report failed
+            </span>
+          ) : null}
+          <StatusPill status={job.status} job={job} />
+        </span>
       </div>
       <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
         <div className="flex items-center gap-1 min-w-0 flex-1 text-[13px] font-medium text-text-primary leading-[1.3]">
@@ -739,7 +754,17 @@ function JobHoverPanel({ job, anchor }: { job: KanbanJob; anchor: DOMRect }) {
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] tracking-[0.04em] text-fx-mute">{job.reference}</span>
-        <StatusPill status={job.status} job={job} />
+        <span className="inline-flex items-center gap-1 shrink-0">
+          {relatorioFalhou(job) ? (
+            <span
+              className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
+              title={`Report not on the client platform: ${job.external_report_error}`}
+            >
+              Report failed
+            </span>
+          ) : null}
+          <StatusPill status={job.status} job={job} />
+        </span>
       </div>
       <p className="mb-2 text-[13px] font-semibold leading-tight text-text-primary">{normalizeTypeOfWork(job.title) || job.title}</p>
       <dl className="space-y-1.5 text-[11.5px] leading-snug">

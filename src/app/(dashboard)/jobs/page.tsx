@@ -239,6 +239,7 @@ import {
 import { JobsWeekBoard } from "@/components/jobs/jobs-week-board";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import type { DateFilterMode, DateFilterValue } from "@/lib/date-range-filter";
+import { relatorioFalhou } from "@/lib/stefane/report-failed";
 
 const JOB_STATUSES = ["unassigned", "auto_assigning", "scheduled", "late", "in_progress", "on_hold", "final_check", "awaiting_payment", "need_attention", "completed", "cancelled"] as const;
 
@@ -3238,6 +3239,11 @@ function JobsPageContent() {
           return (
             <div className="inline-flex flex-wrap items-center gap-1.5">
               <Badge variant={variantTag} dot className={LIST_CHIP_CLASS}>{lbl}</Badge>
+              {relatorioFalhou(item) ? (
+              <span title={`Report not on the client platform: ${item.external_report_error}`}>
+                <Badge variant="danger" size="sm" className={LIST_CHIP_CLASS}>Report failed</Badge>
+              </span>
+            ) : null}
             </div>
           );
         }
@@ -3247,8 +3253,13 @@ function JobsPageContent() {
         const onHoldBadge = jobOnHoldDisplayBadge(item);
         const c = onHoldBadge ?? statusConfig[st] ?? { label: st, variant: "default" as const };
         return (
-          <div className="inline-flex items-center" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
+          <div className="inline-flex items-center gap-1" title={st === "on_hold" ? jobOnHoldDurationSubtitle(item) : undefined}>
             <Badge variant={c.variant} dot={c.dot ?? true} size="sm" className={cn(LIST_CHIP_CLASS, onHoldBadge?.className)}>{c.label}</Badge>
+            {relatorioFalhou(item) ? (
+              <span title={`Report not on the client platform: ${item.external_report_error}`}>
+                <Badge variant="danger" size="sm" className={LIST_CHIP_CLASS}>Report failed</Badge>
+              </span>
+            ) : null}
           </div>
         );
       },

@@ -650,6 +650,10 @@ export interface Job {
   additional_notes?: string | null;
   /** Optional external URL (Drive, Notion, etc.) — office reference; opens in new tab. */
   report_link?: string | null;
+  /** Envio do relatório à plataforma do cliente (Stefane, mig 249). */
+  external_report_error?: string | null;
+  external_report_submitted_at?: string | null;
+  external_report_manual_at?: string | null;
   internal_notes?: string;
   /** Site reference photos (client request / quote / office); JSON array of public storage URLs (quote-invite-images). */
   images?: string[] | null;
