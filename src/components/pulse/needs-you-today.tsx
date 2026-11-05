@@ -81,15 +81,34 @@ function useEstado() {
   return { d, recarregar };
 }
 
-function Linha({ titulo, sub, direita }: { titulo: React.ReactNode; sub: React.ReactNode; direita: React.ReactNode }) {
+function Linha({ referencia, nome, sub, direita }: { referencia: string; nome: string; sub: React.ReactNode; direita: React.ReactNode }) {
   return (
-    <li className="flex items-center gap-3 py-2.5">
+    <li className="flex items-center gap-4 rounded-xl border border-fx-line bg-card px-4 py-3 transition-colors hover:border-fx-line-strong">
       <div className="min-w-0 flex-1">
-        <p className="m-0 truncate text-[13px] font-semibold text-text-primary tabular-nums">{titulo}</p>
-        <p className="m-0 mt-0.5 truncate text-[12px] text-text-secondary tabular-nums">{sub}</p>
+        <p className="m-0 flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-[11px] font-semibold text-text-tertiary tabular-nums">{referencia}</span>
+          <span className="truncate text-[14px] font-semibold text-text-primary">{nome}</span>
+        </p>
+        <p className="m-0 mt-1 truncate text-[12px] text-text-secondary tabular-nums">{sub}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">{direita}</div>
+      <div className="flex shrink-0 items-center gap-2.5">{direita}</div>
     </li>
+  );
+}
+
+/** O miolo de todos os modais: uma linha de resumo e a lista com respiro. */
+function Corpo({ resumo, vazio, children }: { resumo: React.ReactNode; vazio: string | null; children: React.ReactNode }) {
+  return (
+    <div className="px-5 pb-5 pt-4">
+      {vazio ? (
+        <p className="m-0 rounded-xl bg-fx-paper-2/60 px-4 py-8 text-center text-[13px] text-text-secondary">{vazio}</p>
+      ) : (
+        <>
+          <p className="m-0 mb-3 text-[12px] text-text-secondary tabular-nums">{resumo}</p>
+          <ul className="m-0 list-none space-y-2 p-0">{children}</ul>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -109,21 +128,22 @@ function Selo({ tom, children }: { tom: "ok" | "warn" | "muted"; children: React
 function ModalFinalReview({ open, onClose, jobs }: { open: boolean; onClose: () => void; jobs: JobLinha[] }) {
   return (
     <Modal open={open} onClose={onClose} title="Final review" subtitle="Check the report, complete what is missing and send it. Stefane submits it to the platform from the review." size="lg">
-      {jobs.length === 0 ? (
-        <p className="py-6 text-center text-[13px] text-text-secondary">Nothing waiting for final review.</p>
-      ) : (
-        <ul className="divide-y divide-fx-line">
+      <Corpo
+        vazio={jobs.length === 0 ? "Nothing waiting for final review." : null}
+        resumo={`${jobs.length} job${jobs.length === 1 ? "" : "s"} · ${pulseMoney(jobs.reduce((t, j) => t + valor(j), 0))} waiting to invoice`}
+      >
           {jobs.map((j) => {
             const temRelatorio = Boolean(j.final_report_submitted || j.report_1_uploaded);
             return (
               <Linha
                 key={j.id}
-                titulo={`${j.reference ?? "Job"} · ${j.client_name ?? "Client"}`}
+                referencia={j.reference ?? "Job"}
+                nome={j.client_name ?? "Client"}
                 sub={`${pulseMoney(valor(j))}${j.partner_name ? ` · ${j.partner_name}` : ""}${j.title ? ` · ${j.title}` : ""}`}
                 direita={
                   <>
                     {j.final_report_approved_at ? <Selo tom="ok">Report approved</Selo> : temRelatorio ? <Selo tom="muted">Report in</Selo> : <Selo tom="warn">Report missing</Selo>}
-                    <Link href={`/jobs/${j.id}?action=approve`} className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg bg-primary px-3 text-[12px] font-semibold text-[var(--on-brand)] hover:bg-primary-hover">
+                    <Link href={`/jobs/${j.id}?action=approve`} className="inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border border-[var(--line-2)] bg-card px-3 text-[12px] font-semibold text-text-primary hover:bg-surface-secondary">
                       {temRelatorio ? "Review" : "Complete report"}
                       <ArrowRight aria-hidden className="h-3.5 w-3.5" />
                     </Link>
@@ -132,8 +152,7 @@ function ModalFinalReview({ open, onClose, jobs }: { open: boolean; onClose: () 
               />
             );
           })}
-        </ul>
-      )}
+      </Corpo>
     </Modal>
   );
 }
@@ -160,24 +179,31 @@ function ModalVencidas({ open, onClose, vencidas, onEnviado }: { open: boolean; 
   };
   return (
     <Modal open={open} onClose={onClose} title="Overdue invoices" subtitle="Each button sends the next email in the chase sequence, with the invoice PDF and the payment link." size="lg">
-      {vencidas.length === 0 ? (
-        <p className="py-6 text-center text-[13px] text-text-secondary">No overdue invoices.</p>
-      ) : (
-        <ul className="divide-y divide-fx-line">
+      <Corpo
+        vazio={vencidas.length === 0 ? "No overdue invoices." : null}
+        resumo={`${vencidas.length} invoice${vencidas.length === 1 ? "" : "s"} · ${pulseMoney(vencidas.reduce((t, f) => t + f.balance, 0))} overdue${vencidas.some((f) => !f.sent) ? ` · ${vencidas.filter((f) => !f.sent).length} never sent to the client` : ""}`}
+      >
           {vencidas.map((f) => (
             <Linha
               key={f.id}
-              titulo={`${f.reference ?? "Invoice"} · ${f.clientName ?? "Client"}`}
-              sub={`${pulseMoney(f.balance)} · ${f.daysOverdue} day${f.daysOverdue === 1 ? "" : "s"} overdue · ${f.sent ? `${jaSaiu(f.stage)}${f.lastChaseAt ? ` (${dataCurta(f.lastChaseAt)})` : ""}` : "Invoice never sent to the client"}`}
+              referencia={f.reference ?? "Invoice"}
+              nome={f.clientName ?? "Client"}
+              sub={
+                <>
+                  <span className="font-semibold text-text-primary">{pulseMoney(f.balance)}</span> · {f.daysOverdue} day{f.daysOverdue === 1 ? "" : "s"} overdue
+                </>
+              }
               direita={
-                <Button size="sm" variant={!f.sent || f.stage >= FINAL - 1 ? "primary" : "secondary"} icon={<Send />} disabled={enviando !== null} onClick={() => void cobrar(f)}>
+                <>
+                {f.sent ? <Selo tom={f.stage >= FINAL ? "warn" : "muted"}>{`${jaSaiu(f.stage)}${f.lastChaseAt ? ` · ${dataCurta(f.lastChaseAt)}` : ""}`}</Selo> : <Selo tom="warn">Never sent</Selo>}
+                <Button size="sm" variant="secondary" icon={<Send />} disabled={enviando !== null} onClick={() => void cobrar(f)}>
                   {enviando === f.id ? "Sending…" : f.sent ? proximaCobranca(f.stage) : "Send invoice"}
                 </Button>
+                </>
               }
             />
           ))}
-        </ul>
-      )}
+      </Corpo>
     </Modal>
   );
 }
@@ -185,24 +211,21 @@ function ModalVencidas({ open, onClose, vencidas, onEnviado }: { open: boolean; 
 function ModalSemParceiro({ open, onClose, jobs, onAssign }: { open: boolean; onClose: () => void; jobs: JobLinha[]; onAssign: (j: JobLinha) => void }) {
   return (
     <Modal open={open} onClose={onClose} title="Without a partner" subtitle="Jobs waiting for allocation." size="lg">
-      {jobs.length === 0 ? (
-        <p className="py-6 text-center text-[13px] text-text-secondary">Every job has a partner.</p>
-      ) : (
-        <ul className="divide-y divide-fx-line">
+      <Corpo vazio={jobs.length === 0 ? "Every job has a partner." : null} resumo={`${jobs.length} job${jobs.length === 1 ? "" : "s"} waiting for a partner`}>
           {jobs.map((j) => (
             <Linha
               key={j.id}
-              titulo={`${j.reference ?? "Job"} · ${j.client_name ?? "Client"}`}
+              referencia={j.reference ?? "Job"}
+              nome={j.client_name ?? "Client"}
               sub={`${pulseMoney(valor(j))}${j.title ? ` · ${j.title}` : ""}`}
               direita={
-                <Button size="sm" onClick={() => onAssign(j)}>
+                <Button size="sm" variant="secondary" onClick={() => onAssign(j)}>
                   Assign partner
                 </Button>
               }
             />
           ))}
-        </ul>
-      )}
+      </Corpo>
     </Modal>
   );
 }
