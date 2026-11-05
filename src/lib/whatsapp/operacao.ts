@@ -37,6 +37,14 @@ const digitos = (s: unknown) => String(s ?? "").replace(/\D/g, "");
 /** Os últimos 10 dígitos casam 07…, 447… e +44 7… do mesmo celular. */
 export const finalDoNumero = (s: unknown) => digitos(s).slice(-10);
 
+/**
+ * Filtro do PostgREST que acha o número com espaço, traço ou parêntese no meio.
+ * O `ilike %<9 dígitos>%` não achava `+44 7xxxx xxxxx` (39% dos clientes estão
+ * assim): os dígitos não ficam juntos no texto. Aqui são os últimos 9 dígitos com
+ * qualquer não-dígito entre eles; quem chama confere o número inteiro depois.
+ */
+export const filtroDoNumero = (campo: string, s: unknown) => `${campo}.imatch.${digitos(s).slice(-9).split("").join("\\D*")}`;
+
 type MensagemMeta = {
   id?: string;
   from?: string;
@@ -89,7 +97,7 @@ async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<str
   const { data } = await sb
     .from("partners")
     .select("id, whatsapp, phone")
-    .or(`whatsapp.ilike.%${fim.slice(-9)}%,phone.ilike.%${fim.slice(-9)}%`)
+    .or(`${filtroDoNumero("whatsapp", fim)},${filtroDoNumero("phone", fim)}`)
     .limit(10);
   const achado = (data ?? []).find((p) => finalDoNumero(p.whatsapp) === fim || finalDoNumero(p.phone) === fim);
   return (achado?.id as string | undefined) ?? null;

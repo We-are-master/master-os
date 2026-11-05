@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { staffDaInbox } from "@/lib/inbox/staff";
 import { fixfyAccountId } from "@/lib/certificado/regra";
+import { filtroDoNumero } from "@/lib/whatsapp/operacao";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
   const dig = q.replace(/\D/g, "");
   const tel = dig.length >= 4 ? dig.replace(/^0/, "").slice(-9) : null;
   const like = `%${q}%`;
-  const ou = (nomes: string[], fones: string[]) => [...nomes.map((c) => `${c}.ilike.${like}`), ...(tel ? fones.map((c) => `${c}.ilike.%${tel}%`) : [])].join(",");
+  const ou = (nomes: string[], fones: string[]) => [...nomes.map((c) => `${c}.ilike.${like}`), ...(tel ? fones.map((c) => filtroDoNumero(c, tel)) : [])].join(",");
 
   const [contas, parceiros, clientes, leads] = await Promise.all([
     s.sb.from("accounts").select("id, company_name, contact_name, contact_number, logo_url, address").or(ou(["company_name", "contact_name"], ["contact_number"])).limit(POR_TIPO),
