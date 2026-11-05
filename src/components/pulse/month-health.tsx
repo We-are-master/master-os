@@ -115,17 +115,18 @@ export function MonthHealth() {
   const sinalCaixa: Sinal | null = !r ? null : r.vencido.valor <= 0 ? "ok" : pctVencido < 30 ? "watch" : "bad";
 
   // A frase do topo: só o que pede atenção, em ordem de gravidade.
-  const avisos: string[] = [];
-  if (d && meta) avisos.push(atras > 0 ? `${m(atras)} behind pace` : "on pace for the target");
+  // Cada parte da frase: rótulo curto, valor em destaque e o complemento (05/11/2026: "mais clean").
+  const avisos: Array<{ rotulo: string; valor?: string; resto?: string }> = [];
+  if (d && meta) avisos.push(atras > 0 ? { rotulo: "Revenue", valor: m(atras), resto: "below target" } : { rotulo: "Revenue", resto: "on target" });
   if (d && fixos > 0)
     avisos.push(
       resultado >= 0
-        ? `fixed costs covered with ${m(resultado)} to spare`
+        ? { rotulo: "Fixed costs", resto: "covered" }
         : bruto >= fixosAteHoje
-          ? `profit on pace for fixed costs (${m(-resultado)} still to cover)`
-          : `profit ${m(fixosAteHoje - bruto)} behind the fixed costs run so far`,
+          ? { rotulo: "Fixed costs", valor: m(-resultado), resto: "left to cover" }
+          : { rotulo: "Net profit", valor: m(fixosAteHoje - bruto), resto: "behind" },
     );
-  if (r && r.vencido.valor > 0) avisos.push(`${m(r.vencido.valor)} overdue to chase`);
+  if (r) avisos.push(r.vencido.valor > 0 ? { rotulo: "Overdue", valor: m(r.vencido.valor), resto: `in ${r.vencido.n} invoice${r.vencido.n === 1 ? "" : "s"}` } : { rotulo: "Invoices", resto: "nothing overdue" });
   const piores = [sinalVendas, sinalLucro, sinalCaixa];
   const geral: Sinal = piores.includes("bad") ? "bad" : piores.includes("watch") ? "watch" : "ok";
   const tintaTopo = geral === "bad" ? "bg-fx-red-50 text-fx-red" : geral === "watch" ? "bg-fx-amber-50 text-fx-amber" : "bg-fx-green-50 text-fx-green";
@@ -134,10 +135,17 @@ export function MonthHealth() {
     <div className="space-y-3">
       <div role="status" className={cn("flex items-center gap-2.5 rounded-xl px-4 py-2.5 text-[13px] font-medium", d || r ? tintaTopo : "bg-fx-paper-2 text-text-secondary")}>
         <i aria-hidden className={cn("inline-block h-2 w-2 shrink-0 rounded-full", d || r ? SINAL[geral].tinta : "bg-fx-mute")} />
-        <span className="min-w-0">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-y-1">
           {d || r ? (
             <>
-              <span className="font-semibold">{nomeDoMes}:</span> {avisos.length ? avisos.join(" · ") : "nothing needs your attention"}.
+              <span className="font-semibold">{nomeDoMes}</span>
+              {avisos.map((x) => (
+                <span key={x.rotulo} className="ml-3 inline-flex items-baseline gap-1 border-l border-current/20 pl-3">
+                  <span className="opacity-75">{x.rotulo}</span>
+                  {x.valor ? <span className="font-semibold tabular-nums">{x.valor}</span> : null}
+                  {x.resto ? <span className="opacity-75">{x.resto}</span> : null}
+                </span>
+              ))}
             </>
           ) : (
             `Loading ${nomeDoMes}…`
