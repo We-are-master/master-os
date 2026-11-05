@@ -147,9 +147,9 @@ export function MonthHealth() {
 
       <div className="grid grid-cols-1 gap-3 @3xl:grid-cols-3">
         <Card
-          titulo="Sales"
+          titulo="Revenue"
           sinal={sinalVendas}
-          rotulo={sinalVendas === "ok" ? "On pace" : "Behind"}
+          rotulo={sinalVendas === "ok" ? "On target" : "Below target"}
           dica={`Revenue this ${nomeDoMes}: every job with a visit this month that was not cancelled, open jobs included. The marker on the bar is where the month should be today if the target were hit in a straight line.`}
         >
           <p className="mt-2 whitespace-nowrap leading-none">
@@ -183,12 +183,12 @@ export function MonthHealth() {
           ) : null}
           <div className="mt-2.5 space-y-1">
             <Linha rotulo="Jobs" valor={d ? String(d.jobs) : "—"} />
-            <Linha rotulo="Average ticket" valor={d ? m(ticketMedio) : "—"} />
+            <Linha rotulo="Average job value" valor={d ? m(ticketMedio) : "—"} />
           </div>
         </Card>
 
         <Card
-          titulo="Profit"
+          titulo="Net profit"
           sinal={sinalLucro}
           rotulo={sinalLucro === "ok" ? "On pace" : sinalLucro === "watch" ? "Tight" : "Behind"}
           dica={`Month result so far: revenue minus partner and materials (gross profit), minus fixed costs (team and recurring bills). The signal compares gross profit with the share of fixed costs already run this month (${m(fixosAteHoje)} by today).${d?.estimados ? ` ${d.estimados} job${d.estimados === 1 ? "" : "s"} with no cost yet counted at the ${d.margemAlvo}% target margin.` : ""}`}
@@ -198,16 +198,16 @@ export function MonthHealth() {
           </p>
           <div className="mt-2.5 space-y-1">
             <Linha rotulo="Revenue" valor={d ? m(receita) : "—"} />
-            <Linha rotulo="Job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
-            <Linha rotulo={`Gross profit${d ? ` ${Math.round(margem)}%` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
+            <Linha rotulo="Direct job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
+            <Linha rotulo={`Gross profit${d ? ` · ${Math.round(margem)}% margin` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
             <Linha rotulo="Fixed costs" valor={d ? m(fixos) : "—"} tom="text-text-secondary font-normal" />
           </div>
         </Card>
 
         <Card
-          titulo="Cash"
+          titulo="Outstanding invoices"
           sinal={sinalCaixa}
-          rotulo={sinalCaixa === "ok" ? "Healthy" : "Chase"}
+          rotulo={sinalCaixa === "ok" ? "Healthy" : "Follow-up needed"}
           dica="Every unpaid invoice, whatever the date. Overdue is past its due date and needs chasing; platforms past their date stay in on time because they pay on their own cycle. Collected is money received this month."
         >
           <p className="mt-2 whitespace-nowrap leading-none">
@@ -223,9 +223,9 @@ export function MonthHealth() {
             ) : null}
           </div>
           <div className="mt-2 space-y-1">
-            <Linha rotulo="On time" valor={r ? m(r.aguardando.valor) : "—"} tom="font-normal" />
+            <Linha rotulo="Not yet due" valor={r ? m(r.aguardando.valor) : "—"} tom="font-normal" />
             <Linha rotulo={`Overdue${r ? ` · ${r.vencido.n}` : ""}`} valor={r ? m(r.vencido.valor) : "—"} tom={r && r.vencido.valor > 0 ? "text-fx-red" : undefined} />
-            <Linha rotulo="Collected this month" valor={r ? m(r.pago.valor) : "—"} tom="font-normal" />
+            <Linha rotulo="Payments received this month" valor={r ? m(r.pago.valor) : "—"} tom="font-normal" />
           </div>
         </Card>
       </div>
