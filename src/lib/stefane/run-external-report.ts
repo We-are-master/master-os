@@ -706,17 +706,15 @@ async function executarEnvio(
    * formulário deles e a mão.
    */
   const pularMinimo = Boolean(opcoes?.ignorarMinimoDeFotos && opcoes?.simular);
-  if (faltas.length > 0 && !pularMinimo) {
-    // Cinco linhas cabem no card. O resto vira contagem, porque a lista inteira
-    // de treze campos empurra o motivo para fora da tela e ninguém lê nenhum.
-    const mostrar = faltas.slice(0, 5).join("; ");
-    const resto = faltas.length > 5 ? ` and ${faltas.length - 5} more` : "";
-    const motivo = `the client platform requires more photos. ${mostrar}${resto}`;
-    await gravarMotivo(supabase, jobId, motivo);
-    return { estado: "nao_elegivel", motivo };
-  }
+  /**
+   * Faltar foto num cômodo NÃO barra mais (dono, 05/11/2026: "duplica até
+   * encaixar, não podemos falhar"). O envio repete fotos do mesmo campo, ou da
+   * mesma metade quando o cômodo veio vazio, até o mínimo deles. O que barra
+   * é uma metade inteira sem foto, e isso `motivoNaoElegivel` já pega antes.
+   */
+  void pularMinimo;
   if (faltas.length > 0) {
-    console.log(`[stefane] ensaio ignorando o nosso mínimo: ${faltas.join("; ")}`);
+    console.log(`[stefane] ${j.reference}: completando com fotos repetidas: ${faltas.join("; ")}`);
   }
 
   /**

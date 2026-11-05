@@ -112,6 +112,25 @@ async function baixarFotos(
 }
 
 /**
+ * Repete as fotos até chegar em `n` (dono, 05/11/2026: "quando faltar,
+ * duplica até encaixar").
+ *
+ * A Housekeep exige um mínimo por campo (sala 5, cozinha 5...). Parceiro que
+ * tirou 4, ou foto que não baixou, não pode virar relatório recusado: repetir
+ * uma foto do mesmo lugar é aceito por eles e resolve.
+ */
+function completarAte(anexos: Anexo[], n: number, teto: number): Anexo[] {
+  if (anexos.length === 0 || anexos.length >= n) return anexos;
+  const alvo = Math.min(n, teto);
+  const out = [...anexos];
+  for (let i = 0; out.length < alvo; i++) {
+    const a = anexos[i % anexos.length];
+    out.push({ ...a, name: a.name.replace(/(\.\w+)$/, `-copy${out.length + 1}$1`) });
+  }
+  return out;
+}
+
+/**
  * Onde está cada campo de arquivo da página: seção da sanfona e rótulo do bloco.
  *
  * Por RÓTULO e não por índice porque índice é promessa que a página não fez: o
@@ -158,6 +177,7 @@ async function anexarPorComodo(
   prefixoLog: string,
   maxPorChave: Record<string, number> = {},
   pularDe: (metade: "antes" | "depois", chave: string) => number = () => 0,
+  faltaDe: (metade: "antes" | "depois", chave: string) => number = () => 0,
 ): Promise<string[]> {
   const blocos = await mapaDosBlocos(page);
   const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
@@ -172,12 +192,17 @@ async function anexarPorComodo(
       semLugar.push(chave);
       continue;
     }
-    const pular = pularDe(prefixoLog === "after" ? "depois" : "antes", chave);
-    if (pular >= urls.length) {
+    const metade = prefixoLog === "after" ? "depois" : "antes";
+    const pular = pularDe(metade, chave);
+    if (pular === Number.POSITIVE_INFINITY) {
       console.log(`[stefane] ${prefixoLog}: "${rotulo}" já está completo lá, não anexa de novo`);
       continue;
     }
-    const anexos = await baixarFotos(urls.slice(pular), `${prefixoLog}/${chave}`, maxPorChave[chave]);
+    const falta = faltaDe(metade, chave);
+    const teto = maxPorChave[chave] ?? HOUSEKEEP_FOTOS.maximoPorBloco;
+    // Tudo nosso já subiu e ainda falta: repete as nossas, não as que estão lá.
+    const fonte = urls.slice(pular).length ? urls.slice(pular) : urls;
+    const anexos = completarAte(await baixarFotos(fonte, `${prefixoLog}/${chave}`, teto), falta, teto);
     if (anexos.length === 0) continue;
     await inputs.nth(alvo.indice).setInputFiles(anexos, { timeout: 60_000 });
     console.log(`[stefane] ${prefixoLog}: ${anexos.length} foto(s) em "${alvo.rotulo.slice(0, 40)}"`);
@@ -212,6 +237,37 @@ function fotosParaPular(form: FormularioHousekeep | null, metade: "antes" | "dep
   const slot = slotsDeFoto(form).find((s) => s.metade === metade && s.chave === chave);
   if (!slot || slot.temLa === 0) return 0;
   return slot.temLa >= Math.max(1, slot.min) ? Number.POSITIVE_INFINITY : slot.temLa;
+}
+
+/** Quantas fotos ainda faltam para o mínimo deles neste campo (0 = nada). */
+function fotosQueFaltam(form: FormularioHousekeep | null, metade: "antes" | "depois", chave: string): number {
+  if (!form) return 0;
+  const slot = slotsDeFoto(form).find((s) => s.metade === metade && s.chave === chave);
+  return slot ? Math.max(0, slot.min - slot.temLa) : 0;
+}
+
+/**
+ * Cômodo que a Housekeep exige e o parceiro não fotografou recebe as fotos da
+ * mesma metade (dono, 05/11/2026: não pode falhar por coisa simples). O
+ * `completarAte` depois repete até o mínimo do campo.
+ */
+function cobrirComodosVazios(
+  form: FormularioHousekeep | null,
+  metade: "antes" | "depois",
+  mapa: Record<string, string[]>,
+): Record<string, string[]> {
+  if (!form) return mapa;
+  const todas = Object.values(mapa).flat();
+  if (todas.length === 0) return mapa;
+  const out = { ...mapa };
+  for (const slot of slotsDeFoto(form)) {
+    if (slot.metade !== metade || slot.min <= 0 || slot.chave === "all") continue;
+    if ((out[slot.chave]?.length ?? 0) === 0) {
+      console.log(`[stefane] ${metade}: "${slot.rotulo}" sem foto do parceiro, usa as da mesma metade`);
+      out[slot.chave] = todas;
+    }
+  }
+  return out;
 }
 
 /**
@@ -513,6 +569,7 @@ export async function submeterRelatorioHousekeep(args: {
     const lido = args.fotos ? await buscarFormulario(args.url).catch(() => null) : null;
     const formAtual = lido?.ok ? lido.form : null;
     const pularDe = (metade: "antes" | "depois", chave: string) => fotosParaPular(formAtual, metade, chave);
+    const faltaDe = (metade: "antes" | "depois", chave: string) => fotosQueFaltam(formAtual, metade, chave);
     if (args.fotos) {
       /**
        * Limpeza sobe cômodo a cômodo; trade continua com os dois baldes.
@@ -527,8 +584,8 @@ export async function submeterRelatorioHousekeep(args: {
         forma === "limpeza" && (args.fotos.antesPorComodo || args.fotos.depoisPorComodo);
       if (porComodo) {
         const teto = args.fotos.maxPorChave ?? {};
-        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before", teto, pularDe);
-        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after", teto, pularDe);
+        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, cobrirComodosVazios(formAtual, "antes", args.fotos.antesPorComodo ?? {}), "before", teto, pularDe, faltaDe);
+        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, cobrirComodosVazios(formAtual, "depois", args.fotos.depoisPorComodo ?? {}), "after", teto, pularDe, faltaDe);
         const perdidos = [...new Set([...perdidosA, ...perdidosD])];
         if (perdidos.length) {
           console.warn(`[stefane] cômodo(s) sem bloco correspondente na página: ${perdidos.join(", ")}`);
@@ -558,9 +615,12 @@ export async function submeterRelatorioHousekeep(args: {
         if (pularAntes || pularDepois) {
           console.log(`[stefane] fotos já lá: antes pula ${pularAntes}, depois pula ${pularDepois}`);
         }
+        const fonteAntes = Number.isFinite(pularAntes) && args.fotos.antes.slice(pularAntes).length ? args.fotos.antes.slice(pularAntes) : pularAntes === Number.POSITIVE_INFINITY ? [] : args.fotos.antes;
+        const fonteDepois = Number.isFinite(pularDepois) && args.fotos.depois.slice(pularDepois).length ? args.fotos.depois.slice(pularDepois) : pularDepois === Number.POSITIVE_INFINITY ? [] : args.fotos.depois;
+        const tetoTrade = HOUSEKEEP_FOTOS.maximoPorBloco;
         const [antes, depois] = await Promise.all([
-          baixarFotos(args.fotos.antes.slice(pularAntes), "before"),
-          baixarFotos(args.fotos.depois.slice(pularDepois), "after"),
+          baixarFotos(fonteAntes, "before").then((a) => completarAte(a, faltaDe("antes", "all"), tetoTrade)),
+          baixarFotos(fonteDepois, "after").then((a) => completarAte(a, faltaDe("depois", "all"), tetoTrade)),
         ]);
         await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
         await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
