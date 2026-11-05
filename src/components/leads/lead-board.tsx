@@ -9,11 +9,11 @@ import {
   Home,
   MapPin,
   PoundSterling,
-  Ticket,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ZendeskTicketLink } from "@/components/ui/zendesk-ticket-link";
 import { cn } from "@/lib/utils";
 import { STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
 import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
@@ -54,7 +54,9 @@ function BoardCard({
   const ready = stage === "accepted" ? prontoParaJob(checklistDoJob({ lead, quote, semEntrada })) : null;
   const overdue = isOpenStage(stage) && isOverdue(lead.next_action_at);
   const fresh = now - Date.parse(lead.created_at) < FRESH_MS;
-  const address = [lead.address?.trim(), lead.postcode?.trim()].filter(Boolean).join(", ");
+  const street = lead.address?.trim() ?? "";
+  const pc = lead.postcode?.trim() ?? "";
+  const address = pc && street.toUpperCase().replace(/\s/g, "").includes(pc.toUpperCase().replace(/\s/g, "")) ? street : [street, pc].filter(Boolean).join(", ");
   const arrived = new Date(lead.created_at).toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
@@ -63,11 +65,18 @@ function BoardCard({
     timeZone: "Europe/London",
   });
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(lead)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(lead);
+        }
+      }}
       className={cn(
-        "w-full text-left rounded-lg border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
+        "w-full cursor-pointer text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
         fresh ? "border-primary/40 ring-1 ring-primary/15" : "border-border-light",
       )}
     >
@@ -99,6 +108,11 @@ function BoardCard({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
+        <ZendeskTicketLink
+          className="order-last ml-auto"
+          ticketId={lead.external_source === "zendesk" || !lead.external_source ? lead.external_ref : null}
+          fallbackQuery={lead.email || lead.phone}
+        />
         <span className="inline-flex items-center gap-1 text-[11px] text-text-tertiary" title={`Arrived ${arrived}`}>
           <Clock className="h-3 w-3" aria-hidden />
           {formatAgo(lead.created_at, now)}
@@ -115,18 +129,13 @@ function BoardCard({
             {formatWhen(lead.next_action_at)}
           </span>
         ) : null}
-        {lead.external_ref ? (
-          <span className="inline-flex items-center gap-1 text-[11px] text-text-tertiary">
-            <Ticket className="h-3 w-3" aria-hidden />#{lead.external_ref}
-          </span>
-        ) : null}
         {ready ? (
           <Badge variant={ready.pronto ? "success" : "warning"} className="text-[10px] px-1.5 py-0">
             {ready.pronto ? "ready" : `${ready.faltam} missing`}
           </Badge>
         ) : null}
       </div>
-    </button>
+    </div>
   );
 }
 
