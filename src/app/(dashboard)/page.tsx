@@ -16,7 +16,7 @@ import { MonthFunnel } from "@/components/pulse/month-funnel";
 import { MonthBurnUp } from "@/components/pulse/month-charts";
 import { RevenueMix } from "@/components/pulse/revenue-mix";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
-import { AlertsFeed } from "@/components/pulse/alerts-feed";
+import { LiveActions } from "@/components/pulse/live-actions";
 import { LiveBoard } from "@/components/pulse/live-board";
 
 const CeoFinancialDashboard = dynamic(
@@ -57,9 +57,10 @@ function PulseInner() {
               <MonthHealth />
               <MonthFunnel />
               <NeedsYouToday />
-              <div className="grid grid-cols-1 @3xl:grid-cols-[1.6fr_1fr] gap-4 @3xl:items-start">
+              {/* Live actions à esquerda, previsão à direita (05/11/2026): o que acontece agora, com hora e quem fez. */}
+              <div className="grid grid-cols-1 @3xl:grid-cols-[1fr_1.6fr] gap-4 @3xl:items-start">
+                <LiveActions />
                 <TodaysFlow />
-                <AlertsFeed />
               </div>
               <div className="grid grid-cols-1 @3xl:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
                 <MonthBurnUp />
