@@ -16,8 +16,9 @@ const STATUS_JOB: Record<string, string> = {
   scheduled: "Scheduled",
   in_progress: "Started",
   final_check: "In final review",
-  awaiting_payment: "Approved",
-  completed: "Completed",
+  // Finalizado = Completed (dono, 05/11); o status completed do OS é o fechado (aba Closed).
+  awaiting_payment: "Completed",
+  completed: "Closed",
   cancelled: "Cancelled",
   on_hold: "On hold",
   late: "Running late",
