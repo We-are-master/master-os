@@ -80,6 +80,24 @@ export interface CatalogService {
 
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type LeadStatus = "new" | "interested";
+/** Etapa do CRM (mig 356). Lead e quote andam pela mesma lista. */
+export type LeadStage = "new" | "talking" | "quoting" | "quote_sent" | "accepted" | "won" | "lost" | "nurture";
+export type LeadSegment = "b2c" | "b2b";
+export type LeadLostReason = "price" | "went_elsewhere" | "timing" | "no_reply" | "outside_area" | "not_for_us" | "duplicate" | "other";
+export type LeadEventKind =
+  | "created"
+  | "stage_changed"
+  | "message_in"
+  | "message_out"
+  | "note"
+  | "next_action_set"
+  | "quote_created"
+  | "quote_sent"
+  | "payment"
+  | "assigned"
+  | "job_created";
+export type LeadEventActor = "staff" | "harvey" | "system" | "customer" | "partner";
+export type LeadEventChannel = "zendesk" | "whatsapp" | "email" | "phone" | "os" | "portal";
 export type LeadUrgency = "low" | "medium" | "high" | "urgent";
 export type QuoteStatus = "draft" | "in_survey" | "bidding" | "quote_ready" | "awaiting_customer" | "awaiting_payment" | "rejected" | "converted_to_job";
 export type JobStatus =
@@ -299,10 +317,53 @@ export interface Lead {
   published_at?: string | null;
   /** Site / reference photos (quote-invite-images bucket). JSON array of public URLs. */
   images?: string[] | null;
+  /** CRM (mig 356). */
+  stage?: LeadStage;
+  stage_changed_at?: string | null;
+  segment?: LeadSegment;
+  /** lead_channels.key */
+  source?: string | null;
+  /** 'zendesk' quando external_ref é o id do ticket. */
+  external_source?: string | null;
+  external_ref?: string | null;
+  next_action?: string | null;
+  next_action_at?: string | null;
+  last_contact_at?: string | null;
+  customer_replied_at?: string | null;
+  lost_reason?: LeadLostReason | null;
+  lost_note?: string | null;
+  lost_at?: string | null;
+  nurture_until?: string | null;
+  won_at?: string | null;
+  job_id?: string | null;
+  /** Ready for job. */
+  preferred_date?: string | null;
+  preferred_window?: string | null;
+  in_ccz?: boolean | null;
+  has_free_parking?: boolean | null;
+  job_kind?: JobKind | null;
+  price_mode?: "fixed" | "hourly" | "half_day" | "daily" | null;
+  price_given?: number | null;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
   deleted_by?: string | null;
+}
+
+/** Linha da timeline do lead (mig 356). */
+export interface LeadEvent {
+  id: string;
+  lead_id: string;
+  kind: LeadEventKind;
+  channel?: LeadEventChannel | null;
+  actor_type: LeadEventActor;
+  actor_id?: string | null;
+  from_stage?: LeadStage | null;
+  to_stage?: LeadStage | null;
+  summary?: string | null;
+  payload: Record<string, unknown>;
+  idempotency_key?: string | null;
+  created_at: string;
 }
 
 /** Physical site / property linked to an account (Assets module). Contacts are `clients` with matching source_account_id. */
@@ -401,6 +462,8 @@ export interface Quote {
   reference: string;
   title: string;
   request_id?: string;
+  /** CRM (mig 356): a quote pertence a um lead. */
+  lead_id?: string | null;
   /** Optional link to the catalog service used as template for line items. */
   catalog_service_id?: string | null;
   client_id?: string;
