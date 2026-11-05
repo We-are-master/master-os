@@ -140,6 +140,12 @@ export async function mandarPrimeiroContato(sb: SupabaseClient, p: PrimeiroConta
     );
     // O ticket nasce agora, com o template dentro (como no respond.io); a resposta do cliente junta tudo nele.
     const ticket = await abrirTicketDoLead(sb, p, destino).catch((e) => (console.error("[harvey-wa] ticket do lead", e), null));
+    // CRM: o lead do OS (registrarLeadNoOs, gravado antes, sem ticket) passa a viver neste ticket.
+    if (ticket) {
+      await import("@/lib/crm/fontes-servidor")
+        .then(({ ligarTicketAoLeadDoCliente }) => ligarTicketAoLeadDoCliente(sb, { clientId: p.clienteId, ticketId: ticket, telefone: destino }))
+        .catch((e) => console.error("[harvey-wa] ticket no lead do CRM", e));
+    }
     // Welcome to Fixfy por e-mail, junto com o WhatsApp do enquiry (só conta v2 direct; processo/boas-vindas-lead.ts).
     {
       await import("@/lib/processo/boas-vindas-lead")
@@ -400,7 +406,13 @@ export async function registrarLeadNoOs(sb: SupabaseClient, r: LinhaDeCliente, c
   const doCatalogo = catalogo.find((c) => c.name === "General Maintenance");
   const urgente = /urgent|48 hours|emergency/i.test(r.notes ?? "");
   const { data: ref } = await sb.rpc("next_lead_ref");
-  const { error } = await sb.from("leads").insert({
+  // O ticket, quando já existe (o template saiu antes e o lead entra agora): mesma convenção de job e quote.
+  // Só a linha do lead do Checkatrade: a do site e a do Express apontam para o ticket deles.
+  const { data: wa } = brief.phone
+    ? await sb.from("harvey_wa_leads").select("ticket_id").eq("chave", chaveDoTelefone(brief.phone)).eq("origem", "lead").is("job_id", null).maybeSingle()
+    : { data: null };
+  const ticketDoLead = /^\d+$/.test(String((wa as { ticket_id?: unknown } | null)?.ticket_id ?? "")) ? String((wa as { ticket_id: unknown }).ticket_id) : null;
+  const { data: criado, error } = await sb.from("leads").insert({
     reference: String(ref),
     name: brief.name || "Checkatrade lead",
     email: brief.email,
@@ -418,7 +430,21 @@ export async function registrarLeadNoOs(sb: SupabaseClient, r: LinhaDeCliente, c
     account_id: contaId,
     catalog_service_id: doCatalogo?.id ?? null,
     published_at: null,
-  });
+    ...(ticketDoLead ? { external_source: "zendesk", external_ref: ticketDoLead } : {}),
+  }).select("id").single();
   if (error) throw new Error(`lead no OS: ${error.message}`);
+  if (criado?.id) {
+    const { registrarEvento } = await import("@/lib/crm/lead-servidor");
+    await registrarEvento(sb, {
+      leadId: criado.id as string,
+      kind: "created",
+      channel: "whatsapp",
+      actorType: "harvey",
+      toStage: "new",
+      summary: "Lead created · checkatrade (first contact by Harvey)",
+      payload: { client_id: r.id, ticket_id: ticketDoLead },
+      idempotencyKey: `created:harvey:${r.id}`,
+    });
+  }
   return String(ref);
 }

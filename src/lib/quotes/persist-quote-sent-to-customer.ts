@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parsePostgrestUnknownColumnName } from "@/lib/supabase-schema-compat";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 export type PersistQuoteSentResult = {
   error: { message: string } | null;
@@ -26,6 +27,8 @@ export async function persistQuoteSentToCustomer(
   for (let attempt = 0; attempt < 16; attempt++) {
     const { error } = await supabase.from("quotes").update(payload).eq("id", quoteId);
     if (!error) {
+      // CRM: a quote foi ao cliente, o lead dela vai para Quote sent (nunca derruba o envio).
+      await sincronizarLeadDaQuote(supabase, quoteId, { evento: "quote_sent", chaveDoEvento: sentAt });
       return { error: null, customerPdfSentAtRecorded };
     }
 

@@ -9,6 +9,9 @@
  *   --detalhe  uma linha por ticket
  *   --so=JOB-1,JOB-2  só esses jobs (para testar)
  *
+ * No fim, a passada dos leads do CRM (src/lib/crm/espelho-leads-rotina.ts); sozinha ela roda
+ * por scripts/espelho-leads.mts.
+ *
  * Também desfaz o que mudaram à mão no Zendesk: ticket fechado com o job aberto volta
  * para a etapa do job. Ticket closed não aceita mais nada e só aparece na lista.
  * O fixfy-workers roda com --aplicar a cada 10 min (scripts/workers/rotinas.mts).
@@ -263,6 +266,21 @@ if (!so) {
       somar("erro");
       linhas.push(`title em lote: ERRO ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
     }
+  }
+}
+
+// Leads do CRM (fase 3 e 4, 05/11/2026): etapa pelas quotes, Nurture vencido, resposta pelo Reply
+// Status e o ticket de lead sem quote nem job. Regras em src/lib/crm/espelho-leads.ts. Falha aqui
+// não derruba o espelho de job e quote, que já rodou.
+if (!so) {
+  try {
+    const { passarLeadsNoEspelho } = await import("../src/lib/crm/espelho-leads-rotina");
+    const r = await passarLeadsNoEspelho(sb, { aplicar, detalhe, dias });
+    for (const [k, v] of Object.entries(r.conta)) conta[k] = (conta[k] ?? 0) + v;
+    linhas.push(...r.linhas);
+  } catch (e) {
+    somar("leads: erro");
+    linhas.push(`leads: ERRO ${e instanceof Error ? e.message.slice(0, 160) : String(e)}`);
   }
 }
 

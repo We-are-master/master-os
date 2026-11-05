@@ -1324,6 +1324,9 @@ export async function POST(req: NextRequest) {
         partnerIdDoJob: (jobRow as { partner_id?: string | null }).partner_id ?? null,
         jobReference: (inserted as { reference?: string | null }).reference ?? null,
       });
+      // CRM: o job nasceu da quote, o lead dela fecha como Won (nunca derruba a criação).
+      const { sincronizarLeadDaQuote } = await import("@/lib/crm/lead-servidor");
+      await sincronizarLeadDaQuote(supabase, convertingFromQuote.id);
     }
   }
 

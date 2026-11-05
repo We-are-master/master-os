@@ -20,6 +20,7 @@ import type { Identidade } from "./identidade";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { modoDe } from "@/lib/harvey/autonomia";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 export type PedidoDeCotacao = { serviceType: string; description: string; postcode: string; address?: string; name?: string; email?: string };
 
@@ -66,6 +67,7 @@ export async function pedirCotacao(
         ja.status === "draft"
           ? await convidarParceiros(sb, { id: ja.id as string, reference: ja.reference as string, title: classe.tipo, catalog_service_id: classe.catalogServiceId ?? (ja.catalog_service_id as string | null), property_address: endereco, scope }, a.pedido.serviceType, postcode)
           : ((await sb.from("quote_partner_invitations").select("id", { count: "exact", head: true }).eq("quote_id", ja.id as string)).count ?? 0);
+      await sincronizarLeadDaQuote(sb, ja.id as string);
       return { reference: ja.reference as string, invited: convidados, ticket: ref };
     }
   }
@@ -112,6 +114,8 @@ export async function pedirCotacao(
   }
 
   const convidados = await convidarParceiros(sb, data as QuoteParaConvite, a.pedido.serviceType, postcode);
+  // CRM: a quote entra no lead do mesmo ticket e o lead vai para Quoting (nunca derruba o pedido).
+  await sincronizarLeadDaQuote(sb, data.id as string, { evento: "quote_created" });
   return { reference: data.reference as string, invited: convidados, ticket: ref };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -15,14 +15,49 @@ import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
-import type { CatalogService, Lead, LeadStatus, LeadUrgency } from "@/types/database";
+import type { CatalogService, Lead, LeadSegment, LeadStatus, LeadUrgency } from "@/types/database";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { useProfile } from "@/hooks/use-profile";
-import { listLeads, createLead, updateLead, deleteLead, countJobsForClient } from "@/services/leads";
+import { createLead, updateLead, deleteLead, countJobsForClient, getLead } from "@/services/leads";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
-import { getStatusCounts, type ListResult } from "@/services/base";
-import { cn, formatYmdUkDisplay } from "@/lib/utils";
+import { type ListResult } from "@/services/base";
+import {
+  buildTodayQueue,
+  decodeCrmFilter,
+  encodeCrmFilter,
+  getStageCounts,
+  leadValue,
+  listBoardLeads,
+  listCrmLeads,
+  listLatestQuotesForLeads,
+  listLeadChannels,
+  listOpenLeads,
+  listPlatformAccountIds,
+  type CrmTab,
+  type LeadChannel,
+  type LeadQuote,
+  type SegmentFilter,
+  type TodayItem,
+} from "@/services/crm-leads";
+import { STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
+import { LeadStageTabs, SegmentToggle, ViewToggle, type LeadsView } from "@/components/leads/lead-stage-tabs";
+import { TodayQueue } from "@/components/leads/today-queue";
+import { LeadBoard } from "@/components/leads/lead-board";
+import { LeadCrmHeader, LeadCrmPanel, takePendingWonLeadId } from "@/components/leads/lead-crm-panel";
+import { LeadTimeline } from "@/components/leads/lead-timeline";
+import {
+  SEGMENT_LABEL,
+  STAGE_VARIANT,
+  formatAgo,
+  formatWhen,
+  gbp,
+  isOverdue,
+  isoToLocalInput,
+  localInputToIso,
+  zendeskTicketUrl,
+} from "@/components/leads/crm-ui";
+import { cn } from "@/lib/utils";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import { validateLeadForm, type LeadFieldErrors } from "@/lib/lead-validation";
 
@@ -63,7 +98,21 @@ type LeadFormState = {
   status: LeadStatus;
   /** service_catalog.id — required so the Trade Portal can target matching partners. */
   catalog_service_id: string;
+  /** CRM (mig 356). Only used by the New lead modal. */
+  segment: LeadSegment;
+  source: string;
+  zendesk_ticket_id: string;
+  next_action: string;
+  /** datetime-local value */
+  next_action_at: string;
 };
+
+/** Próxima meia hora cheia, para o próximo passo já vir preenchido. */
+function nextHalfHourLocal(): string {
+  const d = new Date(Date.now() + 30 * 60 * 1000);
+  d.setMinutes(d.getMinutes() < 30 ? 30 : 60, 0, 0);
+  return isoToLocalInput(d.toISOString());
+}
 
 function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
   return {
@@ -77,8 +126,15 @@ function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
     scope: "",
     status,
     catalog_service_id: "",
+    segment: "b2c",
+    source: "",
+    zendesk_ticket_id: "",
+    next_action: "Reply to the customer",
+    next_action_at: nextHalfHourLocal(),
   };
 }
+
+type CreateLeadErrors = LeadFieldErrors & Partial<Record<"zendesk_ticket_id" | "next_action" | "next_action_at", string>>;
 
 function FieldBlock({
   label,
@@ -97,16 +153,6 @@ function FieldBlock({
     </div>
   );
 }
-
-const LEAD_STATUSES: LeadStatus[] = ["new", "interested"];
-
-const statusConfig: Record<
-  LeadStatus,
-  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
-> = {
-  new: { label: "New", variant: "primary" },
-  interested: { label: "Interested", variant: "success" },
-};
 
 const urgencyConfig: Record<
   LeadUrgency,
@@ -136,14 +182,43 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     status,
     setStatus,
     refresh,
+    refreshSilent,
   } = useSupabaseList<Lead>({
-    fetcher: listLeads,
+    fetcher: listCrmLeads,
     realtimeTable: "leads",
     initialData,
-    initialStatus: "new",
+    initialStatus: encodeCrmFilter("open", "all"),
   });
+  const { tab, segment } = decodeCrmFilter(status);
+  const setTab = useCallback((t: CrmTab) => setStatus(encodeCrmFilter(t, segment)), [setStatus, segment]);
+  const setSegment = useCallback((sg: SegmentFilter) => setStatus(encodeCrmFilter(tab, sg)), [setStatus, tab]);
 
-  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [view, setViewRaw] = useState<LeadsView>("board");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("fixfy:leads-view");
+      if (v === "board" || v === "list") setViewRaw(v);
+    } catch {
+      /* sem storage fica no Board */
+    }
+  }, []);
+  const setView = useCallback((v: LeadsView) => {
+    setViewRaw(v);
+    try {
+      localStorage.setItem("fixfy:leads-view", v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
+  const [todayItems, setTodayItems] = useState<TodayItem[]>([]);
+  const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
+  const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
+  const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
+  const [sideLoading, setSideLoading] = useState(true);
+  const [channels, setChannels] = useState<LeadChannel[]>([]);
+  const [drawerTab, setDrawerTab] = useState<"overview" | "details" | "activity">("overview");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -151,7 +226,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState(() => emptyLeadForm());
-  const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
+  const [createErrors, setCreateErrors] = useState<CreateLeadErrors>({});
   const [createPhotos, setCreatePhotos] = useState<File[]>([]);
   const [editForm, setEditForm] = useState(() => emptyLeadForm());
   const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
@@ -173,23 +248,77 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       .catch((err) => {
         console.error("[leads] failed to load service_catalog:", err);
       });
+    listLeadChannels().then((rows) => {
+      if (active) setChannels(rows);
+    });
     return () => {
       active = false;
     };
   }, []);
 
+  const channelLabel = useMemo(() => new Map(channels.map((c) => [c.key, c.label])), [channels]);
+  const serviceName = useCallback(
+    (id: string | null | undefined) => (id ? catalogServices.find((c) => c.id === id)?.name ?? null : null),
+    [catalogServices],
+  );
+
+  /** Contagens, Fila Today, board e as quotes dos leads na tela. */
+  const sideSeq = useRef(0);
   const loadCounts = useCallback(async () => {
+    const seq = ++sideSeq.current;
+    setSideLoading(true);
     try {
-      const counts = await getStatusCounts("leads", LEAD_STATUSES);
-      setStatusCounts(counts);
-    } catch {
-      setStatusCounts({});
+      const [counts, openLeads, board] = await Promise.all([
+        getStageCounts(segment),
+        listOpenLeads(segment),
+        view === "board" ? listBoardLeads(segment, search) : Promise.resolve<Record<string, Lead[]>>({}),
+      ]);
+      const boardLeads = Object.values(board).flat();
+      const all = [...openLeads, ...boardLeads, ...data];
+      const [quotes, platforms] = await Promise.all([
+        listLatestQuotesForLeads(all.map((l) => l.id)),
+        listPlatformAccountIds((board.accepted ?? []).map((l) => l.account_id ?? "")),
+      ]);
+      if (seq !== sideSeq.current) return;
+      setStageCounts(counts);
+      setTodayItems(buildTodayQueue(openLeads));
+      setBoardColumns(board);
+      setQuotesByLead(quotes);
+      setPlatformAccounts(platforms);
+    } catch (err) {
+      console.error("[leads] side data failed:", err);
+    } finally {
+      if (seq === sideSeq.current) setSideLoading(false);
     }
-  }, []);
+  }, [segment, view, search, data]);
 
   useEffect(() => {
-    loadCounts();
-  }, [loadCounts, data.length, status]);
+    void loadCounts();
+  }, [loadCounts]);
+
+  const todayFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return todayItems;
+    return todayItems.filter(({ lead: l }) =>
+      [l.name, l.reference, l.email, l.phone, l.postcode, l.external_ref].some((v) => v?.toLowerCase().includes(q)),
+    );
+  }, [todayItems, search]);
+
+  const openLead = useCallback((lead: Lead) => {
+    setDrawerTab("overview");
+    setSelectedLead(lead);
+  }, []);
+
+  // Voltou de Jobs/Quotes depois do Mark won: reabre o lead para ele fechar como Won.
+  useEffect(() => {
+    const id = takePendingWonLeadId();
+    if (!id) return;
+    getLead(id)
+      .then((l) => l && openLead(l))
+      .catch(() => {
+        /* lead sumiu */
+      });
+  }, [openLead]);
 
   const handleDelete = useCallback(
     async (lead: Lead) => {
@@ -217,12 +346,17 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     [loadCounts, profile?.id, refresh],
   );
 
+  /** O formulário de Details só volta ao banco quando outro lead abre (salvar o próximo passo não apaga o que foi digitado). */
+  const formLeadIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedLead) {
+      formLeadIdRef.current = null;
       setLinkedJobsCount(null);
       setLeadImages([]);
       return;
     }
+    if (formLeadIdRef.current === selectedLead.id) return;
+    formLeadIdRef.current = selectedLead.id;
     setEditErrors({});
     setLeadImages(normalizeJsonImageArray(selectedLead.images));
     setEditForm({
@@ -236,6 +370,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       scope: selectedLead.scope ?? "",
       status: selectedLead.status,
       catalog_service_id: selectedLead.catalog_service_id ?? "",
+      segment: selectedLead.segment ?? "b2c",
+      source: selectedLead.source ?? "",
+      zendesk_ticket_id: selectedLead.external_ref ?? "",
+      next_action: selectedLead.next_action ?? "",
+      next_action_at: isoToLocalInput(selectedLead.next_action_at),
     });
 
     const clientId = selectedLead.client_id;
@@ -253,31 +392,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     };
   }, [selectedLead]);
 
-  const tabs = useMemo(
-    () =>
-      LEAD_STATUSES.map((st) => ({
-        id: st,
-        label: statusConfig[st].label,
-        count: statusCounts[st] ?? 0,
-      })),
-    [statusCounts],
-  );
-
   const columns: Column<Lead>[] = useMemo(
     () => [
-      {
-        key: "reference",
-        label: "Ref",
-        sortable: true,
-        minWidth: "6.5rem",
-        headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
-        render: (item) => (
-          <span className="font-mono text-xs text-text-secondary tabular-nums whitespace-nowrap">
-            {item.reference}
-          </span>
-        ),
-      },
       {
         key: "name",
         label: "Lead",
@@ -286,122 +402,106 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         cellClassName: "min-w-[9rem] max-w-[min(100vw-8rem,22rem)] sm:max-w-xs lg:max-w-sm",
         render: (item) => {
           const urgency = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
-          const scopePreview = item.scope?.trim();
+          const value = leadValue(item, quotesByLead[item.id]);
           return (
-            <div className="min-w-0 space-y-1">
+            <div className="min-w-0 space-y-0.5">
               <p className="text-sm font-medium text-text-primary truncate">{item.name}</p>
-              <p className="font-mono text-[10px] text-text-tertiary tabular-nums sm:hidden">{item.reference}</p>
-              <div className="flex flex-wrap items-center gap-1.5 md:hidden">
+              <p className="font-mono text-[10px] text-text-tertiary tabular-nums">
+                {item.reference}
+                {value ? <span className="ml-2 font-sans text-text-secondary">{gbp(value)}</span> : null}
+              </p>
+              {item.urgency === "high" || item.urgency === "urgent" ? (
                 <Badge variant={urgency.variant} className="text-[10px] px-1.5 py-0">
                   {urgency.label}
                 </Badge>
-                <Badge variant={statusConfig[item.status].variant} className="text-[10px] px-1.5 py-0">
-                  {statusConfig[item.status].label}
-                </Badge>
-              </div>
-              {item.email ? (
-                <p className="text-[11px] text-text-tertiary truncate md:hidden">{item.email}</p>
-              ) : null}
-              {scopePreview ? (
-                <p className="text-[11px] text-text-tertiary line-clamp-2 whitespace-pre-wrap lg:hidden">
-                  {scopePreview}
-                </p>
               ) : null}
             </div>
           );
         },
       },
       {
-        key: "email",
-        label: "Email",
-        minWidth: "9rem",
+        key: "segment",
+        label: "Segment",
+        minWidth: "4.5rem",
+        headerClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell",
+        render: (item) => <span className="text-xs text-text-secondary">{SEGMENT_LABEL[item.segment ?? "b2c"]}</span>,
+      },
+      {
+        key: "source",
+        label: "Source",
+        minWidth: "6rem",
         headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell max-w-[12rem]",
+        cellClassName: "hidden md:table-cell",
         render: (item) => (
-          <span className="text-xs text-text-secondary truncate block">{item.email ?? "—"}</span>
+          <span className="text-xs text-text-secondary">{item.source ? channelLabel.get(item.source) ?? item.source : "·"}</span>
         ),
       },
       {
-        key: "phone",
-        label: "Phone",
-        minWidth: "7rem",
+        key: "stage",
+        label: "Stage",
+        minWidth: "6rem",
+        render: (item) => {
+          const st = item.stage ?? "new";
+          return (
+            <Badge variant={STAGE_VARIANT[st]} marker={false}>
+              {STAGE_LABEL[st]}
+            </Badge>
+          );
+        },
+      },
+      {
+        key: "next_action_at",
+        label: "Next action",
+        sortable: true,
+        minWidth: "10rem",
+        cellClassName: "max-w-[16rem]",
+        render: (item) => {
+          const open = isOpenStage(item.stage);
+          if (!open) return <span className="text-xs text-text-tertiary">·</span>;
+          if (!item.next_action_at) return <span className="text-xs font-semibold text-[var(--bad-ink)]">No next action</span>;
+          const late = isOverdue(item.next_action_at);
+          return (
+            <div className={cn("text-xs min-w-0", late ? "text-[var(--bad-ink)] font-semibold" : "text-text-secondary")}>
+              <p className="truncate">{item.next_action || "Next action"}</p>
+              <p className="tabular-nums text-[11px]">{formatWhen(item.next_action_at)}</p>
+            </div>
+          );
+        },
+      },
+      {
+        key: "last_contact_at",
+        label: "Last contact",
+        minWidth: "6rem",
         headerClassName: "hidden lg:table-cell",
         cellClassName: "hidden lg:table-cell whitespace-nowrap",
         render: (item) => (
-          <span className="text-xs text-text-secondary tabular-nums">{item.phone ?? "—"}</span>
-        ),
-      },
-      {
-        key: "urgency",
-        label: "Urgency",
-        minWidth: "5.5rem",
-        headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell",
-        render: (item) => {
-          const cfg = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
-          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-        },
-      },
-      {
-        key: "scope",
-        label: "Scope",
-        minWidth: "12rem",
-        headerClassName: "hidden lg:table-cell",
-        cellClassName: "hidden lg:table-cell max-w-md",
-        render: (item) => (
-          <p className="text-xs text-text-secondary line-clamp-2 whitespace-pre-wrap">
-            {item.scope?.trim() || "—"}
-          </p>
-        ),
-      },
-      {
-        key: "status",
-        label: "Status",
-        minWidth: "5.5rem",
-        headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell",
-        render: (item) => {
-          const cfg = statusConfig[item.status] ?? statusConfig.new;
-          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-        },
-      },
-      {
-        key: "created_at",
-        label: "Created",
-        sortable: true,
-        minWidth: "5.5rem",
-        headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
-        render: (item) => (
-          <span className="text-xs text-text-tertiary tabular-nums whitespace-nowrap">
-            {formatYmdUkDisplay(item.created_at.slice(0, 10))}
+          <span className="text-xs text-text-tertiary tabular-nums">
+            {item.last_contact_at ? `${formatAgo(item.last_contact_at)} ago` : "never"}
           </span>
         ),
       },
       {
-        key: "images",
-        label: "Photos",
-        minWidth: "4.5rem",
+        key: "external_ref",
+        label: "Ticket",
+        minWidth: "5rem",
         headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell whitespace-nowrap",
         render: (item) => {
-          const imgs = normalizeJsonImageArray(item.images);
-          if (imgs.length === 0) return <span className="text-xs text-text-tertiary">—</span>;
-          return (
-            <div className="flex items-center gap-1">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imgs[0]}
-                alt=""
-                loading="lazy"
-                className="h-8 w-8 rounded-md object-cover border border-border-light"
-              />
-              {imgs.length > 1 ? (
-                <span className="text-[11px] font-medium text-text-tertiary tabular-nums">
-                  +{imgs.length - 1}
-                </span>
-              ) : null}
-            </div>
+          const url = zendeskTicketUrl(item.external_ref);
+          if (!item.external_ref) return <span className="text-xs text-[var(--bad-ink)]">none</span>;
+          return url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs font-medium text-primary hover:underline tabular-nums"
+            >
+              #{item.external_ref}
+            </a>
+          ) : (
+            <span className="text-xs tabular-nums">#{item.external_ref}</span>
           );
         },
       },
@@ -433,7 +533,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
     ],
-    [deletingId, handleDelete],
+    [deletingId, handleDelete, quotesByLead, channelLabel],
   );
 
   const handleCreate = async () => {
@@ -450,6 +550,17 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error("Select a Type of Work");
       return;
     }
+    const ticket = createForm.zendesk_ticket_id.trim().replace(/^#/, "");
+    const crmErrors: CreateLeadErrors = {};
+    if (!/^\d+$/.test(ticket)) crmErrors.zendesk_ticket_id = "Link the Zendesk ticket";
+    if (!createForm.next_action.trim()) crmErrors.next_action = "Write the next action";
+    const nextAt = localInputToIso(createForm.next_action_at);
+    if (!nextAt) crmErrors.next_action_at = "Pick a date for the next action";
+    if (Object.keys(crmErrors).length > 0) {
+      setCreateErrors((e) => ({ ...e, ...crmErrors }));
+      toast.error(Object.values(crmErrors)[0] ?? "Check the form");
+      return;
+    }
     setCreating(true);
     try {
       let lead = await createLead({
@@ -463,6 +574,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         scope: createForm.scope,
         status: "new",
         catalog_service_id: createForm.catalog_service_id,
+        segment: createForm.segment,
+        source: createForm.source || null,
+        zendesk_ticket_id: ticket,
+        next_action: createForm.next_action,
+        next_action_at: nextAt,
       });
       // Photos are uploaded after the lead exists (need its id for the folder),
       // then attached — same pattern as service requests.
@@ -482,10 +598,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       setCreateForm(emptyLeadForm());
       setCreatePhotos([]);
       setCreateErrors({});
-      setStatus("new");
+      setTab("new");
       await refresh();
       await loadCounts();
-      setSelectedLead(lead);
+      openLead(lead);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not create lead");
     } finally {
@@ -495,6 +611,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   const handleSave = async () => {
     if (!selectedLead) return;
+    if (isOpenStage(selectedLead.stage) && !selectedLead.next_action_at) {
+      toast.error("An open lead always has a next action. Set it in Overview, then save.");
+      setDrawerTab("overview");
+      return;
+    }
     const errors = validateLeadForm(editForm);
     setEditErrors(errors);
     if (Object.keys(errors).length > 0) {
@@ -512,7 +633,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         postcode: editForm.postcode,
         urgency: editForm.urgency,
         scope: editForm.scope,
-        status: editForm.status,
       });
       toast.success("Lead updated");
       setSelectedLead(updated);
@@ -559,23 +679,15 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     }
   };
 
-  const markInterested = async () => {
-    if (!selectedLead || selectedLead.status === "interested") return;
-    setSaving(true);
-    try {
-      const updated = await updateLead(selectedLead.id, { status: "interested" });
-      toast.success("Marked as Interested");
-      setSelectedLead(updated);
-      setEditForm((f) => ({ ...f, status: "interested" }));
-      setStatus("interested");
-      await refresh();
-      await loadCounts();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update status");
-    } finally {
-      setSaving(false);
-    }
-  };
+  /** Mudança vinda do painel do CRM (próximo passo, etapa, dados do job). */
+  const onLeadChange = useCallback(
+    (l: Lead) => {
+      setSelectedLead(l);
+      refreshSilent();
+      void loadCounts();
+    },
+    [refreshSilent, loadCounts],
+  );
 
   const togglePublish = async () => {
     if (!selectedLead) return;
@@ -583,7 +695,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     setSaving(true);
     try {
       const updated = await updateLead(selectedLead.id, { published_at: next });
-      toast.success(next ? "Lead published — now live in the Trade Portal" : "Lead unpublished");
+      toast.success(next ? "Lead published. Now live in the Trade Portal" : "Lead unpublished");
       setSelectedLead(updated);
       await refresh();
     } catch (err) {
@@ -597,17 +709,20 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     <PageTransition>
       <div className="min-w-0 space-y-4 sm:space-y-5">
         <PageHeader
-          title="Partner offers"
-          subtitle="Review service opportunities and offer them to interested partners."
+          title="Leads"
+          subtitle="Every lead with its stage and next action. Today shows who needs someone now."
           className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
         >
           <Button
             type="button"
             size="sm"
             icon={<Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-            aria-label="Add lead"
-            title="Add lead"
-            onClick={() => setCreateOpen(true)}
+            aria-label="New lead"
+            title="New lead"
+            onClick={() => {
+              setCreateForm(emptyLeadForm());
+              setCreateOpen(true);
+            }}
             className={cn(
               "!flex-nowrap shrink-0 self-end sm:self-auto",
               "h-9 w-9 p-0 justify-center",
@@ -615,43 +730,71 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               "[&>span:last-child]:whitespace-nowrap",
             )}
           >
-            <span className="hidden sm:inline">Add lead</span>
+            <span className="hidden sm:inline">New lead</span>
           </Button>
         </PageHeader>
 
-        <div className="min-w-0 -mx-1 px-1 overflow-x-auto">
-          <Tabs tabs={tabs} activeTab={status} onChange={setStatus} className="min-w-max sm:min-w-0" />
-        </div>
-
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentToggle value={segment} onChange={setSegment} />
+            <ViewToggle value={view} onChange={setView} />
+          </div>
           <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, ref, scope…"
-            className="w-full min-w-0 sm:max-w-md"
+            placeholder="Search name, ref, ticket, scope…"
+            className="w-full min-w-0 sm:max-w-sm"
           />
-          <p className="text-xs text-text-tertiary tabular-nums shrink-0 sm:text-right">
-            {totalItems} lead{totalItems === 1 ? "" : "s"}
-          </p>
         </div>
 
-        <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
-          <DataTable
-            className="min-w-[20rem]"
-            columns={columns}
-            data={data}
-            loading={loading}
-            page={page}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onRowClick={setSelectedLead}
-            emptyMessage={
-              status === "new"
-                ? "No new leads yet — add one to get started."
-                : "No interested leads yet."
-            }
+        {view === "board" || tab !== "today" ? (
+          <TodayQueue
+            items={todayFiltered}
+            quotes={quotesByLead}
+            loading={sideLoading}
+            layout="strip"
+            limit={8}
+            onOpen={openLead}
           />
-        </div>
+        ) : null}
+
+        {view === "board" ? (
+          <LeadBoard
+            columns={boardColumns}
+            counts={stageCounts}
+            quotes={quotesByLead}
+            platformAccounts={platformAccounts}
+            loading={sideLoading}
+            onOpen={openLead}
+          />
+        ) : (
+          <>
+            <LeadStageTabs active={tab} counts={stageCounts} todayCount={todayItems.length} onChange={setTab} />
+            {tab === "today" ? (
+              <TodayQueue items={todayFiltered} quotes={quotesByLead} loading={sideLoading} layout="grid" onOpen={openLead} />
+            ) : (
+              <>
+                <p className="text-xs text-text-tertiary tabular-nums">
+                  {totalItems} lead{totalItems === 1 ? "" : "s"}
+                  {isOpenStage(tab === "open" ? "new" : tab) ? " · overdue next actions first" : ""}
+                </p>
+                <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+                  <DataTable
+                    className="min-w-[20rem]"
+                    columns={columns}
+                    data={data}
+                    loading={loading}
+                    page={page}
+                    totalPages={totalPages}
+                    onPageChange={setPage}
+                    onRowClick={openLead}
+                    emptyMessage={tab === "open" ? "No open leads. Add one to get started." : `No leads in ${STAGE_LABEL[tab]}.`}
+                  />
+                </div>
+              </>
+            )}
+          </>
+        )}
       </div>
 
       <Modal
@@ -660,12 +803,40 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           setCreateOpen(false);
           setCreateErrors({});
         }}
-        title="Add lead"
-        subtitle="Contact is saved under the Fixfy account in Clients. New leads start in the New tab."
+        title="New lead"
+        subtitle="Contact is saved under the Fixfy account in Clients. Link the Zendesk ticket that already exists."
         size="md"
         className="max-w-[min(100vw-1.5rem,32rem)] sm:max-w-lg"
       >
         <div className="px-4 pb-4 pt-4 space-y-3.5 sm:px-5 sm:pb-5 max-h-[min(75dvh,640px)] overflow-y-auto">
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+            <FieldBlock label="Segment">
+              <div role="radiogroup" aria-label="Segment" className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+                {(["b2c", "b2b"] as LeadSegment[]).map((sg) => (
+                  <button
+                    key={sg}
+                    type="button"
+                    role="radio"
+                    aria-checked={createForm.segment === sg}
+                    onClick={() => setCreateForm((f) => ({ ...f, segment: sg }))}
+                    className={cn(
+                      "inline-flex h-7 items-center rounded-md px-3 text-[12px] font-semibold transition-colors",
+                      createForm.segment === sg ? "bg-primary text-white shadow-sm" : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {SEGMENT_LABEL[sg]}
+                  </button>
+                ))}
+              </div>
+            </FieldBlock>
+            <FieldBlock label="Source">
+              <Select
+                value={createForm.source}
+                onChange={(e) => setCreateForm((f) => ({ ...f, source: e.target.value }))}
+                options={[{ value: "", label: "Select a source…" }, ...channels.map((c) => ({ value: c.key, label: c.label }))]}
+              />
+            </FieldBlock>
+          </div>
           <FieldBlock label="Name" error={createErrors.name}>
             <Input
               value={createForm.name}
@@ -709,7 +880,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               onSelect={(parts) => setCreateForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
             />
             <p className="mt-1.5 text-[11px] text-text-tertiary">
-              Choose a Mapbox suggestion — city and postcode are filled automatically.
+              Choose a Mapbox suggestion: city and postcode are filled automatically.
             </p>
           </FieldBlock>
           <FieldBlock label="Type of work">
@@ -724,7 +895,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               ]}
             />
             <p className="mt-1.5 text-[11px] text-text-tertiary">
-              Drives Trade Portal targeting — only partners covering this trade will see the lead.
+              Drives Trade Portal targeting: only partners covering this trade will see the lead.
             </p>
           </FieldBlock>
           <FieldBlock label="Urgency">
@@ -751,6 +922,34 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 createErrors.scope && "border-red-400",
               )}
             />
+          </FieldBlock>
+          <FieldBlock label="Zendesk ticket · required" error={createErrors.zendesk_ticket_id}>
+            <Input
+              inputMode="numeric"
+              value={createForm.zendesk_ticket_id}
+              onChange={(e) => setCreateForm((f) => ({ ...f, zendesk_ticket_id: e.target.value }))}
+              placeholder="48230"
+              className={cn(createErrors.zendesk_ticket_id && "border-red-400")}
+            />
+            <p className="mt-1.5 text-[11px] text-text-tertiary">
+              The ticket where the conversation already is. The job inherits it later.
+            </p>
+          </FieldBlock>
+          <FieldBlock label="Next action · required" error={createErrors.next_action ?? createErrors.next_action_at}>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_12rem]">
+              <Input
+                value={createForm.next_action}
+                onChange={(e) => setCreateForm((f) => ({ ...f, next_action: e.target.value }))}
+                placeholder="Reply to the customer"
+                className={cn(createErrors.next_action && "border-red-400")}
+              />
+              <Input
+                type="datetime-local"
+                value={createForm.next_action_at}
+                onChange={(e) => setCreateForm((f) => ({ ...f, next_action_at: e.target.value }))}
+                className={cn(createErrors.next_action_at && "border-red-400")}
+              />
+            </div>
           </FieldBlock>
           <FieldBlock label="Photos (optional)">
             <div className="flex flex-wrap items-center gap-2">
@@ -811,11 +1010,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         footer={
           selectedLead ? (
             <div className="flex flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
-              {selectedLead.status === "new" ? (
-                <Button variant="secondary" onClick={markInterested} disabled={saving} className="w-full sm:w-auto">
-                  Mark interested
-                </Button>
-              ) : null}
               <Button
                 variant={selectedLead.published_at ? "ghost" : "secondary"}
                 onClick={togglePublish}
@@ -833,10 +1027,23 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       >
         {selectedLead ? (
           <div className="px-4 py-4 space-y-4 sm:px-5 sm:py-5">
+            <LeadCrmHeader lead={selectedLead} sourceLabel={selectedLead.source ? channelLabel.get(selectedLead.source) : null} />
+            <Tabs
+              tabs={[
+                { id: "overview", label: "Overview" },
+                { id: "details", label: "Details" },
+                { id: "activity", label: "Activity" },
+              ]}
+              activeTab={drawerTab}
+              onChange={(id) => setDrawerTab(id as typeof drawerTab)}
+            />
+            {drawerTab === "overview" ? (
+              <LeadCrmPanel lead={selectedLead} serviceName={serviceName(selectedLead.catalog_service_id)} onLeadChange={onLeadChange} />
+            ) : drawerTab === "activity" ? (
+              <LeadTimeline leadId={selectedLead.id} reloadKey={Date.parse(selectedLead.updated_at) || 0} />
+            ) : (
+            <>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant={statusConfig[selectedLead.status].variant}>
-                {statusConfig[selectedLead.status].label}
-              </Badge>
               <Badge variant={urgencyConfig[selectedLead.urgency].variant}>
                 {urgencyConfig[selectedLead.urgency].label} urgency
               </Badge>
@@ -844,7 +1051,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 <Badge variant="info">Fixfy client linked</Badge>
               ) : null}
               {linkedJobsCount === 0 ? (
-                <span title="No job available yet — labour-only lead" className="inline-flex">
+                <span title="No job available yet · labour-only lead" className="inline-flex">
                   <Badge variant="warning">Lead only</Badge>
                 </span>
               ) : linkedJobsCount && linkedJobsCount > 0 ? (
@@ -962,7 +1169,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
               />
               <p className="mt-1.5 text-[11px] text-text-tertiary">
-                Choose a Mapbox suggestion — city and postcode are filled automatically.
+                Choose a Mapbox suggestion: city and postcode are filled automatically.
               </p>
             </FieldBlock>
 
@@ -979,16 +1186,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                   ]}
                 />
               </FieldBlock>
-              <FieldBlock label="Status">
-                <Select
-                  value={editForm.status}
-                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as LeadStatus }))}
-                  options={[
-                    { value: "new", label: "New" },
-                    { value: "interested", label: "Interested" },
-                  ]}
-                />
-              </FieldBlock>
+
             </div>
 
             <FieldBlock label="Scope" error={editErrors.scope}>
@@ -1034,6 +1232,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 Delete lead
               </Button>
             </div>
+            </>
+            )}
           </div>
         ) : null}
       </Drawer>

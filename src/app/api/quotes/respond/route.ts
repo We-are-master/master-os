@@ -14,6 +14,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { resolveNominalBillingParty } from "@/lib/account-billing-addressee";
 import { dispatchJobCreatedZendesk, dispatchQuoteRejectedZendesk } from "@/lib/zendesk-lifecycle";
 import { syncJobZendeskStatus } from "@/lib/zendesk-status-sync";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 function getServiceSupabase() {
   return createClient(
@@ -177,6 +178,8 @@ export async function POST(req: NextRequest) {
       void dispatchQuoteRejectedZendesk(quoteId, supabase).catch((err) => {
         console.error("Quote reject: Zendesk dispatch failed", err);
       });
+      // CRM: o lead da quote acompanha (after: na Vercel a promessa solta morre).
+      after(() => sincronizarLeadDaQuote(supabase, quoteId));
 
       marks.push(["total", performance.now() - startedAt]);
       return withServerTiming({
@@ -452,6 +455,8 @@ export async function POST(req: NextRequest) {
        * cliente não pagou e nada está marcado (dono, 16/10/2026).
        */
       const jobIdDoAceite = job.id;
+      // CRM: aceitou com entrada, o lead vai para Accepted (Won só quando a entrada cai).
+      after(() => sincronizarLeadDaQuote(supabase, quoteId));
       after(() =>
         syncJobZendeskStatus(jobIdDoAceite, supabase)
           .then(() => undefined)
@@ -626,6 +631,8 @@ export async function POST(req: NextRequest) {
         .eq("id", quoteId)
         .then(({ error }) => { if (error) console.error("Quote accept (no deposit): quote update failed", error); }),
     ]);
+    // CRM: sem entrada a quote vira job na hora, o lead fecha como Won.
+    after(() => sincronizarLeadDaQuote(supabase, quoteId));
 
     /** Downstream syncs + audit log don't gate the response — fire-and-forget. */
     void (async () => {

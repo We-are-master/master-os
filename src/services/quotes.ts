@@ -14,6 +14,7 @@ import { batchResolveClientAccountLogoUrls, batchResolveLinkedAccountLabels } fr
 const QUOTE_WRITABLE_KEYS = new Set<string>([
   "title",
   "request_id",
+  "lead_id",
   "catalog_service_id",
   "client_id",
   "client_address_id",
@@ -259,6 +260,21 @@ export async function getQuote(id: string): Promise<Quote | null> {
   return data as Quote;
 }
 
+/**
+ * CRM (fase 3): quote com lead mexe na etapa do lead. A regra roda no servidor
+ * (/api/crm/leads/sync); aqui só avisa, sem esperar e sem derrubar o save. A
+ * rotina do espelho (10 min) corrige qualquer aviso que se perca.
+ */
+function avisarLeadDaQuote(leadId: string | null | undefined): void {
+  if (!leadId || typeof window === "undefined") return;
+  void fetch("/api/crm/leads/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ leadId }),
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
 export async function createQuote(
   input: Omit<Quote, "id" | "reference" | "created_at" | "updated_at">
 ): Promise<Quote> {
@@ -273,6 +289,7 @@ export async function createQuote(
     if (!error && data?.id) {
       const full = await getQuote(String(data.id));
       if (!full) throw new Error("Quote was created but could not be loaded");
+      avisarLeadDaQuote(full.lead_id);
       return full;
     }
     if (!error) throw new Error("Quote insert returned no id");
@@ -308,6 +325,7 @@ export async function updateQuote(
     const { data, error } = await supabase.from("quotes").update(payload).eq("id", id).select().single();
     if (!error) {
       if (!data) throw new Error("Quote not found after update");
+      avisarLeadDaQuote((data as Quote).lead_id);
       return data as Quote;
     }
 

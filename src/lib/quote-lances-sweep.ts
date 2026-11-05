@@ -264,6 +264,9 @@ export async function varrerLancesParaRascunho(
     let enviada = false;
     if (upErr) r.detalhes.push(`${q.reference}: nota saiu mas a quote não mudou — ${upErr.message}`);
     else {
+      // CRM: quote pronta, o lead acompanha (nunca derruba a varredura).
+      const { sincronizarLeadDaQuote } = await import("@/lib/crm/lead-servidor");
+      await sincronizarLeadDaQuote(supabase, q.id);
       // Fase 1: quando é seguro, o preço sai sozinho para o cliente e o Harvey segue com a conversa.
       const envio = envioAutomaticoLigado()
         ? await mandarSozinho(supabase, q, escolhaFinal, escopoConferido, postarNotaInterna).catch((err: unknown) => ({ enviado: false, linha: `envio automático falhou: ${String(err).slice(0, 120)}` }))

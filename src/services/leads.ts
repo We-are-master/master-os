@@ -12,6 +12,7 @@ import type {
   LeadUrgency,
 } from "@/types/database";
 import { legacyStatusFromStage, stageForLegacyStatusChange, validateStageChange } from "@/lib/crm/etapas";
+import { segmentoPeloProcesso } from "@/lib/crm/fontes";
 import { allocateClientForLead, type LeadClientAllocationInput } from "@/lib/lead-client-allocation";
 import {
   formatLeadPhoneDisplay,
@@ -89,6 +90,22 @@ export type CreateLeadInput = LeadClientAllocationInput & {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * B2B quando a conta alocada não é direct (accounts.process_type); senão o que
+ * a tela mandou, ou B2C. A mesma regra do backfill da mig 356.
+ */
+async function segmentoDoLead(
+  supabase: ReturnType<typeof getSupabase>,
+  accountId: string | null | undefined,
+  pedido: Lead["segment"] | undefined,
+): Promise<NonNullable<Lead["segment"]>> {
+  if (accountId) {
+    const { data } = await supabase.from("accounts").select("process_type").eq("id", accountId).maybeSingle();
+    if (segmentoPeloProcesso((data as { process_type?: string | null } | null)?.process_type) === "b2b") return "b2b";
+  }
+  return pedido ?? "b2c";
+}
+
 export async function createLead(input: CreateLeadInput): Promise<Lead> {
   const formInput = {
     name: input.name,
@@ -139,7 +156,7 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
     scope: (input.scope ?? "").trim(),
     status: input.status ?? "new",
     stage: input.status === "interested" ? "talking" : "new",
-    segment: input.segment ?? "b2c",
+    segment: await segmentoDoLead(supabase, accountId, input.segment),
     source: input.source?.trim() || null,
     external_source: input.zendesk_ticket_id ? "zendesk" : null,
     external_ref: input.zendesk_ticket_id ? String(input.zendesk_ticket_id).trim() : null,
