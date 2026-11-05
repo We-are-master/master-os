@@ -100,6 +100,55 @@ export function referenciasNoTexto(texto: string | null | undefined): string[] {
   return [...new Set(String(texto ?? "").match(/JOB-\d+/gi)?.map((r) => r.toUpperCase()) ?? [])];
 }
 
+/**
+ * Palavras de endereço que não identificam rua nenhuma.
+ *
+ * "House" sozinha casava com "Housekeep", que está em TODO e-mail da
+ * Housekeep. Ticket 52139 (05/11/2026): o reschedule de SE22 9PH chegou
+ * segundos antes do job existir, o postcode não achou nada, e o degrau da rua
+ * casou "Flat 6, Bicknor House" (JOB-9746, E5 8LQ) com "Housekeep" + o "6" de
+ * "Fri 6 Nov".
+ */
+const PALAVRAS_GENERICAS = new Set([
+  "house", "court", "london", "street", "road", "place", "close", "lodge",
+  "tower", "manor", "villa", "villas", "mansions", "gardens", "garden", "grove",
+  "terrace", "avenue", "crescent", "square", "drive", "lane", "building",
+  "apartment", "apartments", "block", "estate", "cottage", "cottages", "green",
+  "park", "parade", "floor", "ground", "first", "second", "third",
+  "north", "south", "east", "west", "upper", "lower", "united", "kingdom",
+]);
+
+/**
+ * O endereço do job casa com o texto pela rua: um número E uma palavra forte
+ * do endereço, a palavra como palavra inteira (não pedaço de outra).
+ */
+export function casaPelaRua(enderecoDoJob: string | null | undefined, texto: string): boolean {
+  const end = String(enderecoDoJob ?? "").toLowerCase();
+  const alvo = texto.toLowerCase();
+  if (!end) return false;
+  const palavras = end
+    .split(/[\s,]+/)
+    .filter((p) => p.length >= 5 && /^[a-z]+$/.test(p) && !PALAVRAS_GENERICAS.has(p));
+  const temPalavra = palavras.some((p) => new RegExp(`\\b${p}\\b`).test(alvo));
+  if (!temPalavra) return false;
+  const numeros = new Set(alvo.match(/\b\d{1,4}\b/g) ?? []);
+  return [...numeros].some((n) => new RegExp(`\\b${n}\\b`).test(end));
+}
+
+/**
+ * O e-mail diz um postcode e o job mora em outro: não é este job.
+ *
+ * Postcode é a prova mais forte que o e-mail traz. Quando ele não achou job
+ * nenhum, os degraus de baixo (rua, nome) não podem escolher um job de OUTRO
+ * postcode. Job sem postcode gravado passa: não há o que contradizer.
+ */
+export function postcodeContradiz(enderecoDoJob: string | null | undefined, postcodesDoEmail: readonly string[]): boolean {
+  if (postcodesDoEmail.length === 0) return false;
+  const doJob = postcodesNoTexto(enderecoDoJob);
+  if (doJob.length === 0) return false;
+  return !doJob.some((pc) => postcodesDoEmail.includes(pc));
+}
+
 async function candidatos(janela: Janela): Promise<Job[]> {
   const supabase = createServiceClient();
   let q = supabase.from("jobs").select("*").is("deleted_at", null);
@@ -210,19 +259,10 @@ export async function acharJobDoTicket(
   // Endereço sem postcode legível acontece: "Flat 52 Basildon Court 28
   // Devonshire Street". Casa pelo número + primeira palavra forte da rua, que
   // é o que sobrevive a abreviação e vírgula fora do lugar.
-  const ruaAlvo = `${pistas.endereco ?? ""} ${texto}`.toLowerCase();
-  const numeros = [...new Set(ruaAlvo.match(/\b\d{1,4}\b/g) ?? [])];
-  if (numeros.length > 0) {
-    const hits = doRemetente(
-      pool.filter((j) => {
-        const end = `${j.property_address ?? ""}`.toLowerCase();
-        if (!end) return false;
-        const palavras = end.split(/[\s,]+/).filter((p) => p.length >= 5 && /^[a-z]+$/.test(p));
-        const temPalavra = palavras.some((p) => ruaAlvo.includes(p));
-        const temNumero = numeros.some((n) => new RegExp(`\\b${n}\\b`).test(end));
-        return temPalavra && temNumero;
-      }),
-    );
+  const ruaAlvo = `${pistas.endereco ?? ""} ${texto}`;
+  const semContradicao = pool.filter((j) => !postcodeContradiz(j.property_address, [...pcs]));
+  {
+    const hits = doRemetente(semContradicao.filter((j) => casaPelaRua(j.property_address, ruaAlvo)));
     const achado = um(hits, "street address");
     if (achado) return achado;
   }
@@ -232,7 +272,9 @@ export async function acharJobDoTicket(
   // escrito de jeitos diferentes. Só decide quando nada acima decidiu.
   if (pistas.clientName && pistas.clientName.trim().length >= 4) {
     const alvo = pistas.clientName.trim().toLowerCase();
-    const hits = doRemetente(pool.filter((j) => `${j.client_name ?? ""}`.toLowerCase().includes(alvo)));
+    const hits = doRemetente(
+      semContradicao.filter((j) => `${j.client_name ?? ""}`.toLowerCase().includes(alvo)),
+    );
     const achado = um(hits, `client name "${pistas.clientName}"`);
     if (achado) return achado;
     if (hits.length > 1) {
