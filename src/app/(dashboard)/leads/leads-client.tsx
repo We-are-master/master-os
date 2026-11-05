@@ -18,12 +18,12 @@ import { toast } from "sonner";
 import type { CatalogService, Lead, LeadSegment, LeadStatus, LeadUrgency } from "@/types/database";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
+import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/use-profile";
 import { createLead, updateLead, deleteLead, countJobsForClient, getLead } from "@/services/leads";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { type ListResult } from "@/services/base";
 import {
-  buildTodayQueue,
   decodeCrmFilter,
   encodeCrmFilter,
   getStageCounts,
@@ -31,18 +31,16 @@ import {
   listBoardLeads,
   listCrmLeads,
   listLatestQuotesForLeads,
+  listAccountNames,
   listLeadChannels,
-  listOpenLeads,
   listPlatformAccountIds,
   type CrmTab,
   type LeadChannel,
   type LeadQuote,
   type SegmentFilter,
-  type TodayItem,
 } from "@/services/crm-leads";
 import { STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
 import { LeadStageTabs, SegmentToggle, ViewToggle, type LeadsView } from "@/components/leads/lead-stage-tabs";
-import { TodayQueue } from "@/components/leads/today-queue";
 import { LeadBoard } from "@/components/leads/lead-board";
 import { LeadCrmHeader, LeadCrmPanel, takePendingWonLeadId } from "@/components/leads/lead-crm-panel";
 import { LeadTimeline } from "@/components/leads/lead-timeline";
@@ -212,7 +210,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   }, []);
 
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
-  const [todayItems, setTodayItems] = useState<TodayItem[]>([]);
+  const [accountNames, setAccountNames] = useState<Record<string, string>>({});
   const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
   const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
   const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
@@ -262,29 +260,29 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     [catalogServices],
   );
 
-  /** Contagens, Fila Today, board e as quotes dos leads na tela. */
+  /** Contagens, board, contas e as quotes dos leads na tela. */
   const sideSeq = useRef(0);
   const loadCounts = useCallback(async () => {
     const seq = ++sideSeq.current;
     setSideLoading(true);
     try {
-      const [counts, openLeads, board] = await Promise.all([
+      const [counts, board] = await Promise.all([
         getStageCounts(segment),
-        listOpenLeads(segment),
         view === "board" ? listBoardLeads(segment, search) : Promise.resolve<Record<string, Lead[]>>({}),
       ]);
       const boardLeads = Object.values(board).flat();
-      const all = [...openLeads, ...boardLeads, ...data];
-      const [quotes, platforms] = await Promise.all([
+      const all = [...boardLeads, ...data];
+      const [quotes, platforms, accounts] = await Promise.all([
         listLatestQuotesForLeads(all.map((l) => l.id)),
         listPlatformAccountIds((board.accepted ?? []).map((l) => l.account_id ?? "")),
+        listAccountNames(all.map((l) => l.account_id ?? "")),
       ]);
       if (seq !== sideSeq.current) return;
       setStageCounts(counts);
-      setTodayItems(buildTodayQueue(openLeads));
       setBoardColumns(board);
       setQuotesByLead(quotes);
       setPlatformAccounts(platforms);
+      setAccountNames(accounts);
     } catch (err) {
       console.error("[leads] side data failed:", err);
     } finally {
@@ -296,13 +294,42 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     void loadCounts();
   }, [loadCounts]);
 
-  const todayFiltered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return todayItems;
-    return todayItems.filter(({ lead: l }) =>
-      [l.name, l.reference, l.email, l.phone, l.postcode, l.external_ref].some((v) => v?.toLowerCase().includes(q)),
-    );
-  }, [todayItems, search]);
+  // Tempo real: lead ou quote nova (ou mudada) recarrega o board sem F5. O
+  // canal de leads já vem do useSupabaseList; aqui entra o de quotes e uma
+  // checagem a cada 20 s enquanto a aba está aberta, caso o websocket caia.
+  const loadCountsRef = useRef(loadCounts);
+  useEffect(() => {
+    loadCountsRef.current = loadCounts;
+  }, [loadCounts]);
+  useEffect(() => {
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      return;
+    }
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    let channel: ReturnType<typeof supabase.channel> | undefined;
+    try {
+      channel = supabase
+        .channel("leads-board:quotes")
+        .on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => void loadCountsRef.current(), 400);
+        })
+        .subscribe();
+    } catch (err) {
+      console.warn("[leads] realtime quotes failed:", err);
+    }
+    const poll = setInterval(() => {
+      if (document.visibilityState === "visible") refreshSilent();
+    }, 20000);
+    return () => {
+      clearInterval(poll);
+      if (debounce) clearTimeout(debounce);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [refreshSilent]);
 
   const openLead = useCallback((lead: Lead) => {
     setDrawerTab("overview");
@@ -710,7 +737,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       <div className="min-w-0 space-y-4 sm:space-y-5">
         <PageHeader
           title="Leads"
-          subtitle="Every lead with its stage and next action. Today shows who needs someone now."
+          subtitle="Every lead and quote request, newest first. Updates live as tickets arrive."
           className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
         >
           <Button
@@ -747,52 +774,36 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           />
         </div>
 
-        {view === "board" || tab !== "today" ? (
-          <TodayQueue
-            items={todayFiltered}
-            quotes={quotesByLead}
-            loading={sideLoading}
-            layout="strip"
-            limit={8}
-            onOpen={openLead}
-          />
-        ) : null}
-
         {view === "board" ? (
           <LeadBoard
             columns={boardColumns}
             counts={stageCounts}
             quotes={quotesByLead}
+            accountNames={accountNames}
             platformAccounts={platformAccounts}
             loading={sideLoading}
             onOpen={openLead}
           />
         ) : (
           <>
-            <LeadStageTabs active={tab} counts={stageCounts} todayCount={todayItems.length} onChange={setTab} />
-            {tab === "today" ? (
-              <TodayQueue items={todayFiltered} quotes={quotesByLead} loading={sideLoading} layout="grid" onOpen={openLead} />
-            ) : (
-              <>
-                <p className="text-xs text-text-tertiary tabular-nums">
-                  {totalItems} lead{totalItems === 1 ? "" : "s"}
-                  {isOpenStage(tab === "open" ? "new" : tab) ? " · overdue next actions first" : ""}
-                </p>
-                <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
-                  <DataTable
-                    className="min-w-[20rem]"
-                    columns={columns}
-                    data={data}
-                    loading={loading}
-                    page={page}
-                    totalPages={totalPages}
-                    onPageChange={setPage}
-                    onRowClick={openLead}
-                    emptyMessage={tab === "open" ? "No open leads. Add one to get started." : `No leads in ${STAGE_LABEL[tab]}.`}
-                  />
-                </div>
-              </>
-            )}
+            <LeadStageTabs active={tab} counts={stageCounts} onChange={setTab} />
+            <p className="text-xs text-text-tertiary tabular-nums">
+              {totalItems} lead{totalItems === 1 ? "" : "s"}
+              {" · newest first"}
+            </p>
+            <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+              <DataTable
+                className="min-w-[20rem]"
+                columns={columns}
+                data={data}
+                loading={loading}
+                page={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onRowClick={openLead}
+                emptyMessage={tab === "open" ? "No open leads. Add one to get started." : `No leads in ${STAGE_LABEL[tab]}.`}
+              />
+            </div>
           </>
         )}
       </div>

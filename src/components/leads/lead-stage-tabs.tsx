@@ -2,30 +2,25 @@
 
 import { Tabs } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { STAGE_LABEL } from "@/lib/crm/etapas";
+import { OPEN_STAGES, STAGE_LABEL } from "@/lib/crm/etapas";
 import type { CrmTab, SegmentFilter } from "@/services/crm-leads";
 
-const TAB_ORDER: CrmTab[] = ["today", "open", "new", "talking", "quoting", "quote_sent", "accepted", "won", "nurture", "lost"];
+const TAB_ORDER: CrmTab[] = ["open", "new", "talking", "quoting", "quote_sent", "accepted", "won", "nurture", "lost"];
 
 export function LeadStageTabs({
   active,
   counts,
-  todayCount,
   onChange,
 }: {
   active: CrmTab;
   counts: Record<string, number>;
-  todayCount: number;
   onChange: (tab: CrmTab) => void;
 }) {
+  const openTotal = OPEN_STAGES.reduce((n, id) => n + (counts[id] ?? 0), 0);
   const tabs = TAB_ORDER.map((id) => ({
     id,
-    label: id === "today" ? "Today" : id === "open" ? "Open" : STAGE_LABEL[id],
-    count: id === "today" ? todayCount : (counts[id] ?? 0),
-    hint:
-      id === "today"
-        ? "Open leads that need someone now: customer replied, new and unanswered, next action overdue, or no next action."
-        : undefined,
+    label: id === "open" ? "Open" : STAGE_LABEL[id as keyof typeof STAGE_LABEL],
+    count: id === "open" ? openTotal : (counts[id] ?? 0),
   }));
   return (
     <div className="min-w-0 -mx-1 px-1 overflow-x-auto">

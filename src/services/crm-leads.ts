@@ -6,10 +6,10 @@ import { getSupabase, type ListParams, type ListResult } from "./base";
 import { createQuote } from "./quotes";
 import { changeLeadStage, recordLeadEvent } from "./leads";
 import type { Lead, LeadSegment, LeadStage, Quote } from "@/types/database";
-import { OPEN_STAGES, isOpenStage } from "@/lib/crm/etapas";
+import { OPEN_STAGES } from "@/lib/crm/etapas";
 import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
 
-export type CrmTab = "today" | "open" | LeadStage;
+export type CrmTab = "open" | LeadStage;
 export type SegmentFilter = "all" | LeadSegment;
 
 const SEARCH_COLUMNS = ["reference", "name", "email", "phone", "address", "postcode", "scope", "external_ref"];
@@ -22,11 +22,11 @@ export function encodeCrmFilter(tab: CrmTab, segment: SegmentFilter): string {
 export function decodeCrmFilter(raw: string | undefined): { tab: CrmTab; segment: SegmentFilter } {
   const [tab, segment] = String(raw ?? "open:all").split(":");
   const seg: SegmentFilter = segment === "b2b" || segment === "b2c" ? segment : "all";
-  return { tab: (tab || "open") as CrmTab, segment: seg };
+  return { tab: (!tab || tab === "today" ? "open" : tab) as CrmTab, segment: seg };
 }
 
 function stagesForTab(tab: CrmTab): readonly LeadStage[] {
-  if (tab === "open" || tab === "today") return OPEN_STAGES;
+  if (tab === "open") return OPEN_STAGES;
   return [tab];
 }
 
@@ -46,13 +46,11 @@ export async function listCrmLeads(params: ListParams): Promise<ListResult<Lead>
   const safe = sanitizePostgrestValue(params.search);
   if (safe) q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${safe}%`).join(","));
 
-  const openList = tab === "open" || tab === "today" || isOpenStage(tab as LeadStage);
   if (params.sortBy) {
     q = q.order(params.sortBy, { ascending: params.sortDir === "asc" });
-  } else if (openList) {
-    q = q.order("next_action_at", { ascending: true, nullsFirst: true }).order("created_at", { ascending: true });
   } else {
-    q = q.order("stage_changed_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
+    // O que acabou de chegar fica no topo.
+    q = q.order("created_at", { ascending: false });
   }
 
   const { data, error, count } = await q.range(from, from + pageSize - 1);
@@ -78,57 +76,11 @@ export async function getStageCounts(segment: SegmentFilter): Promise<Record<str
   return out;
 }
 
-// ─── Fila Today ──────────────────────────────────────────────────────────────
-
-export type TodayReasonKind = "replied" | "new_unanswered" | "overdue" | "no_next_action";
-
-export type TodayItem = { lead: Lead; reason: TodayReasonKind; since: string | null; rank: number };
-
-const NEW_GRACE_MS = 15 * 60 * 1000;
-
-/** Por que o lead está na fila agora (ou null). A ordem das regras é a ordem da fila. */
-export function todayReason(lead: Lead, now = Date.now()): Omit<TodayItem, "lead"> | null {
-  if (!isOpenStage(lead.stage)) return null;
-  if (lead.customer_replied_at) return { reason: "replied", since: lead.customer_replied_at, rank: 0 };
-  if ((lead.stage ?? "new") === "new" && now - Date.parse(lead.created_at) > NEW_GRACE_MS) {
-    return { reason: "new_unanswered", since: lead.created_at, rank: 1 };
-  }
-  if (lead.next_action_at && Date.parse(lead.next_action_at) <= now) {
-    return { reason: "overdue", since: lead.next_action_at, rank: 2 };
-  }
-  if (!lead.next_action_at) return { reason: "no_next_action", since: lead.stage_changed_at ?? lead.created_at, rank: 3 };
-  return null;
-}
-
-export function buildTodayQueue(leads: Lead[], now = Date.now()): TodayItem[] {
-  const items: TodayItem[] = [];
-  for (const lead of leads) {
-    const r = todayReason(lead, now);
-    if (r) items.push({ lead, ...r });
-  }
-  return items.sort((a, b) => a.rank - b.rank || Date.parse(a.since ?? "") - Date.parse(b.since ?? ""));
-}
-
-/** Leads abertos (para a fila e o board). Poucos por natureza; teto de segurança. */
-export async function listOpenLeads(segment: SegmentFilter, limit = 300): Promise<Lead[]> {
-  let q = getSupabase()
-    .from("leads")
-    .select("*")
-    .is("deleted_at", null)
-    .in("stage", OPEN_STAGES as LeadStage[])
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (segment !== "all") q = q.eq("segment", segment);
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data ?? []) as Lead[];
-}
-
 // ─── Board ───────────────────────────────────────────────────────────────────
 
 export const BOARD_STAGES: LeadStage[] = ["new", "talking", "quoting", "quote_sent", "accepted", "won", "nurture"];
 
-/** Até `perColumn` cards por etapa. Won e Nurture: os mais recentes. */
+/** Até `perColumn` cards por etapa, o mais recente primeiro. */
 export async function listBoardLeads(segment: SegmentFilter, search: string, perColumn = 30): Promise<Record<string, Lead[]>> {
   const supabase = getSupabase();
   const safe = sanitizePostgrestValue(search);
@@ -137,9 +89,7 @@ export async function listBoardLeads(segment: SegmentFilter, search: string, per
       let q = supabase.from("leads").select("*").is("deleted_at", null).eq("stage", st);
       if (segment !== "all") q = q.eq("segment", segment);
       if (safe) q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${safe}%`).join(","));
-      q = isOpenStage(st)
-        ? q.order("next_action_at", { ascending: true, nullsFirst: true })
-        : q.order("stage_changed_at", { ascending: false, nullsFirst: false });
+      q = q.order("created_at", { ascending: false });
       const { data } = await q.limit(perColumn);
       return [st, (data ?? []) as Lead[]] as const;
     }),
@@ -210,6 +160,14 @@ export async function listPlatformAccountIds(accountIds: string[]): Promise<Set<
   if (!ids.length) return new Set();
   const { data } = await getSupabase().from("accounts").select("id, process_type").in("id", ids);
   return new Set(((data ?? []) as { id: string; process_type?: string | null }[]).filter((a) => a.process_type === "platform").map((a) => a.id));
+}
+
+/** Nome da conta de cada lead do board (accounts.company_name). */
+export async function listAccountNames(accountIds: string[]): Promise<Record<string, string>> {
+  const ids = [...new Set(accountIds.filter(Boolean))];
+  if (!ids.length) return {};
+  const { data } = await getSupabase().from("accounts").select("id, company_name").in("id", ids);
+  return Object.fromEntries((data ?? []).map((a: { id: string; company_name: string | null }) => [a.id, a.company_name ?? ""]));
 }
 
 export type LeadChannel = { key: string; label: string };
