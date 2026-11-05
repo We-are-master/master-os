@@ -202,10 +202,11 @@ export function MonthHealth() {
             {d ? m(resultado) : "—"}
           </p>
           <div className="mt-1.5">
+            {/* Ordem pedida pelo dono (05/11/2026): o que entra (+) e depois o que sai (−). */}
             <Linha rotulo="Revenue" valor={d ? m(receita) : "—"} />
-            <Linha rotulo="Direct job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
-            <Linha rotulo={`Gross profit${d ? ` · ${Math.round(margem)}% margin` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
-            <Linha rotulo="Fixed costs" valor={d ? m(fixos) : "—"} tom="text-text-secondary font-normal" />
+            <Linha rotulo={`Gross margin${d ? ` · ${Math.round(margem)}%` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
+            <Linha rotulo="Fixed costs" valor={d ? `−${m(fixos)}` : "—"} tom="text-text-secondary font-normal" />
+            <Linha rotulo="Operation cost" valor={d ? `−${m(custoJobs)}` : "—"} tom="text-text-secondary font-normal" />
           </div>
         </Card>
 
