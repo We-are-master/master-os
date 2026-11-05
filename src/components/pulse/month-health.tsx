@@ -68,7 +68,7 @@ function Card({ titulo, sinal, rotulo, dica, children }: { titulo: string; sinal
 
 function Linha({ rotulo, valor, tom }: { rotulo: string; valor: string; tom?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-2 text-[12px] tabular-nums">
+    <div className="flex items-baseline justify-between gap-2 border-b border-dotted border-fx-line-2 py-1.5 text-[12px] tabular-nums last:border-b-0">
       <span className="whitespace-nowrap text-text-secondary">{rotulo}</span>
       <span className={cn("whitespace-nowrap font-medium text-text-primary", tom)}>{valor}</span>
     </div>
@@ -181,7 +181,7 @@ export function MonthHealth() {
               Choose the monthly target in Settings
             </Link>
           ) : null}
-          <div className="mt-2.5 space-y-1">
+          <div className="mt-1.5">
             <Linha rotulo="Jobs" valor={d ? String(d.jobs) : "—"} />
             <Linha rotulo="Average job value" valor={d ? m(ticketMedio) : "—"} />
           </div>
@@ -196,7 +196,7 @@ export function MonthHealth() {
           <p className={cn("mt-2 text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums", resultado < 0 ? "text-fx-red" : "text-text-primary")}>
             {d ? m(resultado) : "—"}
           </p>
-          <div className="mt-2.5 space-y-1">
+          <div className="mt-1.5">
             <Linha rotulo="Revenue" valor={d ? m(receita) : "—"} />
             <Linha rotulo="Direct job costs" valor={d ? m(custoJobs) : "—"} tom="text-text-secondary font-normal" />
             <Linha rotulo={`Gross profit${d ? ` · ${Math.round(margem)}% margin` : ""}`} valor={d ? m(bruto) : "—"} tom="text-fx-green" />
@@ -222,7 +222,7 @@ export function MonthHealth() {
               </>
             ) : null}
           </div>
-          <div className="mt-2 space-y-1">
+          <div className="mt-1">
             <Linha rotulo="Not yet due" valor={r ? m(r.aguardando.valor) : "—"} tom="font-normal" />
             <Linha rotulo={`Overdue${r ? ` · ${r.vencido.n}` : ""}`} valor={r ? m(r.vencido.valor) : "—"} tom={r && r.vencido.valor > 0 ? "text-fx-red" : undefined} />
             <Linha rotulo="Payments received this month" valor={r ? m(r.pago.valor) : "—"} tom="font-normal" />
