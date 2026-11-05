@@ -13,16 +13,16 @@ export type TipoAcao = "job_created" | "assigned" | "status" | "complaint" | "pa
 export type AcaoAoVivo = { id: string; em: string; tipo: TipoAcao; ref: string | null; href: string | null; texto: string; quem: string; bot: boolean };
 
 const STATUS_JOB: Record<string, string> = {
-  scheduled: "scheduled",
-  in_progress: "started",
-  final_check: "moved to final review",
-  awaiting_payment: "approved, awaiting payment",
-  completed: "completed",
-  cancelled: "cancelled",
-  on_hold: "put on hold",
-  late: "running late",
+  scheduled: "Scheduled",
+  in_progress: "Started",
+  final_check: "In final review",
+  awaiting_payment: "Approved",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  on_hold: "On hold",
+  late: "Running late",
 };
-const STATUS_QUOTE: Record<string, string> = { sent: "sent to the client", accepted: "accepted", rejected: "rejected", converted: "converted to a job", expired: "expired" };
+const STATUS_QUOTE: Record<string, string> = { sent: "Quote sent", accepted: "Quote accepted", rejected: "Quote declined", converted: "Quote converted", expired: "Quote expired" };
 const ORIGEM: Record<string, string> = { website: "Website", harvey: "Harvey", whatsapp: "WhatsApp", zendesk: "Zendesk", housekeep: "Housekeep", fantastic: "Fantastic", checkatrade: "Checkatrade", checkatrade_express: "Checkatrade Express", manual: "Manual", email: "Email", phone: "Phone" };
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
@@ -31,8 +31,9 @@ const vazio = (v: string | null | undefined) => !v || v === "None" || v === "nul
 /** Quem fez: a pessoa, ou a automação pelo nome que ela grava. Sem nome é robô. */
 function autor(nome: string | null | undefined): { quem: string; bot: boolean } {
   const n = (nome ?? "").trim();
-  if (!n) return { quem: "Automation", bot: true };
-  if (/claude|automatic|automation|bot|harvey|stefane|cron|system|payment received|^report$/i.test(n)) return { quem: n.replace(/\s*\(.*\)\s*$/, "") || n, bot: true };
+  if (!n) return { quem: "Auto", bot: true };
+  if (/harvey/i.test(n)) return { quem: "Harvey", bot: true };
+  if (/claude|automatic|automation|bot|stefane|cron|system|payment received|final check|^report$/i.test(n)) return { quem: "Auto", bot: true };
   return { quem: n, bot: false };
 }
 
@@ -47,12 +48,12 @@ export async function montarAcoesAoVivo(sb: SupabaseClient, horas = 36, limite =
       .gte("created_at", desde)
       .order("created_at", { ascending: false })
       .limit(600),
-    sb.from("jobs").select("id, reference, client_name, client_price, extras_amount, source, owner_name, created_at").is("deleted_at", null).gte("created_at", desde).order("created_at", { ascending: false }).limit(100),
-    sb.from("jobs").select("id, reference, client_name, on_hold_at").eq("status", "on_hold").eq("on_hold_reason_preset_id", "complaint").is("deleted_at", null).gte("on_hold_at", desde).limit(50),
+    sb.from("jobs").select("id, reference, client_price, extras_amount, source, owner_name, created_at").is("deleted_at", null).gte("created_at", desde).order("created_at", { ascending: false }).limit(100),
+    sb.from("jobs").select("id, reference, on_hold_at").eq("status", "on_hold").eq("on_hold_reason_preset_id", "complaint").is("deleted_at", null).gte("on_hold_at", desde).limit(50),
   ]);
 
   const out: AcaoAoVivo[] = [];
-  for (const j of (novos ?? []) as Array<{ id: string; reference: string | null; client_name: string | null; client_price: number | null; extras_amount: number | null; source: string | null; owner_name: string | null; created_at: string }>) {
+  for (const j of (novos ?? []) as Array<{ id: string; reference: string | null; client_price: number | null; extras_amount: number | null; source: string | null; owner_name: string | null; created_at: string }>) {
     // Quem criou fica em owner_name (Leonardo, Victor); sem dono, foi a importação da origem.
     const origem = j.source ? ORIGEM[j.source.toLowerCase()] ?? j.source : null;
     const valor = Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0);
@@ -62,12 +63,12 @@ export async function montarAcoesAoVivo(sb: SupabaseClient, horas = 36, limite =
       tipo: "job_created",
       ref: j.reference,
       href: `/jobs/${j.id}`,
-      texto: `New job · ${j.client_name ?? "client"}${origem ? ` · ${origem}` : ""}${valor > 0 ? ` · ${gbp(valor)}` : ""}`,
-      ...(j.owner_name?.trim() ? autor(j.owner_name) : { quem: origem ? `${origem} import` : "Automation", bot: true }),
+      texto: ["New job", origem, valor > 0 ? gbp(valor) : null].filter(Boolean).join(" · "),
+      ...(j.owner_name?.trim() ? autor(j.owner_name) : { quem: origem ?? "Auto", bot: true }),
     });
   }
-  for (const j of (reclamacoes ?? []) as Array<{ id: string; reference: string | null; client_name: string | null; on_hold_at: string }>) {
-    out.push({ id: `complaint-${j.id}`, em: j.on_hold_at, tipo: "complaint", ref: j.reference, href: `/jobs/${j.id}`, texto: `Complaint opened · ${j.client_name ?? "client"}`, quem: "Ops", bot: false });
+  for (const j of (reclamacoes ?? []) as Array<{ id: string; reference: string | null; on_hold_at: string }>) {
+    out.push({ id: `complaint-${j.id}`, em: j.on_hold_at, tipo: "complaint", ref: j.reference, href: `/jobs/${j.id}`, texto: "Complaint opened", quem: "Ops", bot: false });
   }
 
   const vistos = new Set<string>();
@@ -78,7 +79,7 @@ export async function montarAcoesAoVivo(sb: SupabaseClient, horas = 36, limite =
     let texto = "";
     if (l.entity_type === "job" && l.field_name === "partner_name" && !vazio(l.new_value)) {
       tipo = "assigned";
-      texto = vazio(l.old_value) ? `Assigned to ${l.new_value}` : `Partner changed to ${l.new_value}`;
+      texto = `${vazio(l.old_value) ? "Assigned" : "Reassigned"} · ${l.new_value}`;
     } else if (l.entity_type === "job" && l.action === "created" && !l.field_name) {
       continue; // já vem da tabela de jobs, com a origem
     } else if (l.entity_type === "job" && l.action === "status_changed" && l.new_value && STATUS_JOB[l.new_value]) {
@@ -86,27 +87,27 @@ export async function montarAcoesAoVivo(sb: SupabaseClient, horas = 36, limite =
       // O final check automático grava a aprovação duas vezes; a linha dele (final_check_auto) basta.
       if (l.new_value === "awaiting_payment" && /final check/i.test(l.user_name ?? "")) continue;
       tipo = "status";
-      texto = `Job ${STATUS_JOB[l.new_value]}`;
+      texto = STATUS_JOB[l.new_value];
     } else if (l.entity_type === "job" && l.field_name === "start_report+final_report") {
       tipo = "report";
-      texto = "Report submitted, now in final review";
+      texto = "Report submitted";
     } else if (l.entity_type === "job" && l.field_name === "final_check_auto") {
       tipo = "status";
-      texto = "Final review approved automatically";
+      texto = "Auto-approved";
     } else if (l.action === "payment") {
       const valor = Number((l.metadata as { amount?: unknown } | null)?.amount ?? l.new_value);
       tipo = "payment";
-      texto = `Payment received${Number.isFinite(valor) && valor > 0 ? ` · ${gbp(valor)}` : ""}`;
+      texto = `Paid${Number.isFinite(valor) && valor > 0 ? ` · ${gbp(valor)}` : ""}`;
     } else if (l.entity_type === "invoice" && l.field_name === "email_sent") {
       tipo = "invoice_sent";
-      texto = "Invoice sent to the client";
+      texto = "Invoice sent";
     } else if (l.entity_type === "invoice" && l.field_name === "overdue_reminder") {
       const n = Number(l.new_value);
       tipo = "chase";
-      texto = `${n >= 4 ? "Final" : ["1st", "2nd", "3rd"][n - 1] ?? ""} chase sent${(l.metadata as { manual?: boolean } | null)?.manual ? "" : " (automatic)"}`.trim();
+      texto = n >= 4 ? "Final reminder" : `Reminder ${n}`;
     } else if (l.entity_type === "quote" && l.action === "status_changed" && l.new_value && STATUS_QUOTE[l.new_value]) {
       tipo = "quote";
-      texto = `Quote ${STATUS_QUOTE[l.new_value]}`;
+      texto = STATUS_QUOTE[l.new_value];
     }
     if (!tipo) continue;
     // O mesmo evento gravado duas vezes em poucos minutos (ex.: e-mail da fatura) aparece uma vez.
