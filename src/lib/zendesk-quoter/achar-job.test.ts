@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { postcodesNoTexto, referenciasNoTexto } from "./achar-job";
+import { casaPelaRua, postcodeContradiz, postcodesNoTexto, referenciasNoTexto } from "./achar-job";
 
 /**
  * Só as duas funções puras. O `acharJobDoTicket` fala com o banco e é
@@ -76,5 +76,50 @@ describe("referenciasNoTexto", () => {
 
   test("sem referência devolve vazio", () => {
     assert.deepEqual(referenciasNoTexto("[Housekeep] Reschedule Carpenter: E1 3AQ"), []);
+  });
+});
+
+describe("casaPelaRua", () => {
+  // Ticket 52139, o corpo como chegou: reschedule da Housekeep para SE22 9PH.
+  const reschedule52139 =
+    "[Housekeep] Reschedule Locksmith: SE22 9PH\nRaine (Housekeep Support) 5 Nov 2026, 13:37 GMT Hi team " +
+    "A customer booking at SE22 9PH has been rescheduled. Date: Fri 6 Nov 2026 Arrival time: 12:00-16:00 start " +
+    "housekeep.com Still need a hand? [WD72YN-E7LLM]";
+
+  test("'Housekeep' não é 'Bicknor House': o falso positivo do JOB-9746", () => {
+    assert.equal(casaPelaRua("Flat 6, Bicknor House, Pembury Road, London, E5 8LQ", reschedule52139), false);
+  });
+
+  test("palavra genérica sozinha não decide, mesmo inteira", () => {
+    assert.equal(casaPelaRua("6 Garden House, London", "Fri 6 Nov, house in London"), false);
+  });
+
+  test("rua de verdade com número continua casando", () => {
+    assert.equal(
+      casaPelaRua(
+        "Flat 52 Basildon Court, 28 Devonshire Street, London",
+        "Flat 52 Basildon Court 28 Devonshire Street (K88061).pdf",
+      ),
+      true,
+    );
+  });
+
+  test("palavra como pedaço de outra não conta", () => {
+    assert.equal(casaPelaRua("12 Ardleigh Road", "ardleighroadway 12"), false);
+  });
+});
+
+describe("postcodeContradiz", () => {
+  test("e-mail diz SE22 9PH, job mora em E5 8LQ: contradiz", () => {
+    assert.equal(postcodeContradiz("Flat 6, Bicknor House, Pembury Road, London, E5 8LQ", ["SE229PH"]), true);
+  });
+
+  test("mesmo postcode não contradiz", () => {
+    assert.equal(postcodeContradiz("70 Landells Road, London, SE22 9PH", ["SE229PH"]), false);
+  });
+
+  test("job sem postcode gravado ou e-mail sem postcode: nada a contradizer", () => {
+    assert.equal(postcodeContradiz("70 Landells Road, London", ["SE229PH"]), false);
+    assert.equal(postcodeContradiz("70 Landells Road, London, SE22 9PH", []), false);
   });
 });
