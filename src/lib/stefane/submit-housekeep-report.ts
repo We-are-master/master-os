@@ -40,8 +40,9 @@ import {
   type PayloadLimpeza,
   HOUSEKEEP_COMODOS,
   HOUSEKEEP_SECOES_FOTO,
+  textoEmUmaLinha,
 } from "./housekeep-report-form";
-import { confirmarSubmissao } from "./housekeep-api";
+import { buscarFormulario, confirmarSubmissao, type FormularioHousekeep } from "./housekeep-api";
 
 /** Fotos de um envio: antes e depois, na ordem dos dois blocos do formulário. */
 export type FotosDoEnvio = {
@@ -156,6 +157,7 @@ async function anexarPorComodo(
   fotos: Record<string, string[]>,
   prefixoLog: string,
   maxPorChave: Record<string, number> = {},
+  jaTemFotos: (secao: string, rotulo: string) => boolean = () => false,
 ): Promise<string[]> {
   const blocos = await mapaDosBlocos(page);
   const inputs = page.locator(HOUSEKEEP_FOTOS.seletor);
@@ -168,6 +170,10 @@ async function anexarPorComodo(
       : undefined;
     if (!alvo) {
       semLugar.push(chave);
+      continue;
+    }
+    if (jaTemFotos(alvo.secao, rotulo)) {
+      console.log(`[stefane] ${prefixoLog}: "${rotulo}" já tem foto lá, não anexa de novo`);
       continue;
     }
     const anexos = await baixarFotos(urls, `${prefixoLog}/${chave}`, maxPorChave[chave]);
@@ -187,6 +193,23 @@ async function anexarBloco(page: Page, indice: number, anexos: Anexo[]): Promise
     return;
   }
   await inputs.nth(indice).setInputFiles(anexos, { timeout: 60_000 });
+}
+
+/**
+ * Quantas fotos o campo já tem LÁ, segundo a API deles (05/11/2026).
+ *
+ * Cada tentativa anexava tudo de novo por cima do que a anterior já tinha
+ * subido: o JOB-9815 terminou com 12 fotos de antes e 6 de depois para 2 e 1
+ * do parceiro. Campo de foto com qualquer arquivo já é campo feito; anexar de
+ * novo só duplica.
+ */
+function fotosJaNoForm(form: FormularioHousekeep | null, secao: string, rotulo: string): number {
+  if (!form) return 0;
+  const norm = (t: string) => t.trim().toLowerCase();
+  const q = form.perguntas.find(
+    (p) => p.tipo === "document" && norm(p.secao) === norm(secao) && norm(p.texto).startsWith(norm(rotulo)),
+  );
+  return Array.isArray(q?.resposta) ? q.resposta.length : 0;
 }
 
 /**
@@ -271,13 +294,27 @@ async function preencherCondicional(page: Page, seletor: string, texto: string |
   if (!texto) return;
   const campo = page.locator(seletor);
   await campo.waitFor({ state: "attached", timeout: 5000 });
-  await campo.fill(texto);
+  await escreverTexto(page, seletor, texto);
+}
+
+/**
+ * Texto livre: uma linha só e foco largado em seguida.
+ *
+ * O formulário salva o campo no blur, e só salva texto sem quebra de linha
+ * (ver `textoEmUmaLinha`). `fill` sozinho deixava o texto na tela e nada no
+ * servidor deles.
+ */
+async function escreverTexto(page: Page, seletor: string, texto: string): Promise<void> {
+  const campo = page.locator(seletor);
+  await campo.fill(textoEmUmaLinha(texto));
+  await campo.evaluate((el) => (el as HTMLElement).blur()).catch(() => {});
+  await page.waitForTimeout(400);
 }
 
 async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
   if (p.inicio) await page.fill(HOUSEKEEP_CAMPOS.inicio.seletor, p.inicio);
   if (p.fim) await page.fill(HOUSEKEEP_CAMPOS.fim.seletor, p.fim);
-  await page.fill(HOUSEKEEP_CAMPOS.descricao.seletor, p.descricao);
+  await escreverTexto(page, HOUSEKEEP_CAMPOS.descricao.seletor, p.descricao);
   await marcarRadio(page, HOUSEKEEP_CAMPOS.recomendaServicos.prefixo, p.recomendaServicos ? SIM : NAO);
   // Depois do radio: o campo de texto não existe antes do "Yes".
   await preencherCondicional(page, HOUSEKEEP_CAMPOS.servicosRecomendados.seletor, p.servicosRecomendados);
@@ -295,7 +332,7 @@ async function preencherTrade(page: Page, p: PayloadHousekeep): Promise<void> {
   if (p.precisaRetorno && p.trabalhoAdicional) {
     const campo = page.locator(HOUSEKEEP_CAMPOS.trabalhoAdicional.seletor);
     await campo.waitFor({ state: "attached", timeout: 5000 });
-    await campo.fill(p.trabalhoAdicional);
+    await escreverTexto(page, HOUSEKEEP_CAMPOS.trabalhoAdicional.seletor, p.trabalhoAdicional);
   }
   await marcarRadio(page, HOUSEKEEP_CAMPOS.feedback.prefixo, p.feedback ?? FEEDBACK.bom);
 }
@@ -447,6 +484,9 @@ export async function submeterRelatorioHousekeep(args: {
 
     // Fotos por último: o download é a parte lenta, e não faz sentido pagar por
     // ele se o preenchimento já falhou acima.
+    const lido = args.fotos ? await buscarFormulario(args.url).catch(() => null) : null;
+    const formAtual = lido?.ok ? lido.form : null;
+    const jaTem = (secao: string, rotulo: string) => fotosJaNoForm(formAtual, secao, rotulo) > 0;
     if (args.fotos) {
       /**
        * Limpeza sobe cômodo a cômodo; trade continua com os dois baldes.
@@ -461,8 +501,8 @@ export async function submeterRelatorioHousekeep(args: {
         forma === "limpeza" && (args.fotos.antesPorComodo || args.fotos.depoisPorComodo);
       if (porComodo) {
         const teto = args.fotos.maxPorChave ?? {};
-        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before", teto);
-        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after", teto);
+        const perdidosA = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.antes, args.fotos.antesPorComodo ?? {}, "before", teto, jaTem);
+        const perdidosD = await anexarPorComodo(page, HOUSEKEEP_SECOES_FOTO.depois, args.fotos.depoisPorComodo ?? {}, "after", teto, jaTem);
         const perdidos = [...new Set([...perdidosA, ...perdidosD])];
         if (perdidos.length) {
           console.warn(`[stefane] cômodo(s) sem bloco correspondente na página: ${perdidos.join(", ")}`);
@@ -487,9 +527,14 @@ export async function submeterRelatorioHousekeep(args: {
           segundos: seg(),
         };
       } else {
+        const temAntes = jaTem("Start job", "Before photos");
+        const temDepois = jaTem("Finish job", "After photos");
+        if (temAntes || temDepois) {
+          console.log(`[stefane] fotos já lá: antes ${temAntes ? "sim" : "não"}, depois ${temDepois ? "sim" : "não"}`);
+        }
         const [antes, depois] = await Promise.all([
-          baixarFotos(args.fotos.antes, "before"),
-          baixarFotos(args.fotos.depois, "after"),
+          temAntes ? Promise.resolve([]) : baixarFotos(args.fotos.antes, "before"),
+          temDepois ? Promise.resolve([]) : baixarFotos(args.fotos.depois, "after"),
         ]);
         await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes);
         await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois);
@@ -556,18 +601,10 @@ export async function submeterRelatorioHousekeep(args: {
         const desc = page.locator(HOUSEKEEP_CAMPOS.descricao.seletor);
         const persistiu = ((await desc.inputValue().catch(() => "")) ?? "").trim().length > 0;
         if (!persistiu) {
-          // Os saves não seguraram nada: repete a dose inteira uma vez, com
-          // fotos, e recarrega de novo. Persistir de novo em branco é falha.
+          // A descrição não segurou: repete o texto uma vez e recarrega de
+          // novo. Fotos NÃO entram de novo: já subiram na primeira passada, e
+          // anexar outra vez só duplicava (JOB-9815, 05/11/2026).
           await preencherTrade(page, args.payload as PayloadHousekeep);
-          if (args.fotos) {
-            const [antes2, depois2] = await Promise.all([
-              baixarFotos(args.fotos.antes, "before"),
-              baixarFotos(args.fotos.depois, "after"),
-            ]);
-            await anexarBloco(page, HOUSEKEEP_FOTOS.antes, antes2);
-            await anexarBloco(page, HOUSEKEEP_FOTOS.depois, depois2);
-            await page.waitForTimeout(3000);
-          }
           const erroSave2 = await salvarSecoes();
           if (erroSave2) return { ok: false, motivo: erroSave2, segundos: seg() };
           await page.reload({ waitUntil: "domcontentloaded" });

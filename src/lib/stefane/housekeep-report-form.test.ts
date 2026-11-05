@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
+  textoEmUmaLinha,
   CONCLUSAO,
   FEEDBACK,
   conclusaoParaHousekeep,
@@ -460,4 +461,20 @@ test("sem horário de obra não se envia: a plataforma exige os dois", () => {
   });
   assert.equal(trade.ok, false);
   assert.match(trade.ok ? "" : trade.motivo, /the finish time/);
+});
+
+test("textoEmUmaLinha: report em blocos vira uma linha, título antes de dois pontos", () => {
+  const t =
+    "Scope of Work\nDoor repairs – replacement of the bolt.\n\nWork Completed\nTwo new bolts were fitted\n\nAdditional Notes\nThe work was completed as requested.";
+  assert.equal(
+    textoEmUmaLinha(t),
+    "Scope of Work: Door repairs – replacement of the bolt. Work Completed: Two new bolts were fitted. Additional Notes: The work was completed as requested.",
+  );
+});
+
+test("textoEmUmaLinha: texto sem título só perde as quebras, nunca devolve \\n", () => {
+  assert.equal(textoEmUmaLinha("Fixed the tap.\nTested for leaks."), "Fixed the tap. Tested for leaks.");
+  assert.equal(textoEmUmaLinha("Fixed the tap."), "Fixed the tap.");
+  assert.equal(textoEmUmaLinha("one line\r\n\r\n"), "one line.");
+  assert.doesNotMatch(textoEmUmaLinha("a\n\n\nb\nc"), /\n/);
 });
