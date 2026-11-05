@@ -8,6 +8,8 @@
  * relatório no mesmo dia da visita, então "hoje" também é a regra deles.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getZendeskTicketId } from "@/lib/zendesk";
+import { acaoFeita, precisaDeAcao } from "@/lib/fila-de-acao";
 import { materialDoJobInteiro } from "@/lib/report-material-extra";
 import { Resend } from "resend";
 import { payloadDoReport, payloadLimpeza } from "./housekeep-report-form";
@@ -72,7 +74,8 @@ export type OpcoesDeEnvio = {
 const JOB_SELECT =
   "id, reference, title, status, report_link, start_report, final_report, final_report_submitted, " +
   "partner_timer_started_at, partner_timer_ended_at, partner_name, client_name, property_address, " +
-  "external_report_started_at, external_report_submitted_at, external_report_manual_at, external_report_attempts";
+  "external_report_started_at, external_report_submitted_at, external_report_manual_at, external_report_attempts, " +
+  "external_report_error, external_source, external_ref";
 
 /**
  * O job, com o relatório que vai para a plataforma: o da ÚLTIMA visita que mandou
@@ -336,7 +339,32 @@ async function marcarFalha(
       external_report_attempts: tentativas,
     })
     .eq("id", job.id);
+  if (tentativas >= MAX_TENTATIVAS) await avisarNoTicket(supabase, job.id, tentativas, motivo);
   return tentativas;
+}
+
+/**
+ * A falha que precisa de gente vai para o ticket do job (dono, 05/11/2026).
+ *
+ * Nota interna + "⚡ Action Required" pelo `precisaDeAcao`, o mesmo do final
+ * check automático: o job aparece na fila que o time já olha no Zendesk, sem
+ * ninguém precisar abrir o card. Só na falha final (tentativas esgotadas), para
+ * não encher o ticket a cada passada; e o `precisaDeAcao` não repete a mesma
+ * nota em 24h. O status do job NÃO volta: fatura e e-mail final já saíram.
+ */
+async function avisarNoTicket(supabase: SupabaseClient, jobId: string, tentativas: number, motivo: string): Promise<void> {
+  try {
+    const { data } = await supabase.from("jobs").select("reference, external_source, external_ref").eq("id", jobId).maybeSingle();
+    const ticketId = getZendeskTicketId(data as { external_source?: string | null; external_ref?: string | null } | null);
+    if (!ticketId) return;
+    const r = await precisaDeAcao(
+      ticketId,
+      `Housekeep report not submitted after ${tentativas} tries. ${motivo.slice(0, 200)}. Fix and resend in Review & approve`,
+    );
+    if (!r.ok) console.warn("[stefane] nota no ticket", data?.reference, r.linha);
+  } catch (e) {
+    console.error("[stefane] nota no ticket falhou", e);
+  }
 }
 
 /**
@@ -821,6 +849,14 @@ async function executarEnvio(
         external_report_error: null,
       })
       .eq("id", jobId);
+    // Tinha falhado antes: o Action Required que a falha acendeu apaga aqui.
+    if (j.external_report_error) {
+      const ticketId = getZendeskTicketId(j as { external_source?: string | null; external_ref?: string | null });
+      if (ticketId) {
+        const r = await acaoFeita(ticketId, `Housekeep report submitted (${ref})`);
+        if (!r.ok) console.warn("[stefane] limpar Action Required", ref, r.linha);
+      }
+    }
 
     await avisar(
       `${ref} · report submitted on Housekeep`,
