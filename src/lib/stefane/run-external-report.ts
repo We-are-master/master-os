@@ -19,6 +19,7 @@ import {
   formaDoFormularioAPI,
   slotsDeFoto,
   confirmarSubmissao,
+  pendenciasNoFormulario,
 } from "./housekeep-api";
 import {
   photoSlotsForTemplate,
@@ -843,9 +844,16 @@ async function executarEnvio(
    * relatório para trás. Vale a pena o falso negativo, porque retentar é
    * barato e um relatório perdido não volta.
    */
-  const motivo = res.ok
+  const motivoBase = res.ok
     ? "the submit went through on screen but the client platform has no report: it did not land"
     : res.motivo;
+  // O que ficou faltando LÁ, lido da API deles: é o que a tela precisa mostrar
+  // para alguém arrumar em um minuto, em vez de um erro genérico.
+  const relido = opcoes?.simular ? null : await buscarFormulario(link).catch(() => null);
+  const pendencias = relido?.ok ? pendenciasNoFormulario(relido.form) : [];
+  const motivo = pendencias.length
+    ? `missing on Housekeep: ${pendencias.slice(0, 4).join("; ")}${pendencias.length > 4 ? ` and ${pendencias.length - 4} more` : ""} (${motivoBase})`
+    : motivoBase;
 
   // Dry run não conta tentativa nem grava erro: ele não tocou na Housekeep.
   if (opcoes?.simular) {

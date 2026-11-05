@@ -195,6 +195,37 @@ export function perguntaVisivel(form: FormularioHousekeep, q: PerguntaHousekeep)
   return q.mostrarSe.operador === "==" ? atual === q.mostrarSe.valor : atual !== q.mostrarSe.valor;
 }
 
+/**
+ * O que está vazio ou abaixo do mínimo no formulário deles AGORA.
+ *
+ * É o motivo que a pessoa precisa ler quando o envio não entra (dono,
+ * 05/11/2026: "tem que apontar rápido pra arrumar"). "Validation error has
+ * occurred" e "no confirmation after 234s" não dizem o que consertar; esta
+ * lista diz: "after · Living room: 4 of 5 photos", "Description of work done".
+ */
+export function pendenciasNoFormulario(form: FormularioHousekeep): string[] {
+  const out: string[] = [];
+  for (const q of form.perguntas) {
+    if (q.tipo === "calculated_value" || !perguntaVisivel(form, q)) continue;
+    const r = q.resposta;
+    const rotulo = q.texto.replace(/\s*\(include:.*$/i, "").trim().slice(0, 50);
+    if (q.tipo === "document") {
+      const tem = Array.isArray(r) ? r.length : 0;
+      if ((q.min ?? 0) > tem) {
+        const metade = /after|finish/i.test(`${q.secao} ${q.texto}`) ? "after" : "before";
+        out.push(`${metade} · ${rotulo}: ${tem} of ${q.min} photos`);
+      }
+      continue;
+    }
+    const vazio = r === null || r === undefined || String(r).trim() === "";
+    // Texto opcional tem min 0; o resto (hora, sim/não, texto com mínimo) é obrigatório.
+    const obrigatorio = q.tipo === "string" ? (q.min ?? 0) > 0 : true;
+    if (vazio && obrigatorio) out.push(`${rotulo} is empty`);
+    else if (!vazio && q.tipo === "string" && q.min && String(r).trim().length < q.min) out.push(`${rotulo} is too short`);
+  }
+  return out;
+}
+
 export type SlotDeFoto = {
   id: string;
   /** "antes" ou "depois": qual metade do relatório alimenta este campo. */

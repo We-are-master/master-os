@@ -183,7 +183,9 @@ const PEDE_CONSERTO = /requires more photos|no photos|no before photos|no after 
         {conserto && podeEditar
           ? botao("Edit report", onEditReport!, true)
           : botao(
-              "Try Again",
+              // Quando é coisa do envio (foto que não subiu, campo que não salvou),
+              // a Stefane relê o formulário e completa o que falta.
+              "Fix and resend",
               () => void enviar({ reiniciar: semTentativas }),
               true,
             )}
