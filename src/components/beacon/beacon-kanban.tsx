@@ -589,19 +589,19 @@ function KanbanCard({
         </button>
       )}
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] truncate">{job.reference}</span>
-        <span className="inline-flex items-center gap-1 shrink-0">
-          {relatorioFalhou(job) ? (
-            <span
-              className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
-              title={`Report not on the client platform: ${job.external_report_error}`}
-            >
-              Report failed
-            </span>
-          ) : null}
-          <StatusPill status={job.status} job={job} />
-        </span>
+        <span className="font-mono text-[10.5px] text-fx-mute tracking-[0.04em] shrink-0">{job.reference}</span>
+        <StatusPill status={job.status} job={job} />
       </div>
+      {relatorioFalhou(job) ? (
+        <div className="mb-1.5">
+          <span
+            className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
+            title={`Report not on the client platform: ${job.external_report_error}`}
+          >
+            Report failed
+          </span>
+        </div>
+      ) : null}
       <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
         <div className="flex items-center gap-1 min-w-0 flex-1 text-[13px] font-medium text-text-primary leading-[1.3]">
           {accountLogoUrl ? (
@@ -754,18 +754,18 @@ function JobHoverPanel({ job, anchor }: { job: KanbanJob; anchor: DOMRect }) {
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] tracking-[0.04em] text-fx-mute">{job.reference}</span>
-        <span className="inline-flex items-center gap-1 shrink-0">
-          {relatorioFalhou(job) ? (
-            <span
-              className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
-              title={`Report not on the client platform: ${job.external_report_error}`}
-            >
-              Report failed
-            </span>
-          ) : null}
-          <StatusPill status={job.status} job={job} />
-        </span>
+        <StatusPill status={job.status} job={job} />
       </div>
+      {relatorioFalhou(job) ? (
+        <div className="mb-1.5">
+          <span
+            className="rounded-full bg-fx-red/10 px-1.5 py-[1px] text-[10px] font-semibold text-fx-red"
+            title={`Report not on the client platform: ${job.external_report_error}`}
+          >
+            Report failed
+          </span>
+        </div>
+      ) : null}
       <p className="mb-2 text-[13px] font-semibold leading-tight text-text-primary">{normalizeTypeOfWork(job.title) || job.title}</p>
       <dl className="space-y-1.5 text-[11.5px] leading-snug">
         <HoverRow label="Client" value={job.client_name} />

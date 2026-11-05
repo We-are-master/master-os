@@ -5,17 +5,24 @@ import {
 } from "@/components/beacon/beacon-filters";
 import { applyJobsScheduleRangeToQuery, getSupabase } from "@/services/base";
 
-/** Active ops pipeline — same lifecycle as Jobs Management (excludes closed). */
+/**
+ * Live Operations mostra só o que está rodando (dono, 05/11/2026): On hold fica de
+ * fora, e Date TBC (unassigned sem data) também, ver `semDataAConfirmar` abaixo.
+ * Os dois continuam no Jobs Management.
+ */
 export const BEACON_PIPELINE_STATUSES = [
   "unassigned",
   "auto_assigning",
   "scheduled",
   "late",
   "in_progress",
-  "on_hold",
   "final_check",
   "need_attention",
 ] as const;
+
+/** Mesma regra de `jobDataAConfirmar`, em PostgREST: tira unassigned sem data nenhuma. */
+const SEM_DATA_A_CONFIRMAR =
+  "status.neq.unassigned,scheduled_date.not.is.null,scheduled_start_at.not.is.null";
 
 const TERMINAL_STATUSES = ["completed", "cancelled"] as const;
 
@@ -64,6 +71,7 @@ export async function fetchBeaconBoardJobs(
 
   const { data: pipeline, error: pipeErr } = await build()
     .in("status", [...BEACON_PIPELINE_STATUSES])
+    .or(SEM_DATA_A_CONFIRMAR)
     .order("scheduled_start_at", { ascending: true, nullsFirst: false })
     .limit(280);
   if (pipeErr) throw pipeErr;
