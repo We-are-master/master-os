@@ -76,6 +76,35 @@ export const HOUSEKEEP_LIMPEZA = {
   porqueIncompleto: { seletor: 'textarea[name="v3ba2epfayoe"]', tipo: "texto" as const, rotulo: "Why the job is not complete" },
 } as const;
 
+/**
+ * Texto livre em UMA linha, do jeito que a Housekeep aceita (05/11/2026).
+ *
+ * O formulário deles salva cada campo sozinho ao perder o foco, e com quebra
+ * de linha esse salvamento simplesmente não acontece: a tela mostra o texto,
+ * o servidor fica com o campo vazio, e o Submit volta "Validation error has
+ * occurred". Foi o JOB-9815: três tentativas, a descrição nunca persistiu.
+ * Medido no mesmo formulário: o texto com "\n" não dispara PATCH; o mesmo
+ * texto em uma linha volta 200 na hora.
+ *
+ * O report do parceiro vem em blocos ("Scope of Work" / corpo). O título de
+ * cada bloco vira "Título: corpo." para não colar no texto.
+ */
+export function textoEmUmaLinha(texto: string): string {
+  const blocos = texto
+    .replace(/\r/g, "")
+    .split(/\n\s*\n/)
+    .map((b) => b.split("\n").map((l) => l.trim()).filter(Boolean))
+    .filter((linhas) => linhas.length > 0);
+  const partes = blocos.map((linhas) => {
+    const [primeira, ...resto] = linhas;
+    const ehTitulo = resto.length > 0 && primeira.length <= 40 && !/[.:!?;,]$/.test(primeira);
+    const corpo = (ehTitulo ? resto : linhas).join(" ");
+    const frase = /[.!?]$/.test(corpo) ? corpo : `${corpo}.`;
+    return ehTitulo ? `${primeira}: ${frase}` : frase;
+  });
+  return partes.join(" ").replace(/\s+/g, " ").trim();
+}
+
 /** Campo do formulário de trade, endereçado por `name` ou por prefixo de `id`. */
 export const HOUSEKEEP_CAMPOS = {
   /** Start time. input[type=time] */
