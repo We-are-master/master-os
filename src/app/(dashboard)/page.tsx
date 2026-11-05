@@ -13,11 +13,11 @@ import { MonthHealth } from "@/components/pulse/month-health";
 import { NeedsYouToday } from "@/components/pulse/needs-you-today";
 import { PulseCeoProvider } from "@/components/pulse/pulse-ceo-data";
 import { MonthFunnel } from "@/components/pulse/month-funnel";
-import { MonthBurnUp, RevenueBySource } from "@/components/pulse/month-charts";
+import { MonthBurnUp } from "@/components/pulse/month-charts";
+import { RevenueMix } from "@/components/pulse/revenue-mix";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
 import { AlertsFeed } from "@/components/pulse/alerts-feed";
 import { LiveBoard } from "@/components/pulse/live-board";
-import { TopAccounts } from "@/components/pulse/top-accounts";
 
 const CeoFinancialDashboard = dynamic(
   () =>
@@ -63,13 +63,11 @@ function PulseInner() {
               </div>
               <div className="grid grid-cols-1 @3xl:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
                 <MonthBurnUp />
-                <RevenueBySource />
+                {/* Canal e maiores contas num card só, no mesmo período (05/11/2026). */}
+                <RevenueMix />
               </div>
-              {/* Live Jobs e as maiores contas do ano, meia tela cada (dono, 12/10/2026). O Auto-flow saiu. */}
-              <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-4 items-stretch [&>*]:min-w-0">
-                <LiveBoard />
-                <TopAccounts />
-              </div>
+              {/* Live Jobs na largura toda (05/11/2026): as maiores contas foram para o card de receita. */}
+              <LiveBoard />
             </PulseCeoProvider>
           )}
         </div>
