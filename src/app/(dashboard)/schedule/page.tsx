@@ -634,6 +634,8 @@ export default function SchedulePage() {
     for (const j of jobsForSelectedDay) {
       const normalized = normalizeLiveMapCoordinate(j.latitude, j.longitude);
       if (!normalized) continue;
+      // Live Operations só mostra o que está rodando: On hold fica no Jobs.
+      if (j.status === "on_hold") continue;
       // Account filter: drop jobs whose client_id isn't in the resolved set.
       // null set = no account filter; empty set = account has no clients.
       if (liveMapAccountClientIds !== null) {
