@@ -9,18 +9,15 @@ import { useProfile } from "@/hooks/use-profile";
 import { isCeoDashboardAllowedUser } from "@/lib/ceo-dashboard-access";
 import { PulseHead } from "@/components/pulse/pulse-head";
 import { PulseCurrencyProvider } from "@/lib/pulse-currency";
-import { LiveOperations } from "@/components/pulse/live-operations";
-import { MonthGoal } from "@/components/pulse/month-goal";
+import { MonthHealth } from "@/components/pulse/month-health";
+import { NeedsYouToday } from "@/components/pulse/needs-you-today";
 import { PulseCeoProvider } from "@/components/pulse/pulse-ceo-data";
 import { MonthFunnel } from "@/components/pulse/month-funnel";
-import { MoneyReceivable } from "@/components/pulse/money-receivable";
-import { MonthBurnUp, RevenueBySource } from "@/components/pulse/month-charts";
-import { Financials } from "@/components/pulse/financials";
+import { MonthBurnUp } from "@/components/pulse/month-charts";
+import { RevenueMix } from "@/components/pulse/revenue-mix";
 import { TodaysFlow } from "@/components/pulse/todays-flow";
-import { AlertsFeed } from "@/components/pulse/alerts-feed";
+import { LiveActions } from "@/components/pulse/live-actions";
 import { LiveBoard } from "@/components/pulse/live-board";
-import { TopAccounts } from "@/components/pulse/top-accounts";
-import { PulseStrip } from "@/components/pulse/pulse-strip";
 
 const CeoFinancialDashboard = dynamic(
   () =>
@@ -55,33 +52,23 @@ function PulseInner() {
             <CeoFinancialDashboard />
           ) : (
             <PulseCeoProvider>
-              <MonthGoal />
-              {/* Faixas (15/10/2026): cada grupo de números numa peça só, com divisórias, em vez de 16 cartões soltos. */}
-              <PulseStrip title="Operations" hint="Jobs right now, by stage.">
-                <LiveOperations />
-              </PulseStrip>
-              <div className="grid grid-cols-1 gap-3 @5xl:grid-cols-[1.35fr_1fr]">
-                <PulseStrip title="Period results" hint="Revenue, costs and margin for the selected period.">
-                  <Financials />
-                </PulseStrip>
-                <PulseStrip title="Receivables" hint="Unpaid invoices: what is open, what is overdue and what platforms pay on their own cycle.">
-                  <MoneyReceivable />
-                </PulseStrip>
-              </div>
+              {/* Saúde num olhar (dono, 05/11/2026): frase do mês + Sales, Profit e Cash com semáforo.
+                  Substitui a meta, a faixa de operação e as faixas de resultado e a receber. */}
+              <MonthHealth />
               <MonthFunnel />
-              <div className="grid grid-cols-1 @3xl:grid-cols-[1.6fr_1fr] gap-4 @3xl:items-start">
+              <NeedsYouToday />
+              {/* Live actions à esquerda, previsão à direita (05/11/2026): o que acontece agora, com hora e quem fez. */}
+              <div className="grid grid-cols-1 @3xl:grid-cols-[1fr_1.6fr] gap-4 @3xl:items-start">
+                <LiveActions />
                 <TodaysFlow />
-                <AlertsFeed />
               </div>
               <div className="grid grid-cols-1 @3xl:grid-cols-[1.4fr_1fr] gap-4 items-stretch">
                 <MonthBurnUp />
-                <RevenueBySource />
+                {/* Canal e maiores contas num card só, no mesmo período (05/11/2026). */}
+                <RevenueMix />
               </div>
-              {/* Live Jobs e as maiores contas do ano, meia tela cada (dono, 12/10/2026). O Auto-flow saiu. */}
-              <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-4 items-stretch [&>*]:min-w-0">
-                <LiveBoard />
-                <TopAccounts />
-              </div>
+              {/* Live Jobs na largura toda (05/11/2026): as maiores contas foram para o card de receita. */}
+              <LiveBoard />
             </PulseCeoProvider>
           )}
         </div>

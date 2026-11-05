@@ -8,18 +8,11 @@
  * Chamado pelo n8n uma vez por dia (manhã de Londres). Auth: x-internal-secret =
  * INTERNAL_SYNC_SECRET. ?dry-run=1 só lista o que mandaria.
  */
-import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { Resend } from "resend";
 import { createServiceClient } from "@/lib/supabase/service";
-import { loadInvoiceSendContext, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
-import { invoiceBalanceDue } from "@/lib/invoice-balance";
-import { invoicePayLinkForAmount, invoicePayLinkUrl } from "@/lib/pay-link-url";
-import { buildOverdueReminderEmail, daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage } from "@/lib/invoice-overdue-reminders";
-import { publicoDaCobranca } from "@/lib/emails/billing-email-common";
-import { loadAgentReceiptParty } from "@/lib/agent-model/receipt-party";
-import type { Invoice } from "@/types/database";
+import { daysOverdue, londonTodayYmd, MAX_DIAS_PARA_COMECAR, nextReminderStage } from "@/lib/invoice-overdue-reminders";
+import { enviarEstagioDeCobranca, faturaJaFoiEnviada, saldoVencidoDaFatura, type FaturaCobravel } from "@/lib/invoice-chase-send";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -30,19 +23,6 @@ function autorizado(dado: string | null): boolean {
   const segredo = process.env.INTERNAL_SYNC_SECRET?.trim();
   if (!segredo || !dado || dado.length !== segredo.length) return false;
   return timingSafeEqual(Buffer.from(dado), Buffer.from(segredo));
-}
-
-/** A fatura já foi enviada ao cliente? O envio grava `invoices.sent_at` (mig 323) e `email_sent` no histórico; qualquer um dos dois vale. */
-async function faturaJaFoiEnviada(admin: ReturnType<typeof createServiceClient>, invoiceId: string): Promise<boolean> {
-  const { count, error } = await admin
-    .from("audit_logs")
-    .select("id", { count: "exact", head: true })
-    .eq("entity_type", "invoice")
-    .eq("entity_id", invoiceId)
-    .eq("field_name", "email_sent");
-  // Sem conseguir conferir, não cobra: lembrete errado custa mais do que lembrete atrasado.
-  if (error) return false;
-  return (count ?? 0) > 0;
 }
 
 export async function POST(req: NextRequest) {
@@ -64,24 +44,11 @@ export async function POST(req: NextRequest) {
   const { data: semLembrete } = await admin.from("accounts").select("id").eq("overdue_reminders", false);
   const contasFora = new Set(((semLembrete ?? []) as { id: string }[]).map((a) => a.id));
 
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
   const out: string[] = [];
 
-  for (const inv of (rows ?? []) as (Invoice & { overdue_reminder_stage?: number; source_account_id?: string | null })[]) {
-    const saldo = invoiceBalanceDue({ amount: Number(inv.amount ?? 0), amount_paid: Number(inv.amount_paid ?? 0) });
-    if (saldo <= 0.02 || !inv.due_date) continue;
-    // Fatura parcelada (mig 326): o atraso é o das parcelas vencidas, não o saldo inteiro.
-    const { data: parcelas } = await admin
-      .from("invoice_payment_installments")
-      .select("amount, due_date, status")
-      .eq("invoice_id", inv.id)
-      .neq("status", "cancelled");
-    const plano = (parcelas ?? []) as { amount: number; due_date: string; status: string }[];
-    const vencidas = plano
-      .filter((r) => r.status === "pending" && String(r.due_date).slice(0, 10) < today)
-      .reduce((acc, r) => acc + Number(r.amount), 0);
-    const balance = plano.length > 0 ? Math.min(saldo, Math.round(vencidas * 100) / 100) : saldo;
+  for (const inv of (rows ?? []) as FaturaCobravel[]) {
+    if (!inv.due_date) continue;
+    const { balance, plano } = await saldoVencidoDaFatura(admin, inv, today);
     if (balance <= 0.02) continue;
     const ultimo = (inv as { overdue_reminder_last_at?: string | null }).overdue_reminder_last_at;
     const desdeUltimo = ultimo ? daysOverdue(londonTodayYmd(new Date(ultimo)), today) : null;
@@ -102,59 +69,16 @@ export async function POST(req: NextRequest) {
 
     // Só cobra o que o cliente já recebeu (dono, 13/10/2026): fatura que nunca foi enviada não gera lembrete.
     // A RCP-2026-904 recebeu "overdue" em 12/10 sem a fatura ter saído uma única vez.
-    if (!(inv as { sent_at?: string | null }).sent_at && !(await faturaJaFoiEnviada(admin, inv.id))) { out.push(`${inv.reference}: skip (invoice never sent to the client)`); continue; }
+    if (!(await faturaJaFoiEnviada(admin, inv))) { out.push(`${inv.reference}: skip (invoice never sent to the client)`); continue; }
 
-    const ctx = await loadInvoiceSendContext(admin, inv.id);
-    if ("error" in ctx) { out.push(`${inv.reference}: skip (${ctx.error.split(" [")[0]})`); continue; }
-    if (ctx.billing.sourceAccountId && contasFora.has(ctx.billing.sourceAccountId)) { out.push(`${inv.reference}: skip (platform)`); continue; }
-    const to = ctx.billing.documentEmail?.trim();
-    if (!to) { out.push(`${inv.reference}: skip (no billing email)`); continue; }
-
-    const payUrl = inv.reference
-      ? plano.length > 0
-        ? invoicePayLinkForAmount(inv.reference, balance)
-        : invoicePayLinkUrl(inv.reference)
-      : null;
-    // Schedule A (agente): o PDF é "statement"; B: "invoice". O nome do e-mail segue o PDF.
-    const agente = await loadAgentReceiptParty(admin, ctx.job).catch(() => null);
-    // Copy 15 a 18 na moldura única (um texto por estágio), referência normalizada (INV-).
-    const copy = buildOverdueReminderEmail({
-      stage,
-      publico: publicoDaCobranca(ctx.billing.mode, ctx.billing.displayName, ctx.billing.companyName),
-      invoiceReference: inv.reference ?? "",
-      amount: balance,
-      dueDate: inv.due_date.slice(0, 10),
-      documentName: agente ? "statement" : "invoice",
-      payUrl,
-    });
-    if (ensaio) { out.push(`${inv.reference}: would send stage ${stage} (${copy.subject}) to ${to}`); continue; }
-    if (!resendKey || !fromEmail) return NextResponse.json({ error: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" }, { status: 503 });
-
-    const ccDaConta = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
-    const pdf = await renderInvoicePdfBuffer(admin, inv.id);
-    const resend = new Resend(resendKey);
-    const { error } = await resend.emails.send({
-      from: fromEmail,
-      to: [to],
-      // O financeiro da conta acompanha a cobrança, como acompanha a fatura (mig 324).
-      ...(ccDaConta.length ? { cc: ccDaConta } : {}),
-      replyTo: "hello@getfixfy.com",
-      subject: copy.subject,
-      html: copy.html,
-      text: copy.text,
-      ...("error" in pdf ? {} : { attachments: [{ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" }] }),
-    });
-    if (error) { out.push(`${inv.reference}: send failed`); continue; }
-
-    await admin
-      .from("invoices")
-      .update({ overdue_reminder_stage: stage, overdue_reminder_last_at: new Date().toISOString(), ...(inv.status === "pending" ? { status: "overdue" } : {}) })
-      .eq("id", inv.id);
-    await admin.from("audit_logs").insert({
-      entity_type: "invoice", entity_id: inv.id, entity_ref: inv.reference, action: "bulk_update",
-      field_name: "overdue_reminder", new_value: String(stage), metadata: { to, final: copy.final },
-    });
-    out.push(`${inv.reference}: sent stage ${stage} to ${to}`);
+    const r = await enviarEstagioDeCobranca(admin, inv, stage, balance, plano, { ensaio, contasFora });
+    if (!r.ok) {
+      if (r.motivo.startsWith("RESEND_API_KEY")) return NextResponse.json({ error: r.motivo }, { status: 503 });
+      out.push(`${inv.reference}: ${r.motivo === "send failed" ? "send failed" : `skip (${r.motivo})`}`);
+      continue;
+    }
+    if (!r.enviado) { out.push(`${inv.reference}: would send stage ${stage} (${r.subject}) to ${r.to}`); continue; }
+    out.push(`${inv.reference}: sent stage ${stage} to ${r.to}`);
   }
   return NextResponse.json({ ok: true, ensaio, today, results: out });
 }

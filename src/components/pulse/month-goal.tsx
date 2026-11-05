@@ -43,12 +43,11 @@ type Linha = {
   materials_cost: number | null;
 };
 
-type Dados = { receita: number; custo: number; lucro: number; estimados: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
+export type Dados = { receita: number; custo: number; lucro: number; estimados: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
 
-export function MonthGoal() {
+/** Os números do mês corrente de Londres (meta, faturamento, custo, lucro, fixos). Também usado pelo MonthHealth. */
+export function useMonthGoalData(): Dados | null {
   const [d, setD] = useState<Dados | null>(null);
-  const { data: ceo } = usePulseCeo();
-
   useEffect(() => {
     let vivo = true;
     void (async () => {
@@ -105,6 +104,12 @@ export function MonthGoal() {
       vivo = false;
     };
   }, []);
+  return d;
+}
+
+export function MonthGoal() {
+  const d = useMonthGoalData();
+  const { data: ceo } = usePulseCeo();
 
   const hoje = ukTodayYmd();
   const [ano, mes, dia] = hoje.split("-").map(Number);

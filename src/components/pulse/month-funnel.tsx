@@ -45,11 +45,14 @@ export function MonthFunnel() {
     : data
       ? new Date(`${data.hoje}T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" })
       : "This month";
-  const passos: Array<{ rotulo: string; valor: string; nota: string }> = [
+  // Taxa entre os passos (05/11/2026): só onde um passo nasce do anterior. Booked inclui
+  // job de conta B2B sem quote, então Quotes → Booked não vira porcentagem.
+  const taxa = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : null);
+  const passos: Array<{ rotulo: string; valor: string; nota: string; taxa?: string | null }> = [
     { rotulo: "Leads", valor: f ? String(f.leads) : "—", nota: `People who reached us (${mes}).${f?.porCanal.length ? `\n\n${f.porCanal.map((c) => `${c.n} ${CANAL[c.canal] ?? c.canal}`).join(" · ")}` : ""}` },
-    { rotulo: "Quotes", valor: f ? String(f.quotes) : "—", nota: `Quotes created (${mes}).` },
+    { rotulo: "Quoted", valor: f ? String(f.quotes) : "—", nota: `Quotes created (${mes}).`, taxa: f ? (taxa(f.quotes, f.leads) ? `${taxa(f.quotes, f.leads)} of leads` : null) : null },
     { rotulo: "Jobs booked", valor: f ? String(f.fechados.n) : "—", nota: `Jobs created (${mes}).${f ? `\n\n${pulseMoney(f.fechados.valor)}` : ""}` },
-    { rotulo: "Delivered", valor: f ? String(f.entregues.n) : "—", nota: `Jobs completed (${mes}).${f ? `\n\n${pulseMoney(f.entregues.valor)}` : ""}` },
+    { rotulo: "Delivered", valor: f ? String(f.entregues.n) : "—", nota: `Jobs completed (${mes}).${f ? `\n\n${pulseMoney(f.entregues.valor)}` : ""}`, taxa: f ? (taxa(f.entregues.n, f.fechados.n) ? `${taxa(f.entregues.n, f.fechados.n)} of booked` : null) : null },
     { rotulo: "Sales", valor: f ? pulseMoney(f.fechados.valor) : "—", nota: `Value of the jobs booked (${mes}). Paid money lives in the Paid card.${f ? `\n\n${f.fechados.n} job${f.fechados.n === 1 ? "" : "s"}` : ""}` },
   ];
   const rotuloCls = "inline-flex items-center gap-[5px] text-[12px] font-semibold";
@@ -63,13 +66,14 @@ export function MonthFunnel() {
               <FixfyHintIcon text={p.nota} placement="top-start" />
             </p>
             <p className="mt-1.5 text-[20px] font-semibold leading-none tabular-nums text-text-primary">{p.valor}</p>
+            {p.taxa ? <p className="m-0 mt-1 text-[11px] text-text-tertiary tabular-nums">{p.taxa}</p> : null}
             {i < passos.length - 1 ? <ChevronRight aria-hidden className="absolute -right-2 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 rounded-full border border-fx-line bg-card p-0.5 text-fx-mute @3xl:block" /> : null}
           </div>
         ))}
         <div className="min-w-0 border-l border-fx-line bg-fx-coral-50 px-3.5 py-3">
           <p className={`${rotuloCls} text-fx-coral-p`}>
-            Conversion
-            <FixfyHintIcon text={`Leads of the month that became customers.${f ? `\n\n${f.convertidos} of ${f.leads} leads` : ""}`} placement="top-start" />
+            Lead to customer
+            <FixfyHintIcon text={`Leads of the month that became customers. Jobs booked also include accounts and platforms booking directly, so sales can grow while this stays low.${f ? `\n\n${f.convertidos} of ${f.leads} leads` : ""}`} placement="top-start" />
           </p>
           <p className="mt-1.5 text-[20px] font-semibold leading-none tabular-nums text-fx-coral-p">{f ? `${f.conversao}%` : loading ? "—" : "0%"}</p>
         </div>
