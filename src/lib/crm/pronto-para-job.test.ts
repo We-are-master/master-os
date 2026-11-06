@@ -67,3 +67,13 @@ test("janela de chegada em texto vira início e minutos", () => {
   assert.equal(janelaDoTexto("morning"), null);
   assert.equal(janelaDoTexto("10-08"), null);
 });
+
+test("ready for quote: contato, postcode, serviço e scope sem preço", async () => {
+  const { checklistDaQuote, prontoParaJob } = await import("./pronto-para-job");
+  const vazio = checklistDaQuote({ phone: null, email: null, address: "London", postcode: null, catalog_service_id: null, scope: "" });
+  assert.equal(prontoParaJob(vazio).faltam, 4);
+  const cheio = checklistDaQuote({ phone: "07700 900123", email: null, address: "1 High St", postcode: "w5 2ab", catalog_service_id: "s1", scope: "Fix the leaking kitchen tap." });
+  assert.equal(prontoParaJob(cheio).pronto, true);
+  const comPreco = checklistDaQuote({ phone: "07700 900123", email: null, address: "1 High St", postcode: "W5", catalog_service_id: "s1", scope: "Fix the tap for £80 please" });
+  assert.equal(comPreco.find((i) => i.key === "scope")?.ok, false);
+});

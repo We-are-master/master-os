@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LOST_REASON_LABEL, isOpenStage } from "@/lib/crm/etapas";
 import { useStageLabels } from "./use-stage-labels";
-import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
+import { checklistDaQuote, checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
 import { guardarPrefill, janelaDoTexto } from "@/lib/inbox/prefill";
 import { changeLeadStage, recordLeadEvent } from "@/services/leads";
 import {
@@ -20,7 +20,6 @@ import {
 } from "@/services/crm-leads";
 import type { CatalogService, Lead, LeadStage } from "@/types/database";
 import { cn } from "@/lib/utils";
-import { LeadNextAction } from "./lead-next-action";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
 import { SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
@@ -89,6 +88,7 @@ export function LeadCrmPanel({
   onLeadChange,
   onMove,
   onLose,
+  details,
 }: {
   lead: Lead;
   /** Não usado aqui desde que Quoting abre o modal da tela; fica para quem já passa. */
@@ -98,6 +98,8 @@ export function LeadCrmPanel({
   onMove: (to: LeadStage) => void;
   /** Abre o modal de Lost. */
   onLose: () => void;
+  /** Contato, endereço, scope e fotos (ex-aba Details), entre o próximo passo e os dados do job. */
+  details?: ReactNode;
 }) {
   const router = useRouter();
   const [quote, setQuote] = useState<LeadQuote | null>(null);
@@ -162,6 +164,9 @@ export function LeadCrmPanel({
 
   const items = useMemo(() => checklistDoJob({ lead, quote, semEntrada }), [lead, quote, semEntrada]);
   const ready = prontoParaJob(items);
+  const itensDaQuote = useMemo(() => checklistDaQuote(lead), [lead]);
+  const prontoQuote = prontoParaJob(itensDaQuote);
+  const faltamNaQuote = itensDaQuote.filter((i) => !i.ok).map((i) => i.label.toLowerCase());
   const value = leadValue(lead, quote);
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
@@ -244,9 +249,15 @@ export function LeadCrmPanel({
   const proximo: { label: string; title?: string; hint?: string; run: () => void; disabled?: boolean } | null = !loaded
     ? null
     : stage === "new"
-      ? { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: "Details complete? Hand it to the closer.", run: () => onMove("qualified") }
+      ? prontoQuote.pronto
+        ? { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: "Ready for a quote. Hand it to the closer.", run: () => onMove("qualified") }
+        : { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: `Still missing: ${faltamNaQuote.join(", ")}.`, run: () => onMove("qualified") }
       : stage === "qualified"
-        ? { label: liveQuote ? "Open quote" : "Create quote", hint: "Partners bid or internal quote. The card moves to Quoting.", run: onCreateQuote }
+        ? {
+            label: liveQuote ? "Open quote" : "Create quote",
+            hint: liveQuote || prontoQuote.pronto ? "Partners bid or internal quote. The card moves to Quoting." : `Missing for the quote: ${faltamNaQuote.join(", ")}.`,
+            run: onCreateQuote,
+          }
         : stage === "quoting"
           ? !liveQuote
             ? { label: "Create quote", hint: "Partners bid or internal quote.", run: onCreateQuote }
@@ -356,7 +367,11 @@ export function LeadCrmPanel({
         <p className="text-xs text-text-secondary">Comes back on {lead.nurture_until.split("-").reverse().join("/")}. It goes back to New lead on that day.</p>
       ) : null}
 
-      <LeadNextAction lead={lead} required={open} onSaved={onLeadChange} />
+      {/* O que falta: para a quote enquanto não há quote, e para o job sempre. */}
+      {!liveQuote && (stage === "new" || stage === "qualified" || stage === "quoting") ? (
+        <LeadReadyPanel items={itensDaQuote} title="Ready for quote" footnote="Filled in by the team or by Harvey. All green: create the quote." />
+      ) : null}
+      {details}
       <LeadJobFieldsEditor lead={lead} hasQuote={!!liveQuote} onSaved={onLeadChange} />
       <LeadReadyPanel items={items} />
 

@@ -57,7 +57,6 @@ import {
   gbp,
   isOverdue,
   isoToLocalInput,
-  localInputToIso,
   zendeskTicketUrl,
 } from "@/components/leads/crm-ui";
 import { cn } from "@/lib/utils";
@@ -228,7 +227,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
   const [sideLoading, setSideLoading] = useState(true);
   const [channels, setChannels] = useState<LeadChannel[]>([]);
-  const [drawerTab, setDrawerTab] = useState<"overview" | "details" | "activity">("overview");
+  const [drawerTab, setDrawerTab] = useState<"overview" | "activity">("overview");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -568,7 +567,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         render: (item) => {
           const open = isOpenStage(item.stage);
           if (!open) return <span className="text-xs text-text-tertiary">·</span>;
-          if (!item.next_action_at) return <span className="text-xs font-semibold text-[var(--bad-ink)]">No next action</span>;
+          if (!item.next_action_at) return <span className="text-xs text-text-tertiary">·</span>;
           const late = isOverdue(item.next_action_at);
           return (
             <div className={cn("text-xs min-w-0", late ? "text-[var(--bad-ink)] font-semibold" : "text-text-secondary")}>
@@ -662,9 +661,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     const ticket = createForm.zendesk_ticket_id.trim().replace(/^#/, "");
     const crmErrors: CreateLeadErrors = {};
     if (!/^\d+$/.test(ticket)) crmErrors.zendesk_ticket_id = "Link the Zendesk ticket";
-    if (!createForm.next_action.trim()) crmErrors.next_action = "Write the next action";
-    const nextAt = localInputToIso(createForm.next_action_at);
-    if (!nextAt) crmErrors.next_action_at = "Pick a date for the next action";
     if (Object.keys(crmErrors).length > 0) {
       setCreateErrors((e) => ({ ...e, ...crmErrors }));
       toast.error(Object.values(crmErrors)[0] ?? "Check the form");
@@ -686,8 +682,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         segment: createForm.segment,
         source: createForm.source || null,
         zendesk_ticket_id: ticket,
-        next_action: createForm.next_action,
-        next_action_at: nextAt,
       });
       // Photos are uploaded after the lead exists (need its id for the folder),
       // then attached — same pattern as service requests.
@@ -720,11 +714,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   const handleSave = async () => {
     if (!selectedLead) return;
-    if (isOpenStage(selectedLead.stage) && !selectedLead.next_action_at) {
-      toast.error("An open lead always has a next action. Set it in Overview, then save.");
-      setDrawerTab("overview");
-      return;
-    }
     const errors = validateLeadForm(editForm);
     setEditErrors(errors);
     if (Object.keys(errors).length > 0) {
@@ -1060,22 +1049,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               The ticket where the conversation already is. The job inherits it later.
             </p>
           </FieldBlock>
-          <FieldBlock label="Next action · required" error={createErrors.next_action ?? createErrors.next_action_at}>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_12rem]">
-              <Input
-                value={createForm.next_action}
-                onChange={(e) => setCreateForm((f) => ({ ...f, next_action: e.target.value }))}
-                placeholder="Reply to the customer"
-                className={cn(createErrors.next_action && "border-red-400")}
-              />
-              <Input
-                type="datetime-local"
-                value={createForm.next_action_at}
-                onChange={(e) => setCreateForm((f) => ({ ...f, next_action_at: e.target.value }))}
-                className={cn(createErrors.next_action_at && "border-red-400")}
-              />
-            </div>
-          </FieldBlock>
           <FieldBlock label="Photos (optional)">
             <div className="flex flex-wrap items-center gap-2">
               {createPhotos.map((file, i) => (
@@ -1156,7 +1129,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             <Tabs
               tabs={[
                 { id: "overview", label: "Overview" },
-                { id: "details", label: "Details" },
                 { id: "activity", label: "Activity" },
               ]}
               activeTab={drawerTab}
@@ -1172,11 +1144,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                   setLostDefault(undefined);
                   setLostLead(selectedLead);
                 }}
-              />
-            ) : drawerTab === "activity" ? (
-              <LeadTimeline leadId={selectedLead.id} reloadKey={Date.parse(selectedLead.updated_at) || 0} />
-            ) : (
-            <>
+                details={
+                  <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-1.5">
               <Badge variant={urgencyConfig[selectedLead.urgency].variant}>
                 {urgencyConfig[selectedLead.urgency].label} urgency
@@ -1366,7 +1335,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 Delete lead
               </Button>
             </div>
-            </>
+                  </div>
+                }
+              />
+            ) : (
+              <LeadTimeline leadId={selectedLead.id} reloadKey={Date.parse(selectedLead.updated_at) || 0} />
             )}
           </div>
         ) : null}

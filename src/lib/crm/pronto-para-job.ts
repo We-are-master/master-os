@@ -98,7 +98,33 @@ export function checklistDoJob(c: ContextoDoChecklist): ItemDoChecklist[] {
   ];
 }
 
-export function prontoParaJob(itens: ItemDoChecklist[]): { pronto: boolean; faltam: number; total: number } {
+export function prontoParaJob(itens: readonly { ok: boolean }[]): { pronto: boolean; faltam: number; total: number } {
   const faltam = itens.filter((i) => !i.ok).length;
   return { pronto: faltam === 0, faltam, total: itens.length };
+}
+
+/**
+ * Checklist "Ready for quote" (06/11/2026, dono): o mínimo para pedir preço
+ * (Partners bid casa por tipo de trabalho e área; a quote interna precisa do
+ * scope). A equipe ou o Harvey preenchem e vai ficando verde.
+ */
+export type ItemDaQuote = { key: "contact" | "address" | "service" | "scope"; label: string; ok: boolean; detail: string };
+
+export function checklistDaQuote(
+  l: Pick<Lead, "phone" | "email" | "address" | "postcode" | "catalog_service_id" | "scope">,
+): ItemDaQuote[] {
+  const contato = !!String(l.phone ?? "").trim() || !!String(l.email ?? "").trim();
+  const postcode = !!String(l.postcode ?? "").trim();
+  const scope = String(l.scope ?? "").trim();
+  return [
+    { key: "contact", label: "Contact", ok: contato, detail: contato ? "phone or email" : "add a phone or email" },
+    { key: "address", label: "Postcode", ok: postcode, detail: postcode ? String(l.postcode).toUpperCase() : "partners are matched by area" },
+    { key: "service", label: "Service", ok: !!l.catalog_service_id, detail: l.catalog_service_id ? "from the catalogue" : "pick one of the 14" },
+    {
+      key: "scope",
+      label: "Scope",
+      ok: scope.length >= 10 && !PRECO_COM_PRECO.test(scope),
+      detail: !scope ? "what the customer needs" : PRECO_COM_PRECO.test(scope) ? "remove the price from the scope" : scope.length < 10 ? "a bit more detail" : "no price",
+    },
+  ];
 }

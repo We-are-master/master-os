@@ -2,15 +2,23 @@
 
 import { Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ItemDoChecklist } from "@/lib/crm/pronto-para-job";
+type Item = { key: string; label: string; ok: boolean; detail: string };
 
-/** Checklist "Ready for job": destrava o Mark won. */
-export function LeadReadyPanel({ items }: { items: ItemDoChecklist[] }) {
+/** Checklist "Ready for job" (destrava o Mark won) ou "Ready for quote" (o mínimo para pedir preço). */
+export function LeadReadyPanel({
+  items,
+  title = "Ready for job",
+  footnote = "With everything green, Mark won opens the job creation already filled in.",
+}: {
+  items: Item[];
+  title?: string;
+  footnote?: string;
+}) {
   const ok = items.filter((i) => i.ok).length;
   return (
     <div className="rounded-xl border border-border-light p-3">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Ready for job</p>
+        <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">{title}</p>
         <span className={cn("text-[11px] tabular-nums font-semibold", ok === items.length ? "text-[var(--ok-ink)]" : "text-text-tertiary")}>
           {ok} of {items.length}
         </span>
@@ -28,7 +36,7 @@ export function LeadReadyPanel({ items }: { items: ItemDoChecklist[] }) {
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-text-tertiary">With everything green, Mark won opens the job creation already filled in.</p>
+      {footnote ? <p className="mt-2 text-[11px] text-text-tertiary">{footnote}</p> : null}
     </div>
   );
 }
