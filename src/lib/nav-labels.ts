@@ -2,7 +2,7 @@
 const LEGACY_LABELS: Readonly<Record<string, readonly string[]>> = {
   "/": ["Pulse"],
   "/schedule": ["Live view", "Live View"],
-  "/leads": ["Leads"],
+  "/leads": ["Leads", "Partner offers"],
   "/school": ["Fixfy School"],
 };
 
