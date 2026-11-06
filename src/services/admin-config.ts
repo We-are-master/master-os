@@ -251,11 +251,8 @@ function normalizeNavigation(nav: NavGroup[]): NavGroup[] {
     // do site; fica um item Leads em Operations, apontando para /crm.
     items: g.items.filter((i) => !strip.has(i.href) && i.href !== "/crm" && i.href !== "/website-leads"),
   }));
-  const ops = next.find((g) => g.label === "Operations");
-  if (ops) {
-    const depoisDe = ops.items.findIndex((i) => i.href === "/leads");
-    ops.items.splice(depoisDe >= 0 ? depoisDe + 1 : 0, 0, { ...LEADS_NAV_ITEM });
-  }
+  // 06/11/2026: o CRM (/leads) substituiu a tela antiga de Leads (/crm) no menu.
+  // A rota /crm continua no ar para quem tiver o link.
 
   const adminIdx = next.findIndex((g) => g.label === "Admin");
   if (adminIdx >= 0) {
@@ -307,9 +304,6 @@ export async function loadMergedPermissions(supabase: SupabaseClient): Promise<P
   return mergePermissionsWithDefaults(data.value as PermissionsByRole);
 }
 
-/** A tela única de Leads (B2C | B2B). */
-const LEADS_NAV_ITEM = { label: "Leads", href: "/crm", icon: "kanban", permission: "leads" } as const;
-
 const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Learn",
@@ -330,7 +324,6 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
     items: [
       // CRM (06/11/2026): Pipeline (board de tudo) e Leads (lista).
       { label: "CRM", href: "/leads", icon: "user-circle", permission: "leads" },
-      { ...LEADS_NAV_ITEM },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
       { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
