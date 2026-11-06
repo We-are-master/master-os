@@ -242,6 +242,7 @@ function BoardCard({
       <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
         <ZendeskTicketLink
           className="order-last ml-auto"
+          compact
           ticketId={
             lead.external_source === "zendesk" || !lead.external_source
               ? lead.external_ref

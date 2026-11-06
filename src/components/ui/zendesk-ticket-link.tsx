@@ -22,10 +22,13 @@ export function ZendeskTicketLink({
   ticketId,
   fallbackQuery,
   className,
+  compact,
 }: {
   ticketId?: string | number | null;
   fallbackQuery?: string | null;
   className?: string;
+  /** Card estreito: sem ticket vira só a lupa, sem o texto. */
+  compact?: boolean;
 }) {
   const id = ticketId != null && String(ticketId).trim() ? String(ticketId).trim() : null;
   const query = fallbackQuery?.trim() || null;
@@ -40,7 +43,7 @@ export function ZendeskTicketLink({
       onKeyDown={(e) => e.stopPropagation()}
       title={id ? `Open ticket #${id} in Zendesk` : `Search Zendesk for ${query}`}
       className={cn(
-        "group inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+        "group inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors",
         id
           ? "bg-[#03363d]/[0.07] text-[#03363d] hover:bg-[#03363d]/15 dark:bg-white/10 dark:text-white/85"
           : "text-text-tertiary hover:bg-surface-secondary hover:text-text-secondary",
@@ -48,8 +51,8 @@ export function ZendeskTicketLink({
       )}
     >
       {id ? <Ticket className="h-3 w-3" aria-hidden /> : <Search className="h-3 w-3" aria-hidden />}
-      {id ? `#${id}` : "Find in Zendesk"}
-      <ExternalLink className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden />
+      {id ? `#${id}` : compact ? null : "Find in Zendesk"}
+      {compact && !id ? null : <ExternalLink className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden />}
     </a>
   );
 }
