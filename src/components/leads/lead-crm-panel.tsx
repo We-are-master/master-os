@@ -367,10 +367,6 @@ export function LeadCrmPanel({
         <p className="text-xs text-text-secondary">Comes back on {lead.nurture_until.split("-").reverse().join("/")}. It goes back to New lead on that day.</p>
       ) : null}
 
-      {/* O que falta: para a quote enquanto não há quote, e para o job sempre. */}
-      {!liveQuote && (stage === "new" || stage === "qualified" || stage === "quoting") ? (
-        <LeadReadyPanel items={itensDaQuote} title="Ready for quote" footnote="Filled in by the team or by Harvey. All green: create the quote." />
-      ) : null}
       {details}
       <LeadJobFieldsEditor lead={lead} hasQuote={!!liveQuote} onSaved={onLeadChange} />
       <LeadReadyPanel items={items} />

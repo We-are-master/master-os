@@ -9,7 +9,6 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
-import { LeadOffersCard } from "@/components/leads/lead-offers-card";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -48,6 +47,7 @@ import { useStageLabels } from "@/components/leads/use-stage-labels";
 import { LeadStageTabs, SegmentToggle, ViewToggle, type LeadsView } from "@/components/leads/lead-stage-tabs";
 import { LeadBoard } from "@/components/leads/lead-board";
 import { LeadCrmHeader, LeadCrmPanel, takePendingWonLeadId } from "@/components/leads/lead-crm-panel";
+import { LeadActionsMenu } from "@/components/leads/lead-actions-menu";
 import { LeadTimeline } from "@/components/leads/lead-timeline";
 import {
   SEGMENT_LABEL,
@@ -731,6 +731,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         postcode: editForm.postcode,
         urgency: editForm.urgency,
         scope: editForm.scope,
+        catalog_service_id: editForm.catalog_service_id || null,
       });
       toast.success("Lead updated");
       setSelectedLead(updated);
@@ -1108,14 +1109,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         footer={
           selectedLead ? (
             <div className="flex flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
-              <Button
-                variant={selectedLead.published_at ? "ghost" : "secondary"}
-                onClick={togglePublish}
-                disabled={saving}
-                className="w-full sm:w-auto"
-              >
-                {selectedLead.published_at ? "Unpublish" : "Publish to partners"}
-              </Button>
               <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
               </Button>
@@ -1125,7 +1118,15 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       >
         {selectedLead ? (
           <div className="px-4 py-4 space-y-4 sm:px-5 sm:py-5">
-            <LeadCrmHeader lead={selectedLead} sourceLabel={selectedLead.source ? channelLabel.get(selectedLead.source) : null} />
+            <div className="flex items-start justify-between gap-2">
+              <LeadCrmHeader lead={selectedLead} sourceLabel={selectedLead.source ? channelLabel.get(selectedLead.source) : null} />
+              <LeadActionsMenu
+                published={!!selectedLead.published_at}
+                onTogglePublish={togglePublish}
+                onDelete={() => void handleDelete(selectedLead)}
+                busy={saving || deletingId === selectedLead.id}
+              />
+            </div>
             <Tabs
               tabs={[
                 { id: "overview", label: "Overview" },
@@ -1146,195 +1147,144 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 }}
                 details={
                   <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant={urgencyConfig[selectedLead.urgency].variant}>
-                {urgencyConfig[selectedLead.urgency].label} urgency
-              </Badge>
-              {selectedLead.client_id ? (
-                <Badge variant="info">Fixfy client linked</Badge>
-              ) : null}
-              {linkedJobsCount === 0 ? (
-                <span title="No job available yet · labour-only lead" className="inline-flex">
-                  <Badge variant="warning">Lead only</Badge>
-                </span>
-              ) : linkedJobsCount && linkedJobsCount > 0 ? (
-                <Badge variant="success">
-                  {linkedJobsCount} job{linkedJobsCount === 1 ? "" : "s"} linked
-                </Badge>
-              ) : null}
-              {selectedLead.published_at ? (
-                <Badge variant="default">Offered to partners</Badge>
-              ) : null}
-            </div>
-
-            <LeadOffersCard leadId={selectedLead.id} published={!!selectedLead.published_at} />
-
-            {/* Photos */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                  Photos {leadImages.length > 0 ? `(${leadImages.length})` : ""}
-                </p>
-                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline cursor-pointer">
-                  {uploadingPhotos ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ImagePlus className="h-3.5 w-3.5" />
-                  )}
-                  Add photos
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    disabled={uploadingPhotos}
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files ?? []);
-                      if (files.length) void addLeadPhotos(files);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-              {leadImages.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                  {leadImages.map((url) => (
-                    <div key={url} className="relative group aspect-square">
-                      <a href={url} target="_blank" rel="noopener noreferrer">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={url}
-                          alt=""
-                          loading="lazy"
-                          className="h-full w-full rounded-lg object-cover border border-border-light"
+                    {/* Cliente: quem é e onde. */}
+                    <section className="space-y-3 rounded-xl border border-border-light p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Customer</p>
+                        {selectedLead.client_id ? (
+                          <Link href="/clients" className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                            Client linked
+                            {linkedJobsCount && linkedJobsCount > 0 ? ` · ${linkedJobsCount} job${linkedJobsCount === 1 ? "" : "s"}` : ""}
+                            <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        ) : (
+                          <span className="text-[11px] text-text-tertiary">New customer</span>
+                        )}
+                      </div>
+                      <FieldBlock label="Name" error={editErrors.name}>
+                        <Input
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          className={cn(editErrors.name && "border-red-400")}
                         />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => void removeLeadPhoto(url)}
-                        className="absolute -right-1.5 -top-1.5 rounded-full bg-surface border border-border-light p-0.5 text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-red-600 shadow-sm transition-opacity"
-                        aria-label="Remove photo"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-text-tertiary">No photos yet.</p>
-              )}
-            </div>
+                      </FieldBlock>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <FieldBlock label="Email" error={editErrors.email}>
+                          <Input
+                            type="email"
+                            value={editForm.email}
+                            onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                            className={cn(editErrors.email && "border-red-400")}
+                          />
+                        </FieldBlock>
+                        <FieldBlock label="Phone" error={editErrors.phone}>
+                          <Input
+                            type="tel"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                            className={cn(editErrors.phone && "border-red-400")}
+                          />
+                        </FieldBlock>
+                      </div>
+                      <FieldBlock label="Address" error={editErrors.address}>
+                        <AddressAutocomplete
+                          placeholder="Start typing address or postcode…"
+                          value={editForm.address}
+                          onChange={(v) => setEditForm((f) => ({ ...f, address: v, city: "", postcode: "" }))}
+                          onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
+                        />
+                        {editForm.postcode ? (
+                          <p className="mt-1.5 text-[11px] text-text-tertiary">Postcode {editForm.postcode.toUpperCase()}</p>
+                        ) : (
+                          <p className="mt-1.5 text-[11px] text-text-tertiary">Pick a suggestion: city and postcode fill in.</p>
+                        )}
+                      </FieldBlock>
+                    </section>
 
-            {selectedLead.client_id ? (
-              <Link
-                href="/clients"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-              >
-                Open Clients directory
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            ) : null}
-
-            <FieldBlock label="Name" error={editErrors.name}>
-              <Input
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                className={cn(editErrors.name && "border-red-400")}
-              />
-            </FieldBlock>
-
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-              <FieldBlock label="Email" error={editErrors.email}>
-                <Input
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-                  className={cn(editErrors.email && "border-red-400")}
-                />
-              </FieldBlock>
-              <FieldBlock label="Phone" error={editErrors.phone}>
-                <Input
-                  type="tel"
-                  value={editForm.phone}
-                  onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
-                  className={cn(editErrors.phone && "border-red-400")}
-                />
-              </FieldBlock>
-            </div>
-
-            <FieldBlock label="Address" error={editErrors.address}>
-              <AddressAutocomplete
-                placeholder="Start typing address or postcode…"
-                value={editForm.address}
-                onChange={(v) =>
-                  setEditForm((f) => ({ ...f, address: v, city: "", postcode: "" }))
-                }
-                onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
-              />
-              <p className="mt-1.5 text-[11px] text-text-tertiary">
-                Choose a Mapbox suggestion: city and postcode are filled automatically.
-              </p>
-            </FieldBlock>
-
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-              <FieldBlock label="Urgency">
-                <Select
-                  value={editForm.urgency}
-                  onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
-                  options={[
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Medium" },
-                    { value: "high", label: "High" },
-                    { value: "urgent", label: "Urgent" },
-                  ]}
-                />
-              </FieldBlock>
-
-            </div>
-
-            <FieldBlock label="Scope" error={editErrors.scope}>
-              <textarea
-                value={editForm.scope}
-                onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
-                rows={6}
-                className={cn(
-                  "w-full min-h-[6rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
-                  "focus:outline-none focus:ring-2 focus:ring-primary/30",
-                  editErrors.scope && "border-red-400",
-                )}
-              />
-            </FieldBlock>
-
-            <p className="text-[11px] text-text-tertiary leading-snug">
-              Lead saved under the Fixfy account (matched by email). Interested leads can be offered to partners as
-              labour-only when no job is available yet.
-            </p>
-
-            <div className="pt-4 mt-2 border-t border-dashed border-border-light">
-              <p className="text-[11px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide mb-2">
-                Danger zone
-              </p>
-              <p className="text-xs text-text-tertiary mb-3">
-                Permanently removes this lead from the OS and partner portal. Partner interest records stay in the audit
-                trail but the lead no longer appears anywhere.
-              </p>
-              <Button
-                type="button"
-                variant="danger"
-                className="w-full sm:w-auto"
-                disabled={deletingId === selectedLead.id || saving}
-                icon={
-                  deletingId === selectedLead.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )
-                }
-                onClick={() => void handleDelete(selectedLead)}
-              >
-                Delete lead
-              </Button>
-            </div>
+                    {/* O pedido: o que, quão urgente, fotos. */}
+                    <section className="space-y-3 rounded-xl border border-border-light p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Service requested</p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_9rem]">
+                        <FieldBlock label="Type of work">
+                          <Select
+                            value={editForm.catalog_service_id}
+                            onChange={(e) => setEditForm((f) => ({ ...f, catalog_service_id: e.target.value }))}
+                            options={[
+                              { value: "", label: "Select a type of work…" },
+                              ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
+                            ]}
+                          />
+                        </FieldBlock>
+                        <FieldBlock label="Urgency">
+                          <Select
+                            value={editForm.urgency}
+                            onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
+                            options={[
+                              { value: "low", label: "Low" },
+                              { value: "medium", label: "Medium" },
+                              { value: "high", label: "High" },
+                              { value: "urgent", label: "Urgent" },
+                            ]}
+                          />
+                        </FieldBlock>
+                      </div>
+                      <FieldBlock label="Scope" error={editErrors.scope}>
+                        <textarea
+                          value={editForm.scope}
+                          onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
+                          rows={5}
+                          placeholder="What the customer needs. No prices."
+                          className={cn(
+                            "w-full min-h-[6rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
+                            "focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            editErrors.scope && "border-red-400",
+                          )}
+                        />
+                      </FieldBlock>
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-xs font-medium text-text-secondary">Photos {leadImages.length > 0 ? `(${leadImages.length})` : ""}</span>
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+                            {uploadingPhotos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+                            Add photos
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              className="hidden"
+                              disabled={uploadingPhotos}
+                              onChange={(e) => {
+                                const files = Array.from(e.target.files ?? []);
+                                if (files.length) void addLeadPhotos(files);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        </div>
+                        {leadImages.length > 0 ? (
+                          <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+                            {leadImages.map((url) => (
+                              <div key={url} className="group relative aspect-square">
+                                <a href={url} target="_blank" rel="noopener noreferrer">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt="" loading="lazy" className="h-full w-full rounded-lg border border-border-light object-cover" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => void removeLeadPhoto(url)}
+                                  className="absolute -right-1.5 -top-1.5 rounded-full border border-border-light bg-surface p-0.5 text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-red-600 group-hover:opacity-100"
+                                  aria-label="Remove photo"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-text-tertiary">No photos yet.</p>
+                        )}
+                      </div>
+                    </section>
                   </div>
                 }
               />

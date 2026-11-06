@@ -206,6 +206,7 @@ export type UpdateLeadInput = Partial<
     | "owner_id"
     | "published_at"
     | "images"
+    | "catalog_service_id"
   >
 >;
 
@@ -255,6 +256,7 @@ export async function updateLead(id: string, patch: UpdateLeadInput): Promise<Le
   };
 
   if (patch.urgency !== undefined) payload.urgency = patch.urgency;
+  if (patch.catalog_service_id !== undefined) payload.catalog_service_id = patch.catalog_service_id || null;
   let stageMove: { from: LeadStage; to: LeadStage } | null = null;
   if (patch.status !== undefined) {
     payload.status = patch.status;
