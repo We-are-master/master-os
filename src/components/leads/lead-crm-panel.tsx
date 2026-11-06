@@ -19,6 +19,8 @@ import {
 } from "@/services/crm-leads";
 import type { CatalogService, Lead, LeadStage } from "@/types/database";
 import { cn } from "@/lib/utils";
+import { getSupabase } from "@/services/base";
+import { getQuoteProposalRecipientEmail } from "@/lib/account-billing-addressee";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
 import { QUOTE_STATUS_CHIP, SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
@@ -171,22 +173,56 @@ export function LeadCrmPanel({
     liveQuote && window.open(`/api/quotes/send-pdf?quoteId=${encodeURIComponent(liveQuote.id)}`, "_blank", "noopener,noreferrer");
 
   // Quote pronta (parceiro cotou): envia daqui, com os valores salvos na quote.
+  // Mesmo destinatário da tela de Quotes (conta B2B segue o billing da conta) e
+  // mesmo ticket da conversa: sem ticket na quote, liga ao ticket do lead antes.
   // O envio leva o card para Quoted (persistQuoteSentToCustomer sincroniza o lead).
   const sendQuote = async () => {
     if (!liveQuote) return;
-    const email = (lead.email ?? "").trim();
+    const sb = getSupabase();
+    const { data: q } = await sb
+      .from("quotes")
+      .select("client_id, property_id, source_account_id, client_name, client_email, external_source, external_ref")
+      .eq("id", liveQuote.id)
+      .maybeSingle();
+    const row = (q ?? {}) as Record<string, string | null>;
+    const clientId = row.client_id?.trim() || null;
+    const propertyId = clientId ? null : row.property_id?.trim() || null;
+    const email = (
+      (await getQuoteProposalRecipientEmail(sb, {
+        clientId,
+        propertyId,
+        accountId: clientId || propertyId ? null : row.source_account_id?.trim() || null,
+        fallbackName: row.client_name ?? lead.name ?? null,
+        fallbackEmail: row.client_email ?? lead.email ?? null,
+      }).catch(() => null)) ||
+      row.client_email ||
+      lead.email ||
+      ""
+    ).trim();
     if (!email.includes("@")) {
-      toast.info("No customer email on this lead. Opening the quote to add it and send.");
+      toast.info("No customer email on this quote. Opening it to add the email and send.");
       openQuote();
       return;
     }
-    if (!window.confirm(`Send ${liveQuote.reference} to ${email}?`)) return;
+    const leadTicket = lead.external_source === "zendesk" || !lead.external_source ? lead.external_ref?.trim() || null : null;
+    const quoteTicket = row.external_source === "zendesk" ? row.external_ref?.trim() || null : null;
+    const ticket = quoteTicket ?? (row.external_source ? null : leadTicket);
+    const onde = ticket ? `on Zendesk ticket #${ticket}` : "by email (no Zendesk ticket linked)";
+    if (!window.confirm(`Send ${liveQuote.reference} to ${email} ${onde}?`)) return;
     setBusy("send");
     try {
+      if (!quoteTicket && ticket) {
+        await sb.from("quotes").update({ external_source: "zendesk", external_ref: ticket }).eq("id", liveQuote.id).is("external_source", null);
+      }
       const res = await fetch("/api/quotes/send-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quoteId: liveQuote.id, recipientEmail: email, recipientName: lead.name ?? undefined }),
+        body: JSON.stringify({
+          quoteId: liveQuote.id,
+          recipientEmail: email,
+          recipientName: row.client_name ?? lead.name ?? undefined,
+          accountId: row.source_account_id ?? undefined,
+        }),
       });
       const j = (await res.json().catch(() => null)) as { emailSent?: boolean; error?: string; detail?: string; reason?: string } | null;
       if (!res.ok) throw new Error(j?.detail ? `${j.error ?? "Could not send"}: ${j.detail}` : (j?.error ?? "Could not send the quote"));
@@ -327,23 +363,23 @@ export function LeadCrmPanel({
         </button>
       </div>
 
-      {/* A quote do card: estado, valor e o que dá para fazer com ela. */}
+      {/* A quote do card: uma linha com estado, valor e ações. */}
       {liveQuote ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border-light bg-surface-secondary/60 px-3 py-2">
-          <FileText className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
-          <span className="text-sm font-medium text-text-primary">{liveQuote.reference}</span>
+        <div className="flex h-10 items-center gap-2 rounded-lg border border-border-light bg-surface-secondary/60 pl-2.5 pr-1">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+          <span className="shrink-0 text-xs font-medium text-text-primary">{liveQuote.reference}</span>
           {QUOTE_STATUS_CHIP[liveQuote.status] ? (
-            <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", QUOTE_STATUS_CHIP[liveQuote.status].cls)}>
+            <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none", QUOTE_STATUS_CHIP[liveQuote.status].cls)}>
               {QUOTE_STATUS_CHIP[liveQuote.status].label}
             </span>
           ) : null}
-          {value ? <span className="text-sm font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
-          <span className="ml-auto flex items-center gap-1">
-            <button type="button" onClick={previewQuote} className="h-7 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-surface hover:text-text-primary">
+          {value ? <span className="shrink-0 text-xs font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
+          <span className="ml-auto flex shrink-0 items-center gap-0.5">
+            <button type="button" onClick={previewQuote} title="Preview the PDF" className="h-7 rounded-md px-2 text-xs font-medium text-text-secondary hover:bg-surface hover:text-text-primary">
               PDF
             </button>
-            <button type="button" onClick={openQuote} className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-surface">
-              Open quote
+            <button type="button" onClick={openQuote} title="Open the quote" className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-surface">
+              Open
               <ExternalLink className="h-3 w-3" aria-hidden />
             </button>
             {liveQuote.status === "quote_ready" ? (
@@ -351,10 +387,10 @@ export function LeadCrmPanel({
                 type="button"
                 onClick={sendQuote}
                 disabled={busy === "send"}
-                className="inline-flex h-7 items-center gap-1 rounded-lg bg-success px-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                className="inline-flex h-7 items-center gap-1 rounded-md bg-success px-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
               >
                 {busy === "send" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Send className="h-3 w-3" aria-hidden />}
-                Send to customer
+                Send
               </button>
             ) : null}
           </span>
