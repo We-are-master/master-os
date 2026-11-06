@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ExternalLink, FileText, Loader2, Send, X } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, FileText, Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { LOST_REASON_LABEL, isOpenStage } from "@/lib/crm/etapas";
@@ -20,6 +20,7 @@ import {
 import type { CatalogService, Lead, LeadStage } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { getSupabase } from "@/services/base";
+import { getBidsByQuoteId, type QuoteBid } from "@/services/quote-bids";
 import { getQuoteProposalRecipientEmail } from "@/lib/account-billing-addressee";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
@@ -169,6 +170,36 @@ export function LeadCrmPanel({
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
   const openQuote = () => liveQuote && router.push(`/quotes?quoteId=${liveQuote.id}`);
+  // Lances da quote: o escolhido (quotes.partner_id) em cima, os outros pelo preço.
+  const [bids, setBids] = useState<QuoteBid[]>([]);
+  const [chosenPartner, setChosenPartner] = useState<string | null>(null);
+  const [showBids, setShowBids] = useState(true);
+  const liveQuoteId = liveQuote?.id ?? null;
+  useEffect(() => {
+    if (!liveQuoteId) {
+      setBids([]);
+      setChosenPartner(null);
+      return;
+    }
+    let active = true;
+    Promise.all([
+      getBidsByQuoteId(liveQuoteId).catch(() => [] as QuoteBid[]),
+      getSupabase().from("quotes").select("partner_id").eq("id", liveQuoteId).maybeSingle(),
+    ]).then(([list, { data }]) => {
+      if (!active) return;
+      const chosen = (data as { partner_id?: string | null } | null)?.partner_id ?? null;
+      setChosenPartner(chosen);
+      setBids(
+        list
+          .filter((b) => b.status !== "rejected" || b.partner_id === chosen)
+          .sort((a, b) => Number(b.partner_id === chosen) - Number(a.partner_id === chosen) || a.bid_amount - b.bid_amount),
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [liveQuoteId, liveQuote?.status]);
+
   const previewQuote = () =>
     liveQuote && window.open(`/api/quotes/send-pdf?quoteId=${encodeURIComponent(liveQuote.id)}`, "_blank", "noopener,noreferrer");
 
@@ -363,37 +394,101 @@ export function LeadCrmPanel({
         </button>
       </div>
 
-      {/* A quote do card: uma linha com estado, valor e ações. */}
+      {/* A quote do card: linha com estado, valor e ações; abaixo os lances numerados. */}
       {liveQuote ? (
-        <div className="flex h-10 items-center gap-2 rounded-lg border border-border-light bg-surface-secondary/60 pl-2.5 pr-1">
-          <FileText className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
-          <span className="shrink-0 text-xs font-medium text-text-primary">{liveQuote.reference}</span>
-          {QUOTE_STATUS_CHIP[liveQuote.status] ? (
-            <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none", QUOTE_STATUS_CHIP[liveQuote.status].cls)}>
-              {QUOTE_STATUS_CHIP[liveQuote.status].label}
-            </span>
-          ) : null}
-          {value ? <span className="shrink-0 text-xs font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
-          <span className="ml-auto flex shrink-0 items-center gap-0.5">
-            <button type="button" onClick={previewQuote} title="Preview the PDF" className="h-7 rounded-md px-2 text-xs font-medium text-text-secondary hover:bg-surface hover:text-text-primary">
-              PDF
+        <div className="overflow-hidden rounded-lg border border-border-light bg-surface-secondary/60">
+          <div className="flex h-10 items-center gap-2 pl-2.5 pr-1">
+            <button
+              type="button"
+              onClick={() => setShowBids((v) => !v)}
+              disabled={!bids.length}
+              aria-expanded={showBids}
+              title={bids.length ? (showBids ? "Hide the partner bids" : "Show the partner bids") : "No partner bids"}
+              className="flex min-w-0 items-center gap-2 text-left disabled:cursor-default"
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+              <span className="shrink-0 text-xs font-medium text-text-primary">{liveQuote.reference}</span>
+              {QUOTE_STATUS_CHIP[liveQuote.status] ? (
+                <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none", QUOTE_STATUS_CHIP[liveQuote.status].cls)}>
+                  {QUOTE_STATUS_CHIP[liveQuote.status].label}
+                </span>
+              ) : null}
+              {value ? <span className="shrink-0 text-xs font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
+              {bids.length ? (
+                <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-text-tertiary">
+                  {bids.length} {bids.length === 1 ? "bid" : "bids"}
+                  <ChevronDown className={cn("h-3 w-3 transition-transform", showBids && "rotate-180")} aria-hidden />
+                </span>
+              ) : null}
             </button>
-            <button type="button" onClick={openQuote} title="Open the quote" className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-surface">
-              Open
-              <ExternalLink className="h-3 w-3" aria-hidden />
-            </button>
-            {liveQuote.status === "quote_ready" ? (
-              <button
-                type="button"
-                onClick={sendQuote}
-                disabled={busy === "send"}
-                className="inline-flex h-7 items-center gap-1 rounded-md bg-success px-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
-              >
-                {busy === "send" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Send className="h-3 w-3" aria-hidden />}
-                Send
+            <span className="ml-auto flex shrink-0 items-center gap-0.5">
+              <button type="button" onClick={previewQuote} title="Preview the PDF" className="h-7 rounded-md px-2 text-xs font-medium text-text-secondary hover:bg-surface hover:text-text-primary">
+                PDF
               </button>
-            ) : null}
-          </span>
+              <button type="button" onClick={openQuote} title="Open the quote" className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-primary hover:bg-surface">
+                Open
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </button>
+              {liveQuote.status === "quote_ready" ? (
+                <button
+                  type="button"
+                  onClick={sendQuote}
+                  disabled={busy === "send"}
+                  className="inline-flex h-7 items-center gap-1 rounded-md bg-success px-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                >
+                  {busy === "send" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Send className="h-3 w-3" aria-hidden />}
+                  Send
+                </button>
+              ) : null}
+            </span>
+          </div>
+          {showBids && bids.length ? (
+            <div className="border-t border-border-light bg-surface">
+              <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_4.5rem_4.5rem_5.5rem] items-center gap-2 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                <span>#</span>
+                <span>Partner</span>
+                <span className="text-right">Partner</span>
+                <span className="text-right">Our price</span>
+                <span className="text-right">Margin</span>
+              </div>
+              {bids.map((b, i) => {
+                const chosen = b.partner_id === chosenPartner;
+                const hourly = b.job_type === "hourly";
+                const margem = value && !hourly ? value - b.bid_amount : null;
+                const pct = margem != null && value ? Math.round((margem / value) * 100) : null;
+                return (
+                  <div
+                    key={b.id}
+                    className={cn(
+                      "grid grid-cols-[1.25rem_minmax(0,1fr)_4.5rem_4.5rem_5.5rem] items-center gap-2 border-t border-border-light px-2.5 py-1.5 text-xs",
+                      chosen && "bg-success-light/50",
+                    )}
+                  >
+                    <span className="tabular-nums text-text-tertiary">{i + 1}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate font-medium text-text-primary">{b.partner_name || "Partner"}</span>
+                      {chosen ? (
+                        <span className="shrink-0 rounded bg-success px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-white">Chosen</span>
+                      ) : null}
+                    </span>
+                    <span className="text-right tabular-nums text-text-secondary">
+                      {gbp(b.bid_amount)}
+                      {hourly ? "/h" : ""}
+                    </span>
+                    <span className="text-right tabular-nums text-text-secondary">{chosen && value ? gbp(value) : "·"}</span>
+                    <span
+                      className={cn(
+                        "text-right font-semibold tabular-nums",
+                        margem == null ? "text-text-tertiary" : margem < 0 ? "text-danger" : "text-success",
+                      )}
+                    >
+                      {margem == null ? "·" : `${gbp(margem)}${pct != null ? ` · ${pct}%` : ""}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
