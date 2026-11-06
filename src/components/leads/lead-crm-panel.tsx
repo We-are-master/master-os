@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, FileText, Loader2, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { LOST_REASON_LABEL, isOpenStage } from "@/lib/crm/etapas";
 import { useStageLabels } from "./use-stage-labels";
 import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
 import { guardarPrefill, janelaDoTexto } from "@/lib/inbox/prefill";
-import { changeLeadStage, recordLeadEvent } from "@/services/leads";
+import { changeLeadStage, getLead, recordLeadEvent } from "@/services/leads";
 import {
   accountSkipsDeposit,
   findJobForLead,
@@ -21,7 +21,7 @@ import type { CatalogService, Lead, LeadStage } from "@/types/database";
 import { cn } from "@/lib/utils";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
-import { SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
+import { QUOTE_STATUS_CHIP, SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
 
 const PENDING_WON_KEY = "fixfy:crm-pending-won";
 
@@ -104,7 +104,7 @@ export function LeadCrmPanel({
   const [quote, setQuote] = useState<LeadQuote | null>(null);
   const [semEntrada, setSemEntrada] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState<"quote" | "won" | null>(null);
+  const [busy, setBusy] = useState<"quote" | "won" | "send" | null>(null);
   const reconciledFor = useRef<string | null>(null);
 
   const stage = lead.stage ?? "new";
@@ -167,6 +167,39 @@ export function LeadCrmPanel({
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
   const openQuote = () => liveQuote && router.push(`/quotes?quoteId=${liveQuote.id}`);
+  const previewQuote = () =>
+    liveQuote && window.open(`/api/quotes/send-pdf?quoteId=${encodeURIComponent(liveQuote.id)}`, "_blank", "noopener,noreferrer");
+
+  // Quote pronta (parceiro cotou): envia daqui, com os valores salvos na quote.
+  // O envio leva o card para Quoted (persistQuoteSentToCustomer sincroniza o lead).
+  const sendQuote = async () => {
+    if (!liveQuote) return;
+    const email = (lead.email ?? "").trim();
+    if (!email.includes("@")) {
+      toast.info("No customer email on this lead. Opening the quote to add it and send.");
+      openQuote();
+      return;
+    }
+    if (!window.confirm(`Send ${liveQuote.reference} to ${email}?`)) return;
+    setBusy("send");
+    try {
+      const res = await fetch("/api/quotes/send-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId: liveQuote.id, recipientEmail: email, recipientName: lead.name ?? undefined }),
+      });
+      const j = (await res.json().catch(() => null)) as { emailSent?: boolean; error?: string; detail?: string; reason?: string } | null;
+      if (!res.ok) throw new Error(j?.detail ? `${j.error ?? "Could not send"}: ${j.detail}` : (j?.error ?? "Could not send the quote"));
+      if (j?.emailSent === false) toast.warning(j.reason ?? "Quote updated but the email was not sent");
+      else toast.success(`${liveQuote.reference} sent to ${email}`);
+      const updated = await getLead(lead.id);
+      if (updated) onLeadChange(updated);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send the quote");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const onMarkWon = async () => {
     if (!ready.pronto) return;
@@ -294,14 +327,38 @@ export function LeadCrmPanel({
         </button>
       </div>
 
-      {/* A quote do card, quando existe: valor e link. */}
+      {/* A quote do card: estado, valor e o que dá para fazer com ela. */}
       {liveQuote ? (
-        <p className="text-sm text-text-secondary">
-          {value ? <span className="font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
-          <button type="button" onClick={openQuote} className="ml-1.5 text-xs font-medium text-primary hover:underline">
-            {liveQuote.reference}
-          </button>
-        </p>
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border-light bg-surface-secondary/60 px-3 py-2">
+          <FileText className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
+          <span className="text-sm font-medium text-text-primary">{liveQuote.reference}</span>
+          {QUOTE_STATUS_CHIP[liveQuote.status] ? (
+            <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", QUOTE_STATUS_CHIP[liveQuote.status].cls)}>
+              {QUOTE_STATUS_CHIP[liveQuote.status].label}
+            </span>
+          ) : null}
+          {value ? <span className="text-sm font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
+          <span className="ml-auto flex items-center gap-1">
+            <button type="button" onClick={previewQuote} className="h-7 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-surface hover:text-text-primary">
+              PDF
+            </button>
+            <button type="button" onClick={openQuote} className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-surface">
+              Open quote
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </button>
+            {liveQuote.status === "quote_ready" ? (
+              <button
+                type="button"
+                onClick={sendQuote}
+                disabled={busy === "send"}
+                className="inline-flex h-7 items-center gap-1 rounded-lg bg-success px-2.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+              >
+                {busy === "send" ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Send className="h-3 w-3" aria-hidden />}
+                Send to customer
+              </button>
+            ) : null}
+          </span>
+        </div>
       ) : null}
 
       {stage === "lost" && lead.lost_reason ? (

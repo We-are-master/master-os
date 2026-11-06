@@ -211,13 +211,16 @@ function BoardCard({
       </div>
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span
-            className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
-            title="Status"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-            {stageLabel}
-          </span>
+          {/* Com a etiqueta da quote, a da etapa sai: a coluna já diz a etapa. */}
+          {chip ? null : (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+              title="Status"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+              {stageLabel}
+            </span>
+          )}
           {chip ? (
             <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}>
               {readyToSend ? <Send className="h-3 w-3" aria-hidden /> : <FileText className="h-3 w-3" aria-hidden />}
