@@ -162,8 +162,9 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       origem: l.origem as MensagemDaCaixa["origem"],
       tipo: l.tipo as string,
       texto: (l.texto as string | null) ?? null,
-      // A uazapi entrega a mídia por URL; o id da Meta não abre sem token.
-      midiaUrl: midia ? (assinadas.get(midia) ?? (/^https?:\/\//.test(midia) ? midia : null)) : null,
+      // Mídia ainda no link da uazapi passa pela nossa rota: ela copia para o
+      // bucket e redireciona (o domínio da uazapi é bloqueado em algumas redes).
+      midiaUrl: midia ? (assinadas.get(midia) ?? (/^https?:\/\//.test(midia) ? `/api/inbox/midia/${l.id as string}` : null)) : null,
       status: (l.status as string | null) ?? null,
       erro: (l.erro as string | null) ?? null,
       quem: (l.enviado_por_nome as string | null) ?? null,
