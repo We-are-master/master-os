@@ -50,7 +50,7 @@ export function leadDoSiteLead(l: SiteLeadParaCrm, ticketId: number | string | n
     urgency: "medium",
     scope: escopoDoSiteLead(l.service_label),
     status: "interested",
-    stage: "qualifying",
+    stage: "new",
     segment: "b2c",
     source: "website",
     client_id: l.client_id ?? null,

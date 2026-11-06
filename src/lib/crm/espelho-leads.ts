@@ -61,14 +61,13 @@ const FUNIL = [
 /**
  * Por etapa: o status alvo e os status que já servem (sub-etapas que o Harvey
  * ou a equipe põem e que dizem a mesma coisa com mais detalhe). New lead e
- * Qualifying aceitam To Call e Needs Quote (o Harvey grava os dois ao passar
+ * (antes também Qualifying, que saiu em 06/11/2026) aceitam To Call e Needs Quote (o Harvey grava os dois ao passar
  * para a equipe) e Awaiting Approval (preço da equipe no chat, antes de o lead
  * andar no OS). Qualified = vez do closer: To Call até existir o status
  * Qualified no Zendesk.
  */
 const POR_ETAPA: Partial<Record<LeadStage, { alvo: number; servem: number[] }>> = {
   new: { alvo: ZD_STATUS_LEAD, servem: [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
-  qualifying: { alvo: ZD_STATUS_LEAD, servem: [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
   qualified: { alvo: ZD_STATUS_TO_CALL, servem: [ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
   quoting: { alvo: ZD_STATUS_NEEDS_QUOTE, servem: [ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_BIDDING, ZD_STATUS_NO_BIDS, ZD_STATUS_QUOTE_READY] },
   quoted: { alvo: ZD_STATUS_AWAITING_APPROVAL, servem: [ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_DEPOSIT_PENDING] },

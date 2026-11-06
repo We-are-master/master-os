@@ -64,7 +64,7 @@ for (const q of quotes) {
     if (data && data.stage !== "won") destino = `liga ao ${data.reference} (ticket)`;
   }
   if (destino === "cria card novo" && q.client_id) {
-    const { data } = await sb.from("leads").select("id, reference").eq("client_id", q.client_id).in("stage", ["new", "qualifying", "qualified"]).is("deleted_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const { data } = await sb.from("leads").select("id, reference").eq("client_id", q.client_id).in("stage", ["new", "qualified"]).is("deleted_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (data) {
       const { count } = await sb.from("quotes").select("id", { count: "exact", head: true }).eq("lead_id", data.id).is("deleted_at", null);
       if (!count) destino = `liga ao ${data.reference} (cliente)`;

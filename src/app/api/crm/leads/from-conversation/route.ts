@@ -24,8 +24,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** Colunas em que um card pode nascer à mão. Quoted e Won vêm da quote e do job. */
-const COLUNAS_DE_ENTRADA: readonly LeadStage[] = ["new", "qualifying", "qualified", "quoting"];
-const ABERTAS: readonly LeadStage[] = ["new", "qualifying", "qualified", "quoting", "quoted"];
+const COLUNAS_DE_ENTRADA: readonly LeadStage[] = ["new", "qualified", "quoting"];
+const ABERTAS: readonly LeadStage[] = ["new", "qualified", "quoting", "quoted"];
 
 type Corpo = {
   stage?: unknown;

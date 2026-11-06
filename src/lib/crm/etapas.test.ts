@@ -37,20 +37,20 @@ test("status antigo segue a etapa", () => {
 });
 
 test("interested na tela antiga não puxa lead adiantado para trás", () => {
-  assert.equal(stageForLegacyStatusChange("new", "interested"), "qualifying");
-  assert.equal(stageForLegacyStatusChange("qualifying", "new"), "new");
+  assert.equal(stageForLegacyStatusChange("new", "interested"), "new");
+  assert.equal(stageForLegacyStatusChange("qualified", "new"), "qualified");
   assert.equal(stageForLegacyStatusChange("qualified", "new"), "qualified");
   assert.equal(stageForLegacyStatusChange("quoting", "interested"), "quoting");
   assert.equal(stageForLegacyStatusChange("won", "new"), "won");
 });
 
 test("lost exige motivo", () => {
-  assert.match(validateStageChange({ from: "qualifying", to: "lost" }) ?? "", /reason/);
-  assert.equal(validateStageChange({ from: "qualifying", to: "lost", lostReason: "price" }), null);
+  assert.match(validateStageChange({ from: "new", to: "lost" }) ?? "", /reason/);
+  assert.equal(validateStageChange({ from: "new", to: "lost", lostReason: "price" }), null);
 });
 
 test("lost com data de volta: a data tem que ser no futuro", () => {
-  const base = { from: "qualifying" as const, to: "lost" as const, lostReason: "timing" as const, today: "2026-11-05" };
+  const base = { from: "new" as const, to: "lost" as const, lostReason: "timing" as const, today: "2026-11-05" };
   assert.match(validateStageChange({ ...base, nurtureUntil: "2026-11-05" }) ?? "", /future/);
   assert.match(validateStageChange({ ...base, nurtureUntil: "12/11" }) ?? "", /valid/);
   assert.equal(validateStageChange({ ...base, nurtureUntil: "2026-11-12" }), null);
@@ -59,7 +59,7 @@ test("lost com data de volta: a data tem que ser no futuro", () => {
 test("won só com job e won não volta", () => {
   assert.match(validateStageChange({ from: "quoted", to: "won" }) ?? "", /job/);
   assert.equal(validateStageChange({ from: "quoted", to: "won", jobId: "j1" }), null);
-  assert.match(validateStageChange({ from: "won", to: "qualifying" }) ?? "", /already a job/);
+  assert.match(validateStageChange({ from: "won", to: "new" }) ?? "", /already a job/);
 });
 
 test("mesma etapa é permitido", () => {

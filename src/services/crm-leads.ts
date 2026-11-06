@@ -93,7 +93,7 @@ export async function getStageCounts(segment: SegmentFilter): Promise<Record<str
 
 // ─── Board ───────────────────────────────────────────────────────────────────
 
-export const BOARD_STAGES: LeadStage[] = ["new", "qualifying", "qualified", "quoting", "quoted", "won", "lost"];
+export const BOARD_STAGES: LeadStage[] = ["new", "qualified", "quoting", "quoted", "won", "lost"];
 
 /** Até `perColumn` cards por etapa, o mais recente primeiro. Lost: só a última semana. */
 export async function listBoardLeads(segment: SegmentFilter, search: string, perColumn = 30): Promise<Record<string, Lead[]>> {
@@ -318,7 +318,7 @@ export async function createQuoteFromLead(
     void fetch(`/api/quotes/${quote.id}/sync-zendesk-status`, { method: "POST", keepalive: true }).catch(() => {});
   }
   const stage = lead.stage ?? "new";
-  if (stage === "new" || stage === "qualifying" || stage === "qualified" || stage === "lost") {
+  if (stage === "new" || stage === "qualified" || stage === "lost") {
     try {
       await changeLeadStage(lead.id, "quoting", { summary: `Quote ${quote.reference} created` });
     } catch {

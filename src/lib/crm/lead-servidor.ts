@@ -361,7 +361,7 @@ export async function criarLeadDaQuote(sb: SupabaseClient, q: QuoteParaCrm): Pro
       .from("leads")
       .select("id")
       .eq("client_id", q.client_id)
-      .in("stage", ["new", "qualifying", "qualified"])
+      .in("stage", ["new", "qualified"])
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -457,7 +457,7 @@ export async function marcarRespostaDoCliente(
     .eq("id", lead.id);
   // Perdido com data de volta (ex-Nurture) e o cliente escreveu: volta antes da data.
   if (lead.stage === "lost" && lead.nurture_until) {
-    await moverEtapa(sb, lead, { to: "qualifying", actorType: "customer", channel: input.channel ?? "zendesk", summary: "Customer replied" });
+    await moverEtapa(sb, lead, { to: "new", actorType: "customer", channel: input.channel ?? "zendesk", summary: "Customer replied" });
   }
   return { leadId: lead.id, novo: true };
 }
@@ -483,9 +483,7 @@ export async function marcarRespostaNossa(
   const patch: Record<string, unknown> = { last_contact_at: at, customer_replied_at: null, updated_at: new Date().toISOString() };
   const { error } = await sb.from("leads").update(patch).eq("id", lead.id);
   if (error) console.warn("[crm] resposta nossa:", error.message);
-  if (lead.stage === "new") {
-    await moverEtapa(sb, lead, { to: "qualifying", actorType: input.actorType ?? "staff", channel: input.channel ?? "zendesk", summary: "First reply sent" });
-  }
+  // Qualifying saiu do funil (06/11/2026): a primeira resposta não move o card; New lead até qualificar.
   return { leadId: lead.id };
 }
 

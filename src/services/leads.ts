@@ -155,7 +155,7 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
     urgency: input.urgency ?? "medium",
     scope: (input.scope ?? "").trim(),
     status: input.status ?? "new",
-    stage: input.status === "interested" ? "qualifying" : "new",
+    stage: "new",
     segment: await segmentoDoLead(supabase, accountId, input.segment),
     source: input.source?.trim() || null,
     external_source: input.zendesk_ticket_id ? "zendesk" : null,

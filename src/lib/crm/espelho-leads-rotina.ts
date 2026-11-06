@@ -91,7 +91,7 @@ export async function passarLeadsNoEspelho(
     .eq("external_source", "zendesk")
     .not("external_ref", "is", null)
     .is("deleted_at", null)
-    .or(`stage.in.(new,qualifying,qualified,quoting,quoted),and(stage.eq.lost,updated_at.gte.${desde})`)
+    .or(`stage.in.(new,qualified,quoting,quoted),and(stage.eq.lost,updated_at.gte.${desde})`)
     .limit(3000);
   if (error) {
     linhas.push(`leads: ERRO ${error.message}`);
@@ -155,8 +155,7 @@ export async function passarLeadsNoEspelho(
           linhas.push(`${l.reference} #${ref}: ERRO resposta ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
         }
       }
-      if (sinal === "cliente" && stage === "lost" && l.nurture_until) stage = "qualifying";
-      if (sinal === "nossa" && stage === "new") stage = "qualifying";
+      if (sinal === "cliente" && stage === "lost" && l.nurture_until) stage = "new";
     }
 
     if (comPedido.has(ref)) {
@@ -275,7 +274,7 @@ export async function trazerLeadsDoZendesk(
         .select("id, reference, name, postcode")
         .is("external_ref", null)
         .is("deleted_at", null)
-        .in("stage", ["new", "qualifying", "qualified", "quoting", "quoted"])
+        .in("stage", ["new", "qualified", "quoting", "quoted"])
         .ilike("name", pessoa.nome)
         .limit(5);
       const doTicket = ((soltos ?? []) as Array<{ id: string; reference: string; postcode: string | null }>).filter(

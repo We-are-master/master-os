@@ -10,7 +10,6 @@ import type { LeadLostReason, LeadStage, LeadStatus, QuoteStatus } from "@/types
 
 export const LEAD_STAGES: readonly LeadStage[] = [
   "new",
-  "qualifying",
   "qualified",
   "quoting",
   "quoted",
@@ -19,15 +18,14 @@ export const LEAD_STAGES: readonly LeadStage[] = [
 ] as const;
 
 /** Etapas em que o lead ainda pede ação. */
-export const OPEN_STAGES: readonly LeadStage[] = ["new", "qualifying", "qualified", "quoting", "quoted"] as const;
+export const OPEN_STAGES: readonly LeadStage[] = ["new", "qualified", "quoting", "quoted"] as const;
 
 /** Etapas que a equipe move à mão no board (antes da quote existir). */
-export const MANUAL_STAGES: readonly LeadStage[] = ["new", "qualifying", "qualified"] as const;
+export const MANUAL_STAGES: readonly LeadStage[] = ["new", "qualified"] as const;
 
 /** Mesmo nome no OS e no Zendesk (dicionário de nomes, 06/11/2026). */
 export const STAGE_LABEL: Record<LeadStage, string> = {
   new: "New lead",
-  qualifying: "Qualifying",
   qualified: "Qualified",
   quoting: "Quoting",
   quoted: "Quoted",
@@ -99,9 +97,12 @@ export function stageFromQuoteStatus(status: QuoteStatus): LeadStage {
   }
 }
 
-/** Status antigo (tela de hoje) → etapa. */
-export function stageFromLegacyStatus(status: LeadStatus): LeadStage {
-  return status === "interested" ? "qualifying" : "new";
+/**
+ * Status antigo (tela de hoje) → etapa. Qualifying saiu do funil (dono,
+ * 06/11/2026): quem está juntando os dados continua em New lead.
+ */
+export function stageFromLegacyStatus(_status: LeadStatus): LeadStage {
+  return "new";
 }
 
 /** Etapa → status antigo, para a tela de hoje continuar coerente. */
@@ -138,9 +139,9 @@ export function validateStageChange(c: StageChange): string | null {
 /**
  * Quando o status antigo muda pela tela de hoje (new ↔ interested), só mexe
  * na etapa se o lead ainda está no começo do funil. Um lead em Quoting que
- * alguém marca "interested" não volta para Qualifying.
+ * alguém marca "interested" não volta para New lead.
  */
 export function stageForLegacyStatusChange(current: LeadStage, status: LeadStatus): LeadStage {
-  if (current !== "new" && current !== "qualifying") return current;
+  if (current !== "new") return current;
   return stageFromLegacyStatus(status);
 }

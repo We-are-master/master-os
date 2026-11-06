@@ -30,7 +30,7 @@ const base = {
 
 test("lead do site nasce em Talking, no ticket do lead do site", () => {
   const l = leadDoSiteLead(base, 50000);
-  assert.equal(l.stage, "qualifying");
+  assert.equal(l.stage, "new");
   assert.equal(l.status, "interested");
   assert.equal(l.segment, "b2c");
   assert.equal(l.source, "website");

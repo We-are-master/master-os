@@ -37,8 +37,7 @@ export type AddToCrmPrefill = {
 export type LeadCriado = { id: string; reference: string | null; stage: LeadStage };
 
 const COLUNAS: { stage: LeadStage; text: string }[] = [
-  { stage: "new", text: "Just arrived. Nobody has qualified it yet." },
-  { stage: "qualifying", text: "We are gathering the details." },
+  { stage: "new", text: "Just arrived, or we are still gathering the details." },
   { stage: "qualified", text: "Details complete. The closer's turn." },
   { stage: "quoting", text: "Needs a price. Next: partners bid or internal quote." },
 ];

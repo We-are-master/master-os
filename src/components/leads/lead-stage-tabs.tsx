@@ -6,7 +6,7 @@ import { OPEN_STAGES } from "@/lib/crm/etapas";
 import { useStageLabels } from "./use-stage-labels";
 import type { CrmTab, SegmentFilter } from "@/services/crm-leads";
 
-const TAB_ORDER: CrmTab[] = ["open", "new", "qualifying", "qualified", "quoting", "quoted", "won", "lost"];
+const TAB_ORDER: CrmTab[] = ["open", "new", "qualified", "quoting", "quoted", "won", "lost"];
 
 export function LeadStageTabs({
   active,

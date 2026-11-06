@@ -382,7 +382,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         }
         return;
       }
-      // New lead, Qualifying, Qualified: livre, salvo se já existe quote andando.
+      // New lead, Qualified: livre, salvo se já existe quote andando.
       if (liveQuote && (from === "quoting" || from === "quoted")) {
         return void toast.info(`${liveQuote.reference} is in progress and moves this card. Reject the quote or mark the lead lost to take it out.`);
       }

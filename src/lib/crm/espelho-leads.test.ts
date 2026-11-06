@@ -19,17 +19,17 @@ const aberto = (customStatusId: number | null, extra: Partial<Parameters<typeof 
 
 test("tag crm_* é uma só, a da etapa", () => {
   assert.equal(tagDaEtapa("quoted"), "crm_quoted");
-  assert.deepEqual(tagsDoLead("qualifying", ["customer", "crm_new"]), { add: ["crm_qualifying"], remove: ["crm_new"] });
-  assert.deepEqual(tagsDoLead("qualifying", ["crm_qualifying", "harvey_wa"]), { add: [], remove: [] });
+  assert.deepEqual(tagsDoLead("qualified", ["customer", "crm_new"]), { add: ["crm_qualified"], remove: ["crm_new"] });
+  assert.deepEqual(tagsDoLead("qualified", ["crm_qualified", "harvey_wa"]), { add: [], remove: [] });
   assert.deepEqual(tagsDoLead("lost", ["crm_new", "crm_qualifying"]), { add: ["crm_lost"], remove: ["crm_new", "crm_qualifying"] });
 });
 
-test("New lead e Qualifying: ticket livre vira Lead; sub-etapas do Harvey ficam", () => {
+test("New lead: ticket livre vira Lead; sub-etapas do Harvey ficam", () => {
   assert.deepEqual(alvoDoTicketDoLead({ stage: "new" }, aberto(ZD_STATUS_NEW), null), { kind: "status", customStatusId: ZD_STATUS_LEAD });
-  assert.deepEqual(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(ZD_STATUS_OPEN), null), { kind: "status", customStatusId: ZD_STATUS_LEAD });
-  assert.deepEqual(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(null), null), { kind: "status", customStatusId: ZD_STATUS_LEAD });
+  assert.deepEqual(alvoDoTicketDoLead({ stage: "new" }, aberto(ZD_STATUS_OPEN), null), { kind: "status", customStatusId: ZD_STATUS_LEAD });
+  assert.deepEqual(alvoDoTicketDoLead({ stage: "new" }, aberto(null), null), { kind: "status", customStatusId: ZD_STATUS_LEAD });
   for (const s of [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL]) {
-    assert.equal(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(s), null).kind, "nada");
+    assert.equal(alvoDoTicketDoLead({ stage: "new" }, aberto(s), null).kind, "nada");
   }
 });
 
@@ -44,14 +44,14 @@ test("etapas de preço sem quote no ticket", () => {
 });
 
 test("fora do funil de venda o lead não mexe", () => {
-  assert.equal(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(ZD_STATUS_COMPLAINT), null).kind, "nada");
-  assert.equal(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(ZD_STATUS_SCHEDULED), null).kind, "nada");
+  assert.equal(alvoDoTicketDoLead({ stage: "new" }, aberto(ZD_STATUS_COMPLAINT), null).kind, "nada");
+  assert.equal(alvoDoTicketDoLead({ stage: "new" }, aberto(ZD_STATUS_SCHEDULED), null).kind, "nada");
   assert.equal(alvoDoTicketDoLead({ stage: "lost", lostReason: "price" }, aberto(ZD_STATUS_SCHEDULED), null).kind, "nada");
 });
 
 test("Won é do espelho do job; closed e Harvey segurando ficam", () => {
   assert.equal(alvoDoTicketDoLead({ stage: "won" }, aberto(ZD_STATUS_LEAD), null).kind, "nada");
-  assert.equal(alvoDoTicketDoLead({ stage: "qualifying" }, { status: "closed", customStatusId: ZD_STATUS_LEAD }, null).kind, "nada");
+  assert.equal(alvoDoTicketDoLead({ stage: "new" }, { status: "closed", customStatusId: ZD_STATUS_LEAD }, null).kind, "nada");
   assert.equal(alvoDoTicketDoLead({ stage: "new" }, aberto(ZD_STATUS_NEW, { supportType: "ai_agent" }), null).kind, "nada");
 });
 
@@ -69,7 +69,7 @@ test("Lost resolve, mas nunca com o cliente esperando", () => {
 });
 
 test("ticket resolvido com lead vivo não reabre sozinho", () => {
-  assert.equal(alvoDoTicketDoLead({ stage: "qualifying" }, { status: "solved", customStatusId: null }, null).kind, "nada");
+  assert.equal(alvoDoTicketDoLead({ stage: "new" }, { status: "solved", customStatusId: null }, null).kind, "nada");
 });
 
 test("Lost com data de volta não resolve: vai para Nurture se o status existir", () => {
@@ -78,7 +78,7 @@ test("Lost com data de volta não resolve: vai para Nurture se o status existir"
   assert.deepEqual(alvoDoTicketDoLead(volta, aberto(ZD_STATUS_LEAD), NURTURE), { kind: "status", customStatusId: NURTURE });
   assert.equal(alvoDoTicketDoLead(volta, aberto(NURTURE), NURTURE).kind, "nada");
   // Voltou: o ticket sai do Nurture para Lead.
-  assert.deepEqual(alvoDoTicketDoLead({ stage: "qualifying" }, aberto(NURTURE), NURTURE), { kind: "status", customStatusId: ZD_STATUS_LEAD });
+  assert.deepEqual(alvoDoTicketDoLead({ stage: "new" }, aberto(NURTURE), NURTURE), { kind: "status", customStatusId: ZD_STATUS_LEAD });
 });
 
 test("sinal de resposta pelo Reply Status", () => {

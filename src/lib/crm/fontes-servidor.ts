@@ -11,7 +11,7 @@ import { chaveDoTelefone } from "@/lib/harvey-wa/identidade";
 import { leadDoSiteLead, type SiteLeadParaCrm } from "./fontes";
 import { acharLeadPorTicket, marcarRespostaDoCliente, marcarRespostaNossa, moverEtapa, registrarEvento } from "./lead-servidor";
 
-const ETAPAS_VIVAS = ["new", "qualifying", "qualified", "quoting", "quoted"];
+const ETAPAS_VIVAS = ["new", "qualified", "quoting", "quoted"];
 
 /** O lead vivo mais recente do cliente (etapa aberta ou Nurture). */
 async function leadVivoDoCliente(sb: SupabaseClient, clientId: string | null | undefined): Promise<{ id: string; stage: string; job_id: string | null; external_ref: string | null } | null> {
@@ -45,7 +45,6 @@ export async function leadDaReservaQueRespondeu(
     const existente = porTicket ?? (await leadVivoDoCliente(sb, site.client_id));
     let leadId = existente?.id ?? null;
     if (existente) {
-      if (existente.stage === "new") await moverEtapa(sb, existente as Pick<Lead, "id" | "stage" | "job_id">, { to: "qualifying", actorType: "customer", channel: "zendesk", summary: "Customer replied to the website follow-up" });
       if (!existente.external_ref && ticket) {
         await sb.from("leads").update({ external_source: "zendesk", external_ref: String(ticket) }).eq("id", existente.id).is("external_ref", null);
       }
@@ -64,7 +63,7 @@ export async function leadDaReservaQueRespondeu(
         kind: "created",
         channel: "zendesk",
         actorType: "system",
-        toStage: "qualifying",
+        toStage: "new",
         summary: "Lead created · website (abandoned booking, customer replied)",
         payload: { site_lead_id: site.id, ticket_id: ticket ?? null },
         idempotencyKey: `created:site_lead:${site.id}`,

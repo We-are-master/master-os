@@ -4,7 +4,6 @@ import type { LeadSegment, LeadStage } from "@/types/database";
 /** Cor da etapa: estado, não categoria (VOS UNO §9). */
 export const STAGE_VARIANT: Record<LeadStage, BadgeVariant> = {
   new: "primary",
-  qualifying: "default",
   qualified: "info",
   quoting: "warning",
   quoted: "info",

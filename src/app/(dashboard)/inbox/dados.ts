@@ -332,7 +332,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const leadPorCliente = new Map<string, LeadDaCaixa>();
   const leadPorTelefone = new Map<string, LeadDaCaixa>();
   {
-    const ABERTOS = ["new", "qualifying", "qualified", "quoting", "quoted"];
+    const ABERTOS = ["new", "qualified", "quoting", "quoted"];
     const [porCliente, porFone] = await Promise.all([
       idsClientes.length
         ? sb.from("leads").select("id, reference, stage, client_id, created_at").in("client_id", idsClientes).is("deleted_at", null).order("created_at", { ascending: false }).limit(600)
