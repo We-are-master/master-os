@@ -6,10 +6,10 @@
  * site, o Harvey) e nunca manda mensagem para ninguém.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Lead, LeadEventActor } from "@/types/database";
+import type { LeadEventActor } from "@/types/database";
 import { chaveDoTelefone } from "@/lib/harvey-wa/identidade";
 import { leadDoSiteLead, type SiteLeadParaCrm } from "./fontes";
-import { acharLeadPorTicket, marcarRespostaDoCliente, marcarRespostaNossa, moverEtapa, registrarEvento } from "./lead-servidor";
+import { acharLeadPorTicket, marcarRespostaDoCliente, marcarRespostaNossa, registrarEvento } from "./lead-servidor";
 
 const ETAPAS_VIVAS = ["new", "qualified", "quoting", "quoted"];
 
