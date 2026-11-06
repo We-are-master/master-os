@@ -15,12 +15,25 @@ function diasDaqui(n: number): string {
   return new Date(Date.now() + n * 86400000).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
 
-export function LeadLostModal({ lead, open, onClose, onDone }: { lead: Lead; open: boolean; onClose: () => void; onDone: (l: Lead) => void }) {
-  const [reason, setReason] = useState<LeadLostReason | "">("");
+export function LeadLostModal({
+  lead,
+  open,
+  onClose,
+  onDone,
+  defaultReason,
+}: {
+  lead: Lead;
+  open: boolean;
+  onClose: () => void;
+  onDone: (l: Lead) => void;
+  /** Saiu do pipeline pelo botão do card: já vem com o motivo marcado. */
+  defaultReason?: LeadLostReason;
+}) {
+  const [reason, setReason] = useState<LeadLostReason | "">(defaultReason ?? "");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   /** Data de volta (ex-Nurture): padrão 7 dias no B2C e 14 no B2B. */
-  const [comeBack, setComeBack] = useState(false);
+  const [comeBack, setComeBack] = useState(defaultReason === "no_reply" || defaultReason === "timing");
   const [comeBackOn, setComeBackOn] = useState(() => diasDaqui(lead.segment === "b2b" ? 14 : 7));
 
   const submit = async () => {

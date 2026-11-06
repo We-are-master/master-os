@@ -5,6 +5,7 @@ export const OS_PAGE_HELP: Readonly<Record<string, string>> = {
   "Clients": "Manage individual client records, addresses and service history.",
   "Partners": "Manage service partners, documents, rates, job history and self-bills.",
   "Leads": "Manage residential and business enquiries from first contact to conversion.",
+  "CRM": "Pipeline has every lead and quote on one board. Leads is the same list as a table.",
   "Settings": "Manage business settings, pricing, AI agents, users and access permissions.",
   "Pricing": "Manage service prices, labour rates, material costs and quote calculations.",
   "Properties": "Manage service locations linked to client accounts.",

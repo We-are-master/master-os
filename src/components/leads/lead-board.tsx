@@ -73,10 +73,12 @@ function BoardCard({
   dragging,
   onDragState,
   onOpen,
+  onLose,
   stageLabel,
 }: {
   lead: Lead;
   stageLabel: string;
+  onLose?: (l: Lead) => void;
   quote?: LeadQuote | null;
   accountName?: string | null;
   semEntrada: boolean;
@@ -132,7 +134,7 @@ function BoardCard({
         }
       }}
       className={cn(
-        "w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
+        "group/card w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
         readyToSend
           ? "border-success ring-2 ring-success/15"
           : fresh
@@ -159,6 +161,24 @@ function BoardCard({
           )}
           <span className="truncate">{lead.name || "No name"}</span>
         </p>
+        <span className="flex shrink-0 items-center gap-1">
+        {onLose && isOpenStage(stage) ? (
+          <button
+            type="button"
+            draggable={false}
+            onClick={(e) => {
+              e.stopPropagation();
+              onLose(lead);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            aria-label={`Move ${lead.name || "lead"} to Lost`}
+            title="Out of the pipeline: move to Lost (no reply, price…)"
+            className="inline-flex h-5 items-center gap-0.5 rounded-md px-1 text-[10px] font-semibold text-text-tertiary opacity-0 transition hover:bg-danger-light hover:text-danger focus:opacity-100 group-hover/card:opacity-100"
+          >
+            <XCircle className="h-3 w-3" aria-hidden />
+            Lost
+          </button>
+        ) : null}
         <span
           className={cn(
             "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
@@ -173,6 +193,7 @@ function BoardCard({
             <Home className="h-3 w-3" aria-hidden />
           )}
           {SEGMENT_LABEL[segment]}
+        </span>
         </span>
       </div>
 
@@ -368,6 +389,7 @@ export function LeadBoard({
   onOpen,
   onMove,
   canRename = false,
+  onLose,
 }: {
   columns: Record<string, Lead[]>;
   counts: Record<string, number>;
@@ -380,6 +402,8 @@ export function LeadBoard({
   onMove: (l: Lead, to: LeadStage) => void;
   /** Admin renomeia a coluna (vale para a equipe toda). */
   canRename?: boolean;
+  /** Botão Lost do card: tira do pipeline (sem resposta, preço...). */
+  onLose?: (l: Lead) => void;
 }) {
   const STAGE_LABEL = useStageLabels();
   const [dragId, setDragId] = useState<string | null>(null);
@@ -459,6 +483,7 @@ export function LeadBoard({
                       key={l.id}
                       lead={l}
                       stageLabel={STAGE_LABEL[l.stage ?? "new"]}
+                      onLose={onLose}
                       quote={quotes[l.id]}
                       accountName={
                         l.account_id ? accountNames[l.account_id] : null

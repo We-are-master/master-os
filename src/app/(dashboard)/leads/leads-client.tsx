@@ -16,7 +16,7 @@ import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
-import type { CatalogService, Lead, LeadSegment, LeadStage, LeadStatus, LeadUrgency } from "@/types/database";
+import type { CatalogService, Lead, LeadLostReason, LeadSegment, LeadStage, LeadStatus, LeadUrgency } from "@/types/database";
 import { useRouter } from "next/navigation";
 import { LeadQuotingModal } from "@/components/leads/lead-quoting-modal";
 import { LeadLostModal } from "@/components/leads/lead-lost-modal";
@@ -221,6 +221,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [quotingLead, setQuotingLead] = useState<Lead | null>(null);
   /** Card solto em Lost: motivo e data de volta. */
   const [lostLead, setLostLead] = useState<Lead | null>(null);
+  const [lostDefault, setLostDefault] = useState<LeadLostReason | undefined>(undefined);
   const router = useRouter();
   const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
   const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
@@ -356,7 +357,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       const liveQuote = q && q.status !== "rejected" && q.status !== "converted_to_job" ? q : null;
       if (from === to) return;
       if (from === "won") return void toast.info("This lead is already a job.");
-      if (to === "lost") return setLostLead(lead);
+      if (to === "lost") {
+        setLostDefault(undefined);
+        return setLostLead(lead);
+      }
       if (to === "won") {
         toast.info("Won comes from the job. Use Mark won · create job on the lead.");
         openLead(lead);
@@ -800,12 +804,12 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     <PageTransition>
       <div className="-mt-2 min-w-0 space-y-4">
         <PageHeader
-          title="Leads"
-          subtitle="Every lead and quote request, newest first. Updates live as tickets arrive."
+          title="CRM"
+          subtitle="Pipeline has every lead and quote on one board, newest first. Leads is the same list as a table. Updates live as tickets arrive."
           titleAddon={
             <div className="flex flex-wrap items-center gap-2">
-              <SegmentToggle value={segment} onChange={setSegment} />
               <ViewToggle value={view} onChange={setView} />
+              <SegmentToggle value={segment} onChange={setSegment} />
             </div>
           }
         >
@@ -841,6 +845,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             platformAccounts={platformAccounts}
             onMove={(l, to) => void onMove(l, to)}
             canRename={profile?.role === "admin"}
+            onLose={(l) => {
+              setLostDefault("no_reply");
+              setLostLead(l);
+            }}
             loading={sideLoading}
             onOpen={openLead}
           />
@@ -884,6 +892,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       {lostLead ? (
         <LeadLostModal
           lead={lostLead}
+          defaultReason={lostDefault}
           open
           onClose={() => setLostLead(null)}
           onDone={() => {

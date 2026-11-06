@@ -328,7 +328,8 @@ const DEFAULT_NAVIGATION: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { label: "Leads", href: "/leads", icon: "user-circle", permission: "leads" },
+      // CRM (06/11/2026): Pipeline (board de tudo) e Leads (lista).
+      { label: "CRM", href: "/leads", icon: "user-circle", permission: "leads" },
       { ...LEADS_NAV_ITEM },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },

@@ -82,12 +82,12 @@ export type LeadsView = "board" | "list";
 export function ViewToggle({ value, onChange }: { value: LeadsView; onChange: (v: LeadsView) => void }) {
   return (
     <Segmented
-      label="View"
+      label="CRM view"
       value={value}
       onChange={onChange}
       options={[
-        { value: "board", label: "Board" },
-        { value: "list", label: "List" },
+        { value: "board", label: "Pipeline" },
+        { value: "list", label: "Leads" },
       ]}
     />
   );
