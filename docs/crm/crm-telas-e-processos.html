@@ -1,0 +1,561 @@
+<title>CRM: telas e processos</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: mesma prancha do desenho do CRM; telas em molduras largas com rolagem lateral, processos em raias */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --ink:#141922; --muted:#5A6473; --line:#D8DEE6; --accent:#0F6E68; --bad:#C2410C; --ok:#1D8A57;
+  --s-new:#2F6FEB; --s-talk:#6A55D4; --s-quoting:#B7800A; --s-sent:#D2601A; --s-acc:#9A3DB6; --s-won:#1D8A57; --s-lost:#7F8896; --s-ops:#0F6E68;
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1116; --surface:#161B22; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A313C; --accent:#3FC1B5; --bad:#F08A4B; --ok:#4CC48A;
+  --s-new:#6E9BFF; --s-talk:#9C8BF0; --s-quoting:#E2AE3A; --s-sent:#F08A4B; --s-acc:#C77BE0; --s-won:#4CC48A; --s-lost:#8D96A4; --s-ops:#3FC1B5; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1116; --surface:#161B22; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A313C; --accent:#3FC1B5; --bad:#F08A4B; --ok:#4CC48A;
+  --s-new:#6E9BFF; --s-talk:#9C8BF0; --s-quoting:#E2AE3A; --s-sent:#F08A4B; --s-acc:#C77BE0; --s-won:#4CC48A; --s-lost:#8D96A4; --s-ops:#3FC1B5; color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3,h4{font-family:var(--display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(30px,5vw,46px);font-stretch:85%;font-weight:800;line-height:1.05}
+h2{font-size:24px;font-stretch:90%;font-weight:700}
+h3{font-size:17px;font-weight:700}
+p{margin:0;max-width:70ch}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.lede{color:var(--muted);font-size:17px}
+.muted{color:var(--muted)}
+code{font-family:var(--mono);font-size:.88em}
+.sec{display:flex;flex-direction:column;gap:18px}
+.sec-head{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:22px}
+.toc{display:flex;flex-wrap:wrap;gap:8px}
+.toc a{font-size:13px;color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px}
+.toc a:hover{border-color:var(--accent)}
+.scroll{overflow-x:auto;border-radius:12px}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--c);display:inline-block}
+
+/* respostas */
+.answers{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
+.ans{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.ans .q{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.ans b.v{font-family:var(--display);font-size:18px}
+.ans p{font-size:14px}
+
+/* tabelas */
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+.tbl{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+.tbl table{min-width:760px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;white-space:nowrap}
+.zs{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.yes{color:var(--ok);font-weight:600} .no{color:var(--bad);font-weight:600}
+
+/* telas: moldura */
+.frame{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:1000px;font-size:13px}
+.frame.sm{min-width:720px;max-width:760px}
+.fbar{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line)}
+.fbar strong{font-family:var(--display);font-size:17px}
+.fbar .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg span{padding:3px 10px;color:var(--muted)} .seg span.on{background:var(--ink);color:var(--surface)}
+.btn{padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:12px;white-space:nowrap}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.btn.g{background:var(--s-won);border-color:var(--s-won);color:var(--surface)}
+.btn.off{opacity:.45}
+.chip{font-family:var(--mono);font-size:10.5px;padding:0 6px;border-radius:4px;border:1px solid var(--line);white-space:nowrap}
+.st{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:12px;white-space:nowrap}
+.late{color:var(--bad)}
+.ex{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fbody{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.today{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tcard{border:1px solid var(--line);border-radius:8px;padding:9px 12px;display:flex;flex-direction:column;gap:2px;background:var(--bg)}
+.why{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em}
+.board{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+.col{background:var(--bg);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.col-h{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px}
+.col-h em{margin-left:auto;font-style:normal;color:var(--muted);font-family:var(--mono)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 8px;display:flex;flex-direction:column;gap:3px}
+.card .m{display:flex;justify-content:space-between;gap:4px;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.ready{font-family:var(--mono);font-size:10.5px}
+.split{display:grid;grid-template-columns:1fr 380px}
+.pane{padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.pane.side{border-left:1px solid var(--line);background:var(--bg)}
+.tabs{display:flex;gap:16px;border-bottom:1px solid var(--line)}
+.tabs span{padding:6px 0;color:var(--muted);font-weight:600;font-size:12.5px}
+.tabs span.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+.field{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--surface);min-width:0}
+.field small{display:block;color:var(--muted);font-size:11px}
+.field.need{border-color:var(--bad)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.check{display:flex;flex-direction:column;gap:5px}
+.check div{display:grid;grid-template-columns:18px 130px 1fr;gap:6px;font-size:12.5px}
+.check .k{color:var(--muted)}
+.ok-i{color:var(--ok);font-weight:700} .no-i{color:var(--bad);font-weight:700}
+.tl{display:flex;flex-direction:column;gap:7px;border-left:2px solid var(--line);padding-left:10px}
+.tl div{font-size:12.5px} .tl time{color:var(--muted);font-family:var(--mono);font-size:11px;margin-right:6px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ffoot{display:flex;gap:8px;align-items:center;padding:11px 16px;border-top:1px solid var(--line);background:var(--bg)}
+.ffoot .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.label{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.list td{font-size:12.5px} .list td:first-child{font-weight:600}
+.radio{display:flex;flex-direction:column;gap:6px}
+.radio span{display:flex;gap:8px;align-items:center}
+.rb{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--muted);display:inline-block}
+.rb.on{border-color:var(--accent);background:radial-gradient(var(--accent) 45%,transparent 50%)}
+.msg{max-width:78%;border-radius:10px;padding:8px 11px;font-size:12.5px}
+.msg.in{background:var(--bg);border:1px solid var(--line)}
+.msg.out{background:color-mix(in srgb,var(--accent) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--surface));align-self:flex-end}
+.msg small{display:block;color:var(--muted);font-family:var(--mono);font-size:10.5px}
+.note{font-size:13.5px;color:var(--muted);max-width:80ch}
+
+/* processos */
+.lanes{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;overflow-x:auto}
+.lanes svg{display:block}
+.lane-bg{fill:var(--bg)}
+.lane-t{fill:var(--muted);font-family:var(--mono);font-size:11px;letter-spacing:.06em}
+.lk{fill:none;stroke:var(--muted);stroke-width:1.3}
+.ah{fill:var(--muted)}
+.lk-t{fill:var(--muted);font-family:var(--body);font-size:11px}
+.stepbox{width:100%;height:100%;box-sizing:border-box;border:1.4px solid var(--c);background:color-mix(in srgb,var(--c) 11%,var(--surface));border-radius:8px;padding:6px 8px;font-family:var(--body);font-size:11.8px;line-height:1.3;color:var(--ink);display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.stepbox b{font-size:12.5px;font-family:var(--display);color:var(--ink);font-weight:700}
+.stepbox span{color:var(--muted)}
+.wa-line{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;align-items:stretch}
+.wbox{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;font-size:13.5px}
+.wbox.off{border-style:dashed;opacity:.75}
+.wbox b{font-family:var(--display);font-size:15px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:640px){.answers,.wa-line{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+
+<header class="sec" style="gap:12px">
+  <div class="eyebrow">Fixfy OS · CRM de Leads e Quotes · parte 2 · 05/11/2026</div>
+  <h1>Telas e processos do CRM</h1>
+  <p class="lede">Respostas sobre WhatsApp, status do Zendesk e dados do job, depois as 9 telas e os 4 processos de ponta a ponta. Os nomes de clientes nas telas são exemplos.</p>
+  <nav class="toc" aria-label="Seções">
+    <a href="#respostas">Respostas</a><a href="#whatsapp">WhatsApp</a><a href="#status">Status no Zendesk</a><a href="#job">Dados do job</a>
+    <a href="#t-board">Board</a><a href="#t-list">List</a><a href="#t-drawer">Drawer</a><a href="#t-new">New lead</a><a href="#t-quote">Quote</a><a href="#t-won">Won → job</a><a href="#t-lost">Lost · Nurture</a><a href="#t-quotes">Aba Quotes</a><a href="#t-zd">Ticket</a>
+    <a href="#p-b2c">Processo B2C</a><a href="#p-b2b">Processo B2B</a><a href="#p-bid">Quote com lance</a><a href="#p-nurture">Silêncio</a>
+  </nav>
+</header>
+
+<section class="sec" id="respostas">
+  <div class="sec-head"><div class="eyebrow">Respostas</div><h2>As três perguntas</h2></div>
+  <div class="answers">
+    <div class="ans"><span class="q">A API oficial está no Zendesk. Dá para ter no OS também?</span><b class="v">Não precisa: o OS já usa o mesmo número pelo Zendesk</b><p>O número 020 4538 4668 mora numa WABA só, e o Zendesk é quem recebe as respostas. Desde 08/10 o OS manda os templates por esse mesmo número, pela API do Zendesk (Sunshine), porque a Cloud API direta perdeu a permissão. Assim tudo cai na mesma conversa. Ligar a Cloud API direta de novo no OS é possível, mas a conversa ficaria dividida em dois lugares.</p></div>
+    <div class="ans"><span class="q">O CRM conecta 100% com o status do Zendesk?</span><b class="v">A etapa sim, numa direção: OS → Zendesk</b><p>Cada etapa vira um status que o Zendesk já tem (Lead, Needs Quote, Bidding, Awaiting Approval, Awaiting deposit, os status do job). Só falta criar um: Nurture. Do Zendesk para o OS vêm só sinais (cliente respondeu, ticket novo). Mudança manual no ticket é desfeita pelo espelho, como já acontece com os jobs.</p></div>
+    <div class="ans"><span class="q">O CRM tem tudo para criar o job no Won?</span><b class="v">Hoje não. Faltam 6 grupos de dados</b><p>O lead já guarda cliente, endereço, serviço do catálogo, scope e fotos. Faltam data e janela de chegada, tipo do job, preço do cliente, custo do parceiro, entrada paga e o ticket. O desenho põe esses campos no lead e um checklist "Ready for job": o botão Won só acende com tudo verde.</p></div>
+  </div>
+</section>
+
+<section class="sec" id="whatsapp">
+  <div class="sec-head"><div class="eyebrow">WhatsApp</div><h2>Um número, uma conversa</h2><p class="muted">O OS não precisa de um provedor próprio. Ele decide o que mandar e quando, e manda pelo Zendesk.</p></div>
+  <div class="wa-line">
+    <div class="wbox"><span class="label">Número</span><b>020 4538 4668</b><span class="muted">WhatsApp e ligações · uma WABA</span></div>
+    <div class="wbox"><span class="label">Provedor</span><b>Zendesk (Sunshine)</b><span class="muted">recebe as respostas e guarda a conversa no ticket</span></div>
+    <div class="wbox"><span class="label">OS</span><b>Decide e dispara</b><span class="muted">template pela API do Zendesk, nos 3 momentos; registra em lead_events</span></div>
+    <div class="wbox off"><span class="label">Fora</span><b>Cloud API direta</b><span class="muted">sem permissão desde 08/10; ligar de novo dividiria a conversa</span></div>
+  </div>
+</section>
+
+<section class="sec" id="status">
+  <div class="sec-head"><div class="eyebrow">Zendesk</div><h2>Etapa do CRM → status do ticket</h2><p class="muted">O status conta a etapa. Quem precisa responder fica no campo Reply Status, não no status: quando o cliente responde, o Zendesk abre o ticket sozinho, o OS marca a resposta e o espelho devolve o status certo na próxima passada (10 min).</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Etapa no OS</th><th>Status no Zendesk</th><th>Categoria</th><th>Já existe?</th><th>Observação</th></tr></thead>
+    <tbody>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-new)"></span>New</span></td><td class="zs">New · Lead</td><td>open</td><td class="yes">sim</td><td>Entra no Action Required até a primeira resposta</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-talk)"></span>Talking</span></td><td class="zs">Lead · To Call</td><td>open / pending</td><td class="yes">sim</td><td>To Call só se o cliente pedir ligação</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting</span></td><td class="zs">Needs Quote → Bidding → No bids → Quote Ready</td><td>open / pending</td><td class="yes">sim</td><td>O status do quote escolhe qual</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td class="zs">Awaiting Approval</td><td>pending</td><td class="yes">sim</td><td>Régua de 72h roda aqui</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-acc)"></span>Accepted</span></td><td class="zs">Awaiting deposit</td><td>pending</td><td class="yes">sim</td><td>Sai quando o pagamento confirma</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-won)"></span>Won</span></td><td class="zs">Assigning, Scheduled, In progress, Final review, Awaiting payment</td><td>vários</td><td class="yes">sim</td><td>Daqui em diante é o espelho do job</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-lost)"></span>Lost</span></td><td class="zs">Solved + tag do motivo</td><td>solved</td><td class="yes">sim</td><td>O status Lost está desativado, fica Solved</td></tr>
+      <tr><td><span class="st"><span class="dot" style="--c:var(--s-lost)"></span>Nurture</span></td><td class="zs">Nurture</td><td>on-hold</td><td class="no">criar</td><td>Fora do Action Required; volta na data</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="sec" id="job">
+  <div class="sec-head"><div class="eyebrow">Lead → job</div><h2>O que o job precisa e de onde vem</h2><p class="muted">Comparação entre os campos do job no OS e o que o lead guarda hoje. Em vermelho, o que precisa entrar no lead.</p></div>
+  <div class="tbl"><table>
+    <thead><tr><th>O job precisa</th><th>Campo no job</th><th>Lead hoje</th><th>De onde vem no desenho</th></tr></thead>
+    <tbody>
+      <tr><td>Cliente</td><td><code>client_id, client_name</code></td><td class="yes">tem</td><td>Talking: vincular ou criar o cliente (nome + rua do card de origem)</td></tr>
+      <tr><td>Endereço completo</td><td><code>client_address_id, property_address</code></td><td class="yes">tem</td><td>Já existe com autocomplete</td></tr>
+      <tr><td>CCZ e estacionamento</td><td><code>in_ccz, has_free_parking</code></td><td class="no">falta</td><td>Pergunta do Talking</td></tr>
+      <tr><td>Conta</td><td><code>account_id</code></td><td class="yes">tem</td><td>Domínio do e-mail prova a conta</td></tr>
+      <tr><td>Tipo de trabalho</td><td><code>catalog_service_id</code></td><td class="yes">tem</td><td>Um dos 14 nomes do catálogo</td></tr>
+      <tr><td>Scope sem preço</td><td><code>title</code> + scope</td><td class="yes">tem</td><td>limparScope ao criar</td></tr>
+      <tr><td>Data e janela</td><td><code>scheduled_date, scheduled_start_at, scheduled_end_at</code></td><td class="no">falta</td><td>Data desejada no Talking, confirmada no Won</td></tr>
+      <tr><td>Tipo do job</td><td><code>job_kind</code> (one-off, multi-day, recurring)</td><td class="no">falta</td><td>Escolha no Quote</td></tr>
+      <tr><td>Preço do cliente</td><td><code>job_type, rate_basis, hourly_client_rate, client_price</code></td><td class="no">falta</td><td>Da quote, ou do preço de handyman dado no chat</td></tr>
+      <tr><td>Custo do parceiro</td><td><code>partner_cost, hourly_partner_rate</code></td><td class="no">falta</td><td>Lance escolhido, ou régua de repasse</td></tr>
+      <tr><td>Parceiro</td><td><code>partner_id</code></td><td>opcional</td><td>Lance escolhido ou Auto-assign</td></tr>
+      <tr><td>Entrada</td><td>job_payments</td><td class="no">falta</td><td>Regra da conta + link pago no Accepted</td></tr>
+      <tr><td>Ticket</td><td><code>zendesk_ticket_id</code></td><td class="no">falta</td><td>Ligado na criação do lead, o job herda</td></tr>
+      <tr><td>Fotos</td><td>anexos</td><td class="yes">tem</td><td>As do lead passam para o job</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- TELAS -->
+<section class="sec" id="t-board">
+  <div class="sec-head"><div class="eyebrow">Tela 1 · Leads</div><h2>Board com a Fila Today</h2><p class="muted">Abre aqui. Em cima, o que precisa de alguém agora. Os cards do Accepted mostram quantos itens faltam para virar job.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><strong>Leads</strong><span class="seg"><span class="on">All</span><span>B2C</span><span>B2B</span></span><span class="seg"><span class="on">Board</span><span>List</span></span><span class="chip">Owner: any</span><span class="chip">Source: any</span><div class="r"><span class="ex">exemplo</span><span class="btn p">New lead</span></div></div>
+    <div class="fbody">
+      <div class="col-h">Today <em>4</em></div>
+      <div class="today" style="grid-template-columns:repeat(4,1fr)">
+        <div class="tcard"><span class="why" style="color:var(--s-sent)">CLIENTE RESPONDEU · 12 MIN</span><b>Sarah Khan</b><span class="muted">Quote sent · £540 · B2C</span></div>
+        <div class="tcard"><span class="why" style="color:var(--s-new)">NEW · 40 MIN SEM RESPOSTA</span><b>Oakline Lettings</b><span class="muted">Leak under sink · B2B</span></div>
+        <div class="tcard"><span class="why" style="color:var(--s-acc)">ACEITOU E NÃO PAGOU · 1 DIA</span><b>Tom Reid</b><span class="muted">Accepted · £180 · B2C</span></div>
+        <div class="tcard"><span class="why" style="color:var(--s-quoting)">SEM LANCE · 24H</span><b>Wet room UB7</b><span class="muted">Quoting · bidding</span></div>
+      </div>
+      <div class="board">
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-new)"></span>New<em>2</em></div>
+          <div class="card"><b>Oakline Lettings</b><span class="m"><span class="chip">B2B</span><span class="late">40 min</span></span></div>
+          <div class="card"><b>Priya Shah</b><span class="m"><span class="chip">B2C</span><span>5 min</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-talk)"></span>Talking<em>3</em></div>
+          <div class="card"><b>James Ortiz</b><span class="m"><span class="chip">B2C</span><span>amanhã 10h</span></span></div>
+          <div class="card"><b>Northgate PM</b><span class="m"><span class="chip">B2B</span><span>sex</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting<em>1</em></div>
+          <div class="card"><b>Wet room UB7</b><span class="m"><span>bidding</span><span class="late">sem lance</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent<em>2</em></div>
+          <div class="card"><b>Sarah Khan</b><span class="m"><span>£540</span><span class="late">respondeu</span></span></div>
+          <div class="card"><b>Ellis Court</b><span class="m"><span>£1.280</span><span>lembrete 2/2</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-acc)"></span>Accepted<em>2</em></div>
+          <div class="card"><b>Tom Reid</b><span class="m"><span>£180</span><span class="ready late">faltam 2</span></span></div>
+          <div class="card"><b>Grace Lee</b><span class="m"><span>£329</span><span class="ready" style="color:var(--ok)">pronto</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-won)"></span>Won<em>4</em></div>
+          <div class="card"><b>Mia Turner</b><span class="m"><span>£329</span><span>JOB-9812</span></span></div></div>
+        <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-lost)"></span>Nurture<em>6</em></div>
+          <div class="card"><b>Ben Clarke</b><span class="m"><span class="chip">B2C</span><span>volta 12/11</span></span></div></div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<section class="sec" id="t-list">
+  <div class="sec-head"><div class="eyebrow">Tela 2 · Leads</div><h2>List para trabalhar em volume</h2><p class="muted">Mesmos filtros do board. Ordena por próximo passo, o atrasado primeiro.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><strong>Leads</strong><span class="seg"><span class="on">All</span><span>B2C</span><span>B2B</span></span><span class="seg"><span>Board</span><span class="on">List</span></span><span class="seg"><span class="on">Open</span><span>Won</span><span>Lost</span><span>Nurture</span></span><div class="r"><span class="ex">exemplo</span><span class="btn p">New lead</span></div></div>
+    <table class="list">
+      <thead><tr><th>Lead</th><th>Segment</th><th>Source</th><th>Stage</th><th>Value</th><th>Next action</th><th>Last contact</th><th>Owner</th><th>Ticket</th></tr></thead>
+      <tbody>
+        <tr><td>Tom Reid</td><td>B2C</td><td>Site</td><td><span class="st"><span class="dot" style="--c:var(--s-acc)"></span>Accepted</span></td><td>£180</td><td class="late">Cobrar link · ontem</td><td>2 dias</td><td>Office</td><td class="zs">#48190</td></tr>
+        <tr><td>Oakline Lettings</td><td>B2B</td><td>E-mail</td><td><span class="st"><span class="dot" style="--c:var(--s-new)"></span>New</span></td><td>n/a</td><td class="late">Responder · 40 min</td><td>nunca</td><td>Account owner</td><td class="zs">#48230</td></tr>
+        <tr><td>Sarah Khan</td><td>B2C</td><td>Site</td><td><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td>£540</td><td>Responder dúvida · hoje 15h</td><td>12 min</td><td>Office</td><td class="zs">#48213</td></tr>
+        <tr><td>James Ortiz</td><td>B2C</td><td>WhatsApp</td><td><span class="st"><span class="dot" style="--c:var(--s-talk)"></span>Talking</span></td><td>n/a</td><td>Pedir fotos · amanhã 10h</td><td>1 dia</td><td>Office</td><td class="zs">#48201</td></tr>
+        <tr><td>Ellis Court</td><td>B2B</td><td>Account</td><td><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td>£1.280</td><td>Tarefa do dono · sex</td><td>4 dias</td><td>Account owner</td><td class="zs">#48102</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<section class="sec" id="t-drawer">
+  <div class="sec-head"><div class="eyebrow">Tela 3 · Lead aberto</div><h2>Drawer do lead com checklist do job</h2><p class="muted">Quatro abas: Overview, Conversation, Quote, Activity. O checklist "Ready for job" fica sempre visível na lateral e destrava o Won.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><span class="ex">LD-1042</span><strong>Sarah Khan</strong><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span><span class="chip">B2C</span><span class="chip">site</span><span class="chip">ticket #48213</span><div class="r"><span class="btn">Nurture</span><span class="btn">Mark lost</span><span class="btn g off">Mark won · create job</span></div></div>
+    <div class="split">
+      <div class="pane">
+        <div class="tabs"><span class="on">Overview</span><span>Conversation</span><span>Quote</span><span>Activity</span></div>
+        <div class="field"><small>Next action · obrigatório</small>Responder dúvida sobre prazo · hoje 15:00 · Office</div>
+        <div class="grid2">
+          <div class="field"><small>Client</small>Sarah Khan · 07700 900123 · sarah@example.com</div>
+          <div class="field"><small>Address</small>14 Elm Road, Ealing W5 2AB</div>
+          <div class="field"><small>Service</small>General Maintenance</div>
+          <div class="field"><small>Preferred date</small>Sem data ainda</div>
+          <div class="field need"><small>CCZ · parking</small>Não perguntado</div>
+          <div class="field"><small>Job kind</small>One-off</div>
+        </div>
+        <div class="field"><small>Scope (vai ao parceiro, sem preço)</small>Replace kitchen mixer tap and reseal sink edge. Customer supplies tap.</div>
+        <div class="label">Fotos · 3</div>
+        <div class="tl">
+          <div><time>14:02</time>Cliente respondeu no WhatsApp: "Can you do next Tuesday?"</div>
+          <div><time>ontem</time>Lembrete da quote 1/2 por e-mail</div>
+          <div><time>02/11</time>Quote Q-311 enviada no ticket · £540 fixed</div>
+          <div><time>01/11</time>Etapa Talking → Quoting</div>
+          <div><time>01/11</time>Lead entrou pelo site · ticket #48213</div>
+        </div>
+      </div>
+      <aside class="pane side">
+        <h4>Ready for job · 8 de 11</h4>
+        <div class="check">
+          <div><span class="ok-i">✓</span><span class="k">Client</span><span>vinculado</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Address</span><span>completo</span></div>
+          <div><span class="no-i">✕</span><span class="k">CCZ · parking</span><span>perguntar</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Service</span><span>catálogo</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Scope</span><span>sem preço</span></div>
+          <div><span class="no-i">✕</span><span class="k">Date · window</span><span>falta confirmar</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Client price</span><span>£540 fixed · Q-311</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Partner cost</span><span>£360 · lance</span></div>
+          <div><span class="no-i">✕</span><span class="k">Deposit</span><span>link enviado, não pago</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Ticket</span><span>#48213</span></div>
+          <div><span class="ok-i">✓</span><span class="k">Account</span><span>Fixfy</span></div>
+        </div>
+        <p class="note">Com tudo verde, o botão Mark won abre a criação do job já preenchida.</p>
+      </aside>
+    </div>
+  </div></div>
+</section>
+
+<section class="sec" id="t-new">
+  <div class="sec-head"><div class="eyebrow">Tela 4 · Criar</div><h2>New lead</h2><p class="muted">Rápido de preencher. O ticket é obrigatório: liga a um ticket que já existe. Abrir ticket novo é um botão separado, usado só quando o dono mandar.</p></div>
+  <div class="scroll"><div class="frame sm">
+    <div class="fbar"><strong>New lead</strong><div class="r"><span class="ex">exemplo</span></div></div>
+    <div class="fbody">
+      <div class="grid2">
+        <div class="field"><small>Segment</small><span class="seg"><span class="on">B2C</span><span>B2B</span></span></div>
+        <div class="field"><small>Source</small>Site · WhatsApp · E-mail · Phone · Checkatrade · Account</div>
+        <div class="field"><small>Client</small>Buscar por nome, telefone ou e-mail · ou criar</div>
+        <div class="field"><small>Account (B2B)</small>Pelo domínio do e-mail</div>
+      </div>
+      <div class="field"><small>Address</small>Autocomplete · rua, cidade, postcode</div>
+      <div class="grid2">
+        <div class="field"><small>Service</small>Um dos 14 do catálogo</div>
+        <div class="field"><small>Urgency</small>Low · Medium · High · Urgent</div>
+      </div>
+      <div class="field"><small>Scope</small>O que o cliente pediu, sem preço</div>
+      <div class="grid2">
+        <div class="field"><small>Zendesk ticket · obrigatório</small>#48230 · Leak under sink</div>
+        <div class="field"><small>Next action · obrigatório</small>Responder · hoje 11:30</div>
+      </div>
+    </div>
+    <div class="ffoot"><span class="btn">Open new ticket</span><div class="r"><span class="btn">Cancel</span><span class="btn p">Create lead</span></div></div>
+  </div></div>
+</section>
+
+<section class="sec" id="t-quote">
+  <div class="sec-head"><div class="eyebrow">Tela 5 · Preço</div><h2>Quote dentro do lead</h2><p class="muted">Dois caminhos. Preço agora usa a régua de handyman e vai direto para Quote sent. Quote sob medida chama lances e passa por Quoting.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><span class="ex">LD-1042</span><strong>Quote · Sarah Khan</strong><div class="r"><span class="seg"><span>Price now</span><span class="on">Bespoke quote</span></span></div></div>
+    <div class="split">
+      <div class="pane">
+        <div class="grid3">
+          <div class="field"><small>Pricing</small><span class="seg"><span class="on">Fixed</span><span>Hourly</span></span></div>
+          <div class="field"><small>Job kind</small>One-off</div>
+          <div class="field"><small>Deposit (regra da conta)</small>50% · £270</div>
+        </div>
+        <table class="list">
+          <thead><tr><th>Line</th><th>Qty</th><th>Client</th><th>Partner</th></tr></thead>
+          <tbody>
+            <tr><td>Replace kitchen mixer tap</td><td>1</td><td>£390</td><td>£260</td></tr>
+            <tr><td>Reseal sink edge</td><td>1</td><td>£150</td><td>£100</td></tr>
+            <tr><td>Total</td><td></td><td>£540</td><td>£360 · margem 33%</td></tr>
+          </tbody>
+        </table>
+        <div class="field"><small>Mensagem no ticket</small>Hi Sarah, here is your quote for the tap and sink reseal. You can accept and pay the deposit from the link below.</div>
+      </div>
+      <aside class="pane side">
+        <h4>Bids · 2</h4>
+        <div class="field"><small>Mike R. · Plumbing · 4.9</small>£360 · disponível ter</div>
+        <div class="field"><small>K&amp;S Services · 4.6</small>£410 · disponível qui</div>
+        <p class="note">O lance escolhido vira custo do parceiro e parceiro do job. O preço ao cliente é nosso, nunca o do parceiro com margem automática.</p>
+      </aside>
+    </div>
+    <div class="ffoot"><span class="ex">status: quote_ready</span><div class="r"><span class="btn">Save draft</span><span class="btn p">Send in ticket</span></div></div>
+  </div></div>
+</section>
+
+<section class="sec" id="t-won">
+  <div class="sec-head"><div class="eyebrow">Tela 6 · Virar job</div><h2>Mark won · create job</h2><p class="muted">Tudo vem do lead e da quote. O que faltar aparece em vermelho e bloqueia o botão. O job usa o mesmo ticket e o lead fecha como Won.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><strong>Create job from LD-1042</strong><span class="chip">Q-311</span><span class="chip">ticket #48213</span><div class="r"><span class="ex">exemplo</span></div></div>
+    <div class="fbody">
+      <div class="grid3">
+        <div class="field"><small>Client</small>Sarah Khan</div>
+        <div class="field"><small>Property</small>14 Elm Road, W5 2AB · not CCZ · free parking</div>
+        <div class="field"><small>Service</small>General Maintenance</div>
+      </div>
+      <div class="field"><small>Scope</small>Replace kitchen mixer tap and reseal sink edge. Customer supplies tap.</div>
+      <div class="grid3">
+        <div class="field"><small>Date</small>Tue 11/11</div>
+        <div class="field"><small>Arrival window</small>08:00 to 10:00</div>
+        <div class="field"><small>Job kind</small>One-off</div>
+      </div>
+      <div class="grid3">
+        <div class="field"><small>Client price</small>£540 fixed</div>
+        <div class="field"><small>Partner</small>Mike R. · £360 (do lance)</div>
+        <div class="field"><small>Deposit</small>£270 pago · Stripe · 04/11</div>
+      </div>
+      <p class="note">Ao criar: fatura nasce com o preço, o ticket muda para Scheduled pelo espelho, a confirmação sai pelo canal da conta e o lead registra o job em <code>job_id</code>.</p>
+    </div>
+    <div class="ffoot"><span class="ex">11 de 11 prontos</span><div class="r"><span class="btn">Back to lead</span><span class="btn g">Create job</span></div></div>
+  </div></div>
+</section>
+
+<section class="sec" id="t-lost">
+  <div class="sec-head"><div class="eyebrow">Tela 7 · Fechar sem job</div><h2>Mark lost e Nurture</h2><p class="muted">Lost exige motivo. Nurture exige data de volta. Os dois param a régua.</p></div>
+  <div style="display:flex;flex-wrap:wrap;gap:16px">
+    <div class="frame sm" style="min-width:0;flex:1 1 320px">
+      <div class="fbar"><strong>Mark lost</strong></div>
+      <div class="fbody">
+        <div class="radio">
+          <span><i class="rb"></i>Price</span><span><i class="rb on"></i>Went with someone else</span><span><i class="rb"></i>Timing</span><span><i class="rb"></i>No reply</span><span><i class="rb"></i>Outside area</span><span><i class="rb"></i>Not a job for us</span>
+        </div>
+        <div class="field"><small>Note</small>Found a local plumber cheaper.</div>
+      </div>
+      <div class="ffoot"><div class="r"><span class="btn">Cancel</span><span class="btn p">Mark lost</span></div></div>
+    </div>
+    <div class="frame sm" style="min-width:0;flex:1 1 320px">
+      <div class="fbar"><strong>Nurture</strong></div>
+      <div class="fbody">
+        <div class="field"><small>Come back on</small>Wed 12/11 (7 dias)</div>
+        <div class="field"><small>Reason</small>No reply after reminders</div>
+        <div class="field"><small>On return</small>Volta para Talking com next action "Check in"</div>
+      </div>
+      <div class="ffoot"><div class="r"><span class="btn">Cancel</span><span class="btn p">Pause lead</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="t-quotes">
+  <div class="sec-head"><div class="eyebrow">Tela 8 · Quotes</div><h2>A aba Quotes vira filtro do CRM</h2><p class="muted">Mostra só leads em Quoting, Quote sent e Accepted, com a quote na frente. Clicar abre o mesmo drawer do lead, na aba Quote.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><strong>Quotes</strong><span class="seg"><span class="on">All</span><span>Quoting</span><span>Quote sent</span><span>Accepted</span></span><span class="seg"><span class="on">All</span><span>B2C</span><span>B2B</span></span><div class="r"><span class="ex">exemplo</span></div></div>
+    <table class="list">
+      <thead><tr><th>Quote</th><th>Lead</th><th>Service</th><th>Stage</th><th>Quote status</th><th>Bids</th><th>Client</th><th>Margin</th><th>Next action</th><th>Age</th></tr></thead>
+      <tbody>
+        <tr><td>Q-318</td><td>Wet room UB7</td><td>Bathroom</td><td><span class="st"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting</span></td><td class="zs">bidding</td><td class="late">0</td><td>n/a</td><td>n/a</td><td class="late">Chamar mais parceiros</td><td>2 dias</td></tr>
+        <tr><td>Q-311</td><td>Sarah Khan</td><td>General Maintenance</td><td><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td class="zs">awaiting_customer</td><td>2</td><td>£540</td><td>33%</td><td>Responder · hoje 15h</td><td>3 dias</td></tr>
+        <tr><td>Q-305</td><td>Ellis Court</td><td>Painting</td><td><span class="st"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td class="zs">awaiting_customer</td><td>3</td><td>£1.280</td><td>31%</td><td>Tarefa do dono · sex</td><td>6 dias</td></tr>
+        <tr><td>Q-299</td><td>Tom Reid</td><td>General Maintenance</td><td><span class="st"><span class="dot" style="--c:var(--s-acc)"></span>Accepted</span></td><td class="zs">awaiting_payment</td><td>n/a</td><td>£180</td><td>40%</td><td class="late">Cobrar link · ontem</td><td>4 dias</td></tr>
+      </tbody>
+    </table>
+  </div></div>
+</section>
+
+<section class="sec" id="t-zd">
+  <div class="sec-head"><div class="eyebrow">Tela 9 · Zendesk</div><h2>O mesmo lead visto no ticket</h2><p class="muted">A equipe conversa no Zendesk e vê a etapa sem trocar de tela. Os campos do CRM no ticket são só leitura: mudança se faz no OS.</p></div>
+  <div class="scroll"><div class="frame">
+    <div class="fbar"><span class="zs">#48213</span><strong>Quote sent · General Maintenance · Sarah Khan · W5 2AB</strong><div class="r"><span class="chip">via whatsapp</span><span class="ex">exemplo</span></div></div>
+    <div class="split" style="grid-template-columns:1fr 300px">
+      <div class="pane" style="gap:8px">
+        <div class="msg in"><small>Sarah · site · 01/11</small>Kitchen tap is leaking and the sink edge needs resealing.</div>
+        <div class="msg out"><small>Fixfy Team · WhatsApp enquiry · 01/11</small>Hi Sarah, thanks for getting in touch. Could you send a couple of photos?</div>
+        <div class="msg out"><small>Fixfy Team · e-mail · 02/11</small>Your quote Q-311 is ready: £540. Accept and pay the deposit from the link.</div>
+        <div class="msg in"><small>Sarah · WhatsApp · 14:02</small>Can you do next Tuesday?</div>
+      </div>
+      <aside class="pane side">
+        <div class="field"><small>Status</small>Awaiting Approval</div>
+        <div class="field"><small>Reply Status</small><span class="late">reply_awaiting</span></div>
+        <div class="field"><small>CRM stage</small>Quote sent</div>
+        <div class="field"><small>Next action</small>Responder dúvida sobre prazo · hoje 15:00</div>
+        <div class="field"><small>Lead</small>LD-1042 · abrir no OS</div>
+        <div class="field"><small>Title</small>Quote sent · General Maintenance · Sarah Khan · W5 2AB</div>
+      </aside>
+    </div>
+  </div></div>
+</section>
+
+<!-- PROCESSOS -->
+<section class="sec" id="p-b2c">
+  <div class="sec-head"><div class="eyebrow">Processo 1</div><h2>Pedido B2C do site até o job</h2><p class="muted">Cada caixa é um passo, cada raia é quem faz. A cor é a etapa do lead naquele momento.</p></div>
+  <div class="lanes" data-proc="b2c"></div>
+</section>
+
+<section class="sec" id="p-b2b">
+  <div class="sec-head"><div class="eyebrow">Processo 2</div><h2>Pedido de uma conta B2B</h2><p class="muted">Mesmas etapas, outra régua: só e-mail, preço da conta, entrada conforme os termos.</p></div>
+  <div class="lanes" data-proc="b2b"></div>
+</section>
+
+<section class="sec" id="p-bid">
+  <div class="sec-head"><div class="eyebrow">Processo 3</div><h2>Quote sob medida com lance de parceiro</h2><p class="muted">O que acontece dentro de Quoting até o pagamento.</p></div>
+  <div class="lanes" data-proc="bid"></div>
+</section>
+
+<section class="sec" id="p-nurture">
+  <div class="sec-head"><div class="eyebrow">Processo 4</div><h2>Silêncio, Nurture e volta</h2><p class="muted">Nenhum lead fica parado: ou alguém age, ou a régua age, ou ele dorme com data para voltar.</p></div>
+  <div class="lanes" data-proc="nurture"></div>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var C={new:"--s-new",talk:"--s-talk",quoting:"--s-quoting",sent:"--s-sent",acc:"--s-acc",won:"--s-won",lost:"--s-lost",ops:"--s-ops"};
+  var P={
+    b2c:{lanes:["Cliente","Zendesk","OS · CRM","Operação"],steps:[
+      [0,"new","Pede pelo site","Formulário ou booking"],
+      [1,"new","Ticket criado","status New"],
+      [2,"new","Lead New","ligado ao ticket · next action em 15 min"],
+      [1,"new","Primeiro contato","WhatsApp 1 enquiry + e-mail"],
+      [0,"talk","Responde","fotos e data desejada"],
+      [2,"talk","Talking","completa cliente, endereço, serviço, data"],
+      [2,"sent","Preço","régua de handyman, ou Processo 3"],
+      [1,"sent","Quote no ticket","Awaiting Approval · lembrete 72h"],
+      [0,"acc","Aceita e paga","entrada pelo link"],
+      [2,"won","Won","checklist verde · cria o job"],
+      [3,"ops","Job","mesmo ticket · parceiro · fatura"],
+      [1,"ops","Espelho do job","Scheduled · WhatsApp 2 em 24h"]
+    ]},
+    b2b:{lanes:["Conta","Zendesk","OS · CRM","Dono da conta","Operação"],steps:[
+      [0,"new","Pede por e-mail","contato da conta"],
+      [1,"new","Ticket na org","o domínio prova a conta"],
+      [2,"new","Lead New · b2b","account_id ligado"],
+      [3,"talk","Responde","por e-mail no ticket"],
+      [2,"talk","Talking","endereço, acesso, data"],
+      [2,"sent","Preço da conta","−5%, 1º job 10%, ou quote"],
+      [1,"sent","Quote por e-mail","Awaiting Approval · 1 lembrete"],
+      [0,"acc","Aprova","no link ou por e-mail"],
+      [2,"won","Won","entrada conforme a conta"],
+      [4,"ops","Job","report e fatura por e-mail"],
+      [0,"ops","Paga a fatura","cobrança só por e-mail"]
+    ]},
+    bid:{lanes:["Cliente","OS · CRM","Parceiros","Zendesk"],steps:[
+      [1,"quoting","Quoting","Needs Quote · visita se precisar"],
+      [2,"quoting","Convite de lance","só parceiro do serviço"],
+      [2,"quoting","Lances chegam","24h sem lance = No bids"],
+      [1,"quoting","Monta o preço","nosso preço, lance vira custo"],
+      [3,"sent","Quote no ticket","Quote Ready → Awaiting Approval"],
+      [0,"acc","Aceita","no link da quote"],
+      [3,"acc","Awaiting deposit","link de pagamento"],
+      [0,"acc","Paga","entrada da conta"],
+      [1,"won","Won","parceiro do lance vai ao job"]
+    ]},
+    nurture:{lanes:["Cliente","OS · CRM","Zendesk"],steps:[
+      [1,"talk","Next action vence","sobe na Fila Today"],
+      [2,"talk","Régua","e-mail d1, d2, d3 no ticket"],
+      [0,"lost","Sem resposta","fim da régua"],
+      [1,"lost","Nurture","7 dias B2C, 14 B2B"],
+      [2,"lost","Status Nurture","on-hold, fora do Action Required"],
+      [1,"talk","Data chega","volta para Talking"],
+      [2,"talk","Retomada","e-mail de check-in"],
+      [0,"talk","Responde","a qualquer hora reabre na Fila Today"]
+    ]}
+  };
+  var NS="http://www.w3.org/2000/svg", LW=104, CW=158, BW=140, BH=66, LH=86;
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e}
+  document.querySelectorAll(".lanes[data-proc]").forEach(function(host){
+    var p=P[host.getAttribute("data-proc")]; if(!p)return;
+    var W=LW+p.steps.length*CW+10, H=p.lanes.length*LH+6;
+    var svg=el("svg",{viewBox:"0 0 "+W+" "+H,width:W,height:H,role:"img","aria-label":"Processo em raias"});
+    var id="m"+Math.random().toString(36).slice(2,7);
+    var d=el("defs",{}),m=el("marker",{id:id,viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"7",markerHeight:"7",orient:"auto"});
+    m.appendChild(el("path",{d:"M0 0L10 5L0 10z","class":"ah"}));d.appendChild(m);svg.appendChild(d);
+    p.lanes.forEach(function(l,i){
+      svg.appendChild(el("rect",{x:0,y:i*LH+3,width:W,height:LH-6,rx:8,"class":"lane-bg"}));
+      var t=el("text",{x:12,y:i*LH+LH/2+4,"class":"lane-t"});t.textContent=l.toUpperCase();svg.appendChild(t);
+    });
+    var pos=p.steps.map(function(s,i){return {x:LW+i*CW,y:s[0]*LH+(LH-BH)/2}});
+    for(var i=0;i<pos.length-1;i++){
+      var a=pos[i],b=pos[i+1],x1=a.x+BW,y1=a.y+BH/2,x2=b.x-2,y2=b.y+BH/2,xm=(x1+b.x)/2;
+      var dd=(y1===y2)?"M"+x1+" "+y1+"H"+x2:"M"+x1+" "+y1+"H"+xm+"V"+y2+"H"+x2;
+      svg.appendChild(el("path",{d:dd,"class":"lk","marker-end":"url(#"+id+")"}));
+    }
+    p.steps.forEach(function(s,i){
+      var fo=el("foreignObject",{x:pos[i].x,y:pos[i].y,width:BW,height:BH});
+      var div=document.createElement("div");div.className="stepbox";div.style.setProperty("--c","var("+C[s[1]]+")");
+      var b=document.createElement("b");b.textContent=(i+1)+" · "+s[2];
+      var sp=document.createElement("span");sp.textContent=s[3];
+      div.appendChild(b);div.appendChild(sp);fo.appendChild(div);svg.appendChild(fo);
+    });
+    host.appendChild(svg);
+  });
+})();
+</script>

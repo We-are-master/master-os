@@ -60,7 +60,7 @@ export function LeadOffersCard({ leadId, published }: { leadId: string; publishe
       ) : offers.length === 0 ? (
         <p className="text-xs text-text-tertiary">
           {published
-            ? "No partner has contacted this lead yet. It's live in the Trade Portal — responses appear here."
+            ? "No partner has contacted this lead yet. It's live in the Trade Portal. Responses appear here."
             : "Publish this lead to offer it to partners. Once a partner reaches out from the Trade Portal, they show here."}
         </p>
       ) : (

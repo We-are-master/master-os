@@ -50,6 +50,7 @@ import {
 } from "lucide-react";
 import { QuoteBidLinksModal } from "@/components/quotes/quote-bid-links-modal";
 import { useRouter, useSearchParams } from "next/navigation";
+import { CrmLeadChip } from "@/components/leads/crm-lead-chip";
 import { formatCurrency, cn, normalizeCalendarDateToYmd, formatYmdUkDisplay } from "@/lib/utils";
 import { pricingModeLabel } from "@/lib/pricing-mode-labels";
 import { toast } from "sonner";
@@ -5212,14 +5213,18 @@ function QuoteDetailDrawer({
       title={bidPayloadTrimmedString(quote.reference as unknown) || "Quote"}
       titleClassName="font-mono text-[17px] font-medium tracking-tight"
       titleAddon={
-        quote.external_source === "zendesk" && quote.external_ref?.trim() ? (
-          <ZendeskTicketBadge
-            source={quote.external_source}
-            ref={quote.external_ref}
-            size="sm"
-            zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
-          />
-        ) : null
+        <span className="inline-flex items-center gap-1.5">
+          {quote.external_source === "zendesk" && quote.external_ref?.trim() ? (
+            <ZendeskTicketBadge
+              source={quote.external_source}
+              ref={quote.external_ref}
+              size="sm"
+              zendeskSubdomain={process.env.NEXT_PUBLIC_ZENDESK_SUBDOMAIN ?? null}
+            />
+          ) : null}
+          {/* O card desta quote no CRM (06/11/2026). */}
+          <CrmLeadChip quoteId={quote.id} leadId={quote.lead_id ?? null} />
+        </span>
       }
       subtitle={bidPayloadTrimmedString(quote.title as unknown) || undefined}
       headerExtra={!routingDraft ? <QuoteDrawerProgress status={drawerQuoteStatus} /> : null}

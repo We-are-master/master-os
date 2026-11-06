@@ -20,6 +20,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 export const HORAS_ATE_NO_BIDS = 24;
 export const HORAS_ATE_FECHAR = 48;
@@ -246,6 +247,7 @@ export async function fecharQuoteSemLance(sb: SupabaseClient, q: QuoteSemLance, 
     })
     .eq("id", q.id);
   if (error) return { enviado: true, linha: `sent, but the quote did not close: ${error.message}` };
+  await sincronizarLeadDaQuote(sb, q.id);
   if (deps.sincronizarStatus) await deps.sincronizarStatus(q.id).catch(() => undefined);
   return { enviado: true, linha: "not-able-to-quote sent, quote closed" };
 }

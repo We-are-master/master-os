@@ -79,7 +79,8 @@ const iconMap: Record<string, PhosphorIcon> = {
 
 /** URLs that stay reachable by direct link but are not shown in the sidebar. */
 // /agents e /services são abas do Settings (14/10/2026); o menu salvo no banco ainda os traz.
-const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/leads", "/agents", "/services"]);
+// /leads saiu da lista em 06/11/2026: virou o CRM.
+const SIDEBAR_HIDDEN_HREFS = new Set(["/requests", "/compliance", "/ppm", "/school", "/agents", "/services"]);
 
 /** Páginas que são abas do Settings (Agents, Services): acendem o Settings na lateral. */
 const SETTINGS_TAB_PATHS = ["/agents", "/services"];

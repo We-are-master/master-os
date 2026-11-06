@@ -245,6 +245,27 @@ export async function registrarResposta(sb: SupabaseClient, lead: Record<string,
       : `The team replied to the customer ${onde}. Automatic touches stopped.`;
   await registrarAtividade(sb, lead.id as string, "reply", texto, { meta: { ticket: r.ticketId, tipo: r.tipo, at: r.quando } });
 
+  // CRM (fase 5): o cliente respondeu, agora sim vira lead do funil (Talking), no ticket do lead
+  // do site. Antes da resposta, não (dono, 05/11/2026). Pedido de saída não vira lead.
+  if (r.tipo === "cliente" && !r.pedidoDeSaida) {
+    const { leadDaReservaQueRespondeu } = await import("@/lib/crm/fontes-servidor");
+    await leadDaReservaQueRespondeu(
+      sb,
+      {
+        id: lead.id as string,
+        email: (lead.email as string | null) ?? null,
+        full_name: (lead.full_name as string | null) ?? null,
+        phone: (lead.phone as string | null) ?? null,
+        postcode: (lead.postcode as string | null) ?? null,
+        client_id: (lead.client_id as string | null) ?? null,
+        service_label: (lead.service_label as string | null) ?? null,
+        zendesk_ticket_id: (lead.zendesk_ticket_id as number | null) ?? null,
+        lead_id: (lead.lead_id as string | null) ?? null,
+      },
+      { ticketId: r.ticketId ?? null, quando: r.quando },
+    );
+  }
+
   const email = String(lead.email ?? "").toLowerCase();
   if (r.tipo === "cliente" && email) {
     // O painel de marketing conta a resposta no último toque da sequência.

@@ -1,0 +1,506 @@
+<title>CRM de Leads e Quotes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: blueprint de uma coluna larga; cada seção é uma prancha com diagrama + regras */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --ink:#141922; --muted:#5A6473; --line:#D8DEE6; --accent:#0F6E68;
+  --s-new:#2F6FEB; --s-talk:#6A55D4; --s-quoting:#B7800A; --s-sent:#D2601A; --s-acc:#9A3DB6; --s-won:#1D8A57; --s-lost:#7F8896;
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1116; --surface:#161B22; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A313C; --accent:#3FC1B5;
+  --s-new:#6E9BFF; --s-talk:#9C8BF0; --s-quoting:#E2AE3A; --s-sent:#F08A4B; --s-acc:#C77BE0; --s-won:#4CC48A; --s-lost:#8D96A4; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1116; --surface:#161B22; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A313C; --accent:#3FC1B5;
+  --s-new:#6E9BFF; --s-talk:#9C8BF0; --s-quoting:#E2AE3A; --s-sent:#F08A4B; --s-acc:#C77BE0; --s-won:#4CC48A; --s-lost:#8D96A4; color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1160px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(30px,5vw,46px);font-stretch:85%;font-weight:800;line-height:1.05}
+h2{font-size:24px;font-stretch:90%;font-weight:700}
+h3{font-size:16px;font-weight:700}
+p{margin:0;max-width:68ch}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.lede{color:var(--muted);font-size:17px}
+.sec{display:flex;flex-direction:column;gap:18px}
+.sec-head{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:22px}
+.muted{color:var(--muted)}
+code,.mono{font-family:var(--mono);font-size:.88em}
+.scroll{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px}
+svg{display:block}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;color:var(--muted)}
+
+/* SVG */
+.t{fill:var(--ink);font-family:var(--body);font-size:13px}
+.tb{fill:var(--ink);font-family:var(--display);font-weight:700;font-size:15px}
+.tm{fill:var(--muted);font-family:var(--body);font-size:11.5px}
+.th{fill:var(--accent);font-family:var(--mono);font-size:11.5px;letter-spacing:.08em}
+.tc{fill:var(--ink);font-family:var(--body);font-size:12px;font-weight:600;text-anchor:middle}
+.bx{fill:var(--surface);stroke:var(--line);stroke-width:1.2}
+.bx2{fill:var(--bg);stroke:var(--line);stroke-width:1.2}
+.dash{fill:none;stroke:var(--muted);stroke-width:1.2;stroke-dasharray:5 4}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.3}
+.lnA{fill:none;stroke:var(--accent);stroke-width:1.6}
+.ah{fill:var(--muted)} .ahA{fill:var(--accent)}
+.zd{fill:color-mix(in srgb,var(--accent) 9%,var(--surface));stroke:var(--accent);stroke-width:1.2}
+.pill{fill:color-mix(in srgb,var(--accent) 16%,var(--surface));stroke:var(--accent)}
+.c-new{fill:color-mix(in srgb,var(--s-new) 15%,var(--surface));stroke:var(--s-new)}
+.c-talk{fill:color-mix(in srgb,var(--s-talk) 15%,var(--surface));stroke:var(--s-talk)}
+.c-quoting{fill:color-mix(in srgb,var(--s-quoting) 15%,var(--surface));stroke:var(--s-quoting)}
+.c-sent{fill:color-mix(in srgb,var(--s-sent) 15%,var(--surface));stroke:var(--s-sent)}
+.c-acc{fill:color-mix(in srgb,var(--s-acc) 15%,var(--surface));stroke:var(--s-acc)}
+.c-won{fill:color-mix(in srgb,var(--s-won) 15%,var(--surface));stroke:var(--s-won)}
+.c-lost{fill:color-mix(in srgb,var(--s-lost) 15%,var(--surface));stroke:var(--s-lost)}
+
+/* Etapas */
+.stages{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.stage-top{display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--c)}
+.stage h3{font-size:17px}
+.stage .num{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:4px 10px;font-size:13.5px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0}
+.qs{display:inline-block;font-family:var(--mono);font-size:11.5px;padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--c) 14%,var(--surface));color:var(--ink);margin:0 4px 4px 0}
+
+/* Tabelas */
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:720px}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td:first-child{white-space:nowrap;font-weight:600}
+.tag{display:inline-flex;align-items:center;gap:6px}
+.wa{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--s-won);color:var(--ink);white-space:nowrap}
+
+/* Regras */
+.rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;counter-reset:r}
+.rule{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.rule b{font-family:var(--display);font-size:16px}
+.rule span{color:var(--muted);font-size:14px}
+
+/* Mockup */
+.mock{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:980px;font-size:13px}
+.mock-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.mock-bar strong{font-family:var(--display);font-size:18px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg span{padding:4px 10px;color:var(--muted)} .seg span.on{background:var(--ink);color:var(--surface)}
+.mock-body{display:grid;grid-template-columns:1fr 320px}
+.mock-main{padding:14px 16px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.today{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tcard{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:3px;background:var(--bg)}
+.why{font-family:var(--mono);font-size:11px;letter-spacing:.04em}
+.why.r{color:var(--s-sent)} .why.n{color:var(--s-new)} .why.o{color:var(--s-acc)}
+.board{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.col{background:var(--bg);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.col-h{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px}
+.col-h em{margin-left:auto;font-style:normal;color:var(--muted);font-family:var(--mono)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px 8px;display:flex;flex-direction:column;gap:2px}
+.card .meta{display:flex;justify-content:space-between;color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.late{color:var(--s-sent)!important}
+.chip{font-family:var(--mono);font-size:10.5px;padding:0 5px;border-radius:3px;border:1px solid var(--line)}
+.drawer{border-left:1px solid var(--line);padding:14px 16px;display:flex;flex-direction:column;gap:12px;background:var(--bg)}
+.drawer h4{margin:0;font-family:var(--display);font-size:16px}
+.field{border:1px solid var(--line);border-radius:6px;padding:7px 9px;background:var(--surface)}
+.field small{display:block;color:var(--muted);font-size:11px}
+.tl{display:flex;flex-direction:column;gap:8px;border-left:2px solid var(--line);padding-left:10px}
+.tl div{font-size:12.5px} .tl time{color:var(--muted);font-family:var(--mono);font-size:11px;margin-right:6px}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+.btn{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:12px}
+.btn.p{background:var(--s-won);border-color:var(--s-won);color:#fff}
+.example{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+/* Roadmap */
+.road{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:6px}
+.step .n{font-family:var(--display);font-weight:800;font-size:28px;font-stretch:80%;color:var(--accent);line-height:1}
+.step p{font-size:13.5px;color:var(--muted)}
+.dec{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.d{background:var(--surface);border:1px dashed var(--accent);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.d p{font-size:14px}
+.d .sug{font-size:13.5px;color:var(--muted)}
+pre.mermaid{margin:0;background:transparent}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header class="sec" style="gap:12px">
+  <div class="eyebrow">Fixfy OS · desenho de estrutura · 05/11/2026</div>
+  <h1>CRM de Leads e Quotes</h1>
+  <p class="lede">A aba Leads vira o CRM de todo pedido, B2C e B2B. A quote é um documento dentro do lead e segue as mesmas etapas. O Zendesk carrega a conversa, o OS carrega a etapa e o próximo passo, e a operação assume no Won. Nada fica sem dono e nada fica sem data.</p>
+  <div class="legend">
+    <span class="tag"><span class="dot" style="--c:var(--s-new)"></span>New</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-talk)"></span>Talking</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-acc)"></span>Accepted</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-won)"></span>Won</span>
+    <span class="tag"><span class="dot" style="--c:var(--s-lost)"></span>Lost · Nurture</span>
+  </div>
+</header>
+
+<!-- 1 visão geral -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Mapa geral</div>
+    <h2>Entradas, dois funis, operação e Zendesk</h2>
+    <p class="muted">Todo pedido entra pelo Funil Pedido. O Funil Conta só serve para vender a empresa B2B. Booking de plataforma já chega fechado e vai direto para job.</p>
+  </div>
+  <div class="scroll">
+  <svg viewBox="0 0 1120 580" width="1120" height="580" role="img" aria-label="Mapa geral do CRM">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+      <marker id="aA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahA" d="M0 0L10 5L0 10z"/></marker>
+    </defs>
+    <text class="th" x="20" y="28">ENTRADAS</text>
+    <text class="th" x="290" y="28">OS · CRM</text>
+    <text class="th" x="900" y="28">OPERAÇÃO</text>
+
+    <!-- entradas -->
+    <g>
+      <rect class="bx" x="20" y="50" width="210" height="38" rx="7"/><text class="t" x="34" y="74">Site: formulário e booking</text>
+      <rect class="bx" x="20" y="96" width="210" height="38" rx="7"/><text class="t" x="34" y="120">Reserva abandonada</text>
+      <rect class="bx" x="20" y="142" width="210" height="38" rx="7"/><text class="t" x="34" y="166">WhatsApp · Harvey</text>
+      <rect class="bx" x="20" y="188" width="210" height="38" rx="7"/><text class="t" x="34" y="212">Lead Checkatrade</text>
+      <rect class="bx" x="20" y="234" width="210" height="38" rx="7"/><text class="t" x="34" y="258">E-mail e telefone (Zendesk)</text>
+      <rect class="bx" x="20" y="280" width="210" height="38" rx="7"/><text class="t" x="34" y="304">Pedido de conta B2B</text>
+      <path class="ln" d="M230 69H256M230 115H256M230 161H256M230 207H256M230 253H256M230 299H256M256 69V299"/>
+      <path class="ln" d="M256 262H302" marker-end="url(#a)"/>
+      <rect class="dash" x="20" y="350" width="210" height="50" rx="7"/>
+      <text class="t" x="34" y="371">Plataformas</text>
+      <text class="tm" x="34" y="389">Housekeep, Fantastic, Express</text>
+      <path class="dash" d="M230 375H262V444H884V236H896" marker-end="url(#a)"/>
+      <text class="tm" x="276" y="460">booking de plataforma já vem fechado: vira job direto, fora do funil</text>
+    </g>
+
+    <!-- funil conta -->
+    <rect class="bx" x="290" y="46" width="570" height="100" rx="10"/>
+    <text class="tb" x="306" y="70">Funil Conta · B2B</text>
+    <text class="tm" x="306" y="88">vender a empresa · crm_deals, como já existe</text>
+    <rect class="c-lost" x="306" y="100" width="96" height="30" rx="6"/><text class="tc" x="354" y="119">Business Lead</text>
+    <rect class="c-new" x="412" y="100" width="96" height="30" rx="6"/><text class="tc" x="460" y="119">Scheduled</text>
+    <rect class="c-quoting" x="518" y="100" width="96" height="30" rx="6"/><text class="tc" x="566" y="119">Onboarding</text>
+    <rect class="c-won" x="624" y="100" width="96" height="30" rx="6"/><text class="tc" x="672" y="119">Won</text>
+    <rect class="c-lost" x="730" y="100" width="96" height="30" rx="6"/><text class="tc" x="778" y="119">Lost</text>
+    <path class="lnA" d="M672 130V168" marker-end="url(#aA)"/>
+    <text class="tm" x="682" y="158">conta ganha: os pedidos dela entram como b2b</text>
+
+    <!-- funil pedido -->
+    <rect class="bx" x="290" y="170" width="570" height="240" rx="10"/>
+    <text class="tb" x="306" y="196">Funil Pedido · B2C e B2B</text>
+    <text class="tm" x="306" y="214">aba Leads · uma lista de etapas para lead e quote</text>
+    <rect class="pill" x="740" y="182" width="104" height="26" rx="13"/><text class="tc" x="792" y="199">Fila Today</text>
+    <path class="ln" d="M306 262H833"/>
+    <rect class="c-new" x="306" y="240" width="82" height="44" rx="7"/><text class="tc" x="347" y="266">New</text>
+    <rect class="c-talk" x="395" y="240" width="82" height="44" rx="7"/><text class="tc" x="436" y="266">Talking</text>
+    <rect class="c-quoting" x="484" y="240" width="82" height="44" rx="7"/><text class="tc" x="525" y="266">Quoting</text>
+    <rect class="c-sent" x="573" y="240" width="82" height="44" rx="7"/><text class="tc" x="614" y="266">Quote sent</text>
+    <rect class="c-acc" x="662" y="240" width="82" height="44" rx="7"/><text class="tc" x="703" y="266">Accepted</text>
+    <rect class="c-won" x="751" y="240" width="82" height="44" rx="7"/><text class="tc" x="792" y="266">Won</text>
+    <path class="dash" d="M436 284C436 308 614 308 614 288" marker-end="url(#a)"/>
+    <text class="tm" x="525" y="320" text-anchor="middle">preço de handyman pula Quoting</text>
+    <rect class="c-lost" x="306" y="330" width="160" height="30" rx="6"/><text class="tc" x="386" y="349">Lost · Nurture</text>
+    <rect class="bx2" x="484" y="330" width="260" height="30" rx="6"/><text class="tc" x="614" y="349">Quote: documento dentro do lead</text>
+    <path class="ln" d="M900 390H870V398H386V364" marker-end="url(#a)"/>
+    <text class="tm" x="640" y="392" text-anchor="middle">pós-job volta como Nurture (recompra)</text>
+
+    <!-- won -> job -->
+    <path class="lnA" d="M833 262H860V214H896" marker-end="url(#aA)"/>
+
+    <!-- operação -->
+    <rect class="bx" x="900" y="196" width="200" height="44" rx="8"/><text class="t" x="914" y="216">Job</text><text class="tm" x="914" y="232">nasce do Won, mesmo ticket</text>
+    <rect class="bx" x="900" y="256" width="200" height="40" rx="8"/><text class="t" x="914" y="281">Visita, report, final check</text>
+    <rect class="bx" x="900" y="312" width="200" height="40" rx="8"/><text class="t" x="914" y="337">Fatura, pagamento, self-bill</text>
+    <rect class="bx" x="900" y="368" width="200" height="40" rx="8"/><text class="t" x="914" y="393">Feedback pós-job</text>
+    <path class="ln" d="M1000 240V254M1000 296V310M1000 352V366" marker-end="url(#a)"/>
+
+    <!-- zendesk -->
+    <rect class="zd" x="20" y="470" width="1080" height="96" rx="10"/>
+    <text class="tb" x="40" y="498">Zendesk</text>
+    <text class="t" x="40" y="522">Um ticket por lead. A quote e o job usam o mesmo ticket.</text>
+    <text class="t" x="40" y="544">O OS manda, o Zendesk espelha. Ticket novo só quando o dono mandar.</text>
+    <path class="lnA" d="M620 470V414" marker-end="url(#aA)"/>
+    <path class="lnA" d="M640 414V468" marker-end="url(#aA)"/>
+    <path class="lnA" d="M1060 470V410" marker-end="url(#aA)" marker-start="url(#aA)"/>
+    <text class="t" x="664" y="498">↑ resposta do cliente sobe na Fila Today</text>
+    <text class="t" x="664" y="520">↓ etapa do lead vira tag no ticket</text>
+    <text class="t" x="664" y="542">↕ job: lembrete, report e fatura no ticket</text>
+  </svg>
+  </div>
+</section>
+
+<!-- 2 etapas -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Funil Pedido</div>
+    <h2>Sete etapas, as mesmas no Lead e na Quote</h2>
+    <p class="muted">A etapa fica no lead. Quando existe quote, o status dela move a etapa, e essa sincronização roda na aplicação, não em trigger. A aba Quotes passa a ser um filtro de Quoting, Quote sent e Accepted.</p>
+  </div>
+  <div class="stages">
+    <article class="stage" style="--c:var(--s-new)">
+      <div class="stage-top"><span class="dot"></span><h3>New</h3><span class="num">1</span></div>
+      <dl class="kv"><dt>É</dt><dd>Entrou e ninguém respondeu ainda</dd><dt>Sai quando</dt><dd>A primeira resposta nossa sai no ticket</dd><dt>Quote</dt><dd>nenhuma</dd><dt>Prazo</dt><dd>15 min em horário comercial (sugestão)</dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-talk)">
+      <div class="stage-top"><span class="dot"></span><h3>Talking</h3><span class="num">2</span></div>
+      <dl class="kv"><dt>É</dt><dd>Qualificando: fotos, endereço completo, tipo de trabalho do catálogo</dd><dt>Sai quando</dt><dd>Preço dado no chat (vai para Quote sent) ou precisa de quote (vai para Quoting)</dd><dt>Quote</dt><dd>nenhuma</dd><dt>Prazo</dt><dd>próximo passo em até 24h</dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-quoting)">
+      <div class="stage-top"><span class="dot"></span><h3>Quoting</h3><span class="num">3</span></div>
+      <dl class="kv"><dt>É</dt><dd>Montando o preço: visita ou lance de parceiro</dd><dt>Sai quando</dt><dd>A quote fica pronta e é enviada</dd><dt>Quote</dt><dd><span class="qs">draft</span><span class="qs">in_survey</span><span class="qs">bidding</span></dd><dt>Prazo</dt><dd>alerta interno se passar de 48h</dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-sent)">
+      <div class="stage-top"><span class="dot"></span><h3>Quote sent</h3><span class="num">4</span></div>
+      <dl class="kv"><dt>É</dt><dd>O cliente tem o preço na mão</dd><dt>Sai quando</dt><dd>Aceita, recusa ou a régua acaba</dd><dt>Quote</dt><dd><span class="qs">quote_ready</span><span class="qs">awaiting_customer</span></dd><dt>Prazo</dt><dd>lembrete a cada 72h</dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-acc)">
+      <div class="stage-top"><span class="dot"></span><h3>Accepted</h3><span class="num">5</span></div>
+      <dl class="kv"><dt>É</dt><dd>Aceitou, o link de pagamento está aberto</dd><dt>Sai quando</dt><dd>Paga a entrada da conta (50%, ou 0 em HK, Express e Fantastic)</dd><dt>Quote</dt><dd><span class="qs">awaiting_payment</span></dd><dt>Regra</dt><dd>só confirma pago</dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-won)">
+      <div class="stage-top"><span class="dot"></span><h3>Won</h3><span class="num">6</span></div>
+      <dl class="kv"><dt>É</dt><dd>O job foi criado com o mesmo ticket</dd><dt>Depois</dt><dd>O lead fecha e a operação vira dona</dd><dt>Quote</dt><dd><span class="qs">converted_to_job</span></dd><dt>Liga</dt><dd><code>leads.job_id</code></dd></dl>
+    </article>
+    <article class="stage" style="--c:var(--s-lost)">
+      <div class="stage-top"><span class="dot"></span><h3>Lost · Nurture</h3><span class="num">7</span></div>
+      <dl class="kv"><dt>Lost</dt><dd>Motivo obrigatório: preço, prazo, sem resposta, fora da área, fez com outro</dd><dt>Nurture</dt><dd>Pausado com data de volta, sem resposta no fim da régua ou pós-job</dd><dt>Quote</dt><dd><span class="qs">rejected</span></dd></dl>
+    </article>
+  </div>
+</section>
+
+<!-- 3 régua -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Comunicação</div>
+    <h2>Régua por etapa e por segmento</h2>
+    <p class="muted">Toda mensagem sai no ticket do lead. A régua para quando o cliente responde ou quando a etapa muda. O WhatsApp só entra nos 3 momentos já combinados, marcados em verde. B2B fala só por e-mail.</p>
+  </div>
+  <div class="scroll" style="padding:0">
+  <table>
+    <thead><tr><th>Etapa</th><th>B2C</th><th>B2B</th><th>Se ninguém responder</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-new)"></span>New</span></td><td><span class="wa">WhatsApp 1 · enquiry</span> + e-mail de boas-vindas</td><td>E-mail ao contato da conta, tarefa para o dono da conta</td><td>Fica no topo da Fila Today até alguém responder</td></tr>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-talk)"></span>Talking</span></td><td>E-mail d1, d2 e d3 no ticket</td><td>E-mail d2 e d5</td><td>Nurture: 7 dias B2C, 14 dias B2B</td></tr>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting</span></td><td colspan="2">Interno: aviso ao dono se a quote não ficar pronta em 48h ou se o lance do parceiro não vier</td><td>Sobe na Fila Today como atrasado</td></tr>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent</span></td><td>Lembrete por e-mail a cada 72h, 2 lembretes na conta Fixfy</td><td>1 lembrete, depois tarefa para o dono</td><td>Nurture com data de volta</td></tr>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-acc)"></span>Accepted</span></td><td>Lembrete do link de pagamento por e-mail</td><td>Fatura por e-mail, conforme os termos da conta</td><td>Fila Today: aceitou e não pagou</td></tr>
+      <tr><td><span class="tag"><span class="dot" style="--c:var(--s-won)"></span>Won → job</span></td><td><span class="wa">WhatsApp 2 · lembrete 24h</span></td><td>E-mail de confirmação</td><td>A operação assume</td></tr>
+      <tr><td>Pós-job</td><td>Feedback por e-mail com botão no Google · <span class="wa">WhatsApp 3 · cobrança vencida 3 dias</span> só cliente direto Fixfy</td><td>Cobrança só por e-mail</td><td>Lead volta como Nurture para recompra</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- 4 zendesk -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Zendesk ↔ OS</div>
+    <h2>Uma conversa, do primeiro oi ao pagamento</h2>
+    <p class="muted">O ticket é a conversa e o lead é o estado. Os dois andam juntos pelo <code>zendesk_ticket_id</code>.</p>
+  </div>
+  <div class="scroll">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as Cliente
+  participant Z as Zendesk
+  participant OS as OS Lead
+  participant OP as Operação
+  C->>Z: Pede serviço pelo site, WhatsApp ou e-mail
+  Z->>OS: Webhook acha ou cria o lead pelo ticket_id
+  OS->>Z: Etapa New vira tag crm_new
+  OS->>Z: Régua manda a primeira mensagem no mesmo ticket
+  C->>Z: Responde
+  Z->>OS: Marca customer_replied_at e sobe na Fila Today
+  OS->>Z: Quote enviada no ticket, tag crm_quote_sent
+  C->>OS: Aceita e paga pelo link
+  OS->>OP: Won cria o job com o mesmo ticket
+  OP->>Z: Lembrete 24h, report e fatura no ticket
+  OP->>OS: Job fechado, feedback enviado, lead vai para Nurture
+</pre>
+  </div>
+</section>
+
+<!-- 5 b2b x b2c -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Segmentos</div>
+    <h2>B2B e B2C no mesmo funil, com regras próprias</h2>
+    <p class="muted">As etapas são as mesmas. O campo <code>segment</code> escolhe canal, preço, pagamento e régua.</p>
+  </div>
+  <div class="scroll" style="padding:0">
+  <table>
+    <thead><tr><th></th><th>B2C</th><th>B2B</th></tr></thead>
+    <tbody>
+      <tr><td>Quem é</td><td>Morador, cliente direto Fixfy, lead Checkatrade (origem checkatrade)</td><td>Pedido de uma conta ganha no Funil Conta</td></tr>
+      <tr><td>Canal</td><td>WhatsApp nos 3 momentos + e-mail</td><td>Só e-mail</td></tr>
+      <tr><td>Preço</td><td>Tabela e régua de handyman (£72/h, £180, £329)</td><td>Regras da conta: −5%, 1º job 10%</td></tr>
+      <tr><td>Confirmação</td><td>Só depois de pago</td><td>Entrada conforme a conta (50%, 0 em HK, Express, Fantastic)</td></tr>
+      <tr><td>Dono</td><td>Fila do escritório</td><td>Dono da conta, por papel e não por pessoa</td></tr>
+      <tr><td>Nurture</td><td>7 dias sem resposta</td><td>14 dias sem resposta</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- 6 tela -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Tela</div>
+    <h2>A aba Leads como CRM</h2>
+    <p class="muted">Em cima, a Fila Today com o que precisa de alguém agora. Embaixo, o board por etapa. Clicar num card abre o drawer com a timeline do ticket, o próximo passo e a quote. Os nomes abaixo são exemplos.</p>
+  </div>
+  <div class="scroll" style="padding:0">
+  <div class="mock">
+    <div class="mock-bar">
+      <strong>Leads</strong>
+      <span class="seg"><span class="on">All</span><span>B2C</span><span>B2B</span></span>
+      <span class="seg"><span class="on">Board</span><span>List</span></span>
+      <span style="margin-left:auto" class="example">exemplo</span>
+      <span class="btn">New lead</span>
+    </div>
+    <div class="mock-body">
+      <div class="mock-main">
+        <div>
+          <div class="col-h" style="margin-bottom:8px">Today <em>3</em></div>
+          <div class="today">
+            <div class="tcard"><span class="why r">CLIENTE RESPONDEU · 12 MIN</span><b>Sarah Khan</b><span class="muted">Quote sent · £540 · B2C</span></div>
+            <div class="tcard"><span class="why n">NEW · 40 MIN SEM RESPOSTA</span><b>Oakline Lettings</b><span class="muted">Leak under sink · B2B</span></div>
+            <div class="tcard"><span class="why o">PRÓXIMO PASSO VENCIDO · ONTEM</span><b>Tom Reid</b><span class="muted">Accepted · link não pago · B2C</span></div>
+          </div>
+        </div>
+        <div class="board">
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-new)"></span>New<em>2</em></div>
+            <div class="card"><b>Oakline Lettings</b><span class="meta"><span class="chip">B2B</span><span class="late">40 min</span></span></div>
+            <div class="card"><b>Priya Shah</b><span class="meta"><span class="chip">B2C</span><span>5 min</span></span></div></div>
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-talk)"></span>Talking<em>3</em></div>
+            <div class="card"><b>James Ortiz</b><span class="meta"><span class="chip">B2C</span><span>amanhã 10h</span></span></div>
+            <div class="card"><b>Northgate PM</b><span class="meta"><span class="chip">B2B</span><span>sex</span></span></div></div>
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-quoting)"></span>Quoting<em>1</em></div>
+            <div class="card"><b>Wet room UB7</b><span class="meta"><span class="chip">B2C</span><span>bidding</span></span></div></div>
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-sent)"></span>Quote sent<em>2</em></div>
+            <div class="card"><b>Sarah Khan</b><span class="meta"><span>£540</span><span class="late">respondeu</span></span></div>
+            <div class="card"><b>Ellis Court</b><span class="meta"><span>£1.280</span><span>lembrete 2/2</span></span></div></div>
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-acc)"></span>Accepted<em>1</em></div>
+            <div class="card"><b>Tom Reid</b><span class="meta"><span>£180</span><span class="late">não pago</span></span></div></div>
+          <div class="col"><div class="col-h"><span class="dot" style="--c:var(--s-won)"></span>Won<em>4</em></div>
+            <div class="card"><b>Mia Turner</b><span class="meta"><span>£329</span><span>JOB-9812</span></span></div></div>
+        </div>
+      </div>
+      <aside class="drawer">
+        <div><span class="example">LD-1042</span><h4>Sarah Khan</h4><span class="muted">Quote sent · B2C · origem site · ticket #48213</span></div>
+        <div class="field"><small>Next action</small>Responder dúvida sobre prazo · hoje 15:00</div>
+        <div class="field"><small>Quote Q-311</small>Kitchen tap + silicone · £540 · awaiting_customer</div>
+        <div class="tl">
+          <div><time>14:02</time>Cliente respondeu no WhatsApp</div>
+          <div><time>ontem</time>Lembrete da quote 1/2 por e-mail</div>
+          <div><time>02/11</time>Quote enviada no ticket</div>
+          <div><time>01/11</time>Etapa Talking → Quoting</div>
+          <div><time>01/11</time>Lead entrou pelo site</div>
+        </div>
+        <div class="btns"><span class="btn">Mark lost</span><span class="btn">Nurture</span><span class="btn p">Mark won · create job</span></div>
+      </aside>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 7 dados -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Dados</div>
+    <h2>O que muda no banco</h2>
+    <p class="muted">O <code>status</code> atual do lead (new, interested) vira <code>stage</code>. As quotes ganham <code>lead_id</code>, e a etapa dos leads antigos sai do status da quote que já existe. <code>site_leads</code> e Harvey continuam com a régua deles e passam a alimentar um lead.</p>
+  </div>
+  <div class="scroll">
+<pre class="mermaid">
+erDiagram
+  ACCOUNTS ||--o{ CRM_DEALS : "venda da conta"
+  ACCOUNTS ||--o{ LEADS : "pedidos b2b"
+  CLIENTS ||--o{ LEADS : "pede"
+  LEADS ||--o{ QUOTES : "tem"
+  LEADS ||--o{ LEAD_EVENTS : "timeline"
+  LEADS |o--o| JOBS : "vira"
+  SITE_LEADS }o--o| LEADS : "alimenta"
+  HARVEY_WA_LEADS }o--o| LEADS : "alimenta"
+  LEADS {
+    text stage "new talking quoting quote_sent accepted won lost nurture"
+    text segment "b2c ou b2b"
+    text source "site checkatrade whatsapp email b2b_account"
+    bigint zendesk_ticket_id "um ticket por lead"
+    text next_action "obrigatorio se aberto"
+    timestamptz next_action_at "obrigatorio se aberto"
+    timestamptz last_contact_at
+    timestamptz customer_replied_at "alimenta a Fila Today"
+    text lost_reason
+    date nurture_until
+    uuid job_id FK
+    uuid account_id FK
+    uuid owner_id FK
+  }
+  QUOTES {
+    uuid lead_id FK "novo"
+    text status "move a etapa do lead"
+  }
+  LEAD_EVENTS {
+    uuid lead_id FK
+    text kind "mensagem etapa quote pagamento"
+    text channel "zendesk whatsapp email"
+    jsonb payload
+    timestamptz at
+  }
+</pre>
+  </div>
+</section>
+
+<!-- 8 regras -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Regras que não quebram</div>
+    <h2>O que impede o CRM de esquecer alguém</h2>
+  </div>
+  <div class="rules">
+    <div class="rule"><b>Lead aberto tem próximo passo</b><span>Não salva sem next_action e data, exceto em Won e Lost.</span></div>
+    <div class="rule"><b>Um lead, um ticket</b><span>Quote e job usam o mesmo ticket. Ticket novo só quando o dono mandar.</span></div>
+    <div class="rule"><b>Job só nasce do Won</b><span>Ou de booking de plataforma. Nada entra na operação antes do aceite e do pagamento.</span></div>
+    <div class="rule"><b>A etapa muda pela aplicação</b><span>A quote move o lead no código, nunca em trigger do banco.</span></div>
+    <div class="rule"><b>Lost tem motivo</b><span>Sem motivo não fecha. É isso que mostra onde o funil vaza.</span></div>
+    <div class="rule"><b>Silêncio vira Nurture</b><span>Fim da régua sem resposta leva a Nurture com data de volta. Nunca fica parado.</span></div>
+    <div class="rule"><b>Dono é papel</b><span>Dono da conta ou fila do escritório, configurável. Nunca nome de pessoa no código.</span></div>
+    <div class="rule"><b>Pipeline no brief diário</b><span>Quantos leads em cada etapa, quantos atrasados, quantos responderam sem retorno.</span></div>
+  </div>
+</section>
+
+<!-- 9 entrega -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Entrega</div>
+    <h2>Ordem de construção</h2>
+    <p class="muted">Cada fase entra sem quebrar a anterior. A tela atual segue funcionando até a fase 3.</p>
+  </div>
+  <div class="road">
+    <div class="step"><span class="n">1</span><h3>Base</h3><p>Colunas novas em leads, lead_id em quotes, lead_events, backfill das etapas. Sem mudar a tela.</p></div>
+    <div class="step"><span class="n">2</span><h3>Fila Today</h3><p>Próximo passo obrigatório, fila no topo da aba Leads, atrasados no brief diário.</p></div>
+    <div class="step"><span class="n">3</span><h3>Quote no lead</h3><p>Criar quote a partir do lead, sincronizar etapa pela aplicação, aba Quotes vira filtro.</p></div>
+    <div class="step"><span class="n">4</span><h3>Zendesk</h3><p>Tag por etapa no ticket, webhook de resposta do cliente, timeline no drawer.</p></div>
+    <div class="step"><span class="n">5</span><h3>Fontes e B2B</h3><p>site_leads, Harvey e Checkatrade criando lead; conta ganha no Funil Conta abre pedidos b2b.</p></div>
+  </div>
+</section>
+
+<!-- 10 decisões -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="eyebrow">Para decidir</div>
+    <h2>Três decisões antes da fase 1</h2>
+  </div>
+  <div class="dec">
+    <div class="d"><h3>Reserva abandonada vira lead quando?</h3><p>Logo que entra, ou só depois que o cliente responder.</p><span class="sug">Sugestão: só depois que responder, para não lotar a Fila Today.</span></div>
+    <div class="d"><h3>Preço de handyman no chat gera quote?</h3><p>Pela regra, nada entra no OS antes do aceite.</p><span class="sug">Sugestão: o lead guarda "price given £X" e a quote nasce já aceita.</span></div>
+    <div class="d"><h3>Quantos dias até Nurture?</h3><p>Sem resposta no fim da régua.</p><span class="sug">Sugestão: 7 dias B2C, 14 dias B2B.</span></div>
+  </div>
+</section>
+
+</div>

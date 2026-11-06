@@ -22,6 +22,7 @@ import {
   type EtapaDaConversa,
   type JobDaCaixa,
   type JobParaOferecer,
+  type LeadDaCaixa,
   type MensagemDaCaixa,
   type TagDaCaixa,
 } from "./tipos";
@@ -328,6 +329,31 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       : Promise.resolve({ data: [] as (LinhaJob & { account_id: string })[] }),
   ]);
 
+  // O card no CRM (06/11/2026): pelo cliente; contato sem cadastro, pelo telefone (só os abertos).
+  const leadPorCliente = new Map<string, LeadDaCaixa>();
+  const leadPorTelefone = new Map<string, LeadDaCaixa>();
+  {
+    const ABERTOS = ["new", "qualified", "quoting", "quoted"];
+    const [porCliente, porFone] = await Promise.all([
+      idsClientes.length
+        ? sb.from("leads").select("id, reference, stage, client_id, created_at").in("client_id", idsClientes).is("deleted_at", null).order("created_at", { ascending: false }).limit(600)
+        : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+      sb.from("leads").select("id, reference, stage, phone, created_at").in("stage", ABERTOS).not("phone", "is", null).is("deleted_at", null).order("created_at", { ascending: false }).limit(1000),
+    ]);
+    const paraLead = (l: Record<string, unknown>): LeadDaCaixa => ({ id: l.id as string, ref: (l.reference as string | null) ?? null, stage: String(l.stage ?? "new") });
+    for (const l of (porCliente.data ?? []) as Record<string, unknown>[]) {
+      const cid = l.client_id as string;
+      const ja = leadPorCliente.get(cid);
+      // O aberto mais novo vence; sem aberto, o mais novo de todos.
+      if (!ja || (!ABERTOS.includes(ja.stage) && ABERTOS.includes(String(l.stage)))) leadPorCliente.set(cid, paraLead(l));
+    }
+    const contatoPeloFinal = new Map(contatos.map((c) => [finalDoNumero(c), c]));
+    for (const l of (porFone.data ?? []) as Record<string, unknown>[]) {
+      const contato = contatoPeloFinal.get(finalDoNumero(String(l.phone ?? "").replace(/\D/g, "")));
+      if (contato && !leadPorTelefone.has(contato)) leadPorTelefone.set(contato, paraLead(l));
+    }
+  }
+
   const refsDosClientes = [...new Set([...((jobsClientes ?? []) as LinhaJob[]), ...((jobsContas ?? []) as LinhaJob[])].map((j) => j.reference).filter((r): r is string => Boolean(r)))];
   const { data: faturas } = refsDosClientes.length
     ? await sb
@@ -505,6 +531,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
         : contaId
           ? ((jobsContas ?? []) as (LinhaJob & { account_id: string })[]).filter((j) => j.account_id === contaId).map(paraJob)
           : [];
+      const leadDoContato = (c ? leadPorCliente.get(c.id as string) : null) ?? leadPorTelefone.get(contato) ?? null;
       const quotesDoCliente = c
         ? (quotes ?? [])
             .filter((q) => q.client_id === c.id)
@@ -549,6 +576,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
         jobHoje: jobsDoCliente.find((j) => j.data === hoje && !JOB_FECHADO.has(j.status)) ?? null,
         etapa,
         quotes: quotesDoCliente.slice(0, 12),
+        lead: leadDoContato,
         faturas: (faturas ?? [])
           .filter((f) => refs.has(f.job_reference as string))
           .slice(0, 12)

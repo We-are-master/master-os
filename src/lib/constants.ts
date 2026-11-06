@@ -46,11 +46,8 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { label: "Partner offers", href: "/leads", icon: "user-circle", permission: "leads" },
-      // Leads e CRM numa tela só (11/10/2026): B2C (site, WhatsApp, lançados à mão) e B2B
-      // (empresas), com o botão no topo. O /leads acima é outra coisa (jobs oferecidos a
-      // parceiros) e fica escondido do menu.
-      { label: "Leads", href: "/crm", icon: "kanban", permission: "leads" },
+      // CRM (06/11/2026): Pipeline e Leads de B2C e B2B em /leads; a tela antiga /crm saiu do menu.
+      { label: "CRM", href: "/leads", icon: "user-circle", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
     ],

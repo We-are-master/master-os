@@ -49,6 +49,7 @@ import {
   Tag,
   Trash2,
   UserPlus,
+  Kanban,
   UserRound,
   Users,
   Wrench,
@@ -72,6 +73,9 @@ import { NovaConversa, type Escolhido } from "./novo-contato";
 import { CHIP, flutuante, tempo } from "./movimento";
 import { LinkDeJob } from "./link-de-job";
 import { Modal } from "@/components/ui/modal";
+import { AddToCrmModal } from "@/components/leads/add-to-crm-modal";
+import { crmLeadHref } from "@/components/leads/crm-lead-chip";
+import { useStageLabels } from "@/components/leads/use-stage-labels";
 import type { MembroDaEquipe } from "@/lib/inbox/equipe";
 import { GavetaDeCriar, OfertaDeJob, Painel, ZENDESK, horaCurta, ticketDe } from "./painel";
 import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOferecer, type MensagemDaCaixa, type TagDaCaixa } from "./tipos";
@@ -378,6 +382,10 @@ export function CaixaAtendimento({
     >
   >({});
   const [tagsNovas, setTagsNovas] = useState<TagDaCaixa[]>([]);
+  // "Add to CRM" (06/11/2026): o card criado aparece na hora, antes do próximo refresh.
+  const [crmAberto, setCrmAberto] = useState(false);
+  const [leadLocal, setLeadLocal] = useState<Record<string, { id: string; ref: string | null; stage: string }>>({});
+  const rotulosDoCrm = useStageLabels();
   const [novaTag, setNovaTag] = useState("");
   /** Nome em edição no cabeçalho da conversa (null = só leitura). */
   const [renomeando, setRenomeando] = useState<string | null>(null);
@@ -1304,6 +1312,23 @@ export function CaixaAtendimento({
                   </Acao>
                 </Link>
               ) : null}
+              {/* O card no CRM: abre se existe; senão "Add to CRM" com a coluna (06/11/2026). Parceiro e grupo não. */}
+              {aberta.tipo !== "parceiro" && aberta.tipo !== "grupo"
+                ? (() => {
+                    const lead = leadLocal[aberta.contato] ?? aberta.lead ?? null;
+                    return lead ? (
+                      <Link href={crmLeadHref(lead.id)}>
+                        <Acao icone={Kanban} title={`Open ${lead.ref ?? "the lead"} in the CRM`}>
+                          {rotulosDoCrm[lead.stage as keyof typeof rotulosDoCrm] ?? lead.stage}
+                        </Acao>
+                      </Link>
+                    ) : (
+                      <Acao icone={Kanban} title="Add this contact to the CRM" onClick={() => setCrmAberto(true)}>
+                        Add to CRM
+                      </Acao>
+                    );
+                  })()
+                : null}
               {equipe.length ? (
                 <Acao
                   icone={aberta.atribuidaA ? undefined : UserPlus}
@@ -1830,6 +1855,24 @@ export function CaixaAtendimento({
           )
         ) : null}
       </aside>
+      {aberta && aberta.tipo !== "parceiro" && aberta.tipo !== "grupo" ? (
+        <AddToCrmModal
+          key={aberta.contato}
+          open={crmAberto}
+          onClose={() => setCrmAberto(false)}
+          prefill={{
+            name: aberta.cliente?.nome || (aberta.nome.startsWith("+") ? "" : aberta.nome),
+            email: aberta.cliente?.email ?? null,
+            phone: aberta.contato,
+            postcode: aberta.cliente?.postcode ?? null,
+            address: aberta.cliente?.endereco ?? null,
+            clientId: aberta.cliente?.id ?? null,
+            accountId: aberta.cliente?.contaId ?? null,
+            segment: aberta.tipo === "conta" ? "b2b" : "b2c",
+          }}
+          onDone={(l) => setLeadLocal((m) => ({ ...m, [aberta.contato]: { id: l.id, ref: l.reference, stage: l.stage } }))}
+        />
+      ) : null}
       {/* Offer a job: modal só com os jobs em Unassigned, o painel continua atrás. */}
       {aberta?.tipo === "parceiro" ? (
         <Modal open={gaveta?.k === "oferecer"} onClose={fecharGaveta} title={`Offer a job to ${aberta.nome.startsWith("+") ? "this partner" : aberta.nome.split(" ")[0]}`} subtitle={`${paraOferecer.length} dated job${paraOferecer.length === 1 ? "" : "s"} without a partner`} size="lg">

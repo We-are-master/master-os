@@ -1,6 +1,6 @@
 "use client";
 
-import { lerPrefill, type PrefillDaConversa } from "@/lib/inbox/prefill";
+import { lerPrefill, type PrefillDaConversa, type PrefillDoJob } from "@/lib/inbox/prefill";
 import { splitEqually } from "@/lib/invoice-payment-plan";
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, useId } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -4285,6 +4285,24 @@ const CREATE_JOB_STEPS: { id: JobCreateModalSectionId; label: string }[] = [
   { id: "access", label: "Charges" },
 ];
 
+/** O que o lead do CRM já combinou entra no New Job (só os campos que vieram). */
+function formDoPrefillDoJob(job: PrefillDoJob | null | undefined): Record<string, string | boolean> {
+  if (!job) return {};
+  const out: Record<string, string | boolean> = {};
+  if (job.catalog_service_id) out.catalog_service_id = job.catalog_service_id;
+  if (job.scheduled_date) out.scheduled_date = job.scheduled_date;
+  if (job.arrival_from) out.arrival_from = job.arrival_from;
+  if (job.arrival_window_mins) out.arrival_window_mins = String(job.arrival_window_mins);
+  if (job.job_kind) out.job_kind = job.job_kind;
+  if (job.job_type) out.job_type = job.job_type;
+  if (job.rate_basis) out.rate_basis = job.rate_basis;
+  if (job.client_price != null && job.client_price > 0) out.client_price = String(job.client_price);
+  if (job.hourly_client_rate != null && job.hourly_client_rate > 0) out.hourly_client_rate = String(job.hourly_client_rate);
+  if (job.in_ccz != null) out.in_ccz = job.in_ccz;
+  if (job.has_free_parking != null) out.has_free_parking = job.has_free_parking;
+  return out;
+}
+
 function CreateJobModal({ open, onClose, onCreate, prefill = null }: {
   open: boolean;
   prefill?: PrefillDaConversa | null;
@@ -4338,6 +4356,7 @@ function CreateJobModal({ open, onClose, onCreate, prefill = null }: {
     in_ccz: false,
     has_free_parking: true,
     assignment_mode: "manual",
+    ...formDoPrefillDoJob(prefill?.job),
   });
   const [recurrence, setRecurrence] = useState<RecurrenceFormState>(DEFAULT_RECURRENCE_FORM);
   const [partners, setPartners] = useState<Partner[]>([]);

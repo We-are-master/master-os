@@ -12,6 +12,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isZendeskConfigured, updateTicket } from "@/lib/zendesk";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 const ESTADOS_ACEITOS = new Set(["awaiting_payment", "converted_to_job"]);
 const CAMPO_CLOSING_SUMMARY = 6417950403231;
@@ -59,6 +60,7 @@ export async function recusarQuoteDoTicket(
     if (erroTroca) return { ok: false, status: 500, error: erroTroca.message };
     if (!trocou?.length) continue; // mudou no meio do caminho: não sobrescreve
     recusadas.push(q.reference);
+    await sincronizarLeadDaQuote(sb, q.id);
     await sb.from("audit_logs").insert({
       entity_type: "quote",
       entity_id: q.id,

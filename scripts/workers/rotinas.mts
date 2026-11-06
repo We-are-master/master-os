@@ -22,7 +22,7 @@
  *   cobranca-cartao           (só conta direct v2)             10h
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
  *   harvey-rede               (sem janela; só nota interna)    a cada 10 min
- *   espelho-zendesk           (sem janela; status, dono, cobrança) a cada 10 min
+ *   espelho-zendesk           (sem janela; status, dono, cobrança, leads do CRM) a cada 10 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).

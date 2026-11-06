@@ -331,7 +331,28 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
   if (evento.type !== "conversation:message" || !conversa?.id || !msg) return;
-  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone").eq("conversation_id", conversa.id).maybeSingle();
+  const { data: est } = await createServiceClient().from("harvey_wa_conversas").select("estado, tipo, phone, client_id").eq("conversation_id", conversa.id).maybeSingle();
+  // CRM (fase 4): a mensagem conta no lead da conversa, resposta pendente do cliente ou nossa.
+  // Só contabilidade no banco, sem falar com ninguém; nunca derruba o resto.
+  if (est?.tipo !== "parceiro" && msg.id) {
+    const doCliente = msg.author.type === "user";
+    const autor = doCliente ? (!msg.source?.type || msg.source.type === "whatsapp" ? "cliente" : null) : ehDoHarvey(msg) ? "harvey" : ehDaEquipe(msg) ? "equipe" : "sistema";
+    if (autor) {
+      try {
+        const { sinalDaMensagemWhatsApp } = await import("@/lib/crm/fontes-servidor");
+        await sinalDaMensagemWhatsApp(createServiceClient(), {
+          autor,
+          mensagemId: msg.id,
+          quando: msg.received ?? null,
+          texto: msg.content?.text ?? null,
+          telefone: (est?.phone as string | null) ?? null,
+          clientId: (est?.client_id as string | null) ?? null,
+        });
+      } catch (e) {
+        console.warn("[crm] sinal do WhatsApp:", e instanceof Error ? e.message : e);
+      }
+    }
+  }
   if (msg.author.type === "user" && (!msg.source?.type || msg.source.type === "whatsapp")) {
     // O ticket que nasceu antes da conversa (lead, site, Express): com a equipe, entra no
     // da conversa; com o Harvey (ticket "AI agent", só leitura), vira o lugar de trabalho.

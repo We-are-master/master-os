@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nomeDoParceiroNoAceite } from "@/lib/quote-accept-job-fields";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 
 /**
  * O que roda no servidor depois do aceite e da entrada paga (16/10/2026).
@@ -87,6 +88,8 @@ export async function aposEntradaDaCotacaoPaga(
     .eq("status", "awaiting_payment")
     .select("id");
   if (error || !mudou?.length) return false;
+  // CRM: entrada paga, a quote virou job e o lead fecha como Won (nunca derruba o pagamento).
+  await sincronizarLeadDaQuote(supabase, quote.id);
   await supabase.from("audit_logs").insert({
     entity_type: "quote",
     entity_id: quote.id,

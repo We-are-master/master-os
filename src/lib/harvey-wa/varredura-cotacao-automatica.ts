@@ -34,6 +34,7 @@ import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
 import { foraDaCotacaoAutomatica } from "@/lib/processo/b2b-humano";
 import { processoDaConta } from "@/lib/processo/conta";
+import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 import {
   TAG_CONVIDOU, TAG_FIM, TAG_LEMBROU_PARCEIROS, TAG_PEDIU_CONTEXTO, TAG_SEM_LANCE,
   enderecoCompleto, enderecoNasMensagens, faltandoNoContexto, horaDeLondres,
@@ -405,6 +406,8 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
 
   const fotos = await guardarFotos(sb, t.id, conv.fotos);
   const quote = await criarOuAbrirQuote(sb, t, user, q, ctx, fotos);
+  // CRM: a quote entra no lead do mesmo ticket e o lead vai para Quoting (nunca derruba a varredura).
+  await sincronizarLeadDaQuote(sb, quote.id, q ? {} : { evento: "quote_created" });
   const { dispatchQuoteBidInvites } = await import("@/lib/quote-bid-invites");
   const r = await dispatchQuoteBidInvites(sb, {
     quoteId: quote.id,

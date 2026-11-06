@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { SearchExpand } from "@/components/ui/search-expand";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -8,21 +9,57 @@ import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
-import { LeadOffersCard } from "@/components/leads/lead-offers-card";
 import { Modal } from "@/components/ui/modal";
-import { SearchInput, Input } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
-import type { CatalogService, Lead, LeadStatus, LeadUrgency } from "@/types/database";
+import type { CatalogService, Lead, LeadLostReason, LeadSegment, LeadStage, LeadStatus, LeadUrgency } from "@/types/database";
+import { useRouter, useSearchParams } from "next/navigation";
+import { LeadQuotingModal } from "@/components/leads/lead-quoting-modal";
+import { LeadLostModal } from "@/components/leads/lead-lost-modal";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
+import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/use-profile";
-import { listLeads, createLead, updateLead, deleteLead, countJobsForClient } from "@/services/leads";
+import { createLead, updateLead, deleteLead, countJobsForClient, getLead, changeLeadStage } from "@/services/leads";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
-import { getStatusCounts, type ListResult } from "@/services/base";
-import { cn, formatYmdUkDisplay } from "@/lib/utils";
+import { type ListResult } from "@/services/base";
+import {
+  decodeCrmFilter,
+  encodeCrmFilter,
+  getStageCounts,
+  leadValue,
+  listBoardLeads,
+  listCrmLeads,
+  listLatestQuotesForLeads,
+  listAccountNames,
+  listLeadChannels,
+  listPlatformAccountIds,
+  type CrmTab,
+  type LeadChannel,
+  type LeadQuote,
+  type SegmentFilter,
+} from "@/services/crm-leads";
+import { isOpenStage } from "@/lib/crm/etapas";
+import { useStageLabels } from "@/components/leads/use-stage-labels";
+import { LeadStageTabs, SegmentToggle, ViewToggle, type LeadsView } from "@/components/leads/lead-stage-tabs";
+import { LeadBoard } from "@/components/leads/lead-board";
+import { LeadCrmHeader, LeadCrmPanel, takePendingWonLeadId } from "@/components/leads/lead-crm-panel";
+import { LeadActionsMenu } from "@/components/leads/lead-actions-menu";
+import { LeadTimeline } from "@/components/leads/lead-timeline";
+import {
+  SEGMENT_LABEL,
+  STAGE_VARIANT,
+  formatAgo,
+  formatWhen,
+  gbp,
+  isOverdue,
+  isoToLocalInput,
+  zendeskTicketUrl,
+} from "@/components/leads/crm-ui";
+import { cn } from "@/lib/utils";
 import { AddressAutocomplete, type AddressParts } from "@/components/ui/address-autocomplete";
 import { validateLeadForm, type LeadFieldErrors } from "@/lib/lead-validation";
 
@@ -63,7 +100,21 @@ type LeadFormState = {
   status: LeadStatus;
   /** service_catalog.id — required so the Trade Portal can target matching partners. */
   catalog_service_id: string;
+  /** CRM (mig 356). Only used by the New lead modal. */
+  segment: LeadSegment;
+  source: string;
+  zendesk_ticket_id: string;
+  next_action: string;
+  /** datetime-local value */
+  next_action_at: string;
 };
+
+/** Próxima meia hora cheia, para o próximo passo já vir preenchido. */
+function nextHalfHourLocal(): string {
+  const d = new Date(Date.now() + 30 * 60 * 1000);
+  d.setMinutes(d.getMinutes() < 30 ? 30 : 60, 0, 0);
+  return isoToLocalInput(d.toISOString());
+}
 
 function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
   return {
@@ -77,8 +128,15 @@ function emptyLeadForm(status: LeadStatus = "new"): LeadFormState {
     scope: "",
     status,
     catalog_service_id: "",
+    segment: "b2c",
+    source: "",
+    zendesk_ticket_id: "",
+    next_action: "Reply to the customer",
+    next_action_at: nextHalfHourLocal(),
   };
 }
+
+type CreateLeadErrors = LeadFieldErrors & Partial<Record<"zendesk_ticket_id" | "next_action" | "next_action_at", string>>;
 
 function FieldBlock({
   label,
@@ -98,16 +156,6 @@ function FieldBlock({
   );
 }
 
-const LEAD_STATUSES: LeadStatus[] = ["new", "interested"];
-
-const statusConfig: Record<
-  LeadStatus,
-  { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
-> = {
-  new: { label: "New", variant: "primary" },
-  interested: { label: "Interested", variant: "success" },
-};
-
 const urgencyConfig: Record<
   LeadUrgency,
   { label: string; variant: "default" | "primary" | "success" | "warning" | "danger" | "info" }
@@ -124,6 +172,7 @@ interface LeadsClientProps {
 
 export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const { profile } = useProfile();
+  const STAGE_LABEL = useStageLabels();
   const {
     data,
     loading,
@@ -136,14 +185,49 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     status,
     setStatus,
     refresh,
+    refreshSilent,
   } = useSupabaseList<Lead>({
-    fetcher: listLeads,
+    fetcher: listCrmLeads,
     realtimeTable: "leads",
     initialData,
-    initialStatus: "new",
+    initialStatus: encodeCrmFilter("open", "all"),
   });
+  const { tab, segment } = decodeCrmFilter(status);
+  const setTab = useCallback((t: CrmTab) => setStatus(encodeCrmFilter(t, segment)), [setStatus, segment]);
+  const setSegment = useCallback((sg: SegmentFilter) => setStatus(encodeCrmFilter(tab, sg)), [setStatus, tab]);
 
-  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [view, setViewRaw] = useState<LeadsView>("board");
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("fixfy:leads-view");
+      if (v === "board" || v === "list") setViewRaw(v);
+    } catch {
+      /* sem storage fica no Board */
+    }
+  }, []);
+  const setView = useCallback((v: LeadsView) => {
+    setViewRaw(v);
+    try {
+      localStorage.setItem("fixfy:leads-view", v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
+  const [accountNames, setAccountNames] = useState<Record<string, string>>({});
+  /** Card solto em Quoting: pergunta Partners bid ou Internal. */
+  const [quotingLead, setQuotingLead] = useState<Lead | null>(null);
+  /** Card solto em Lost: motivo e data de volta. */
+  const [lostLead, setLostLead] = useState<Lead | null>(null);
+  const [lostDefault, setLostDefault] = useState<LeadLostReason | undefined>(undefined);
+  const router = useRouter();
+  const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
+  const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
+  const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
+  const [sideLoading, setSideLoading] = useState(true);
+  const [channels, setChannels] = useState<LeadChannel[]>([]);
+  const [drawerTab, setDrawerTab] = useState<"overview" | "activity">("overview");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -151,7 +235,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [createForm, setCreateForm] = useState(() => emptyLeadForm());
-  const [createErrors, setCreateErrors] = useState<LeadFieldErrors>({});
+  const [createErrors, setCreateErrors] = useState<CreateLeadErrors>({});
   const [createPhotos, setCreatePhotos] = useState<File[]>([]);
   const [editForm, setEditForm] = useState(() => emptyLeadForm());
   const [editErrors, setEditErrors] = useState<LeadFieldErrors>({});
@@ -173,23 +257,176 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       .catch((err) => {
         console.error("[leads] failed to load service_catalog:", err);
       });
+    listLeadChannels().then((rows) => {
+      if (active) setChannels(rows);
+    });
     return () => {
       active = false;
     };
   }, []);
 
+  const channelLabel = useMemo(() => new Map(channels.map((c) => [c.key, c.label])), [channels]);
+  /** Contagens, board, contas e as quotes dos leads na tela. */
+  const sideSeq = useRef(0);
   const loadCounts = useCallback(async () => {
+    const seq = ++sideSeq.current;
+    setSideLoading(true);
     try {
-      const counts = await getStatusCounts("leads", LEAD_STATUSES);
-      setStatusCounts(counts);
-    } catch {
-      setStatusCounts({});
+      const [counts, board] = await Promise.all([
+        getStageCounts(segment),
+        view === "board" ? listBoardLeads(segment, search) : Promise.resolve<Record<string, Lead[]>>({}),
+      ]);
+      const boardLeads = Object.values(board).flat();
+      const all = [...boardLeads, ...data];
+      const [quotes, platforms, accounts] = await Promise.all([
+        listLatestQuotesForLeads(all.map((l) => l.id)),
+        listPlatformAccountIds((board.accepted ?? []).map((l) => l.account_id ?? "")),
+        listAccountNames(all.map((l) => l.account_id ?? "")),
+      ]);
+      if (seq !== sideSeq.current) return;
+      setStageCounts(counts);
+      setBoardColumns(board);
+      setQuotesByLead(quotes);
+      setPlatformAccounts(platforms);
+      setAccountNames(accounts);
+    } catch (err) {
+      console.error("[leads] side data failed:", err);
+    } finally {
+      if (seq === sideSeq.current) setSideLoading(false);
     }
-  }, []);
+  }, [segment, view, search, data]);
 
   useEffect(() => {
-    loadCounts();
-  }, [loadCounts, data.length, status]);
+    void loadCounts();
+  }, [loadCounts]);
+
+  // Tempo real: lead ou quote nova (ou mudada) recarrega o board sem F5. O
+  // canal de leads já vem do useSupabaseList; aqui entra o de quotes e uma
+  // checagem a cada 20 s enquanto a aba está aberta, caso o websocket caia.
+  const loadCountsRef = useRef(loadCounts);
+  useEffect(() => {
+    loadCountsRef.current = loadCounts;
+  }, [loadCounts]);
+  useEffect(() => {
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      return;
+    }
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    let channel: ReturnType<typeof supabase.channel> | undefined;
+    try {
+      channel = supabase
+        .channel("leads-board:quotes")
+        .on("postgres_changes", { event: "*", schema: "public", table: "quotes" }, () => {
+          if (debounce) clearTimeout(debounce);
+          debounce = setTimeout(() => void loadCountsRef.current(), 400);
+        })
+        .subscribe();
+    } catch (err) {
+      console.warn("[leads] realtime quotes failed:", err);
+    }
+    const poll = setInterval(() => {
+      if (document.visibilityState === "visible") refreshSilent();
+    }, 20000);
+    return () => {
+      clearInterval(poll);
+      if (debounce) clearTimeout(debounce);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [refreshSilent]);
+
+  const openLead = useCallback((lead: Lead) => {
+    setDrawerTab("overview");
+    setSelectedLead(lead);
+  }, []);
+
+  /**
+   * Card arrastado para outra coluna. Até Qualified a equipe move livre. Dali
+   * para frente quem move é a quote (o status dela decide Quoting e Quoted):
+   * - Quoting pergunta Partners bid ou Internal e cria a quote;
+   * - Quoted só acontece quando a quote é enviada ao cliente;
+   * - Won só com o job criado; Lost pede motivo.
+   */
+  const onMove = useCallback(
+    async (lead: Lead, to: LeadStage) => {
+      const from = lead.stage ?? "new";
+      const q = quotesByLead[lead.id];
+      const liveQuote = q && q.status !== "rejected" && q.status !== "converted_to_job" ? q : null;
+      if (from === to) return;
+      if (from === "won") return void toast.info("This lead is already a job.");
+      if (to === "lost") {
+        setLostDefault(undefined);
+        return setLostLead(lead);
+      }
+      if (to === "won") {
+        toast.info("Won comes from the job. Use Mark won · create job on the lead.");
+        openLead(lead);
+        return;
+      }
+      if (to === "quoting") {
+        if (liveQuote) return void toast.info(`${liveQuote.reference} already exists. Its status moves the card.`);
+        return setQuotingLead(lead);
+      }
+      if (to === "quoted") {
+        if (!liveQuote) return void toast.info("Move it to Quoting first. It becomes Quoted when the quote is sent.");
+        if (liveQuote.status === "bidding" || liveQuote.status === "in_survey") {
+          return void toast.info(`${liveQuote.reference} is still with partners (Sourcing). It shows Ready to send when one quotes.`);
+        }
+        if (liveQuote.status === "draft" || liveQuote.status === "quote_ready") {
+          toast.info(`Send ${liveQuote.reference} to the customer. The card moves to Quoted when it is sent.`);
+          router.push(`/quotes?quoteId=${liveQuote.id}`);
+          return;
+        }
+        return;
+      }
+      // New lead, Qualified: livre, salvo se já existe quote andando.
+      if (liveQuote && (from === "quoting" || from === "quoted")) {
+        return void toast.info(`${liveQuote.reference} is in progress and moves this card. Reject the quote or mark the lead lost to take it out.`);
+      }
+      setBoardColumns((cols) => {
+        const next: Record<string, Lead[]> = {};
+        for (const [k, rows] of Object.entries(cols)) next[k] = rows.filter((l) => l.id !== lead.id);
+        next[to] = [{ ...lead, stage: to }, ...(next[to] ?? [])];
+        return next;
+      });
+      try {
+        const updated = await changeLeadStage(lead.id, to, { summary: "Moved on the board" });
+        // Moveu pelo drawer: o drawer aberto acompanha na hora.
+        setSelectedLead((cur) => (cur?.id === updated.id ? updated : cur));
+        toast.success(`${lead.name} · ${STAGE_LABEL[to]}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not move the lead");
+      } finally {
+        void loadCounts();
+      }
+    },
+    [quotesByLead, openLead, router, loadCounts, STAGE_LABEL],
+  );
+
+  // Link de outra tela (quote, Atendimento): /leads?leadId=... abre o card.
+  const searchParams = useSearchParams();
+  const leadIdDoLink = searchParams.get("leadId");
+  useEffect(() => {
+    if (!leadIdDoLink) return;
+    getLead(leadIdDoLink)
+      .then((l) => l && openLead(l))
+      .catch(() => {
+        /* lead sumiu */
+      });
+  }, [leadIdDoLink, openLead]);
+
+  // Voltou de Jobs/Quotes depois do Mark won: reabre o lead para ele fechar como Won.
+  useEffect(() => {
+    const id = takePendingWonLeadId();
+    if (!id) return;
+    getLead(id)
+      .then((l) => l && openLead(l))
+      .catch(() => {
+        /* lead sumiu */
+      });
+  }, [openLead]);
 
   const handleDelete = useCallback(
     async (lead: Lead) => {
@@ -217,12 +454,17 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     [loadCounts, profile?.id, refresh],
   );
 
+  /** O formulário de Details só volta ao banco quando outro lead abre (salvar o próximo passo não apaga o que foi digitado). */
+  const formLeadIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedLead) {
+      formLeadIdRef.current = null;
       setLinkedJobsCount(null);
       setLeadImages([]);
       return;
     }
+    if (formLeadIdRef.current === selectedLead.id) return;
+    formLeadIdRef.current = selectedLead.id;
     setEditErrors({});
     setLeadImages(normalizeJsonImageArray(selectedLead.images));
     setEditForm({
@@ -236,6 +478,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       scope: selectedLead.scope ?? "",
       status: selectedLead.status,
       catalog_service_id: selectedLead.catalog_service_id ?? "",
+      segment: selectedLead.segment ?? "b2c",
+      source: selectedLead.source ?? "",
+      zendesk_ticket_id: selectedLead.external_ref ?? "",
+      next_action: selectedLead.next_action ?? "",
+      next_action_at: isoToLocalInput(selectedLead.next_action_at),
     });
 
     const clientId = selectedLead.client_id;
@@ -253,31 +500,8 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     };
   }, [selectedLead]);
 
-  const tabs = useMemo(
-    () =>
-      LEAD_STATUSES.map((st) => ({
-        id: st,
-        label: statusConfig[st].label,
-        count: statusCounts[st] ?? 0,
-      })),
-    [statusCounts],
-  );
-
   const columns: Column<Lead>[] = useMemo(
     () => [
-      {
-        key: "reference",
-        label: "Ref",
-        sortable: true,
-        minWidth: "6.5rem",
-        headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
-        render: (item) => (
-          <span className="font-mono text-xs text-text-secondary tabular-nums whitespace-nowrap">
-            {item.reference}
-          </span>
-        ),
-      },
       {
         key: "name",
         label: "Lead",
@@ -286,122 +510,106 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         cellClassName: "min-w-[9rem] max-w-[min(100vw-8rem,22rem)] sm:max-w-xs lg:max-w-sm",
         render: (item) => {
           const urgency = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
-          const scopePreview = item.scope?.trim();
+          const value = leadValue(item, quotesByLead[item.id]);
           return (
-            <div className="min-w-0 space-y-1">
+            <div className="min-w-0 space-y-0.5">
               <p className="text-sm font-medium text-text-primary truncate">{item.name}</p>
-              <p className="font-mono text-[10px] text-text-tertiary tabular-nums sm:hidden">{item.reference}</p>
-              <div className="flex flex-wrap items-center gap-1.5 md:hidden">
+              <p className="font-mono text-[10px] text-text-tertiary tabular-nums">
+                {item.reference}
+                {value ? <span className="ml-2 font-sans text-text-secondary">{gbp(value)}</span> : null}
+              </p>
+              {item.urgency === "high" || item.urgency === "urgent" ? (
                 <Badge variant={urgency.variant} className="text-[10px] px-1.5 py-0">
                   {urgency.label}
                 </Badge>
-                <Badge variant={statusConfig[item.status].variant} className="text-[10px] px-1.5 py-0">
-                  {statusConfig[item.status].label}
-                </Badge>
-              </div>
-              {item.email ? (
-                <p className="text-[11px] text-text-tertiary truncate md:hidden">{item.email}</p>
-              ) : null}
-              {scopePreview ? (
-                <p className="text-[11px] text-text-tertiary line-clamp-2 whitespace-pre-wrap lg:hidden">
-                  {scopePreview}
-                </p>
               ) : null}
             </div>
           );
         },
       },
       {
-        key: "email",
-        label: "Email",
-        minWidth: "9rem",
+        key: "segment",
+        label: "Segment",
+        minWidth: "4.5rem",
+        headerClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell",
+        render: (item) => <span className="text-xs text-text-secondary">{SEGMENT_LABEL[item.segment ?? "b2c"]}</span>,
+      },
+      {
+        key: "source",
+        label: "Source",
+        minWidth: "6rem",
         headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell max-w-[12rem]",
+        cellClassName: "hidden md:table-cell",
         render: (item) => (
-          <span className="text-xs text-text-secondary truncate block">{item.email ?? "—"}</span>
+          <span className="text-xs text-text-secondary">{item.source ? channelLabel.get(item.source) ?? item.source : "·"}</span>
         ),
       },
       {
-        key: "phone",
-        label: "Phone",
-        minWidth: "7rem",
+        key: "stage",
+        label: "Stage",
+        minWidth: "6rem",
+        render: (item) => {
+          const st = item.stage ?? "new";
+          return (
+            <Badge variant={STAGE_VARIANT[st]} marker={false}>
+              {STAGE_LABEL[st]}
+            </Badge>
+          );
+        },
+      },
+      {
+        key: "next_action_at",
+        label: "Next action",
+        sortable: true,
+        minWidth: "10rem",
+        cellClassName: "max-w-[16rem]",
+        render: (item) => {
+          const open = isOpenStage(item.stage);
+          if (!open) return <span className="text-xs text-text-tertiary">·</span>;
+          if (!item.next_action_at) return <span className="text-xs text-text-tertiary">·</span>;
+          const late = isOverdue(item.next_action_at);
+          return (
+            <div className={cn("text-xs min-w-0", late ? "text-[var(--bad-ink)] font-semibold" : "text-text-secondary")}>
+              <p className="truncate">{item.next_action || "Next action"}</p>
+              <p className="tabular-nums text-[11px]">{formatWhen(item.next_action_at)}</p>
+            </div>
+          );
+        },
+      },
+      {
+        key: "last_contact_at",
+        label: "Last contact",
+        minWidth: "6rem",
         headerClassName: "hidden lg:table-cell",
         cellClassName: "hidden lg:table-cell whitespace-nowrap",
         render: (item) => (
-          <span className="text-xs text-text-secondary tabular-nums">{item.phone ?? "—"}</span>
-        ),
-      },
-      {
-        key: "urgency",
-        label: "Urgency",
-        minWidth: "5.5rem",
-        headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell",
-        render: (item) => {
-          const cfg = urgencyConfig[item.urgency] ?? urgencyConfig.medium;
-          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-        },
-      },
-      {
-        key: "scope",
-        label: "Scope",
-        minWidth: "12rem",
-        headerClassName: "hidden lg:table-cell",
-        cellClassName: "hidden lg:table-cell max-w-md",
-        render: (item) => (
-          <p className="text-xs text-text-secondary line-clamp-2 whitespace-pre-wrap">
-            {item.scope?.trim() || "—"}
-          </p>
-        ),
-      },
-      {
-        key: "status",
-        label: "Status",
-        minWidth: "5.5rem",
-        headerClassName: "hidden md:table-cell",
-        cellClassName: "hidden md:table-cell",
-        render: (item) => {
-          const cfg = statusConfig[item.status] ?? statusConfig.new;
-          return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
-        },
-      },
-      {
-        key: "created_at",
-        label: "Created",
-        sortable: true,
-        minWidth: "5.5rem",
-        headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
-        render: (item) => (
-          <span className="text-xs text-text-tertiary tabular-nums whitespace-nowrap">
-            {formatYmdUkDisplay(item.created_at.slice(0, 10))}
+          <span className="text-xs text-text-tertiary tabular-nums">
+            {item.last_contact_at ? `${formatAgo(item.last_contact_at)} ago` : "never"}
           </span>
         ),
       },
       {
-        key: "images",
-        label: "Photos",
-        minWidth: "4.5rem",
+        key: "external_ref",
+        label: "Ticket",
+        minWidth: "5rem",
         headerClassName: "hidden sm:table-cell",
-        cellClassName: "hidden sm:table-cell",
+        cellClassName: "hidden sm:table-cell whitespace-nowrap",
         render: (item) => {
-          const imgs = normalizeJsonImageArray(item.images);
-          if (imgs.length === 0) return <span className="text-xs text-text-tertiary">—</span>;
-          return (
-            <div className="flex items-center gap-1">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imgs[0]}
-                alt=""
-                loading="lazy"
-                className="h-8 w-8 rounded-md object-cover border border-border-light"
-              />
-              {imgs.length > 1 ? (
-                <span className="text-[11px] font-medium text-text-tertiary tabular-nums">
-                  +{imgs.length - 1}
-                </span>
-              ) : null}
-            </div>
+          const url = zendeskTicketUrl(item.external_ref);
+          if (!item.external_ref) return <span className="text-xs text-[var(--bad-ink)]">none</span>;
+          return url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs font-medium text-primary hover:underline tabular-nums"
+            >
+              #{item.external_ref}
+            </a>
+          ) : (
+            <span className="text-xs tabular-nums">#{item.external_ref}</span>
           );
         },
       },
@@ -433,7 +641,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
     ],
-    [deletingId, handleDelete],
+    [deletingId, handleDelete, quotesByLead, channelLabel, STAGE_LABEL],
   );
 
   const handleCreate = async () => {
@@ -450,6 +658,14 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       toast.error("Select a Type of Work");
       return;
     }
+    const ticket = createForm.zendesk_ticket_id.trim().replace(/^#/, "");
+    const crmErrors: CreateLeadErrors = {};
+    if (!/^\d+$/.test(ticket)) crmErrors.zendesk_ticket_id = "Link the Zendesk ticket";
+    if (Object.keys(crmErrors).length > 0) {
+      setCreateErrors((e) => ({ ...e, ...crmErrors }));
+      toast.error(Object.values(crmErrors)[0] ?? "Check the form");
+      return;
+    }
     setCreating(true);
     try {
       let lead = await createLead({
@@ -463,6 +679,9 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         scope: createForm.scope,
         status: "new",
         catalog_service_id: createForm.catalog_service_id,
+        segment: createForm.segment,
+        source: createForm.source || null,
+        zendesk_ticket_id: ticket,
       });
       // Photos are uploaded after the lead exists (need its id for the folder),
       // then attached — same pattern as service requests.
@@ -482,10 +701,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       setCreateForm(emptyLeadForm());
       setCreatePhotos([]);
       setCreateErrors({});
-      setStatus("new");
+      setTab("new");
       await refresh();
       await loadCounts();
-      setSelectedLead(lead);
+      openLead(lead);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not create lead");
     } finally {
@@ -512,7 +731,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         postcode: editForm.postcode,
         urgency: editForm.urgency,
         scope: editForm.scope,
-        status: editForm.status,
+        catalog_service_id: editForm.catalog_service_id || null,
       });
       toast.success("Lead updated");
       setSelectedLead(updated);
@@ -559,23 +778,15 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     }
   };
 
-  const markInterested = async () => {
-    if (!selectedLead || selectedLead.status === "interested") return;
-    setSaving(true);
-    try {
-      const updated = await updateLead(selectedLead.id, { status: "interested" });
-      toast.success("Marked as Interested");
-      setSelectedLead(updated);
-      setEditForm((f) => ({ ...f, status: "interested" }));
-      setStatus("interested");
-      await refresh();
-      await loadCounts();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update status");
-    } finally {
-      setSaving(false);
-    }
-  };
+  /** Mudança vinda do painel do CRM (próximo passo, etapa, dados do job). */
+  const onLeadChange = useCallback(
+    (l: Lead) => {
+      setSelectedLead(l);
+      refreshSilent();
+      void loadCounts();
+    },
+    [refreshSilent, loadCounts],
+  );
 
   const togglePublish = async () => {
     if (!selectedLead) return;
@@ -583,7 +794,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     setSaving(true);
     try {
       const updated = await updateLead(selectedLead.id, { published_at: next });
-      toast.success(next ? "Lead published — now live in the Trade Portal" : "Lead unpublished");
+      toast.success(next ? "Lead published. Now live in the Trade Portal" : "Lead unpublished");
       setSelectedLead(updated);
       await refresh();
     } catch (err) {
@@ -595,64 +806,111 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="min-w-0 space-y-4 sm:space-y-5">
+      <div className="-mt-2 min-w-0 space-y-4">
         <PageHeader
-          title="Partner offers"
-          subtitle="Review service opportunities and offer them to interested partners."
-          className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
+          title="CRM"
+          subtitle="Pipeline has every lead and quote on one board, newest first. Leads is the same list as a table. Updates live as tickets arrive."
+          titleAddon={
+            <div className="flex flex-wrap items-center gap-2">
+              <ViewToggle value={view} onChange={setView} />
+              <SegmentToggle value={segment} onChange={setSegment} />
+            </div>
+          }
         >
+          <SearchExpand
+            value={search}
+            onChange={setSearch}
+            label="Search leads"
+            placeholder="Search name, ref, ticket, scope"
+            width="w-60 sm:w-72"
+          />
           <Button
             type="button"
             size="sm"
             icon={<Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />}
-            aria-label="Add lead"
-            title="Add lead"
-            onClick={() => setCreateOpen(true)}
-            className={cn(
-              "!flex-nowrap shrink-0 self-end sm:self-auto",
-              "h-9 w-9 p-0 justify-center",
-              "sm:h-auto sm:min-h-8 sm:w-auto sm:min-w-[8.75rem] sm:px-3 sm:py-1.5 sm:justify-center",
-              "[&>span:last-child]:whitespace-nowrap",
-            )}
+            aria-label="New lead"
+            title="New lead"
+            onClick={() => {
+              setCreateForm(emptyLeadForm());
+              setCreateOpen(true);
+            }}
+            className="!flex-nowrap shrink-0 h-8 w-8 p-0 justify-center sm:w-auto sm:px-3 [&>span:last-child]:whitespace-nowrap"
           >
-            <span className="hidden sm:inline">Add lead</span>
+            <span className="hidden sm:inline">New lead</span>
           </Button>
         </PageHeader>
 
-        <div className="min-w-0 -mx-1 px-1 overflow-x-auto">
-          <Tabs tabs={tabs} activeTab={status} onChange={setStatus} className="min-w-max sm:min-w-0" />
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, ref, scope…"
-            className="w-full min-w-0 sm:max-w-md"
+        {view === "board" ? (
+          <LeadBoard
+            columns={boardColumns}
+            counts={stageCounts}
+            quotes={quotesByLead}
+            accountNames={accountNames}
+            platformAccounts={platformAccounts}
+            onMove={(l, to) => void onMove(l, to)}
+            canRename={profile?.role === "admin"}
+            onLose={(l) => {
+              setLostDefault("no_reply");
+              setLostLead(l);
+            }}
+            loading={sideLoading}
+            onOpen={openLead}
           />
-          <p className="text-xs text-text-tertiary tabular-nums shrink-0 sm:text-right">
-            {totalItems} lead{totalItems === 1 ? "" : "s"}
-          </p>
-        </div>
-
-        <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
-          <DataTable
-            className="min-w-[20rem]"
-            columns={columns}
-            data={data}
-            loading={loading}
-            page={page}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onRowClick={setSelectedLead}
-            emptyMessage={
-              status === "new"
-                ? "No new leads yet — add one to get started."
-                : "No interested leads yet."
-            }
-          />
-        </div>
+        ) : (
+          <>
+            <LeadStageTabs active={tab} counts={stageCounts} onChange={setTab} />
+            <p className="text-xs text-text-tertiary tabular-nums">
+              {totalItems} lead{totalItems === 1 ? "" : "s"}
+              {" · newest first"}
+            </p>
+            <div className="min-w-0 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+              <DataTable
+                className="min-w-[20rem]"
+                columns={columns}
+                data={data}
+                loading={loading}
+                page={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onRowClick={openLead}
+                emptyMessage={tab === "open" ? "No open leads. Add one to get started." : `No leads in ${STAGE_LABEL[tab]}.`}
+              />
+            </div>
+          </>
+        )}
       </div>
+
+      {quotingLead ? (
+        <LeadQuotingModal
+          lead={quotingLead}
+          catalog={catalogServices}
+          open
+          onClose={() => setQuotingLead(null)}
+          onDone={() => {
+            const id = quotingLead.id;
+            setQuotingLead(null);
+            refreshSilent();
+            void loadCounts();
+            // A quote nasceu: o card já está em Quoting, o drawer aberto também.
+            void getLead(id).then((l) => l && setSelectedLead((cur) => (cur?.id === l.id ? l : cur)));
+          }}
+        />
+      ) : null}
+      {lostLead ? (
+        <LeadLostModal
+          lead={lostLead}
+          defaultReason={lostDefault}
+          open
+          onClose={() => setLostLead(null)}
+          onDone={() => {
+            const id = lostLead.id;
+            setLostLead(null);
+            refreshSilent();
+            void loadCounts();
+            void getLead(id).then((l) => l && setSelectedLead((cur) => (cur?.id === l.id ? l : cur)));
+          }}
+        />
+      ) : null}
 
       <Modal
         open={createOpen}
@@ -660,12 +918,40 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           setCreateOpen(false);
           setCreateErrors({});
         }}
-        title="Add lead"
-        subtitle="Contact is saved under the Fixfy account in Clients. New leads start in the New tab."
+        title="New lead"
+        subtitle="Contact is saved under the Fixfy account in Clients. Link the Zendesk ticket that already exists."
         size="md"
         className="max-w-[min(100vw-1.5rem,32rem)] sm:max-w-lg"
       >
         <div className="px-4 pb-4 pt-4 space-y-3.5 sm:px-5 sm:pb-5 max-h-[min(75dvh,640px)] overflow-y-auto">
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+            <FieldBlock label="Segment">
+              <div role="radiogroup" aria-label="Segment" className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+                {(["b2c", "b2b"] as LeadSegment[]).map((sg) => (
+                  <button
+                    key={sg}
+                    type="button"
+                    role="radio"
+                    aria-checked={createForm.segment === sg}
+                    onClick={() => setCreateForm((f) => ({ ...f, segment: sg }))}
+                    className={cn(
+                      "inline-flex h-7 items-center rounded-md px-3 text-[12px] font-semibold transition-colors",
+                      createForm.segment === sg ? "bg-primary text-white shadow-sm" : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {SEGMENT_LABEL[sg]}
+                  </button>
+                ))}
+              </div>
+            </FieldBlock>
+            <FieldBlock label="Source">
+              <Select
+                value={createForm.source}
+                onChange={(e) => setCreateForm((f) => ({ ...f, source: e.target.value }))}
+                options={[{ value: "", label: "Select a source…" }, ...channels.map((c) => ({ value: c.key, label: c.label }))]}
+              />
+            </FieldBlock>
+          </div>
           <FieldBlock label="Name" error={createErrors.name}>
             <Input
               value={createForm.name}
@@ -709,7 +995,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               onSelect={(parts) => setCreateForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
             />
             <p className="mt-1.5 text-[11px] text-text-tertiary">
-              Choose a Mapbox suggestion — city and postcode are filled automatically.
+              Choose a Mapbox suggestion: city and postcode are filled automatically.
             </p>
           </FieldBlock>
           <FieldBlock label="Type of work">
@@ -724,7 +1010,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               ]}
             />
             <p className="mt-1.5 text-[11px] text-text-tertiary">
-              Drives Trade Portal targeting — only partners covering this trade will see the lead.
+              Drives Trade Portal targeting: only partners covering this trade will see the lead.
             </p>
           </FieldBlock>
           <FieldBlock label="Urgency">
@@ -751,6 +1037,18 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 createErrors.scope && "border-red-400",
               )}
             />
+          </FieldBlock>
+          <FieldBlock label="Zendesk ticket · required" error={createErrors.zendesk_ticket_id}>
+            <Input
+              inputMode="numeric"
+              value={createForm.zendesk_ticket_id}
+              onChange={(e) => setCreateForm((f) => ({ ...f, zendesk_ticket_id: e.target.value }))}
+              placeholder="48230"
+              className={cn(createErrors.zendesk_ticket_id && "border-red-400")}
+            />
+            <p className="mt-1.5 text-[11px] text-text-tertiary">
+              The ticket where the conversation already is. The job inherits it later.
+            </p>
           </FieldBlock>
           <FieldBlock label="Photos (optional)">
             <div className="flex flex-wrap items-center gap-2">
@@ -811,19 +1109,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         footer={
           selectedLead ? (
             <div className="flex flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
-              {selectedLead.status === "new" ? (
-                <Button variant="secondary" onClick={markInterested} disabled={saving} className="w-full sm:w-auto">
-                  Mark interested
-                </Button>
-              ) : null}
-              <Button
-                variant={selectedLead.published_at ? "ghost" : "secondary"}
-                onClick={togglePublish}
-                disabled={saving}
-                className="w-full sm:w-auto"
-              >
-                {selectedLead.published_at ? "Unpublish" : "Publish to partners"}
-              </Button>
               <Button onClick={handleSave} disabled={saving} className="w-full sm:ml-auto sm:w-auto">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
               </Button>
@@ -833,207 +1118,179 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       >
         {selectedLead ? (
           <div className="px-4 py-4 space-y-4 sm:px-5 sm:py-5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant={statusConfig[selectedLead.status].variant}>
-                {statusConfig[selectedLead.status].label}
-              </Badge>
-              <Badge variant={urgencyConfig[selectedLead.urgency].variant}>
-                {urgencyConfig[selectedLead.urgency].label} urgency
-              </Badge>
-              {selectedLead.client_id ? (
-                <Badge variant="info">Fixfy client linked</Badge>
-              ) : null}
-              {linkedJobsCount === 0 ? (
-                <span title="No job available yet — labour-only lead" className="inline-flex">
-                  <Badge variant="warning">Lead only</Badge>
-                </span>
-              ) : linkedJobsCount && linkedJobsCount > 0 ? (
-                <Badge variant="success">
-                  {linkedJobsCount} job{linkedJobsCount === 1 ? "" : "s"} linked
-                </Badge>
-              ) : null}
-              {selectedLead.published_at ? (
-                <Badge variant="default">Offered to partners</Badge>
-              ) : null}
+            <div className="flex items-start justify-between gap-2">
+              <LeadCrmHeader lead={selectedLead} sourceLabel={selectedLead.source ? channelLabel.get(selectedLead.source) : null} />
+              <LeadActionsMenu
+                published={!!selectedLead.published_at}
+                onTogglePublish={togglePublish}
+                onDelete={() => void handleDelete(selectedLead)}
+                busy={saving || deletingId === selectedLead.id}
+              />
             </div>
-
-            <LeadOffersCard leadId={selectedLead.id} published={!!selectedLead.published_at} />
-
-            {/* Photos */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                  Photos {leadImages.length > 0 ? `(${leadImages.length})` : ""}
-                </p>
-                <label className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline cursor-pointer">
-                  {uploadingPhotos ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ImagePlus className="h-3.5 w-3.5" />
-                  )}
-                  Add photos
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    disabled={uploadingPhotos}
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files ?? []);
-                      if (files.length) void addLeadPhotos(files);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-              {leadImages.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                  {leadImages.map((url) => (
-                    <div key={url} className="relative group aspect-square">
-                      <a href={url} target="_blank" rel="noopener noreferrer">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={url}
-                          alt=""
-                          loading="lazy"
-                          className="h-full w-full rounded-lg object-cover border border-border-light"
+            <Tabs
+              tabs={[
+                { id: "overview", label: "Overview" },
+                { id: "activity", label: "Activity" },
+              ]}
+              activeTab={drawerTab}
+              onChange={(id) => setDrawerTab(id as typeof drawerTab)}
+            />
+            {drawerTab === "overview" ? (
+              <LeadCrmPanel
+                lead={selectedLead}
+                catalog={catalogServices}
+                onLeadChange={onLeadChange}
+                onMove={(to) => void onMove(selectedLead, to)}
+                onLose={() => {
+                  setLostDefault(undefined);
+                  setLostLead(selectedLead);
+                }}
+                details={
+                  <div className="space-y-4">
+                    {/* Cliente: quem é e onde. */}
+                    <section className="space-y-3 rounded-xl border border-border-light p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Customer</p>
+                        {selectedLead.client_id ? (
+                          <Link href="/clients" className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                            Client linked
+                            {linkedJobsCount && linkedJobsCount > 0 ? ` · ${linkedJobsCount} job${linkedJobsCount === 1 ? "" : "s"}` : ""}
+                            <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        ) : (
+                          <span className="text-[11px] text-text-tertiary">New customer</span>
+                        )}
+                      </div>
+                      <FieldBlock label="Name" error={editErrors.name}>
+                        <Input
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          className={cn(editErrors.name && "border-red-400")}
                         />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => void removeLeadPhoto(url)}
-                        className="absolute -right-1.5 -top-1.5 rounded-full bg-surface border border-border-light p-0.5 text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-red-600 shadow-sm transition-opacity"
-                        aria-label="Remove photo"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-text-tertiary">No photos yet.</p>
-              )}
-            </div>
+                      </FieldBlock>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <FieldBlock label="Email" error={editErrors.email}>
+                          <Input
+                            type="email"
+                            value={editForm.email}
+                            onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                            className={cn(editErrors.email && "border-red-400")}
+                          />
+                        </FieldBlock>
+                        <FieldBlock label="Phone" error={editErrors.phone}>
+                          <Input
+                            type="tel"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                            className={cn(editErrors.phone && "border-red-400")}
+                          />
+                        </FieldBlock>
+                      </div>
+                      <FieldBlock label="Address" error={editErrors.address}>
+                        <AddressAutocomplete
+                          placeholder="Start typing address or postcode…"
+                          value={editForm.address}
+                          onChange={(v) => setEditForm((f) => ({ ...f, address: v, city: "", postcode: "" }))}
+                          onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
+                        />
+                        {editForm.postcode ? (
+                          <p className="mt-1.5 text-[11px] text-text-tertiary">Postcode {editForm.postcode.toUpperCase()}</p>
+                        ) : (
+                          <p className="mt-1.5 text-[11px] text-text-tertiary">Pick a suggestion: city and postcode fill in.</p>
+                        )}
+                      </FieldBlock>
+                    </section>
 
-            {selectedLead.client_id ? (
-              <Link
-                href="/clients"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-              >
-                Open Clients directory
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            ) : null}
-
-            <FieldBlock label="Name" error={editErrors.name}>
-              <Input
-                value={editForm.name}
-                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                className={cn(editErrors.name && "border-red-400")}
-              />
-            </FieldBlock>
-
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-              <FieldBlock label="Email" error={editErrors.email}>
-                <Input
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
-                  className={cn(editErrors.email && "border-red-400")}
-                />
-              </FieldBlock>
-              <FieldBlock label="Phone" error={editErrors.phone}>
-                <Input
-                  type="tel"
-                  value={editForm.phone}
-                  onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
-                  className={cn(editErrors.phone && "border-red-400")}
-                />
-              </FieldBlock>
-            </div>
-
-            <FieldBlock label="Address" error={editErrors.address}>
-              <AddressAutocomplete
-                placeholder="Start typing address or postcode…"
-                value={editForm.address}
-                onChange={(v) =>
-                  setEditForm((f) => ({ ...f, address: v, city: "", postcode: "" }))
+                    {/* O pedido: o que, quão urgente, fotos. */}
+                    <section className="space-y-3 rounded-xl border border-border-light p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Service requested</p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_9rem]">
+                        <FieldBlock label="Type of work">
+                          <Select
+                            value={editForm.catalog_service_id}
+                            onChange={(e) => setEditForm((f) => ({ ...f, catalog_service_id: e.target.value }))}
+                            options={[
+                              { value: "", label: "Select a type of work…" },
+                              ...catalogServices.map((c) => ({ value: c.id, label: c.name })),
+                            ]}
+                          />
+                        </FieldBlock>
+                        <FieldBlock label="Urgency">
+                          <Select
+                            value={editForm.urgency}
+                            onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
+                            options={[
+                              { value: "low", label: "Low" },
+                              { value: "medium", label: "Medium" },
+                              { value: "high", label: "High" },
+                              { value: "urgent", label: "Urgent" },
+                            ]}
+                          />
+                        </FieldBlock>
+                      </div>
+                      <FieldBlock label="Scope" error={editErrors.scope}>
+                        <textarea
+                          value={editForm.scope}
+                          onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
+                          rows={5}
+                          placeholder="What the customer needs. No prices."
+                          className={cn(
+                            "w-full min-h-[6rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
+                            "focus:outline-none focus:ring-2 focus:ring-primary/30",
+                            editErrors.scope && "border-red-400",
+                          )}
+                        />
+                      </FieldBlock>
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-xs font-medium text-text-secondary">Photos {leadImages.length > 0 ? `(${leadImages.length})` : ""}</span>
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+                            {uploadingPhotos ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+                            Add photos
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              className="hidden"
+                              disabled={uploadingPhotos}
+                              onChange={(e) => {
+                                const files = Array.from(e.target.files ?? []);
+                                if (files.length) void addLeadPhotos(files);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        </div>
+                        {leadImages.length > 0 ? (
+                          <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+                            {leadImages.map((url) => (
+                              <div key={url} className="group relative aspect-square">
+                                <a href={url} target="_blank" rel="noopener noreferrer">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt="" loading="lazy" className="h-full w-full rounded-lg border border-border-light object-cover" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => void removeLeadPhoto(url)}
+                                  className="absolute -right-1.5 -top-1.5 rounded-full border border-border-light bg-surface p-0.5 text-text-tertiary opacity-0 shadow-sm transition-opacity hover:text-red-600 group-hover:opacity-100"
+                                  aria-label="Remove photo"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-text-tertiary">No photos yet.</p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
                 }
-                onSelect={(parts) => setEditForm((f) => ({ ...f, ...mapboxPartsToLeadFields(parts) }))}
               />
-              <p className="mt-1.5 text-[11px] text-text-tertiary">
-                Choose a Mapbox suggestion — city and postcode are filled automatically.
-              </p>
-            </FieldBlock>
-
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-              <FieldBlock label="Urgency">
-                <Select
-                  value={editForm.urgency}
-                  onChange={(e) => setEditForm((f) => ({ ...f, urgency: e.target.value as LeadUrgency }))}
-                  options={[
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Medium" },
-                    { value: "high", label: "High" },
-                    { value: "urgent", label: "Urgent" },
-                  ]}
-                />
-              </FieldBlock>
-              <FieldBlock label="Status">
-                <Select
-                  value={editForm.status}
-                  onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as LeadStatus }))}
-                  options={[
-                    { value: "new", label: "New" },
-                    { value: "interested", label: "Interested" },
-                  ]}
-                />
-              </FieldBlock>
-            </div>
-
-            <FieldBlock label="Scope" error={editErrors.scope}>
-              <textarea
-                value={editForm.scope}
-                onChange={(e) => setEditForm((f) => ({ ...f, scope: e.target.value }))}
-                rows={6}
-                className={cn(
-                  "w-full min-h-[6rem] rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary",
-                  "focus:outline-none focus:ring-2 focus:ring-primary/30",
-                  editErrors.scope && "border-red-400",
-                )}
-              />
-            </FieldBlock>
-
-            <p className="text-[11px] text-text-tertiary leading-snug">
-              Lead saved under the Fixfy account (matched by email). Interested leads can be offered to partners as
-              labour-only when no job is available yet.
-            </p>
-
-            <div className="pt-4 mt-2 border-t border-dashed border-border-light">
-              <p className="text-[11px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide mb-2">
-                Danger zone
-              </p>
-              <p className="text-xs text-text-tertiary mb-3">
-                Permanently removes this lead from the OS and partner portal. Partner interest records stay in the audit
-                trail but the lead no longer appears anywhere.
-              </p>
-              <Button
-                type="button"
-                variant="danger"
-                className="w-full sm:w-auto"
-                disabled={deletingId === selectedLead.id || saving}
-                icon={
-                  deletingId === selectedLead.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )
-                }
-                onClick={() => void handleDelete(selectedLead)}
-              >
-                Delete lead
-              </Button>
-            </div>
+            ) : (
+              <LeadTimeline leadId={selectedLead.id} reloadKey={Date.parse(selectedLead.updated_at) || 0} />
+            )}
           </div>
         ) : null}
       </Drawer>
