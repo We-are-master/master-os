@@ -95,16 +95,14 @@ export function LeadQuotingModal({
       className={cn(
         "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition",
         mode === value
-          ? value === "bid"
-            ? "border-amber-400 bg-amber-50 ring-2 ring-amber-200 dark:bg-amber-950/30"
-            : "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-200 dark:bg-indigo-950/30"
+          ? "border-primary bg-primary-light ring-2 ring-primary/15"
           : "border-border-light hover:border-border",
       )}
     >
       <span
         className={cn(
           "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-          value === "bid" ? "bg-amber-100 text-amber-700" : "bg-indigo-100 text-indigo-700",
+          mode === value ? "bg-primary text-white" : "bg-surface-tertiary text-text-secondary",
         )}
       >
         <Icon className="h-4 w-4" aria-hidden />

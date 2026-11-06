@@ -28,60 +28,15 @@ import type { Lead, LeadStage } from "@/types/database";
 import { BOARD_STAGES, leadValue, type LeadQuote } from "@/services/crm-leads";
 import { QUOTE_STATUS_CHIP, SEGMENT_LABEL, formatAgo, formatWhen, gbp, isOverdue } from "./crm-ui";
 
-/** Cor de cada etapa: faixa da coluna, ponto, contador e borda do card. */
-const STAGE_TONE: Record<
-  LeadStage,
-  { bar: string; col: string; dot: string; pill: string; edge: string }
-> = {
-  new: {
-    bar: "bg-sky-500",
-    col: "bg-sky-50/70 dark:bg-sky-950/25",
-    dot: "bg-sky-500",
-    pill: "bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200",
-    edge: "border-l-sky-500",
-  },
-  qualifying: {
-    bar: "bg-violet-500",
-    col: "bg-violet-50/70 dark:bg-violet-950/25",
-    dot: "bg-violet-500",
-    pill: "bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-200",
-    edge: "border-l-violet-500",
-  },
-  qualified: {
-    bar: "bg-cyan-500",
-    col: "bg-cyan-50/70 dark:bg-cyan-950/25",
-    dot: "bg-cyan-500",
-    pill: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/60 dark:text-cyan-200",
-    edge: "border-l-cyan-500",
-  },
-  quoting: {
-    bar: "bg-amber-500",
-    col: "bg-amber-50/70 dark:bg-amber-950/25",
-    dot: "bg-amber-500",
-    pill: "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200",
-    edge: "border-l-amber-500",
-  },
-  quoted: {
-    bar: "bg-indigo-500",
-    col: "bg-indigo-50/70 dark:bg-indigo-950/25",
-    dot: "bg-indigo-500",
-    pill: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-200",
-    edge: "border-l-indigo-500",
-  },
-  won: {
-    bar: "bg-emerald-500",
-    col: "bg-emerald-50/70 dark:bg-emerald-950/25",
-    dot: "bg-emerald-500",
-    pill: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200",
-    edge: "border-l-emerald-500",
-  },
-  lost: {
-    bar: "bg-rose-500",
-    col: "bg-rose-50/70 dark:bg-rose-950/25",
-    dot: "bg-rose-500",
-    pill: "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200",
-    edge: "border-l-rose-500",
-  },
+/**
+ * Board nas cores do OS (Fixfy UNO): colunas neutras, navy como cor da marca.
+ * Cor só onde significa algo: verde = pronto, âmbar = esperando, vermelho =
+ * atrasado ou perdido, coral = acabou de chegar.
+ */
+const COLUMN = {
+  col: "bg-surface-secondary",
+  dot: "bg-primary",
+  pill: "bg-card text-text-secondary ring-1 ring-inset ring-border-light",
 };
 
 /** Chegou há menos de 15 min: ganha o ponto de "novo". */
@@ -118,8 +73,10 @@ function BoardCard({
   dragging,
   onDragState,
   onOpen,
+  stageLabel,
 }: {
   lead: Lead;
+  stageLabel: string;
   quote?: LeadQuote | null;
   accountName?: string | null;
   semEntrada: boolean;
@@ -176,13 +133,11 @@ function BoardCard({
       }}
       className={cn(
         "w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
-        "border-l-[3px]",
-        STAGE_TONE[stage].edge,
         readyToSend
-          ? "border-y-emerald-300 border-r-emerald-300 shadow-[0_0_0_3px_rgb(16_185_129/0.15)]"
+          ? "border-success ring-2 ring-success/15"
           : fresh
-            ? "border-y-sky-300 border-r-sky-300 shadow-[0_0_0_3px_rgb(14_165_233/0.12)]"
-            : "border-y-border-light border-r-border-light",
+            ? "border-fx-coral ring-2 ring-fx-coral/15"
+            : "border-border-light",
         dragging && "opacity-40",
       )}
     >
@@ -193,12 +148,12 @@ function BoardCard({
               className="relative flex h-2 w-2 shrink-0"
               aria-label="Just arrived"
             >
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-fx-coral opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-fx-coral" />
             </span>
           ) : (
             <UserRound
-              className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400"
+              className="h-3.5 w-3.5 shrink-0 text-text-tertiary"
               aria-hidden
             />
           )}
@@ -208,8 +163,8 @@ function BoardCard({
           className={cn(
             "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
             segment === "b2b"
-              ? "bg-violet-100 text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-900/50 dark:text-violet-200 dark:ring-violet-800"
-              : "bg-teal-50 text-teal-700 ring-1 ring-inset ring-teal-200 dark:bg-teal-900/40 dark:text-teal-200 dark:ring-teal-800",
+              ? "bg-primary text-white"
+              : "bg-card text-text-secondary ring-1 ring-inset ring-border-light",
           )}
         >
           {segment === "b2b" ? (
@@ -223,19 +178,25 @@ function BoardCard({
 
       <div className="mt-1.5 space-y-1">
         {accountName ? (
-          <Line icon={Building2} tone="text-indigo-500">
+          <Line icon={Building2} tone="text-text-tertiary">
             <span className="font-medium text-text-primary">{accountName}</span>
           </Line>
         ) : null}
-        <Line icon={MapPin} tone="text-rose-500" title={address || undefined}>
+        <Line icon={MapPin} tone="text-text-tertiary" title={address || undefined}>
           {address || (
             <span className="text-text-tertiary">No address yet</span>
           )}
         </Line>
       </div>
 
-      {chip || (stage === "lost" && lead.lost_reason) ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span
+            className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+            title="Status"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+            {stageLabel}
+          </span>
           {chip ? (
             <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}>
               {readyToSend ? <Send className="h-3 w-3" aria-hidden /> : <FileText className="h-3 w-3" aria-hidden />}
@@ -244,19 +205,18 @@ function BoardCard({
             </span>
           ) : null}
           {stage === "lost" && lead.lost_reason ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10.5px] font-medium text-rose-700 dark:bg-rose-900/40 dark:text-rose-200">
+            <span className="inline-flex items-center gap-1 rounded-md bg-danger-light px-1.5 py-0.5 text-[10.5px] font-medium text-danger">
               <XCircle className="h-3 w-3" aria-hidden />
               {LOST_REASON_LABEL[lead.lost_reason]}
             </span>
           ) : null}
           {stage === "lost" && lead.nurture_until ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-medium text-teal-700 dark:bg-teal-900/40 dark:text-teal-200">
+            <span className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] font-medium text-text-secondary">
               <RotateCcw className="h-3 w-3" aria-hidden />
               back {lead.nurture_until.slice(8, 10)}/{lead.nurture_until.slice(5, 7)}
             </span>
           ) : null}
-        </div>
-      ) : null}
+      </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
         <ZendeskTicketLink
@@ -272,11 +232,11 @@ function BoardCard({
           className="inline-flex items-center gap-1 text-[11px] text-text-secondary"
           title={`Arrived ${arrived}`}
         >
-          <Clock className="h-3 w-3 text-amber-500" aria-hidden />
+          <Clock className="h-3 w-3 text-text-tertiary" aria-hidden />
           {formatAgo(lead.created_at, now)}
         </span>
         {value ? (
-          <span className="inline-flex items-center gap-0.5 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums text-text-primary">
             <PoundSterling className="h-3 w-3" aria-hidden />
             {gbp(value).replace("£", "")}
           </span>
@@ -285,13 +245,13 @@ function BoardCard({
           <span
             className={cn(
               "inline-flex items-center gap-1 text-[11px]",
-              overdue ? "font-semibold text-rose-600" : "text-text-secondary",
+              overdue ? "font-semibold text-danger" : "text-text-secondary",
             )}
           >
             <CalendarClock
               className={cn(
                 "h-3 w-3",
-                overdue ? "text-rose-500" : "text-violet-500",
+                overdue ? "text-danger" : "text-text-tertiary",
               )}
               aria-hidden
             />
@@ -461,24 +421,23 @@ export function LeadBoard({
               }}
               className={cn(
                 "w-72 shrink-0 overflow-hidden rounded-xl transition",
-                STAGE_TONE[st].col,
+                COLUMN.col,
                 overStage === st && dragFrom !== st && "ring-2 ring-offset-2 ring-primary/50",
               )}
             >
-              <div className={cn("h-1", STAGE_TONE[st].bar)} aria-hidden />
               <div className="p-2">
                 <header className="mb-2 flex items-center justify-between px-1">
                   <ColumnTitle
                     stage={st}
                     label={STAGE_LABEL[st]}
-                    dot={STAGE_TONE[st].dot}
+                    dot={COLUMN.dot}
                     canRename={canRename}
                     suffix={st === "lost" ? "· last 7 days" : null}
                   />
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
-                      STAGE_TONE[st].pill,
+                      COLUMN.pill,
                     )}
                   >
                     {total}
@@ -499,6 +458,7 @@ export function LeadBoard({
                     <BoardCard
                       key={l.id}
                       lead={l}
+                      stageLabel={STAGE_LABEL[l.stage ?? "new"]}
                       quote={quotes[l.id]}
                       accountName={
                         l.account_id ? accountNames[l.account_id] : null
