@@ -197,6 +197,9 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
   if (!m.midiaUrl && ["image", "audio", "video", "document", "sticker"].includes(m.tipo)) {
     m.midiaUrl = await urlDaMidia(m.wamid);
   }
+  // O link da uazapi não abre em toda rede (a EE bloqueia o domínio) e expira:
+  // a mídia vai para o nosso bucket já na chegada; se falhar, fica o link.
+  const guardada = m.midiaUrl ? await guardarMidiaRecebida(sb, m.midiaUrl, m.contato, m.wamid) : null;
   const linha: Record<string, unknown> = {
     wamid: m.wamid,
     phone_number_id: OPS_PHONE_NUMBER_ID(),
@@ -206,7 +209,7 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
     origem: m.direcao === "entrada" ? "contato" : "celular",
     tipo: m.tipo,
     texto: m.texto,
-    midia_id: m.midiaUrl,
+    midia_id: guardada ?? m.midiaUrl,
     status: m.direcao === "saida" ? "sent" : null,
     // Grupo não é de um parceiro só: a conversa não vira "parceiro" por causa de um membro.
     partner_id: m.grupo ? null : await parceiroDoNumero(sb, m.contato),
@@ -356,6 +359,46 @@ function cabecalho(): Record<string, string> {
   const token = process.env.UAZAPI_OPS_TOKEN?.trim();
   if (!token) throw new EnvioOperacaoError("UAZAPI_OPS_TOKEN is not set");
   return { token, "Content-Type": "application/json", Accept: "application/json" };
+}
+
+export const BUCKET_DA_MIDIA = "inbox-media";
+/** Acima disso a mídia fica só no link da uazapi (o WhatsApp já limita vídeo a 16 MB). */
+const MIDIA_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Baixa a mídia recebida (servidor, onde a uazapi abre) e guarda no bucket
+ * privado. Devolve `storage:<caminho>` ou null. Se o link expirou, pede outro
+ * pelo id da mensagem e tenta de novo.
+ */
+export async function guardarMidiaRecebida(sb: SupabaseClient, url: string, contato: string, wamid: string): Promise<string | null> {
+  const baixar = async (u: string) => {
+    const res = await fetch(u, { redirect: "follow" });
+    if (!res.ok) return null;
+    const tamanho = Number(res.headers.get("content-length") ?? 0);
+    if (tamanho > MIDIA_MAX_BYTES) return null;
+    const dados = Buffer.from(await res.arrayBuffer());
+    if (!dados.length || dados.length > MIDIA_MAX_BYTES) return null;
+    return { dados, tipo: res.headers.get("content-type")?.split(";")[0].trim() || "application/octet-stream" };
+  };
+  try {
+    let arquivo = await baixar(url).catch(() => null);
+    if (!arquivo) {
+      const nova = await urlDaMidia(wamid);
+      if (nova && nova !== url) arquivo = await baixar(nova).catch(() => null);
+    }
+    if (!arquivo) return null;
+    const ext = (new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1] ?? arquivo.tipo.split("/")[1] ?? "bin").toLowerCase();
+    const caminho = `${contato}/recebida-${wamid.replace(/[^\w-]+/g, "_").slice(-60)}.${ext}`;
+    const { error } = await sb.storage.from(BUCKET_DA_MIDIA).upload(caminho, arquivo.dados, { contentType: arquivo.tipo, upsert: true });
+    if (error) {
+      console.error("[uazapi-operacao] guardar mídia", error.message);
+      return null;
+    }
+    return `storage:${caminho}`;
+  } catch (e) {
+    console.error("[uazapi-operacao] guardar mídia", e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 /** Pede à uazapi a URL de uma mídia recebida. Sem ela, a mensagem fica só com o rótulo. */
