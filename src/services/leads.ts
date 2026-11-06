@@ -155,7 +155,7 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
     urgency: input.urgency ?? "medium",
     scope: (input.scope ?? "").trim(),
     status: input.status ?? "new",
-    stage: input.status === "interested" ? "talking" : "new",
+    stage: input.status === "interested" ? "qualifying" : "new",
     segment: await segmentoDoLead(supabase, accountId, input.segment),
     source: input.source?.trim() || null,
     external_source: input.zendesk_ticket_id ? "zendesk" : null,
@@ -410,8 +410,11 @@ export async function changeLeadStage(id: string, to: LeadStage, extra: ChangeLe
     payload.lost_reason = extra.lostReason;
     payload.lost_note = extra.lostNote?.trim() || null;
     payload.lost_at = now;
+    // Data de volta (ex-Nurture): no dia o lead volta sozinho para New lead.
+    payload.nurture_until = extra.nurtureUntil || null;
+  } else if (from === "lost") {
+    payload.nurture_until = null;
   }
-  if (to === "nurture") payload.nurture_until = extra.nurtureUntil;
   if (to === "won") {
     payload.won_at = now;
     payload.job_id = extra.jobId ?? existing.job_id;

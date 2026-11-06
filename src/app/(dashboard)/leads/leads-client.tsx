@@ -15,12 +15,15 @@ import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
-import type { CatalogService, Lead, LeadSegment, LeadStatus, LeadUrgency } from "@/types/database";
+import type { CatalogService, Lead, LeadSegment, LeadStage, LeadStatus, LeadUrgency } from "@/types/database";
+import { useRouter } from "next/navigation";
+import { LeadQuotingModal } from "@/components/leads/lead-quoting-modal";
+import { LeadLostModal } from "@/components/leads/lead-lost-modal";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
 import { useSupabaseList } from "@/hooks/use-supabase-list";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/use-profile";
-import { createLead, updateLead, deleteLead, countJobsForClient, getLead } from "@/services/leads";
+import { createLead, updateLead, deleteLead, countJobsForClient, getLead, changeLeadStage } from "@/services/leads";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { type ListResult } from "@/services/base";
 import {
@@ -211,6 +214,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [accountNames, setAccountNames] = useState<Record<string, string>>({});
+  /** Card solto em Quoting: pergunta Partners bid ou Internal. */
+  const [quotingLead, setQuotingLead] = useState<Lead | null>(null);
+  /** Card solto em Lost: motivo e data de volta. */
+  const [lostLead, setLostLead] = useState<Lead | null>(null);
+  const router = useRouter();
   const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
   const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
   const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
@@ -255,11 +263,6 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   }, []);
 
   const channelLabel = useMemo(() => new Map(channels.map((c) => [c.key, c.label])), [channels]);
-  const serviceName = useCallback(
-    (id: string | null | undefined) => (id ? catalogServices.find((c) => c.id === id)?.name ?? null : null),
-    [catalogServices],
-  );
-
   /** Contagens, board, contas e as quotes dos leads na tela. */
   const sideSeq = useRef(0);
   const loadCounts = useCallback(async () => {
@@ -335,6 +338,64 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     setDrawerTab("overview");
     setSelectedLead(lead);
   }, []);
+
+  /**
+   * Card arrastado para outra coluna. Até Qualified a equipe move livre. Dali
+   * para frente quem move é a quote (o status dela decide Quoting e Quoted):
+   * - Quoting pergunta Partners bid ou Internal e cria a quote;
+   * - Quoted só acontece quando a quote é enviada ao cliente;
+   * - Won só com o job criado; Lost pede motivo.
+   */
+  const onMove = useCallback(
+    async (lead: Lead, to: LeadStage) => {
+      const from = lead.stage ?? "new";
+      const q = quotesByLead[lead.id];
+      const liveQuote = q && q.status !== "rejected" && q.status !== "converted_to_job" ? q : null;
+      if (from === to) return;
+      if (from === "won") return void toast.info("This lead is already a job.");
+      if (to === "lost") return setLostLead(lead);
+      if (to === "won") {
+        toast.info("Won comes from the job. Use Mark won · create job on the lead.");
+        openLead(lead);
+        return;
+      }
+      if (to === "quoting") {
+        if (liveQuote) return void toast.info(`${liveQuote.reference} already exists. Its status moves the card.`);
+        return setQuotingLead(lead);
+      }
+      if (to === "quoted") {
+        if (!liveQuote) return void toast.info("Move it to Quoting first. It becomes Quoted when the quote is sent.");
+        if (liveQuote.status === "bidding" || liveQuote.status === "in_survey") {
+          return void toast.info(`${liveQuote.reference} is still with partners (Sourcing). It shows Ready to send when one quotes.`);
+        }
+        if (liveQuote.status === "draft" || liveQuote.status === "quote_ready") {
+          toast.info(`Send ${liveQuote.reference} to the customer. The card moves to Quoted when it is sent.`);
+          router.push(`/quotes?quoteId=${liveQuote.id}`);
+          return;
+        }
+        return;
+      }
+      // New lead, Qualifying, Qualified: livre, salvo se já existe quote andando.
+      if (liveQuote && (from === "quoting" || from === "quoted")) {
+        return void toast.info(`${liveQuote.reference} is in progress and moves this card. Reject the quote or mark the lead lost to take it out.`);
+      }
+      setBoardColumns((cols) => {
+        const next: Record<string, Lead[]> = {};
+        for (const [k, rows] of Object.entries(cols)) next[k] = rows.filter((l) => l.id !== lead.id);
+        next[to] = [{ ...lead, stage: to }, ...(next[to] ?? [])];
+        return next;
+      });
+      try {
+        await changeLeadStage(lead.id, to, { summary: "Moved on the board" });
+        toast.success(`${lead.name} · ${STAGE_LABEL[to]}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not move the lead");
+      } finally {
+        void loadCounts();
+      }
+    },
+    [quotesByLead, openLead, router, loadCounts],
+  );
 
   // Voltou de Jobs/Quotes depois do Mark won: reabre o lead para ele fechar como Won.
   useEffect(() => {
@@ -781,6 +842,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             quotes={quotesByLead}
             accountNames={accountNames}
             platformAccounts={platformAccounts}
+            onMove={(l, to) => void onMove(l, to)}
             loading={sideLoading}
             onOpen={openLead}
           />
@@ -807,6 +869,32 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           </>
         )}
       </div>
+
+      {quotingLead ? (
+        <LeadQuotingModal
+          lead={quotingLead}
+          catalog={catalogServices}
+          open
+          onClose={() => setQuotingLead(null)}
+          onDone={() => {
+            setQuotingLead(null);
+            refreshSilent();
+            void loadCounts();
+          }}
+        />
+      ) : null}
+      {lostLead ? (
+        <LeadLostModal
+          lead={lostLead}
+          open
+          onClose={() => setLostLead(null)}
+          onDone={() => {
+            setLostLead(null);
+            refreshSilent();
+            void loadCounts();
+          }}
+        />
+      ) : null}
 
       <Modal
         open={createOpen}
@@ -1049,7 +1137,14 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               onChange={(id) => setDrawerTab(id as typeof drawerTab)}
             />
             {drawerTab === "overview" ? (
-              <LeadCrmPanel lead={selectedLead} serviceName={serviceName(selectedLead.catalog_service_id)} onLeadChange={onLeadChange} />
+              <LeadCrmPanel
+                lead={selectedLead}
+                catalog={catalogServices}
+                onLeadChange={onLeadChange}
+                onQuoteCreated={() => {
+                  void getLead(selectedLead.id).then((l) => l && onLeadChange(l));
+                }}
+              />
             ) : drawerTab === "activity" ? (
               <LeadTimeline leadId={selectedLead.id} reloadKey={Date.parse(selectedLead.updated_at) || 0} />
             ) : (

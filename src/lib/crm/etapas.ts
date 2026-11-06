@@ -10,27 +10,29 @@ import type { LeadLostReason, LeadStage, LeadStatus, QuoteStatus } from "@/types
 
 export const LEAD_STAGES: readonly LeadStage[] = [
   "new",
-  "talking",
+  "qualifying",
+  "qualified",
   "quoting",
-  "quote_sent",
-  "accepted",
+  "quoted",
   "won",
   "lost",
-  "nurture",
 ] as const;
 
-/** Etapas em que o lead ainda pede ação (Fila Today, próximo passo). */
-export const OPEN_STAGES: readonly LeadStage[] = ["new", "talking", "quoting", "quote_sent", "accepted"] as const;
+/** Etapas em que o lead ainda pede ação. */
+export const OPEN_STAGES: readonly LeadStage[] = ["new", "qualifying", "qualified", "quoting", "quoted"] as const;
 
+/** Etapas que a equipe move à mão no board (antes da quote existir). */
+export const MANUAL_STAGES: readonly LeadStage[] = ["new", "qualifying", "qualified"] as const;
+
+/** Mesmo nome no OS e no Zendesk (dicionário de nomes, 06/11/2026). */
 export const STAGE_LABEL: Record<LeadStage, string> = {
-  new: "New",
-  talking: "Talking",
+  new: "New lead",
+  qualifying: "Qualifying",
+  qualified: "Qualified",
   quoting: "Quoting",
-  quote_sent: "Quote sent",
-  accepted: "Accepted",
+  quoted: "Quoted",
   won: "Won",
   lost: "Lost",
-  nurture: "Nurture",
 };
 
 export const LOST_REASON_LABEL: Record<LeadLostReason, string> = {
@@ -48,18 +50,21 @@ export function isOpenStage(stage: LeadStage | null | undefined): boolean {
   return !!stage && OPEN_STAGES.includes(stage);
 }
 
-/** Status da quote → etapa do lead. */
+/**
+ * Status da quote → etapa do lead. Quoting vai até a quote estar pronta para
+ * enviar (Ready to send = parceiro cotou, falta a equipe mandar). Quoted só
+ * quando o cliente tem o preço.
+ */
 export function stageFromQuoteStatus(status: QuoteStatus): LeadStage {
   switch (status) {
     case "draft":
     case "in_survey":
     case "bidding":
-      return "quoting";
     case "quote_ready":
+      return "quoting";
     case "awaiting_customer":
-      return "quote_sent";
     case "awaiting_payment":
-      return "accepted";
+      return "quoted";
     case "converted_to_job":
       return "won";
     case "rejected":
@@ -69,7 +74,7 @@ export function stageFromQuoteStatus(status: QuoteStatus): LeadStage {
 
 /** Status antigo (tela de hoje) → etapa. */
 export function stageFromLegacyStatus(status: LeadStatus): LeadStage {
-  return status === "interested" ? "talking" : "new";
+  return status === "interested" ? "qualifying" : "new";
 }
 
 /** Etapa → status antigo, para a tela de hoje continuar coerente. */
@@ -81,7 +86,7 @@ export type StageChange = {
   from: LeadStage;
   to: LeadStage;
   lostReason?: LeadLostReason | null;
-  /** YYYY-MM-DD */
+  /** YYYY-MM-DD: Lost com data de volta (ex-Nurture). */
   nurtureUntil?: string | null;
   jobId?: string | null;
   /** YYYY-MM-DD de hoje em Londres; injetado para testar. */
@@ -94,8 +99,8 @@ export function validateStageChange(c: StageChange): string | null {
   if (c.from === c.to) return null;
   if (c.from === "won") return "This lead is already a job";
   if (c.to === "lost" && !c.lostReason) return "Pick a reason to mark this lead as lost";
-  if (c.to === "nurture") {
-    if (!c.nurtureUntil || !/^\d{4}-\d{2}-\d{2}$/.test(c.nurtureUntil)) return "Pick a date to come back to this lead";
+  if (c.to === "lost" && c.nurtureUntil) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(c.nurtureUntil)) return "Pick a valid come-back date";
     const hoje = c.today ?? new Date().toISOString().slice(0, 10);
     if (c.nurtureUntil <= hoje) return "The come-back date must be in the future";
   }
@@ -106,9 +111,9 @@ export function validateStageChange(c: StageChange): string | null {
 /**
  * Quando o status antigo muda pela tela de hoje (new ↔ interested), só mexe
  * na etapa se o lead ainda está no começo do funil. Um lead em Quoting que
- * alguém marca "interested" não volta para Talking.
+ * alguém marca "interested" não volta para Qualifying.
  */
 export function stageForLegacyStatusChange(current: LeadStage, status: LeadStatus): LeadStage {
-  if (current !== "new" && current !== "talking") return current;
+  if (current !== "new" && current !== "qualifying") return current;
   return stageFromLegacyStatus(status);
 }

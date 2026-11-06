@@ -12,18 +12,17 @@ import { guardarPrefill, janelaDoTexto } from "@/lib/inbox/prefill";
 import { changeLeadStage, recordLeadEvent } from "@/services/leads";
 import {
   accountSkipsDeposit,
-  createQuoteFromLead,
   findJobForLead,
   getLatestLeadQuote,
   leadValue,
   type LeadQuote,
 } from "@/services/crm-leads";
-import type { Lead } from "@/types/database";
+import type { CatalogService, Lead } from "@/types/database";
 import { LeadNextAction } from "./lead-next-action";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
 import { LeadLostModal } from "./lead-lost-modal";
-import { LeadNurtureModal } from "./lead-nurture-modal";
+import { LeadQuotingModal } from "./lead-quoting-modal";
 import { SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
 
 const PENDING_WON_KEY = "fixfy:crm-pending-won";
@@ -75,17 +74,20 @@ export function LeadCrmHeader({ lead, sourceLabel }: { lead: Lead; sourceLabel?:
 }
 
 /**
- * Aba Overview do drawer: ações (Nurture, Lost, Quote, Won), próximo passo,
- * dados do job e checklist Ready for job.
+ * Aba Overview do drawer: ações (Lost, Quote, Won), próximo passo, dados do
+ * job e checklist Ready for job. Create quote abre a mesma pergunta do board
+ * (Partners bid ou Internal).
  */
 export function LeadCrmPanel({
   lead,
-  serviceName,
+  catalog,
   onLeadChange,
+  onQuoteCreated,
 }: {
   lead: Lead;
-  serviceName?: string | null;
+  catalog: CatalogService[];
   onLeadChange: (l: Lead) => void;
+  onQuoteCreated?: () => void;
 }) {
   const router = useRouter();
   const [quote, setQuote] = useState<LeadQuote | null>(null);
@@ -93,7 +95,7 @@ export function LeadCrmPanel({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"quote" | "won" | null>(null);
   const [lostOpen, setLostOpen] = useState(false);
-  const [nurtureOpen, setNurtureOpen] = useState(false);
+  const [quotingOpen, setQuotingOpen] = useState(false);
   const reconciledFor = useRef<string | null>(null);
 
   const stage = lead.stage ?? "new";
@@ -155,24 +157,12 @@ export function LeadCrmPanel({
   const value = leadValue(lead, quote);
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
-  const onCreateQuote = async () => {
+  const onCreateQuote = () => {
     if (liveQuote) {
       router.push(`/quotes?quoteId=${liveQuote.id}`);
       return;
     }
-    setBusy("quote");
-    try {
-      const q = await createQuoteFromLead(lead, {
-        title: `${serviceName?.trim() || "Quote"} · ${lead.name}`,
-        semEntrada,
-      });
-      toast.success(`Quote ${q.reference} created. Pick partner bid or manual price.`);
-      router.push(`/quotes?quoteId=${q.id}`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create the quote");
-    } finally {
-      setBusy(null);
-    }
+    setQuotingOpen(true);
   };
 
   const onMarkWon = async () => {
@@ -252,9 +242,6 @@ export function LeadCrmPanel({
             {liveQuote ? <span className="ml-1 text-[11px] font-normal text-text-tertiary">{liveQuote.reference}</span> : null}
           </span>
         ) : null}
-        <Button size="sm" variant="secondary" onClick={() => setNurtureOpen(true)} disabled={stage === "won" || stage === "nurture"}>
-          Nurture
-        </Button>
         <Button size="sm" variant="secondary" onClick={() => setLostOpen(true)} disabled={stage === "won" || stage === "lost"}>
           Mark lost
         </Button>
@@ -274,29 +261,32 @@ export function LeadCrmPanel({
           {lead.lost_note ? ` · ${lead.lost_note}` : ""}
         </p>
       ) : null}
-      {stage === "nurture" && lead.nurture_until ? (
-        <p className="text-xs text-text-secondary">Paused until {lead.nurture_until.split("-").reverse().join("/")}. It goes back to Talking on that day.</p>
+      {stage === "lost" && lead.nurture_until ? (
+        <p className="text-xs text-text-secondary">Comes back on {lead.nurture_until.split("-").reverse().join("/")}. It goes back to New lead on that day.</p>
       ) : null}
 
       <LeadNextAction lead={lead} required={open} onSaved={onLeadChange} />
       <LeadJobFieldsEditor lead={lead} hasQuote={!!liveQuote} onSaved={onLeadChange} />
       <LeadReadyPanel items={items} />
 
+      {quotingOpen ? (
+        <LeadQuotingModal
+          lead={lead}
+          catalog={catalog}
+          open
+          onClose={() => setQuotingOpen(false)}
+          onDone={() => {
+            setQuotingOpen(false);
+            onQuoteCreated?.();
+          }}
+        />
+      ) : null}
       <LeadLostModal
         lead={lead}
         open={lostOpen}
         onClose={() => setLostOpen(false)}
         onDone={(l) => {
           setLostOpen(false);
-          onLeadChange(l);
-        }}
-      />
-      <LeadNurtureModal
-        lead={lead}
-        open={nurtureOpen}
-        onClose={() => setNurtureOpen(false)}
-        onDone={(l) => {
-          setNurtureOpen(false);
           onLeadChange(l);
         }}
       />

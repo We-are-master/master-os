@@ -6,8 +6,11 @@ import { getSupabase, type ListParams, type ListResult } from "./base";
 import { createQuote } from "./quotes";
 import { changeLeadStage, recordLeadEvent } from "./leads";
 import type { Lead, LeadSegment, LeadStage, Quote } from "@/types/database";
-import { OPEN_STAGES } from "@/lib/crm/etapas";
+import { LEAD_STAGES, OPEN_STAGES } from "@/lib/crm/etapas";
 import { sanitizePostgrestValue } from "@/lib/supabase/sanitize";
+
+/** Lost no board: só os da última semana (o resto fica na List). */
+const LOST_NO_BOARD_DIAS = 7;
 
 export type CrmTab = "open" | LeadStage;
 export type SegmentFilter = "all" | LeadSegment;
@@ -62,15 +65,27 @@ export async function listCrmLeads(params: ListParams): Promise<ListResult<Lead>
 /** Contagem por etapa (e Open = soma das abertas). */
 export async function getStageCounts(segment: SegmentFilter): Promise<Record<string, number>> {
   const supabase = getSupabase();
-  const stages: LeadStage[] = ["new", "talking", "quoting", "quote_sent", "accepted", "won", "lost", "nurture"];
-  const results = await Promise.all(
-    stages.map(async (st) => {
+  const stages = LEAD_STAGES;
+  const lostWeek = (async () => {
+    let q = supabase
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .is("deleted_at", null)
+      .eq("stage", "lost")
+      .gte("lost_at", new Date(Date.now() - LOST_NO_BOARD_DIAS * 86400000).toISOString());
+    if (segment !== "all") q = q.eq("segment", segment);
+    const { count } = await q;
+    return ["lost_week", count ?? 0] as const;
+  })();
+  const results = await Promise.all([
+    lostWeek,
+    ...stages.map(async (st) => {
       let q = supabase.from("leads").select("id", { count: "exact", head: true }).is("deleted_at", null).eq("stage", st);
       if (segment !== "all") q = q.eq("segment", segment);
       const { count } = await q;
       return [st, count ?? 0] as const;
     }),
-  );
+  ]);
   const out: Record<string, number> = Object.fromEntries(results);
   out.open = OPEN_STAGES.reduce((s, st) => s + (out[st] ?? 0), 0);
   return out;
@@ -78,15 +93,16 @@ export async function getStageCounts(segment: SegmentFilter): Promise<Record<str
 
 // ─── Board ───────────────────────────────────────────────────────────────────
 
-export const BOARD_STAGES: LeadStage[] = ["new", "talking", "quoting", "quote_sent", "accepted", "won", "nurture"];
+export const BOARD_STAGES: LeadStage[] = ["new", "qualifying", "qualified", "quoting", "quoted", "won", "lost"];
 
-/** Até `perColumn` cards por etapa, o mais recente primeiro. */
+/** Até `perColumn` cards por etapa, o mais recente primeiro. Lost: só a última semana. */
 export async function listBoardLeads(segment: SegmentFilter, search: string, perColumn = 30): Promise<Record<string, Lead[]>> {
   const supabase = getSupabase();
   const safe = sanitizePostgrestValue(search);
   const cols = await Promise.all(
     BOARD_STAGES.map(async (st) => {
       let q = supabase.from("leads").select("*").is("deleted_at", null).eq("stage", st);
+      if (st === "lost") q = q.gte("lost_at", new Date(Date.now() - LOST_NO_BOARD_DIAS * 86400000).toISOString());
       if (segment !== "all") q = q.eq("segment", segment);
       if (safe) q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${safe}%`).join(","));
       q = q.order("created_at", { ascending: false });
@@ -186,7 +202,18 @@ export async function listLeadChannels(): Promise<LeadChannel[]> {
 // ─── Ready for job ───────────────────────────────────────────────────────────
 
 export type LeadJobFields = Partial<
-  Pick<Lead, "preferred_date" | "preferred_window" | "in_ccz" | "has_free_parking" | "job_kind" | "price_mode" | "price_given">
+  Pick<
+    Lead,
+    | "preferred_date"
+    | "preferred_window"
+    | "in_ccz"
+    | "has_free_parking"
+    | "job_kind"
+    | "price_mode"
+    | "price_given"
+    | "catalog_service_id"
+    | "postcode"
+  >
 >;
 
 export async function updateLeadJobFields(id: string, patch: LeadJobFields): Promise<Lead> {
@@ -213,10 +240,39 @@ export async function updateLeadJobFields(id: string, patch: LeadJobFields): Pro
  * (draft_route_completed = false): a tela de Quotes abre no passo
  * "Partner bid ou Manual", o mesmo do botão Create a quote.
  */
+export type QuoteMode = "bid" | "internal";
+
+/**
+ * Manda a quote em bidding para todos os parceiros do trade na área: o mesmo
+ * disparo do "Notify partners" da tela de Quotes (push, e-mail e convite
+ * registrado). Devolve quantos parceiros foram convidados.
+ */
+export async function sendQuoteToPartners(quoteId: string): Promise<{ partners: number }> {
+  const res = await fetch(`/api/quotes/${quoteId}/retry-notify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    partners_notified?: { partnerIds?: string[] };
+  };
+  if (!res.ok) throw new Error(body.error || "Could not send the quote to partners");
+  return { partners: body.partners_notified?.partnerIds?.length ?? 0 };
+}
+
 export async function createQuoteFromLead(
   lead: Lead,
-  opts: { title: string; semEntrada: boolean; ownerId?: string | null; ownerName?: string | null },
+  opts: {
+    title: string;
+    semEntrada: boolean;
+    /** bid: vai para todos os parceiros do trade na área; internal: a equipe põe o preço. */
+    mode?: QuoteMode;
+    ownerId?: string | null;
+    ownerName?: string | null;
+  },
 ): Promise<Quote> {
+  const bid = opts.mode === "bid";
   const quote = await createQuote({
     title: opts.title,
     lead_id: lead.id,
@@ -226,14 +282,15 @@ export async function createQuoteFromLead(
     client_email: lead.email ?? "",
     source_account_id: lead.account_id ?? null,
     catalog_service_id: lead.catalog_service_id ?? null,
-    status: "draft",
+    status: bid ? "bidding" : "draft",
     total_value: 0,
     partner_quotes_count: 0,
     cost: 0,
     sell_price: 0,
     margin_percent: 0,
-    quote_type: "internal",
-    draft_route_completed: false,
+    quote_type: bid ? "partner" : "internal",
+    draft_route_completed: bid,
+    ...(bid ? { bidding_started_at: new Date().toISOString() } : {}),
     deposit_percent: opts.semEntrada ? 0 : 50,
     deposit_required: 0,
     customer_accepted: false,
@@ -253,11 +310,15 @@ export async function createQuoteFromLead(
     leadId: lead.id,
     kind: "quote_created",
     channel: "os",
-    summary: `Quote ${quote.reference} created`,
-    payload: { quote_id: quote.id },
+    summary: `Quote ${quote.reference} created · ${bid ? "partners bid" : "internal"}`,
+    payload: { quote_id: quote.id, mode: bid ? "bid" : "internal" },
   });
+  // O ticket copia o status da quote (Needs quote / Sourcing), pela mesma porta da tela de Quotes.
+  if (quote.external_source === "zendesk" && quote.external_ref) {
+    void fetch(`/api/quotes/${quote.id}/sync-zendesk-status`, { method: "POST", keepalive: true }).catch(() => {});
+  }
   const stage = lead.stage ?? "new";
-  if (stage === "new" || stage === "talking") {
+  if (stage === "new" || stage === "qualifying" || stage === "qualified" || stage === "lost") {
     try {
       await changeLeadStage(lead.id, "quoting", { summary: `Quote ${quote.reference} created` });
     } catch {

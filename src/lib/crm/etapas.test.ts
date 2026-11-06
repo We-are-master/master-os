@@ -12,19 +12,20 @@ test("status da quote vira etapa do lead", () => {
   assert.equal(stageFromQuoteStatus("draft"), "quoting");
   assert.equal(stageFromQuoteStatus("in_survey"), "quoting");
   assert.equal(stageFromQuoteStatus("bidding"), "quoting");
-  assert.equal(stageFromQuoteStatus("quote_ready"), "quote_sent");
-  assert.equal(stageFromQuoteStatus("awaiting_customer"), "quote_sent");
-  assert.equal(stageFromQuoteStatus("awaiting_payment"), "accepted");
+  // Parceiro cotou e falta enviar: ainda Quoting (chip Ready to send).
+  assert.equal(stageFromQuoteStatus("quote_ready"), "quoting");
+  assert.equal(stageFromQuoteStatus("awaiting_customer"), "quoted");
+  assert.equal(stageFromQuoteStatus("awaiting_payment"), "quoted");
   assert.equal(stageFromQuoteStatus("converted_to_job"), "won");
   assert.equal(stageFromQuoteStatus("rejected"), "lost");
 });
 
 test("etapas abertas", () => {
   assert.equal(isOpenStage("new"), true);
-  assert.equal(isOpenStage("accepted"), true);
+  assert.equal(isOpenStage("qualified"), true);
+  assert.equal(isOpenStage("quoted"), true);
   assert.equal(isOpenStage("won"), false);
   assert.equal(isOpenStage("lost"), false);
-  assert.equal(isOpenStage("nurture"), false);
   assert.equal(isOpenStage(undefined), false);
 });
 
@@ -34,27 +35,29 @@ test("status antigo segue a etapa", () => {
 });
 
 test("interested na tela antiga não puxa lead adiantado para trás", () => {
-  assert.equal(stageForLegacyStatusChange("new", "interested"), "talking");
-  assert.equal(stageForLegacyStatusChange("talking", "new"), "new");
+  assert.equal(stageForLegacyStatusChange("new", "interested"), "qualifying");
+  assert.equal(stageForLegacyStatusChange("qualifying", "new"), "new");
+  assert.equal(stageForLegacyStatusChange("qualified", "new"), "qualified");
   assert.equal(stageForLegacyStatusChange("quoting", "interested"), "quoting");
   assert.equal(stageForLegacyStatusChange("won", "new"), "won");
 });
 
 test("lost exige motivo", () => {
-  assert.match(validateStageChange({ from: "talking", to: "lost" }) ?? "", /reason/);
-  assert.equal(validateStageChange({ from: "talking", to: "lost", lostReason: "price" }), null);
+  assert.match(validateStageChange({ from: "qualifying", to: "lost" }) ?? "", /reason/);
+  assert.equal(validateStageChange({ from: "qualifying", to: "lost", lostReason: "price" }), null);
 });
 
-test("nurture exige data no futuro", () => {
-  assert.match(validateStageChange({ from: "talking", to: "nurture", today: "2026-11-05" }) ?? "", /date/);
-  assert.match(validateStageChange({ from: "talking", to: "nurture", nurtureUntil: "2026-11-05", today: "2026-11-05" }) ?? "", /future/);
-  assert.equal(validateStageChange({ from: "talking", to: "nurture", nurtureUntil: "2026-11-12", today: "2026-11-05" }), null);
+test("lost com data de volta: a data tem que ser no futuro", () => {
+  const base = { from: "qualifying" as const, to: "lost" as const, lostReason: "timing" as const, today: "2026-11-05" };
+  assert.match(validateStageChange({ ...base, nurtureUntil: "2026-11-05" }) ?? "", /future/);
+  assert.match(validateStageChange({ ...base, nurtureUntil: "12/11" }) ?? "", /valid/);
+  assert.equal(validateStageChange({ ...base, nurtureUntil: "2026-11-12" }), null);
 });
 
 test("won só com job e won não volta", () => {
-  assert.match(validateStageChange({ from: "accepted", to: "won" }) ?? "", /job/);
-  assert.equal(validateStageChange({ from: "accepted", to: "won", jobId: "j1" }), null);
-  assert.match(validateStageChange({ from: "won", to: "talking" }) ?? "", /already a job/);
+  assert.match(validateStageChange({ from: "quoted", to: "won" }) ?? "", /job/);
+  assert.equal(validateStageChange({ from: "quoted", to: "won", jobId: "j1" }), null);
+  assert.match(validateStageChange({ from: "won", to: "qualifying" }) ?? "", /already a job/);
 });
 
 test("mesma etapa é permitido", () => {

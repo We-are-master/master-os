@@ -55,8 +55,8 @@ test("conta sem entrada não pede pagamento", () => {
 test("quote mais avançada decide a etapa", () => {
   assert.equal(etapaPelasQuotes([]), null);
   assert.equal(etapaPelasQuotes(["bidding"]), "quoting");
-  assert.equal(etapaPelasQuotes(["rejected", "awaiting_customer"]), "quote_sent");
-  assert.equal(etapaPelasQuotes(["awaiting_payment", "bidding"]), "accepted");
+  assert.equal(etapaPelasQuotes(["rejected", "awaiting_customer"]), "quoted");
+  assert.equal(etapaPelasQuotes(["awaiting_payment", "bidding"]), "quoted");
   assert.equal(etapaPelasQuotes(["rejected", "rejected"]), "lost");
   assert.equal(etapaPelasQuotes(["converted_to_job"]), "won");
 });

@@ -11,17 +11,28 @@ import { changeLeadStage } from "@/services/leads";
 import type { Lead, LeadLostReason } from "@/types/database";
 import { textareaClass } from "./crm-ui";
 
+function diasDaqui(n: number): string {
+  return new Date(Date.now() + n * 86400000).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+}
+
 export function LeadLostModal({ lead, open, onClose, onDone }: { lead: Lead; open: boolean; onClose: () => void; onDone: (l: Lead) => void }) {
   const [reason, setReason] = useState<LeadLostReason | "">("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  /** Data de volta (ex-Nurture): padrão 7 dias no B2C e 14 no B2B. */
+  const [comeBack, setComeBack] = useState(false);
+  const [comeBackOn, setComeBackOn] = useState(() => diasDaqui(lead.segment === "b2b" ? 14 : 7));
 
   const submit = async () => {
     if (!reason) return toast.error("Pick a reason to mark this lead as lost");
     setSaving(true);
     try {
-      const updated = await changeLeadStage(lead.id, "lost", { lostReason: reason, lostNote: note });
-      toast.success("Lead marked as lost");
+      const updated = await changeLeadStage(lead.id, "lost", {
+        lostReason: reason,
+        lostNote: note,
+        nurtureUntil: comeBack ? comeBackOn : null,
+      });
+      toast.success(comeBack ? `Lead lost. It comes back on ${comeBackOn.split("-").reverse().join("/")}.` : "Lead marked as lost");
       setReason("");
       setNote("");
       onDone(updated);
@@ -45,7 +56,17 @@ export function LeadLostModal({ lead, open, onClose, onDone }: { lead: Lead; ope
                 reason === r ? "border-primary bg-[var(--pick-bg)]" : "border-border-light hover:border-border",
               )}
             >
-              <input type="radio" name="lost-reason" value={r} checked={reason === r} onChange={() => setReason(r)} />
+              <input
+                type="radio"
+                name="lost-reason"
+                value={r}
+                checked={reason === r}
+                onChange={() => {
+                  setReason(r);
+                  // Sem resposta ou fora de hora: quase sempre vale voltar a falar.
+                  if (r === "no_reply" || r === "timing") setComeBack(true);
+                }}
+              />
               {LOST_REASON_LABEL[r]}
             </label>
           ))}
@@ -53,6 +74,24 @@ export function LeadLostModal({ lead, open, onClose, onDone }: { lead: Lead; ope
         <div>
           <label className="text-xs font-medium text-text-secondary mb-1.5 block">Note</label>
           <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} className={textareaClass} placeholder="Found a local plumber cheaper." />
+        </div>
+        <div className="rounded-lg border border-border-light p-3">
+          <label className="flex items-center gap-2 text-sm text-text-primary">
+            <input type="checkbox" checked={comeBack} onChange={(e) => setComeBack(e.target.checked)} />
+            Come back to this lead later
+          </label>
+          {comeBack ? (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="date"
+                value={comeBackOn}
+                min={diasDaqui(1)}
+                onChange={(e) => setComeBackOn(e.target.value)}
+                className="h-9 rounded-lg border border-border bg-surface px-2 text-sm text-text-primary"
+              />
+              <span className="text-xs text-text-tertiary">It goes back to New lead on that day.</span>
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
           <Button variant="ghost" onClick={onClose}>

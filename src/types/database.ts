@@ -81,7 +81,7 @@ export interface CatalogService {
 export type RequestStatus = "new" | "approved" | "declined" | "converted_to_quote" | "converted_to_job";
 export type LeadStatus = "new" | "interested";
 /** Etapa do CRM (mig 356). Lead e quote andam pela mesma lista. */
-export type LeadStage = "new" | "talking" | "quoting" | "quote_sent" | "accepted" | "won" | "lost" | "nurture";
+export type LeadStage = "new" | "qualifying" | "qualified" | "quoting" | "quoted" | "won" | "lost";
 export type LeadSegment = "b2c" | "b2b";
 export type LeadLostReason = "price" | "went_elsewhere" | "timing" | "no_reply" | "outside_area" | "not_for_us" | "duplicate" | "other";
 export type LeadEventKind =

@@ -4,13 +4,24 @@ import type { LeadSegment, LeadStage } from "@/types/database";
 /** Cor da etapa: estado, não categoria (VOS UNO §9). */
 export const STAGE_VARIANT: Record<LeadStage, BadgeVariant> = {
   new: "primary",
-  talking: "default",
-  quoting: "default",
-  quote_sent: "info",
-  accepted: "warning",
+  qualifying: "default",
+  qualified: "info",
+  quoting: "warning",
+  quoted: "info",
   won: "success",
   lost: "danger",
-  nurture: "default",
+};
+
+/** Status da quote com o MESMO nome do Zendesk e da tela de Quotes, e a cor do chip no card. */
+export const QUOTE_STATUS_CHIP: Record<string, { label: string; cls: string }> = {
+  draft: { label: "Draft", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200" },
+  in_survey: { label: "Sourcing", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200" },
+  bidding: { label: "Sourcing", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200" },
+  quote_ready: { label: "Ready to send", cls: "bg-emerald-500 text-white dark:bg-emerald-600" },
+  awaiting_customer: { label: "Awaiting approval", cls: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200" },
+  awaiting_payment: { label: "Awaiting deposit", cls: "bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-200" },
+  rejected: { label: "Rejected", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-200" },
+  converted_to_job: { label: "Converted to job", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200" },
 };
 
 export const SEGMENT_LABEL: Record<LeadSegment, string> = { b2c: "B2C", b2b: "B2B" };

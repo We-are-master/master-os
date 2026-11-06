@@ -27,6 +27,7 @@ type LeadDoEspelho = {
   id: string;
   reference: string | null;
   stage: LeadStage;
+  nurture_until: string | null;
   lost_reason: LeadLostReason | null;
   external_ref: string;
   customer_replied_at: string | null;
@@ -76,7 +77,7 @@ export async function passarLeadsNoEspelho(
   const desde = new Date(agora.getTime() - dias * 86_400_000).toISOString();
   const { data: lidos, error } = await sb
     .from("leads")
-    .select("id, reference, stage, lost_reason, external_ref, customer_replied_at, updated_at")
+    .select("id, reference, stage, lost_reason, nurture_until, external_ref, customer_replied_at, updated_at")
     .eq("external_source", "zendesk")
     .not("external_ref", "is", null)
     .is("deleted_at", null)
@@ -116,7 +117,7 @@ export async function passarLeadsNoEspelho(
     linhas.push(`custom_statuses: ERRO ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
   }
   const nurtureId = nurtureIdDoAmbiente();
-  if (nurtureId == null && leads.some((l) => l.stage === "nurture")) somar("leads: nurture sem ZENDESK_STATUS_NURTURE_ID (ticket não muda)");
+  if (nurtureId == null && leads.some((l) => l.stage === "lost" && l.nurture_until)) somar("leads: lost com data de volta sem ZENDESK_STATUS_NURTURE_ID (ticket não muda)");
 
   const pendentes: Array<Record<string, unknown>> = [];
   for (const l of leads) {
@@ -144,8 +145,8 @@ export async function passarLeadsNoEspelho(
           linhas.push(`${l.reference} #${ref}: ERRO resposta ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`);
         }
       }
-      if (sinal === "cliente" && stage === "nurture") stage = "talking";
-      if (sinal === "nossa" && stage === "new") stage = "talking";
+      if (sinal === "cliente" && stage === "lost" && l.nurture_until) stage = "qualifying";
+      if (sinal === "nossa" && stage === "new") stage = "qualifying";
     }
 
     if (comPedido.has(ref)) {
@@ -157,7 +158,7 @@ export async function passarLeadsNoEspelho(
       continue;
     }
 
-    const alvo = alvoDoTicketDoLead({ stage, lostReason: l.lost_reason }, { status: t.status, customStatusId: t.custom_status_id, replyStatus: reply, supportType: t.support_type }, nurtureId);
+    const alvo = alvoDoTicketDoLead({ stage, lostReason: l.lost_reason, nurtureUntil: stage === "lost" ? l.nurture_until : null }, { status: t.status, customStatusId: t.custom_status_id, replyStatus: reply, supportType: t.support_type }, nurtureId);
     const tags = tagsDoLead(stage, t.tags ?? []);
     const mud: Record<string, unknown> = { id: t.id };
     if (alvo.kind === "status") {

@@ -120,10 +120,10 @@ export async function moverEtapa(sb: SupabaseClient, lead: Pick<Lead, "id" | "st
     patch.lost_reason = m.lostReason ?? "other";
     patch.lost_note = m.lostNote ?? null;
     patch.lost_at = now;
-  }
-  if (m.to === "nurture") {
-    if (!m.nurtureUntil) return from;
-    patch.nurture_until = m.nurtureUntil;
+    // Data de volta (ex-Nurture): no dia o lead volta sozinho para New lead.
+    patch.nurture_until = m.nurtureUntil ?? null;
+  } else if (from === "lost") {
+    patch.nurture_until = null;
   }
   if (m.to === "won") {
     const jobId = m.jobId ?? lead.job_id;
@@ -153,7 +153,7 @@ export async function moverEtapa(sb: SupabaseClient, lead: Pick<Lead, "id" | "st
  */
 export function etapaPelasQuotes(statuses: QuoteStatus[]): LeadStage | null {
   if (!statuses.length) return null;
-  const ordem: LeadStage[] = ["quoting", "quote_sent", "accepted", "won"];
+  const ordem: LeadStage[] = ["quoting", "quoted", "won"];
   let melhor: LeadStage | null = null;
   for (const s of statuses) {
     const e = stageFromQuoteStatus(s);
@@ -166,7 +166,7 @@ export function etapaPelasQuotes(statuses: QuoteStatus[]): LeadStage | null {
 /**
  * A etapa pelas quotes e pelos jobs delas. O job do aceite com entrada nasce
  * junto com o aceite (quote em awaiting_payment, job esperando o pagamento):
- * isso ainda é Accepted. Won é quote convertida, job de quote em outro status
+ * isso ainda é Quoted. Won é quote convertida, job de quote em outro status
  * ou o job já ligado no lead.
  */
 export function alvoPelasQuotes(
@@ -177,8 +177,8 @@ export function alvoPelasQuotes(
   const ganha = quotes.find((q) => q.jobId && q.status !== "awaiting_payment" && q.status !== "rejected");
   if (ganha) return { stage: "won", jobId: ganha.jobId ?? null };
   const alvo = etapaPelasQuotes(quotes.map((q) => q.status));
-  // converted_to_job sem job achado: fica em Accepted até o job aparecer.
-  return { stage: alvo === "won" ? "accepted" : alvo, jobId: null };
+  // converted_to_job sem job achado: fica em Quoted até o job aparecer.
+  return { stage: alvo === "won" ? "quoted" : alvo, jobId: null };
 }
 
 export type ResultadoSync = { lidos: number; movidos: number; ganhos: number; erros: string[] };
@@ -190,7 +190,7 @@ const LOTE = 200;
  * qualquer mudança de quote e também na rotina do espelho (10 min), então
  * nenhum caminho que muda quote precisa lembrar de mexer no lead.
  *
- * - Lead em Lost/Nurture só é puxado de volta se uma quote dele estiver viva.
+ * - Lead em Lost só é puxado de volta se uma quote dele estiver viva.
  * - Won exige job: pega o job que nasceu de uma quote do lead.
  */
 export async function sincronizarEtapasPelasQuotes(
@@ -255,7 +255,7 @@ export async function sincronizarEtapasPelasQuotes(
     const atual = (lead.stage ?? "new") as LeadStage;
     if (atual === alvo || atual === "won") continue;
     // Lead pausado ou perdido à mão: só volta se a quote estiver viva.
-    if ((atual === "nurture" || atual === "lost") && alvo === "lost") continue;
+    if (atual === "lost" && alvo === "lost") continue;
     if (!aplicar) {
       r.movidos++;
       if (alvo === "won") r.ganhos++;
@@ -382,8 +382,9 @@ export async function marcarRespostaDoCliente(
     .from("leads")
     .update({ customer_replied_at: at, last_contact_at: at, updated_at: new Date().toISOString() })
     .eq("id", lead.id);
-  if (lead.stage === "nurture") {
-    await moverEtapa(sb, lead, { to: "talking", actorType: "customer", channel: input.channel ?? "zendesk", summary: "Customer replied" });
+  // Perdido com data de volta (ex-Nurture) e o cliente escreveu: volta antes da data.
+  if (lead.stage === "lost" && lead.nurture_until) {
+    await moverEtapa(sb, lead, { to: "qualifying", actorType: "customer", channel: input.channel ?? "zendesk", summary: "Customer replied" });
   }
   return { leadId: lead.id, novo: true };
 }
@@ -410,24 +411,25 @@ export async function marcarRespostaNossa(
   const { error } = await sb.from("leads").update(patch).eq("id", lead.id);
   if (error) console.warn("[crm] resposta nossa:", error.message);
   if (lead.stage === "new") {
-    await moverEtapa(sb, lead, { to: "talking", actorType: input.actorType ?? "staff", channel: input.channel ?? "zendesk", summary: "First reply sent" });
+    await moverEtapa(sb, lead, { to: "qualifying", actorType: input.actorType ?? "staff", channel: input.channel ?? "zendesk", summary: "First reply sent" });
   }
   return { leadId: lead.id };
 }
 
-/** Leads em Nurture cuja data chegou voltam para Talking com próximo passo. */
+/** Lead perdido com data de volta: no dia ele volta para New lead com próximo passo. */
 export async function acordarNurture(sb: SupabaseClient, hoje: string, aplicar = true): Promise<number> {
   const { data } = await sb
     .from("leads")
     .select("id, stage, job_id, nurture_until")
-    .eq("stage", "nurture")
+    .eq("stage", "lost")
+    .not("nurture_until", "is", null)
     .lte("nurture_until", hoje)
     .is("deleted_at", null);
   let n = 0;
   for (const lead of (data ?? []) as Pick<Lead, "id" | "stage" | "job_id">[]) {
     n++;
     if (!aplicar) continue;
-    await moverEtapa(sb, lead, { to: "talking", summary: "Back from nurture", idempotencyKey: `nurture_back:${lead.id}:${hoje}` });
+    await moverEtapa(sb, lead, { to: "new", summary: "Come-back date reached", idempotencyKey: `nurture_back:${lead.id}:${hoje}` });
     await sb
       .from("leads")
       .update({ next_action: "Check in with the customer", next_action_at: new Date().toISOString() })

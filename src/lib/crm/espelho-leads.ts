@@ -59,16 +59,18 @@ const FUNIL = [
 
 /**
  * Por etapa: o status alvo e os status que já servem (sub-etapas que o Harvey
- * ou a equipe põem e que dizem a mesma coisa com mais detalhe). Talking aceita
- * To Call e Needs Quote (o Harvey grava os dois ao passar para a equipe) e
- * Awaiting Approval (preço da equipe no chat, antes de o lead andar no OS).
+ * ou a equipe põem e que dizem a mesma coisa com mais detalhe). New lead e
+ * Qualifying aceitam To Call e Needs Quote (o Harvey grava os dois ao passar
+ * para a equipe) e Awaiting Approval (preço da equipe no chat, antes de o lead
+ * andar no OS). Qualified = vez do closer: To Call até existir o status
+ * Qualified no Zendesk.
  */
 const POR_ETAPA: Partial<Record<LeadStage, { alvo: number; servem: number[] }>> = {
   new: { alvo: ZD_STATUS_LEAD, servem: [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
-  talking: { alvo: ZD_STATUS_LEAD, servem: [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
+  qualifying: { alvo: ZD_STATUS_LEAD, servem: [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
+  qualified: { alvo: ZD_STATUS_TO_CALL, servem: [ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_AWAITING_APPROVAL] },
   quoting: { alvo: ZD_STATUS_NEEDS_QUOTE, servem: [ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_BIDDING, ZD_STATUS_NO_BIDS, ZD_STATUS_QUOTE_READY] },
-  quote_sent: { alvo: ZD_STATUS_AWAITING_APPROVAL, servem: [ZD_STATUS_AWAITING_APPROVAL] },
-  accepted: { alvo: ZD_STATUS_DEPOSIT_PENDING, servem: [ZD_STATUS_DEPOSIT_PENDING] },
+  quoted: { alvo: ZD_STATUS_AWAITING_APPROVAL, servem: [ZD_STATUS_AWAITING_APPROVAL, ZD_STATUS_DEPOSIT_PENDING] },
 };
 
 export type TicketDoLead = {
@@ -103,11 +105,12 @@ const MOTIVO_EM_INGLES: Record<LeadLostReason, string> = {
 };
 
 /**
- * O que o ticket do lead deve virar. `nurtureId` é o status 💤 Nurture (o dono
- * cria no Zendesk e põe em ZENDESK_STATUS_NURTURE_ID); sem ele, Nurture não mexe.
+ * O que o ticket do lead deve virar. Lost com data de volta (ex-Nurture) não
+ * resolve o ticket: vai para o status `nurtureId` (ZENDESK_STATUS_NURTURE_ID,
+ * on-hold) quando existe, e fica como está quando não existe.
  */
 export function alvoDoTicketDoLead(
-  lead: { stage: LeadStage; lostReason?: LeadLostReason | null },
+  lead: { stage: LeadStage; lostReason?: LeadLostReason | null; nurtureUntil?: string | null },
   t: TicketDoLead,
   nurtureId: number | null,
 ): AlvoDoTicket {
@@ -121,6 +124,14 @@ export function alvoDoTicketDoLead(
 
   if (lead.stage === "won") return { kind: "nada", motivo: "won: the job mirror owns the ticket" };
 
+  if (lead.stage === "lost" && lead.nurtureUntil) {
+    if (resolvido) return { kind: "nada", motivo: "already solved" };
+    if (nurtureId == null) return { kind: "nada", motivo: "lost with a come-back date: ZENDESK_STATUS_NURTURE_ID is not set" };
+    if (daNurture) return { kind: "nada", motivo: "already mirrored" };
+    if (!livre && !doFunil) return { kind: "nada", motivo: "ticket is outside the sales funnel" };
+    return { kind: "status", customStatusId: nurtureId };
+  }
+
   if (lead.stage === "lost") {
     if (resolvido) return { kind: "nada", motivo: "already solved" };
     if (t.replyStatus === "reply_awaiting") return { kind: "nada", motivo: "customer is waiting for a reply" };
@@ -132,13 +143,6 @@ export function alvoDoTicketDoLead(
   // Ticket resolvido com o lead vivo: quem resolveu sabia de algo. Não reabre sozinho;
   // a resposta do cliente reabre o ticket e aí o espelho volta a valer.
   if (resolvido) return { kind: "nada", motivo: "solved in Zendesk with the lead open" };
-
-  if (lead.stage === "nurture") {
-    if (nurtureId == null) return { kind: "nada", motivo: "ZENDESK_STATUS_NURTURE_ID is not set" };
-    if (daNurture) return { kind: "nada", motivo: "already mirrored" };
-    if (!livre && !doFunil) return { kind: "nada", motivo: "ticket is outside the sales funnel" };
-    return { kind: "status", customStatusId: nurtureId };
-  }
 
   const regra = POR_ETAPA[lead.stage];
   if (!regra) return { kind: "nada", motivo: `no mapping for ${lead.stage}` };
