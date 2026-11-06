@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { SearchExpand } from "@/components/ui/search-expand";
 import { PageHeader } from "@/components/layout/page-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { Drawer } from "@/components/ui/drawer";
 import { LeadOffersCard } from "@/components/leads/lead-offers-card";
 import { Modal } from "@/components/ui/modal";
-import { SearchInput, Input } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
@@ -797,12 +798,24 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
 
   return (
     <PageTransition>
-      <div className="min-w-0 space-y-4 sm:space-y-5">
+      <div className="-mt-2 min-w-0 space-y-4">
         <PageHeader
           title="Leads"
           subtitle="Every lead and quote request, newest first. Updates live as tickets arrive."
-          className="!flex-col !items-stretch gap-3 sm:!flex-row sm:!items-end sm:!justify-between sm:gap-6"
+          titleAddon={
+            <div className="flex flex-wrap items-center gap-2">
+              <SegmentToggle value={segment} onChange={setSegment} />
+              <ViewToggle value={view} onChange={setView} />
+            </div>
+          }
         >
+          <SearchExpand
+            value={search}
+            onChange={setSearch}
+            label="Search leads"
+            placeholder="Search name, ref, ticket, scope"
+            width="w-60 sm:w-72"
+          />
           <Button
             type="button"
             size="sm"
@@ -813,29 +826,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               setCreateForm(emptyLeadForm());
               setCreateOpen(true);
             }}
-            className={cn(
-              "!flex-nowrap shrink-0 self-end sm:self-auto",
-              "h-9 w-9 p-0 justify-center",
-              "sm:h-auto sm:min-h-8 sm:w-auto sm:min-w-[8.75rem] sm:px-3 sm:py-1.5 sm:justify-center",
-              "[&>span:last-child]:whitespace-nowrap",
-            )}
+            className="!flex-nowrap shrink-0 h-8 w-8 p-0 justify-center sm:w-auto sm:px-3 [&>span:last-child]:whitespace-nowrap"
           >
             <span className="hidden sm:inline">New lead</span>
           </Button>
         </PageHeader>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SegmentToggle value={segment} onChange={setSegment} />
-            <ViewToggle value={view} onChange={setView} />
-          </div>
-          <SearchInput
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, ref, ticket, scope…"
-            className="w-full min-w-0 sm:max-w-sm"
-          />
-        </div>
 
         {view === "board" ? (
           <LeadBoard
