@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alvoDoTicketDoLead, hojeEmLondres, nurtureIdDoAmbiente, sinalDeResposta, tagDaEtapa, tagsDoLead } from "./espelho-leads";
+import { alvoDoTicketDoLead, etapaDeEntrada, hojeEmLondres, leadDoTicket, nurtureIdDoAmbiente, pessoaDoAssunto, sinalDeResposta, tagDaEtapa, tagsDoLead } from "./espelho-leads";
 import {
   ZD_STATUS_AWAITING_APPROVAL,
   ZD_STATUS_BIDDING,
@@ -96,4 +96,28 @@ test("id do Nurture e data de Londres", () => {
   assert.equal(nurtureIdDoAmbiente("6500000000001"), 6500000000001);
   assert.equal(hojeEmLondres(new Date("2026-11-05T23:30:00Z")), "2026-11-05");
   assert.equal(hojeEmLondres(new Date("2026-07-05T23:30:00Z")), "2026-07-06");
+});
+
+test("entrada pelo Zendesk: coluna pelo status", () => {
+  assert.equal(etapaDeEntrada(ZD_STATUS_LEAD), "new");
+  assert.equal(etapaDeEntrada(ZD_STATUS_TO_CALL), "qualified");
+  assert.equal(etapaDeEntrada(ZD_STATUS_NEEDS_QUOTE), "quoting");
+  assert.equal(etapaDeEntrada(ZD_STATUS_BIDDING), null);
+  assert.equal(etapaDeEntrada(null), null);
+});
+
+test("lead do ticket: e-mail da equipe não vira cliente", () => {
+  const l = leadDoTicket({ id: 1, subject: "Leaking tap", customStatusId: ZD_STATUS_LEAD }, { name: "Fixfy Team", email: "team@getfixfy.com" });
+  assert.ok(l);
+  assert.equal(l!.email, null);
+  assert.equal(l!.stage, "new");
+  assert.equal(l!.external_ref, "1");
+  assert.equal(l!.scope, "Leaking tap.");
+  assert.equal(leadDoTicket({ id: 2, customStatusId: ZD_STATUS_BIDDING }, null), null);
+});
+
+test("nome e postcode do assunto do primeiro contato", () => {
+  assert.deepEqual(pessoaDoAssunto("Lead · Handyman work · Ingrid Mills · SE4 1BQ"), { nome: "Ingrid Mills", postcode: "SE4 1BQ" });
+  assert.equal(pessoaDoAssunto("Re: quote for painting"), null);
+  assert.equal(pessoaDoAssunto("Lead · Carpentry · Emma · not a postcode"), null);
 });

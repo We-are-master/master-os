@@ -10,6 +10,7 @@
  * onde estão (alguém pôs lá por um motivo que o lead não conhece).
  */
 import type { LeadLostReason, LeadStage } from "@/types/database";
+import { limparScope } from "@/lib/scope-limpo";
 import {
   ZD_STATUS_AWAITING_APPROVAL,
   ZD_STATUS_BIDDING,
@@ -170,4 +171,58 @@ export function nurtureIdDoAmbiente(valor: string | undefined = process.env.ZEND
 
 export function hojeEmLondres(agora: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(agora);
+}
+
+/**
+ * Entrada pelo Zendesk (06/11/2026, dono): ticket num status de lead e sem
+ * lead, quote ou job no OS cai no CRM sozinho, na coluna que o status diz.
+ * Os outros status do funil (Bidding em diante) já têm quote: entram pela quote.
+ */
+export function etapaDeEntrada(customStatusId: number | null | undefined): LeadStage | null {
+  if (customStatusId === ZD_STATUS_LEAD) return "new";
+  if (customStatusId === ZD_STATUS_TO_CALL) return "qualified";
+  if (customStatusId === ZD_STATUS_NEEDS_QUOTE) return "quoting";
+  return null;
+}
+
+export const STATUS_DE_ENTRADA = [ZD_STATUS_LEAD, ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE] as const;
+
+/** O lead que nasce de um ticket do Zendesk. Assunto do ticket vira o scope (sem preço). */
+export function leadDoTicket(
+  t: { id: number | string; subject?: string | null; customStatusId: number | null },
+  quem: { name?: string | null; email?: string | null; phone?: string | null } | null,
+): Record<string, unknown> | null {
+  const stage = etapaDeEntrada(t.customStatusId);
+  if (!stage) return null;
+  const email = String(quem?.email ?? "").trim().toLowerCase();
+  // E-mail interno (o ticket aberto pela equipe ou pelo Harvey) não é o cliente.
+  const deFora = email && !/@getfixfy\.com$/.test(email) ? email : "";
+  const nome = String(quem?.name ?? "").trim() || deFora.split("@")[0] || "Customer";
+  const assunto = String(t.subject ?? "").replace(/\s+/g, " ").trim();
+  return {
+    name: nome,
+    email: deFora || null,
+    phone: String(quem?.phone ?? "").trim() || null,
+    address: "London",
+    city: "London",
+    urgency: "medium",
+    scope: limparScope(assunto ? `${assunto.replace(/[.\s]+$/, "")}.` : "") ?? "",
+    status: stage === "new" ? "new" : "interested",
+    stage,
+    segment: "b2c",
+    external_source: "zendesk",
+    external_ref: String(t.id),
+    next_action: stage === "new" ? "Qualify the customer" : null,
+    published_at: null,
+  };
+}
+
+/** Assunto do primeiro contato: "Lead · Handyman work · Ingrid Mills · SE4 1BQ". */
+export function pessoaDoAssunto(assunto: string | null | undefined): { nome: string; postcode: string } | null {
+  const partes = String(assunto ?? "").split("·").map((p) => p.trim());
+  if (partes.length < 4 || !/^lead$/i.test(partes[0])) return null;
+  const postcode = partes[partes.length - 1].toUpperCase();
+  const nome = partes[partes.length - 2];
+  if (!nome || !/^[A-Z]{1,2}\d[A-Z\d]?\s*\d?[A-Z]{0,2}$/.test(postcode)) return null;
+  return { nome, postcode };
 }

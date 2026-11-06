@@ -145,7 +145,11 @@ export type ConversaDaCaixa = {
   etapa: EtapaDaConversa | null;
   quotes: QuoteDaCaixa[];
   faturas: FaturaDaCaixa[];
+  /** O card do contato no CRM (o aberto mais novo, senão o último), pelo cliente ou pelo telefone. */
+  lead?: LeadDaCaixa | null;
 };
+
+export type LeadDaCaixa = { id: string; ref: string | null; stage: string };
 
 export type TagDaCaixa = { nome: string; cor: string };
 

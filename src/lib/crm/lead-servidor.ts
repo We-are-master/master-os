@@ -16,6 +16,7 @@ import type {
   QuoteStatus,
 } from "@/types/database";
 import { isOpenStage, legacyStatusFromStage, stageFromQuoteStatus } from "./etapas";
+import { leadDaQuote, quoteAbreLead, segmentoPeloProcesso, type QuoteParaCrm } from "./fontes";
 
 export type EventoDoLead = {
   leadId: string;
@@ -311,7 +312,9 @@ export async function sincronizarLeadDaQuote(
   try {
     const { data: q, error } = await sb
       .from("quotes")
-      .select("id, reference, lead_id, external_source, external_ref, total_value")
+      .select(
+        "id, reference, title, status, lead_id, client_id, client_name, client_email, property_address, postcode, scope, catalog_service_id, source_account_id, external_source, external_ref, total_value, deleted_at",
+      )
       .eq("id", quoteId)
       .maybeSingle();
     if (error || !q) return;
@@ -322,6 +325,10 @@ export async function sincronizarLeadDaQuote(
         const { error: e2 } = await sb.from("quotes").update({ lead_id: lead.id }).eq("id", quoteId).is("lead_id", null);
         if (!e2) leadId = lead.id;
       }
+    }
+    // Toda quote viva aparece no CRM (dono, 06/11/2026): sem lead no ticket, nasce um.
+    if (!leadId && !q.deleted_at && quoteAbreLead(q.status as string | null)) {
+      leadId = await criarLeadDaQuote(sb, q as unknown as QuoteParaCrm);
     }
     if (!leadId) return;
     if (opts.evento) {
@@ -340,6 +347,72 @@ export async function sincronizarLeadDaQuote(
   } catch (e) {
     console.warn("[crm] sync da quote", quoteId, e instanceof Error ? e.message : e);
   }
+}
+
+/**
+ * Cria o lead do CRM para uma quote que não tem (Harvey, Zendesk, quote feita
+ * direto no OS) e liga a quote nele. Um lead por ticket (índice único): se
+ * outro processo criou no meio tempo, usa o dele. Devolve o id ou null.
+ */
+export async function criarLeadDaQuote(sb: SupabaseClient, q: QuoteParaCrm): Promise<string | null> {
+  // O cliente já tem um card aberto ainda sem quote (New lead a Qualified): a quote entra nele.
+  if (q.client_id) {
+    const { data: aberto } = await sb
+      .from("leads")
+      .select("id")
+      .eq("client_id", q.client_id)
+      .in("stage", ["new", "qualifying", "qualified"])
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const id = (aberto as { id?: string } | null)?.id ?? null;
+    if (id) {
+      const { count } = await sb.from("quotes").select("id", { count: "exact", head: true }).eq("lead_id", id).is("deleted_at", null);
+      if (!count) {
+        const { error } = await sb.from("quotes").update({ lead_id: id }).eq("id", q.id).is("lead_id", null);
+        if (!error) return id;
+      }
+    }
+  }
+  let segment: "b2c" | "b2b" = "b2c";
+  if (q.source_account_id) {
+    const { data } = await sb.from("accounts").select("process_type").eq("id", q.source_account_id).maybeSingle();
+    segment = segmentoPeloProcesso((data as { process_type?: string | null } | null)?.process_type);
+  }
+  const linha = leadDaQuote(q, segment);
+  const { data: ref } = await sb.rpc("next_lead_ref");
+  if (!ref) return null;
+  const { data: criado, error } = await sb
+    .from("leads")
+    .insert({ reference: String(ref), ...linha, status: legacyStatusFromStage("quoting") })
+    .select("id")
+    .single();
+  let leadId = (criado?.id as string | undefined) ?? null;
+  if (error) {
+    // Corrida com outra escrita do mesmo ticket: o lead dele vale.
+    const ticket = linha.external_ref as string | null;
+    const outro = ticket ? await acharLeadPorTicket(sb, ticket) : null;
+    if (!outro) {
+      console.warn("[crm] lead da quote", q.id, error.message);
+      return null;
+    }
+    leadId = outro.id;
+  } else if (leadId) {
+    await registrarEvento(sb, {
+      leadId,
+      kind: "created",
+      channel: linha.external_source === "zendesk" ? "zendesk" : "os",
+      toStage: "quoting",
+      summary: `Lead created from ${q.reference ?? "a quote"}`,
+      payload: { quote_id: q.id },
+      idempotencyKey: `created:quote:${q.id}`,
+    });
+  }
+  if (!leadId) return null;
+  const { error: e2 } = await sb.from("quotes").update({ lead_id: leadId }).eq("id", q.id).is("lead_id", null);
+  if (e2) console.warn("[crm] quote → lead", q.id, e2.message);
+  return leadId;
 }
 
 /** O lead pelo id (vivo). */

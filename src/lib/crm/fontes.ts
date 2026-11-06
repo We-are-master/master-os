@@ -61,3 +61,59 @@ export function leadDoSiteLead(l: SiteLeadParaCrm, ticketId: number | string | n
     published_at: null,
   };
 }
+
+/** A quote que entra no CRM sem lead (Harvey, Zendesk, OS): o que interessa dela. */
+export type QuoteParaCrm = {
+  id: string;
+  reference: string | null;
+  title: string | null;
+  status: string | null;
+  client_id: string | null;
+  client_name: string | null;
+  client_email: string | null;
+  property_address: string | null;
+  postcode: string | null;
+  scope: string | null;
+  catalog_service_id: string | null;
+  source_account_id: string | null;
+  external_source: string | null;
+  external_ref: string | null;
+};
+
+/** Quote recusada ou apagada não abre card novo: o card só nasce de quote viva. */
+export function quoteAbreLead(status: string | null | undefined): boolean {
+  return !!status && status !== "rejected";
+}
+
+/**
+ * O lead que nasce de uma quote sem lead (06/11/2026, dono: toda quote aparece
+ * no CRM). Nasce em Quoting; a sincronização pelas quotes leva para Quoted ou
+ * Won logo depois. Fica nosso: nunca publicado aos parceiros.
+ */
+export function leadDaQuote(q: QuoteParaCrm, segment: LeadSegment): Record<string, unknown> {
+  const ticket = q.external_source === "zendesk" ? String(q.external_ref ?? "").trim() : "";
+  const postcode = String(q.postcode ?? "").trim().toUpperCase() || null;
+  const email = String(q.client_email ?? "").trim().toLowerCase();
+  const nome = String(q.client_name ?? "").trim() || email.split("@")[0] || "Customer";
+  const endereco = String(q.property_address ?? "").trim() || (postcode ? `London, ${postcode}` : "London");
+  const titulo = semPreco(String(q.title ?? "").replace(/\s+/g, " ").trim()).trim();
+  const scope = limparScope(String(q.scope ?? "").trim() || (titulo ? `${titulo.replace(/[.\s]+$/, "")}.` : "")) ?? "";
+  return {
+    name: nome,
+    email: email || null,
+    address: endereco,
+    city: "London",
+    postcode,
+    urgency: "medium",
+    scope,
+    status: "new",
+    stage: "quoting",
+    segment,
+    client_id: q.client_id ?? null,
+    account_id: q.source_account_id ?? null,
+    catalog_service_id: q.catalog_service_id ?? null,
+    external_source: /^\d+$/.test(ticket) ? "zendesk" : null,
+    external_ref: /^\d+$/.test(ticket) ? ticket : null,
+    published_at: null,
+  };
+}

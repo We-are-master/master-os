@@ -17,7 +17,7 @@ import Link from "next/link";
 import { Plus, Loader2, ExternalLink, Trash2, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { CatalogService, Lead, LeadLostReason, LeadSegment, LeadStage, LeadStatus, LeadUrgency } from "@/types/database";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { LeadQuotingModal } from "@/components/leads/lead-quoting-modal";
 import { LeadLostModal } from "@/components/leads/lead-lost-modal";
 import { normalizeJsonImageArray } from "@/lib/request-attachment-images";
@@ -403,6 +403,18 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     },
     [quotesByLead, openLead, router, loadCounts, STAGE_LABEL],
   );
+
+  // Link de outra tela (quote, Atendimento): /leads?leadId=... abre o card.
+  const searchParams = useSearchParams();
+  const leadIdDoLink = searchParams.get("leadId");
+  useEffect(() => {
+    if (!leadIdDoLink) return;
+    getLead(leadIdDoLink)
+      .then((l) => l && openLead(l))
+      .catch(() => {
+        /* lead sumiu */
+      });
+  }, [leadIdDoLink, openLead]);
 
   // Voltou de Jobs/Quotes depois do Mark won: reabre o lead para ele fechar como Won.
   useEffect(() => {
