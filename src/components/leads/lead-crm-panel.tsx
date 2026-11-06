@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ExternalLink, Loader2, X } from "lucide-react";
+import { Check, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { LOST_REASON_LABEL, isOpenStage } from "@/lib/crm/etapas";
 import { useStageLabels } from "./use-stage-labels";
-import { checklistDaQuote, checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
+import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
 import { guardarPrefill, janelaDoTexto } from "@/lib/inbox/prefill";
 import { changeLeadStage, recordLeadEvent } from "@/services/leads";
 import {
@@ -164,14 +163,10 @@ export function LeadCrmPanel({
 
   const items = useMemo(() => checklistDoJob({ lead, quote, semEntrada }), [lead, quote, semEntrada]);
   const ready = prontoParaJob(items);
-  const itensDaQuote = useMemo(() => checklistDaQuote(lead), [lead]);
-  const prontoQuote = prontoParaJob(itensDaQuote);
-  const faltamNaQuote = itensDaQuote.filter((i) => !i.ok).map((i) => i.label.toLowerCase());
   const value = leadValue(lead, quote);
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
   const openQuote = () => liveQuote && router.push(`/quotes?quoteId=${liveQuote.id}`);
-  const onCreateQuote = () => (liveQuote ? openQuote() : onMove("quoting"));
 
   const onMarkWon = async () => {
     if (!ready.pronto) return;
@@ -244,37 +239,10 @@ export function LeadCrmPanel({
   const STAGE_LABEL = useStageLabels();
   const atual = PASSOS.indexOf(stage);
 
-  // O próximo passo da etapa: um botão só, o resto fica como secundário.
-  const qs = liveQuote?.status;
-  const proximo: { label: string; title?: string; hint?: string; run: () => void; disabled?: boolean } | null = !loaded
-    ? null
-    : stage === "new"
-      ? prontoQuote.pronto
-        ? { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: "Ready for a quote. Hand it to the closer.", run: () => onMove("qualified") }
-        : { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: `Still missing: ${faltamNaQuote.join(", ")}.`, run: () => onMove("qualified") }
-      : stage === "qualified"
-        ? {
-            label: liveQuote ? "Open quote" : "Create quote",
-            hint: liveQuote || prontoQuote.pronto ? "Partners bid or internal quote. The card moves to Quoting." : `Missing for the quote: ${faltamNaQuote.join(", ")}.`,
-            run: onCreateQuote,
-          }
-        : stage === "quoting"
-          ? !liveQuote
-            ? { label: "Create quote", hint: "Partners bid or internal quote.", run: onCreateQuote }
-            : qs === "bidding" || qs === "in_survey"
-              ? { label: "Open quote", hint: "With partners. It shows Ready to send when one quotes.", run: openQuote }
-              : { label: qs === "quote_ready" ? "Send quote" : "Price and send", hint: "The card moves to Quoted when the customer gets it.", run: openQuote }
-          : stage === "quoted"
-            ? { label: "Mark won · create job", title: wonTitle, hint: "Turns Won as soon as the job exists.", run: onMarkWon, disabled: !ready.pronto || busy !== null }
-            : stage === "lost"
-              ? { label: "Reopen", hint: "Goes back to New lead.", run: () => onMove("new") }
-              : lead.job_id
-                ? { label: "Open job", run: () => router.push(`/jobs/${lead.job_id}`) }
-                : null;
-
   const clicarPasso = (to: LeadStage) => {
     if (to === stage || stage === "won") return;
-    if (to === "won") return void onMarkWon();
+    // Won só com o Ready for job verde: diz o que falta em vez de não fazer nada.
+    if (to === "won") return void (ready.pronto ? onMarkWon() : toast.info(wonTitle));
     onMove(to);
   };
 
@@ -292,7 +260,7 @@ export function LeadCrmPanel({
                   type="button"
                   onClick={() => clicarPasso(p)}
                   disabled={stage === "won" || aqui || busy !== null}
-                  title={aqui ? `In ${STAGE_LABEL[p]}` : `Move to ${STAGE_LABEL[p]}`}
+                  title={aqui ? `In ${STAGE_LABEL[p]}` : p === "won" ? wonTitle : `Move to ${STAGE_LABEL[p]}`}
                   className={cn(
                     "flex h-9 w-full items-center justify-center gap-1 truncate border-r border-border-light px-1.5 text-[11px] font-semibold transition last:border-r-0",
                     aqui
@@ -326,36 +294,15 @@ export function LeadCrmPanel({
         </button>
       </div>
 
-      {/* Próximo passo: um botão principal, valor e quote ao lado. */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-secondary/60 p-3">
-        <div className="min-w-0 flex-1">
-          {value ? (
-            <p className="text-sm font-semibold tabular-nums text-text-primary">
-              {gbp(value)}
-              {liveQuote ? (
-                <button type="button" onClick={openQuote} className="ml-1.5 text-[11px] font-medium text-primary hover:underline">
-                  {liveQuote.reference}
-                </button>
-              ) : null}
-            </p>
-          ) : null}
-          {proximo?.hint ? <p className="text-xs text-text-secondary">{proximo.hint}</p> : null}
-        </div>
-        {liveQuote && proximo && proximo.run !== openQuote && stage !== "qualified" ? (
-          <Button size="sm" variant="secondary" onClick={openQuote}>
-            Open quote
-          </Button>
-        ) : null}
-        {proximo ? (
-          <span title={proximo.title} className="inline-flex">
-            <Button size="sm" onClick={proximo.run} disabled={proximo.disabled}>
-              {busy === "won" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : proximo.label}
-            </Button>
-          </span>
-        ) : !loaded ? (
-          <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" />
-        ) : null}
-      </div>
+      {/* A quote do card, quando existe: valor e link. */}
+      {liveQuote ? (
+        <p className="text-sm text-text-secondary">
+          {value ? <span className="font-semibold tabular-nums text-text-primary">{gbp(value)}</span> : null}
+          <button type="button" onClick={openQuote} className="ml-1.5 text-xs font-medium text-primary hover:underline">
+            {liveQuote.reference}
+          </button>
+        </p>
+      ) : null}
 
       {stage === "lost" && lead.lost_reason ? (
         <p className="text-xs text-text-secondary">
