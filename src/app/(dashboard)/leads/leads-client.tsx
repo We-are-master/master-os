@@ -393,7 +393,9 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         return next;
       });
       try {
-        await changeLeadStage(lead.id, to, { summary: "Moved on the board" });
+        const updated = await changeLeadStage(lead.id, to, { summary: "Moved on the board" });
+        // Moveu pelo drawer: o drawer aberto acompanha na hora.
+        setSelectedLead((cur) => (cur?.id === updated.id ? updated : cur));
         toast.success(`${lead.name} · ${STAGE_LABEL[to]}`);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Could not move the lead");
@@ -895,9 +897,12 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           open
           onClose={() => setQuotingLead(null)}
           onDone={() => {
+            const id = quotingLead.id;
             setQuotingLead(null);
             refreshSilent();
             void loadCounts();
+            // A quote nasceu: o card já está em Quoting, o drawer aberto também.
+            void getLead(id).then((l) => l && setSelectedLead((cur) => (cur?.id === l.id ? l : cur)));
           }}
         />
       ) : null}
@@ -908,9 +913,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
           open
           onClose={() => setLostLead(null)}
           onDone={() => {
+            const id = lostLead.id;
             setLostLead(null);
             refreshSilent();
             void loadCounts();
+            void getLead(id).then((l) => l && setSelectedLead((cur) => (cur?.id === l.id ? l : cur)));
           }}
         />
       ) : null}
@@ -1160,8 +1167,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
                 lead={selectedLead}
                 catalog={catalogServices}
                 onLeadChange={onLeadChange}
-                onQuoteCreated={() => {
-                  void getLead(selectedLead.id).then((l) => l && onLeadChange(l));
+                onMove={(to) => void onMove(selectedLead, to)}
+                onLose={() => {
+                  setLostDefault(undefined);
+                  setLostLead(selectedLead);
                 }}
               />
             ) : drawerTab === "activity" ? (

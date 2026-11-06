@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,12 +18,11 @@ import {
   leadValue,
   type LeadQuote,
 } from "@/services/crm-leads";
-import type { CatalogService, Lead } from "@/types/database";
+import type { CatalogService, Lead, LeadStage } from "@/types/database";
+import { cn } from "@/lib/utils";
 import { LeadNextAction } from "./lead-next-action";
 import { LeadJobFieldsEditor } from "./lead-job-fields";
 import { LeadReadyPanel } from "./lead-ready-panel";
-import { LeadLostModal } from "./lead-lost-modal";
-import { LeadQuotingModal } from "./lead-quoting-modal";
 import { SEGMENT_LABEL, STAGE_VARIANT, formatAgo, gbp, zendeskTicketUrl } from "./crm-ui";
 
 const PENDING_WON_KEY = "fixfy:crm-pending-won";
@@ -75,29 +74,36 @@ export function LeadCrmHeader({ lead, sourceLabel }: { lead: Lead; sourceLabel?:
   );
 }
 
+/** As etapas na barra do drawer, na ordem do funil. Lost fica à parte. */
+const PASSOS: LeadStage[] = ["new", "qualified", "quoting", "quoted", "won"];
+
 /**
- * Aba Overview do drawer: ações (Lost, Quote, Won), próximo passo, dados do
- * job e checklist Ready for job. Create quote abre a mesma pergunta do board
- * (Partners bid ou Internal).
+ * Aba Overview do drawer (06/11/2026, dono: mudar de etapa e resolver com um
+ * clique). Em cima, a barra de etapas: clicar numa etapa move o card com as
+ * mesmas regras de arrastar no board (Quoting pergunta Partners bid ou
+ * Internal, Lost pede o motivo, Won só com o job). Embaixo, um botão
+ * principal: o próximo passo da etapa em que o card está.
  */
 export function LeadCrmPanel({
   lead,
-  catalog,
   onLeadChange,
-  onQuoteCreated,
+  onMove,
+  onLose,
 }: {
   lead: Lead;
-  catalog: CatalogService[];
+  /** Não usado aqui desde que Quoting abre o modal da tela; fica para quem já passa. */
+  catalog?: CatalogService[];
   onLeadChange: (l: Lead) => void;
-  onQuoteCreated?: () => void;
+  /** Move o card com as regras do board (a tela abre os modais). */
+  onMove: (to: LeadStage) => void;
+  /** Abre o modal de Lost. */
+  onLose: () => void;
 }) {
   const router = useRouter();
   const [quote, setQuote] = useState<LeadQuote | null>(null);
   const [semEntrada, setSemEntrada] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"quote" | "won" | null>(null);
-  const [lostOpen, setLostOpen] = useState(false);
-  const [quotingOpen, setQuotingOpen] = useState(false);
   const reconciledFor = useRef<string | null>(null);
 
   const stage = lead.stage ?? "new";
@@ -159,13 +165,8 @@ export function LeadCrmPanel({
   const value = leadValue(lead, quote);
   const liveQuote = quote && quote.status !== "rejected" ? quote : null;
 
-  const onCreateQuote = () => {
-    if (liveQuote) {
-      router.push(`/quotes?quoteId=${liveQuote.id}`);
-      return;
-    }
-    setQuotingOpen(true);
-  };
+  const openQuote = () => liveQuote && router.push(`/quotes?quoteId=${liveQuote.id}`);
+  const onCreateQuote = () => (liveQuote ? openQuote() : onMove("quoting"));
 
   const onMarkWon = async () => {
     if (!ready.pronto) return;
@@ -235,26 +236,114 @@ export function LeadCrmPanel({
           : "Opens New job filled in from the lead"
         : `${ready.faltam} item${ready.faltam === 1 ? "" : "s"} missing in Ready for job`;
 
+  const STAGE_LABEL = useStageLabels();
+  const atual = PASSOS.indexOf(stage);
+
+  // O próximo passo da etapa: um botão só, o resto fica como secundário.
+  const qs = liveQuote?.status;
+  const proximo: { label: string; title?: string; hint?: string; run: () => void; disabled?: boolean } | null = !loaded
+    ? null
+    : stage === "new"
+      ? { label: `Mark ${STAGE_LABEL.qualified.toLowerCase()}`, hint: "Details complete? Hand it to the closer.", run: () => onMove("qualified") }
+      : stage === "qualified"
+        ? { label: liveQuote ? "Open quote" : "Create quote", hint: "Partners bid or internal quote. The card moves to Quoting.", run: onCreateQuote }
+        : stage === "quoting"
+          ? !liveQuote
+            ? { label: "Create quote", hint: "Partners bid or internal quote.", run: onCreateQuote }
+            : qs === "bidding" || qs === "in_survey"
+              ? { label: "Open quote", hint: "With partners. It shows Ready to send when one quotes.", run: openQuote }
+              : { label: qs === "quote_ready" ? "Send quote" : "Price and send", hint: "The card moves to Quoted when the customer gets it.", run: openQuote }
+          : stage === "quoted"
+            ? { label: "Mark won · create job", title: wonTitle, hint: "Turns Won as soon as the job exists.", run: onMarkWon, disabled: !ready.pronto || busy !== null }
+            : stage === "lost"
+              ? { label: "Reopen", hint: "Goes back to New lead.", run: () => onMove("new") }
+              : lead.job_id
+                ? { label: "Open job", run: () => router.push(`/jobs/${lead.job_id}`) }
+                : null;
+
+  const clicarPasso = (to: LeadStage) => {
+    if (to === stage || stage === "won") return;
+    if (to === "won") return void onMarkWon();
+    onMove(to);
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {value ? (
-          <span className="text-sm font-semibold tabular-nums text-text-primary mr-1">
-            {gbp(value)}
-            {liveQuote ? <span className="ml-1 text-[11px] font-normal text-text-tertiary">{liveQuote.reference}</span> : null}
-          </span>
-        ) : null}
-        <Button size="sm" variant="secondary" onClick={() => setLostOpen(true)} disabled={stage === "won" || stage === "lost"}>
-          Mark lost
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onCreateQuote} disabled={busy !== null || stage === "won" || !loaded}>
-          {busy === "quote" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : liveQuote ? "Open quote" : "Create quote"}
-        </Button>
-        <span title={wonTitle} className="inline-flex sm:ml-auto">
-          <Button size="sm" onClick={onMarkWon} disabled={!open || !loaded || !ready.pronto || busy !== null}>
-            {busy === "won" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Mark won · create job"}
+      {/* Barra de etapas: clicar move o card. */}
+      <div className="flex items-stretch gap-1.5">
+        <ol className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-xl border border-border-light">
+          {PASSOS.map((p, i) => {
+            const feito = atual >= 0 && i < atual;
+            const aqui = p === stage;
+            return (
+              <li key={p} className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => clicarPasso(p)}
+                  disabled={stage === "won" || aqui || busy !== null}
+                  title={aqui ? `In ${STAGE_LABEL[p]}` : `Move to ${STAGE_LABEL[p]}`}
+                  className={cn(
+                    "flex h-9 w-full items-center justify-center gap-1 truncate border-r border-border-light px-1.5 text-[11px] font-semibold transition last:border-r-0",
+                    aqui
+                      ? "bg-primary text-white"
+                      : feito
+                        ? "bg-primary-light text-primary hover:bg-primary/15"
+                        : "bg-surface text-text-secondary hover:bg-surface-secondary hover:text-text-primary",
+                    "disabled:cursor-default",
+                  )}
+                >
+                  {feito ? <Check className="h-3 w-3 shrink-0" aria-hidden /> : null}
+                  <span className="truncate">{STAGE_LABEL[p]}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+        <button
+          type="button"
+          onClick={onLose}
+          disabled={stage === "won" || stage === "lost"}
+          title={stage === "lost" ? "Lost" : "Mark lost"}
+          className={cn(
+            "inline-flex h-9 shrink-0 items-center gap-1 rounded-xl border px-2.5 text-[11px] font-semibold transition",
+            stage === "lost" ? "border-danger bg-danger-light text-danger" : "border-border-light text-text-secondary hover:border-danger hover:text-danger",
+            "disabled:cursor-default",
+          )}
+        >
+          <X className="h-3 w-3" aria-hidden />
+          {STAGE_LABEL.lost}
+        </button>
+      </div>
+
+      {/* Próximo passo: um botão principal, valor e quote ao lado. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-secondary/60 p-3">
+        <div className="min-w-0 flex-1">
+          {value ? (
+            <p className="text-sm font-semibold tabular-nums text-text-primary">
+              {gbp(value)}
+              {liveQuote ? (
+                <button type="button" onClick={openQuote} className="ml-1.5 text-[11px] font-medium text-primary hover:underline">
+                  {liveQuote.reference}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
+          {proximo?.hint ? <p className="text-xs text-text-secondary">{proximo.hint}</p> : null}
+        </div>
+        {liveQuote && proximo && proximo.run !== openQuote && stage !== "qualified" ? (
+          <Button size="sm" variant="secondary" onClick={openQuote}>
+            Open quote
           </Button>
-        </span>
+        ) : null}
+        {proximo ? (
+          <span title={proximo.title} className="inline-flex">
+            <Button size="sm" onClick={proximo.run} disabled={proximo.disabled}>
+              {busy === "won" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : proximo.label}
+            </Button>
+          </span>
+        ) : !loaded ? (
+          <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" />
+        ) : null}
       </div>
 
       {stage === "lost" && lead.lost_reason ? (
@@ -271,27 +360,6 @@ export function LeadCrmPanel({
       <LeadJobFieldsEditor lead={lead} hasQuote={!!liveQuote} onSaved={onLeadChange} />
       <LeadReadyPanel items={items} />
 
-      {quotingOpen ? (
-        <LeadQuotingModal
-          lead={lead}
-          catalog={catalog}
-          open
-          onClose={() => setQuotingOpen(false)}
-          onDone={() => {
-            setQuotingOpen(false);
-            onQuoteCreated?.();
-          }}
-        />
-      ) : null}
-      <LeadLostModal
-        lead={lead}
-        open={lostOpen}
-        onClose={() => setLostOpen(false)}
-        onDone={(l) => {
-          setLostOpen(false);
-          onLeadChange(l);
-        }}
-      />
     </div>
   );
 }
