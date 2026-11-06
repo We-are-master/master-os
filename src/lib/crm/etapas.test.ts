@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  cleanStageLabels,
   isOpenStage,
+  mergeStageLabels,
   legacyStatusFromStage,
   stageForLegacyStatusChange,
   stageFromQuoteStatus,
@@ -62,4 +64,15 @@ test("won só com job e won não volta", () => {
 
 test("mesma etapa é permitido", () => {
   assert.equal(validateStageChange({ from: "won", to: "won" }), null);
+});
+
+test("nome de coluna renomeada: aparado, até 24 letras, vazio volta ao padrão", () => {
+  assert.deepEqual(
+    cleanStageLabels({ new: "  Inbox  ", quoting: "", won: "Won", bogus: "x", lost: 5, qualified: "A".repeat(40) }),
+    { new: "Inbox", qualified: "A".repeat(24) },
+  );
+  assert.deepEqual(cleanStageLabels(null), {});
+  const m = mergeStageLabels({ quoted: "Waiting customer" });
+  assert.equal(m.quoted, "Waiting customer");
+  assert.equal(m.new, "New lead");
 });

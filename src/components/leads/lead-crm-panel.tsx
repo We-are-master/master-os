@@ -6,7 +6,8 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { LOST_REASON_LABEL, STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
+import { LOST_REASON_LABEL, isOpenStage } from "@/lib/crm/etapas";
+import { useStageLabels } from "./use-stage-labels";
 import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
 import { guardarPrefill, janelaDoTexto } from "@/lib/inbox/prefill";
 import { changeLeadStage, recordLeadEvent } from "@/services/leads";
@@ -50,6 +51,7 @@ export function takePendingWonLeadId(): string | null {
 /** Cabeçalho do lead no drawer: etapa, segmento, origem, ticket. */
 export function LeadCrmHeader({ lead, sourceLabel }: { lead: Lead; sourceLabel?: string | null }) {
   const stage = lead.stage ?? "new";
+  const STAGE_LABEL = useStageLabels();
   const url = zendeskTicketUrl(lead.external_ref);
   return (
     <div className="flex flex-wrap items-center gap-1.5">

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { STAGE_LABEL } from "@/lib/crm/etapas";
+import type { StageLabels } from "@/lib/crm/etapas";
+import { useStageLabels } from "./use-stage-labels";
 import { listLeadEvents } from "@/services/leads";
 import type { LeadEvent, LeadEventKind } from "@/types/database";
 import { formatWhen } from "./crm-ui";
@@ -22,7 +23,7 @@ const KIND_LABEL: Record<LeadEventKind, string> = {
 
 const ACTOR: Record<string, string> = { staff: "Office", harvey: "Harvey", system: "System", customer: "Customer", partner: "Partner" };
 
-function line(e: LeadEvent): string {
+function line(e: LeadEvent, STAGE_LABEL: StageLabels): string {
   if (e.kind === "stage_changed" && (e.from_stage || e.to_stage)) {
     const move = `${e.from_stage ? STAGE_LABEL[e.from_stage] : "·"} → ${e.to_stage ? STAGE_LABEL[e.to_stage] : "·"}`;
     return e.summary ? `${move} · ${e.summary}` : move;
@@ -35,6 +36,7 @@ function line(e: LeadEvent): string {
 }
 
 export function LeadTimeline({ leadId, reloadKey }: { leadId: string; reloadKey?: number }) {
+  const labels = useStageLabels();
   const [events, setEvents] = useState<LeadEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,7 +71,7 @@ export function LeadTimeline({ leadId, reloadKey }: { leadId: string; reloadKey?
                 {e.channel ? ` · ${e.channel}` : ""}
               </span>
             </p>
-            {line(e) ? <p className="text-text-secondary whitespace-pre-wrap break-words">{line(e)}</p> : null}
+            {line(e, labels) ? <p className="text-text-secondary whitespace-pre-wrap break-words">{line(e, labels)}</p> : null}
           </div>
         </li>
       ))}

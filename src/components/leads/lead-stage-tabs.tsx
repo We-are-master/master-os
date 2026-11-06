@@ -2,7 +2,8 @@
 
 import { Tabs } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { OPEN_STAGES, STAGE_LABEL } from "@/lib/crm/etapas";
+import { OPEN_STAGES } from "@/lib/crm/etapas";
+import { useStageLabels } from "./use-stage-labels";
 import type { CrmTab, SegmentFilter } from "@/services/crm-leads";
 
 const TAB_ORDER: CrmTab[] = ["open", "new", "qualifying", "qualified", "quoting", "quoted", "won", "lost"];
@@ -16,6 +17,7 @@ export function LeadStageTabs({
   counts: Record<string, number>;
   onChange: (tab: CrmTab) => void;
 }) {
+  const STAGE_LABEL = useStageLabels();
   const openTotal = OPEN_STAGES.reduce((n, id) => n + (counts[id] ?? 0), 0);
   const tabs = TAB_ORDER.map((id) => ({
     id,

@@ -35,6 +35,33 @@ export const STAGE_LABEL: Record<LeadStage, string> = {
   lost: "Lost",
 };
 
+/** Tamanho máximo do nome de uma coluna renomeada no board. */
+export const STAGE_LABEL_MAX = 24;
+
+export type StageLabels = Record<LeadStage, string>;
+
+/**
+ * Nomes que a equipe deu às colunas (admin_config crm_stage_labels) → só o que
+ * vale guardar: etapa conhecida, texto aparado, até 24 letras, diferente do
+ * padrão. Vazio volta ao nome padrão. A etapa (id) nunca muda, só o rótulo.
+ */
+export function cleanStageLabels(input: unknown): Partial<StageLabels> {
+  const out: Partial<StageLabels> = {};
+  if (!input || typeof input !== "object") return out;
+  for (const st of LEAD_STAGES) {
+    const raw = (input as Record<string, unknown>)[st];
+    if (typeof raw !== "string") continue;
+    const v = raw.replace(/\s+/g, " ").trim().slice(0, STAGE_LABEL_MAX).trim();
+    if (v && v !== STAGE_LABEL[st]) out[st] = v;
+  }
+  return out;
+}
+
+/** Nome de cada coluna: o da equipe, senão o padrão. */
+export function mergeStageLabels(custom: Partial<StageLabels> | null | undefined): StageLabels {
+  return { ...STAGE_LABEL, ...cleanStageLabels(custom) };
+}
+
 export const LOST_REASON_LABEL: Record<LeadLostReason, string> = {
   price: "Price",
   went_elsewhere: "Went with someone else",

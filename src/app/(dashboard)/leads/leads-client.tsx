@@ -42,7 +42,8 @@ import {
   type LeadQuote,
   type SegmentFilter,
 } from "@/services/crm-leads";
-import { STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
+import { isOpenStage } from "@/lib/crm/etapas";
+import { useStageLabels } from "@/components/leads/use-stage-labels";
 import { LeadStageTabs, SegmentToggle, ViewToggle, type LeadsView } from "@/components/leads/lead-stage-tabs";
 import { LeadBoard } from "@/components/leads/lead-board";
 import { LeadCrmHeader, LeadCrmPanel, takePendingWonLeadId } from "@/components/leads/lead-crm-panel";
@@ -171,6 +172,7 @@ interface LeadsClientProps {
 
 export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const { profile } = useProfile();
+  const STAGE_LABEL = useStageLabels();
   const {
     data,
     loading,
@@ -394,7 +396,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         void loadCounts();
       }
     },
-    [quotesByLead, openLead, router, loadCounts],
+    [quotesByLead, openLead, router, loadCounts, STAGE_LABEL],
   );
 
   // Voltou de Jobs/Quotes depois do Mark won: reabre o lead para ele fechar como Won.
@@ -621,7 +623,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
         ),
       },
     ],
-    [deletingId, handleDelete, quotesByLead, channelLabel],
+    [deletingId, handleDelete, quotesByLead, channelLabel, STAGE_LABEL],
   );
 
   const handleCreate = async () => {
@@ -843,6 +845,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             accountNames={accountNames}
             platformAccounts={platformAccounts}
             onMove={(l, to) => void onMove(l, to)}
+            canRename={profile?.role === "admin"}
             loading={sideLoading}
             onOpen={openLead}
           />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Briefcase,
   Building2,
@@ -9,6 +9,7 @@ import {
   FileText,
   Home,
   MapPin,
+  Pencil,
   PoundSterling,
   RotateCcw,
   Send,
@@ -19,7 +20,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ZendeskTicketLink } from "@/components/ui/zendesk-ticket-link";
 import { cn } from "@/lib/utils";
-import { LOST_REASON_LABEL, STAGE_LABEL, isOpenStage } from "@/lib/crm/etapas";
+import { toast } from "sonner";
+import { LOST_REASON_LABEL, STAGE_LABEL as DEFAULT_LABEL, STAGE_LABEL_MAX, isOpenStage } from "@/lib/crm/etapas";
+import { renameStage, useStageLabels } from "./use-stage-labels";
 import { checklistDoJob, prontoParaJob } from "@/lib/crm/pronto-para-job";
 import type { Lead, LeadStage } from "@/types/database";
 import { BOARD_STAGES, leadValue, type LeadQuote } from "@/services/crm-leads";
@@ -308,6 +311,93 @@ function BoardCard({
   );
 }
 
+/** Nome da coluna; admin clica no lápis, digita e Enter grava (vazio = padrão). */
+function ColumnTitle({
+  stage,
+  label,
+  dot,
+  canRename,
+  suffix,
+}: {
+  stage: LeadStage;
+  label: string;
+  dot: string;
+  canRename: boolean;
+  suffix: string | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(label);
+  const [saving, setSaving] = useState(false);
+  const done = useRef(false);
+
+  const start = () => {
+    done.current = false;
+    setDraft(label);
+    setEditing(true);
+  };
+  const finish = async (save: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const name = draft.trim();
+    if (!save || name === label) return setEditing(false);
+    setSaving(true);
+    try {
+      const next = await renameStage(stage, name);
+      toast.success(name ? `Column renamed to ${next[stage]}` : `Column back to ${DEFAULT_LABEL[stage]}`);
+      setEditing(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not rename the column");
+      done.current = false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", dot)} aria-hidden />
+        <input
+          autoFocus
+          value={draft}
+          maxLength={STAGE_LABEL_MAX}
+          disabled={saving}
+          aria-label={`Rename ${label}`}
+          placeholder={DEFAULT_LABEL[stage]}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void finish(true);
+            if (e.key === "Escape") void finish(false);
+          }}
+          onBlur={() => void finish(true)}
+          className="h-6 w-40 rounded-md border border-border bg-card px-1.5 text-xs font-semibold text-text-primary outline-none focus:ring-2 focus:ring-primary/40"
+        />
+      </span>
+    );
+  }
+  return (
+    <p className="group flex min-w-0 items-center gap-1.5 text-xs font-semibold text-text-primary">
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", dot)} aria-hidden />
+      <span className="truncate" title={label !== DEFAULT_LABEL[stage] ? `Stage: ${DEFAULT_LABEL[stage]}` : undefined}>
+        {label}
+      </span>
+      {suffix ? <span className="shrink-0 font-normal text-text-tertiary">{suffix}</span> : null}
+      {canRename ? (
+        <button
+          type="button"
+          onClick={start}
+          aria-label={`Rename ${label}`}
+          title="Rename column"
+          className="shrink-0 rounded p-0.5 text-text-tertiary opacity-0 transition hover:bg-black/5 hover:text-text-primary focus:opacity-100 group-hover:opacity-100 dark:hover:bg-white/10"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      ) : null}
+    </p>
+  );
+}
+
 export function LeadBoard({
   columns,
   counts,
@@ -317,6 +407,7 @@ export function LeadBoard({
   loading,
   onOpen,
   onMove,
+  canRename = false,
 }: {
   columns: Record<string, Lead[]>;
   counts: Record<string, number>;
@@ -327,7 +418,10 @@ export function LeadBoard({
   onOpen: (l: Lead) => void;
   /** Card solto numa coluna: quem decide o que acontece é a tela (modal, quote, aviso). */
   onMove: (l: Lead, to: LeadStage) => void;
+  /** Admin renomeia a coluna (vale para a equipe toda). */
+  canRename?: boolean;
 }) {
+  const STAGE_LABEL = useStageLabels();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<LeadStage | null>(null);
   const findLead = (id: string) => Object.values(columns).flat().find((l) => l.id === id) ?? null;
@@ -374,14 +468,13 @@ export function LeadBoard({
               <div className={cn("h-1", STAGE_TONE[st].bar)} aria-hidden />
               <div className="p-2">
                 <header className="mb-2 flex items-center justify-between px-1">
-                  <p className="flex items-center gap-1.5 text-xs font-semibold text-text-primary">
-                    <span
-                      className={cn("h-2 w-2 rounded-full", STAGE_TONE[st].dot)}
-                      aria-hidden
-                    />
-                    {STAGE_LABEL[st]}
-                    {st === "lost" ? <span className="font-normal text-text-tertiary">· last 7 days</span> : null}
-                  </p>
+                  <ColumnTitle
+                    stage={st}
+                    label={STAGE_LABEL[st]}
+                    dot={STAGE_TONE[st].dot}
+                    canRename={canRename}
+                    suffix={st === "lost" ? "· last 7 days" : null}
+                  />
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
