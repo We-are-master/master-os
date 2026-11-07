@@ -20,6 +20,12 @@ import { getSupabase } from "@/services/base";
 
 // ── Global Search ────────────────────────────────────────────────────────────
 
+/** "52054" ou "#52054" vira o número do ticket; qualquer outra coisa, null. */
+export function zendeskTicketDaBusca(q: string): string | null {
+  const m = q.trim().match(/^#?(\d{4,9})$/);
+  return m ? m[1] : null;
+}
+
 type SearchResult = {
   id: string;
   type: "job" | "quote" | "request";
@@ -48,30 +54,33 @@ function GlobalSearch() {
     try {
       const supabase = getSupabase();
       const term = `%${q.trim()}%`;
-      const jobOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term}`;
-      const quoteOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term}`;
-      const requestOr = `reference.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term},service_type.ilike.${term},description.ilike.${term}`;
+      // Número de ticket do Zendesk (com ou sem #): acha o que está ligado a ele.
+      const ticket = zendeskTicketDaBusca(q);
+      const porTicket = ticket ? `,external_ref.eq.${ticket}` : "";
+      const jobOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term}${porTicket}`;
+      const quoteOr = `reference.ilike.${term},title.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term}${porTicket}`;
+      const requestOr = `reference.ilike.${term},client_name.ilike.${term},property_address.ilike.${term},postcode.ilike.${term},service_type.ilike.${term},description.ilike.${term}${porTicket}`;
       const [{ data: jobs }, { data: quotes }, { data: requests }] = await Promise.all([
         supabase
           .from("jobs")
-          .select("id, reference, title, client_name, status, property_address")
+          .select("id, reference, title, client_name, status, property_address, external_ref")
           .or(jobOr)
           .is("deleted_at", null)
           .limit(5),
         supabase
           .from("quotes")
-          .select("id, reference, title, client_name, status, property_address, postcode")
+          .select("id, reference, title, client_name, status, property_address, postcode, external_ref")
           .or(quoteOr)
           .is("deleted_at", null)
           .limit(5),
         supabase
           .from("service_requests")
-          .select("id, reference, client_name, status, property_address, postcode, service_type, description")
+          .select("id, reference, client_name, status, property_address, postcode, service_type, description, external_ref")
           .or(requestOr)
           .is("deleted_at", null)
           .limit(5),
       ]);
-      type RowBase = { id: string; reference: string; client_name: string; status: string };
+      type RowBase = { id: string; reference: string; client_name: string; status: string; external_ref?: string | null };
       type JobRow = RowBase & { title: string; property_address?: string | null };
       type QuoteRow = RowBase & { title: string; property_address?: string | null; postcode?: string | null };
       type RequestRow = RowBase & {
@@ -86,25 +95,26 @@ function GlobalSearch() {
         if (a && p) return `${a} · ${p}`;
         return a || p || "";
       };
+      const viaTicket = (ref?: string | null) => (ticket && String(ref ?? "") === ticket ? `Zendesk #${ticket}` : null);
       const mapped: SearchResult[] = [
         ...((jobs ?? []) as JobRow[]).map((j) => ({
           id: j.id,
           type: "job" as const,
           title: `${j.reference} – ${j.title}`,
-          subtitle: [j.client_name, addrLine(j.property_address, null) || null].filter(Boolean).join(" · "),
+          subtitle: [viaTicket(j.external_ref), j.client_name, addrLine(j.property_address, null) || null].filter(Boolean).join(" · "),
           href: `/jobs/${j.id}`,
           status: j.status,
         })),
         ...((quotes ?? []) as QuoteRow[]).map((q2) => ({
           id: q2.id, type: "quote" as const,
           title: `${q2.reference} – ${q2.title}`,
-          subtitle: [q2.client_name, addrLine(q2.property_address, q2.postcode) || null, q2.status].filter(Boolean).join(" · "),
+          subtitle: [viaTicket(q2.external_ref), q2.client_name, addrLine(q2.property_address, q2.postcode) || null, q2.status].filter(Boolean).join(" · "),
           href: `/quotes?quoteId=${q2.id}`,
         })),
         ...((requests ?? []) as RequestRow[]).map((r) => ({
           id: r.id, type: "request" as const,
           title: `${r.reference} – ${(r.service_type ?? "").trim() || "Request"}`,
-          subtitle: [r.client_name, addrLine(r.property_address, r.postcode) || null, r.status].filter(Boolean).join(" · "),
+          subtitle: [viaTicket(r.external_ref), r.client_name, addrLine(r.property_address, r.postcode) || null, r.status].filter(Boolean).join(" · "),
           href: `/requests?requestId=${r.id}`,
         })),
       ];
