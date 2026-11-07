@@ -403,6 +403,25 @@ async function copiarTituloDoAnterior(ticketWa: number, anteriores: number[]): P
   return `, title "${doAnterior}"`;
 }
 
+/**
+ * O Title da conversa: o do ticket mais recente da mesma pessoa que tem Title (o lead,
+ * "Lead · Handyman work · Nome · Postcode", ou o job), senão "WhatsApp · <nome do perfil>".
+ */
+export function tituloDeReserva(assunto: string | null | undefined): string {
+  const nome = String(assunto ?? "").replace(/^conversation with\s*/i, "").trim();
+  return `WhatsApp · ${nome || "new conversation"}`;
+}
+
+async function tituloParaConversa(ticket: number, requesterId: number, assunto: string | null): Promise<string> {
+  type T = { id: number; subject: string | null; custom_fields?: Array<{ id: number; value: unknown }> };
+  const { tickets } = await zendeskApi<{ tickets: T[] }>(`users/${requesterId}/tickets/requested.json?per_page=20&sort_by=created_at&sort_order=desc`);
+  const doAnterior = (tickets ?? [])
+    .filter((x) => x.id !== ticket)
+    .map((x) => x.custom_fields?.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value)
+    .find((v): v is string => typeof v === "string" && !!v.trim());
+  return doAnterior?.trim() || tituloDeReserva(assunto);
+}
+
 async function desmarcarConversaEspelhada(ticketWa: number): Promise<void> {
   const { ticket: t } = await zendeskApi<{ ticket: { tags: string[] } }>(`tickets/${ticketWa}.json`);
   if (!t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return;
@@ -525,7 +544,7 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
     if (!ticket && esperarTicket) await new Promise((r) => setTimeout(r, 2500));
   }
   if (!ticket) return "sem ticket";
-  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; requester_id: number; subject: string | null; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
   // harvey_ai: o Harvey está atendendo (ticket "AI agent", só leitura). A Action Required
   // ignora essa tag; ela sai quando a conversa passa para a equipe (dono, 08/10/2026).
   // Com Action Required Yes a conversa fica na view para acompanhar (dono, 07/11/2026):
@@ -535,7 +554,16 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
   if (comHarvey && !t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_ai"] } });
   if (!comHarvey && t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
   const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
-  if (atual !== valor) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor }] } } });
+  const campos: Array<{ id: number; value: unknown }> = [];
+  if (atual !== valor) campos.push({ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor });
+  // Toda conversa com Title (dono, 07/11/2026: "a gente se perde"). A cópia na hora do
+  // espelho falhava calada; aqui vai junto com o Reply Status, que a conversa "AI agent" aceita.
+  const tituloAtual = t.custom_fields.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value;
+  if (!(typeof tituloAtual === "string" && tituloAtual.trim())) {
+    const titulo = await tituloParaConversa(ticket, t.requester_id, t.subject).catch(() => null);
+    if (titulo) campos.push({ id: TITLE_FIELD_ID, value: titulo });
+  }
+  if (campos.length) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: campos } } });
   // PUT acrescenta (POST substituiria as tags da conversa).
   if (!t.tags.includes("harvey_wa")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa"] } });
   return `ticket ${ticket}: ${valor}`;
