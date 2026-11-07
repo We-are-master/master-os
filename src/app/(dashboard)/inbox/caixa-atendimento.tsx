@@ -149,6 +149,8 @@ export const naoLidas = (c: ConversaDaCaixa) => {
   }
   return n || (c.naoLida ? 1 : 0);
 };
+/** O WhatsApp aceita editar até 15 minutos depois do envio. */
+const JANELA_DE_EDICAO_MS = 15 * 60_000;
 /** Resolvida até o contato escrever depois do "resolver". */
 const resolvida = (c: ConversaDaCaixa) => Boolean(c.resolvidaEm && (!c.ultimaEntradaEm || c.ultimaEntradaEm <= c.resolvidaEm));
 /** Arquivada fica fora da caixa até desarquivar. */
@@ -399,6 +401,10 @@ export function CaixaAtendimento({
   const [respondendo, setRespondendo] = useState<{ contato: string; m: MensagemDaCaixa } | null>(null);
   /** O balão com o seletor de reação aberto. */
   const [reagindo, setReagindo] = useState<string | null>(null);
+  /** Balão em edição (Edit para todos) e o texto sendo escrito. */
+  const [editando, setEditando] = useState<{ id: string; texto: string; salvando: boolean } | null>(null);
+  /** Texto editado aqui, até o servidor trazer a linha nova. */
+  const [editadas, setEditadas] = useState<Record<string, string>>({});
   /** A nossa reação mudada aqui, até o servidor trazer a linha (null = tirada). */
   const [minhaReacao, setMinhaReacao] = useState<Record<string, string | null>>({});
 
@@ -471,7 +477,32 @@ export function CaixaAtendimento({
     }
   }
 
-  /** React e Reply ao lado do balão, no hover, como no WhatsApp Web. */
+  /** Edit para todos: só texto nosso nos primeiros 15 minutos, regra do WhatsApp. */
+  const podeEditar = (m: MensagemDaCaixa) =>
+    m.direcao === "saida" && m.tipo === "text" && !!m.wamid && !m.id.startsWith("tmp-") && agora - Date.parse(m.criadoEm) < JANELA_DE_EDICAO_MS;
+
+  async function salvarEdicao(contato: string, m: MensagemDaCaixa) {
+    if (!editando || editando.id !== m.id) return;
+    const texto = editando.texto.trim();
+    if (!texto || texto === (editadas[m.id] ?? m.texto ?? "").trim()) {
+      setEditando(null);
+      return;
+    }
+    setEditando({ ...editando, salvando: true });
+    try {
+      const res = await fetch("/api/inbox/editar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contato, wamid: m.wamid, texto }) });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(j.error ?? `Failed (${res.status})`);
+      setEditadas((p) => ({ ...p, [m.id]: texto }));
+      setEditando(null);
+      router.refresh();
+    } catch (e) {
+      setEditando((p) => (p && p.id === m.id ? { ...p, salvando: false } : p));
+      toast.error(e instanceof Error ? e.message : "Could not edit");
+    }
+  }
+
+  /** React, Reply e Edit ao lado do balão, no hover, como no WhatsApp Web. */
   function acoesDoBalao(m: MensagemDaCaixa, contato: string) {
     if (!m.wamid || m.id.startsWith("tmp-") || gaveta?.k === "criar") return null;
     const aberto = reagindo === m.id;
@@ -501,6 +532,17 @@ export function CaixaAtendimento({
         >
           <Reply className="h-4 w-4" />
         </button>
+        {podeEditar(m) ? (
+          <button
+            type="button"
+            onClick={() => setEditando({ id: m.id, texto: editadas[m.id] ?? m.texto ?? "", salvando: false })}
+            className="grid h-7 w-7 place-items-center rounded-full text-text-tertiary hover:bg-surface-tertiary hover:text-text-primary"
+            aria-label="Edit for everyone"
+            title="Edit for everyone"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+        ) : null}
         <AnimatePresence>
           {aberto ? (
             <mo.span
@@ -606,7 +648,9 @@ export function CaixaAtendimento({
         : null;
   const nRapido = useMemo(() => {
     const naView = conversas.filter((c) => passa(c, visao));
-    return { todas: naView.length, parceiro: naView.filter((c) => c.tipo === "parceiro").length, cliente: naView.filter((c) => (TIPOS_CLIENTE as readonly string[]).includes(c.tipo)).length };
+    const conta = (l: ConversaDaCaixa[]) => ({ todas: l.length, parceiro: l.filter((c) => c.tipo === "parceiro").length, cliente: l.filter((c) => (TIPOS_CLIENTE as readonly string[]).includes(c.tipo)).length });
+    // Não lida como na lista: resolvida não conta.
+    return { total: conta(naView), naoLidas: conta(naView.filter((c) => !resolvida(c) && naoLidas(c) > 0)) };
   }, [conversas, visao]);
 
   const aberta =
@@ -1062,10 +1106,12 @@ export function CaixaAtendimento({
               </mo.div>
             ) : (
               <mo.div key="titulo" className="relative flex h-full min-w-0 flex-1 items-center" initial={{ opacity: 0 }} animate={{ opacity: 1, transition: tempo("md") }} exit={{ opacity: 0, transition: tempo("xs", "saida") }}>
-                <h2 className="text-[16px] font-bold tracking-tight text-text-primary">
-                  Conversations <span className="ml-1 text-[13px] font-medium tabular-nums text-text-tertiary">{lista.length}</span>
+                {/* O total pequeno ao lado, numa linha só (não quebra em coluna estreita). */}
+                <h2 className="relative flex h-full items-center whitespace-nowrap text-[16px] font-bold tracking-tight text-text-primary">
+                  Conversations
+                  <span className="ml-1 self-center text-[11px] font-medium tabular-nums text-text-tertiary">{lista.length}</span>
+                  <span className="absolute bottom-0 left-0 h-[2px] w-full rounded-full bg-text-primary" aria-hidden />
                 </h2>
-                <span className="absolute bottom-0 left-0 h-[2px] w-[118px] rounded-full bg-text-primary" aria-hidden />
               </mo.div>
             )}
           </AnimatePresence>
@@ -1130,12 +1176,13 @@ export function CaixaAtendimento({
             onEnviado={() => router.refresh()}
           />
         </div>
-        {/* All · Partners · Clients com a contagem da view: o mesmo filtro de Contacts da lateral. */}
+        {/* All · Clients · Partners com a contagem da view: o mesmo filtro de Contacts da lateral. */}
         <div className="shrink-0 px-4 py-3">
           <SeletorDeTipo
             ativo={tipoRapido}
             onTroca={(t) => setFiltros((f) => ({ ...f, tipos: t === "todas" ? [] : t === "parceiro" ? ["parceiro"] : [...TIPOS_CLIENTE] }))}
-            n={nRapido}
+            n={nRapido.total}
+            naoLidas={nRapido.naoLidas}
           />
         </div>
         <FiltrosAtivos filtros={filtros} onMudar={setFiltros} equipe={equipe} />
@@ -1766,13 +1813,47 @@ export function CaixaAtendimento({
                         ) : null}
                         <Midia m={m} />
                         <div className="flex flex-wrap items-end justify-end gap-x-2.5">
-                          {m.texto && !(m.midiaUrl && SO_ROTULO.has(m.texto)) && !(m.midiaUrl && m.tipo === "document") ? (
-                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words"><TextoDoWhatsApp texto={m.texto} /></p>
+                          {editando?.id === m.id ? (
+                            <div className="w-full min-w-[220px]" onClick={(e) => e.stopPropagation()}>
+                              <textarea
+                                autoFocus
+                                value={editando.texto}
+                                disabled={editando.salvando}
+                                onChange={(e) => setEditando({ ...editando, texto: e.target.value })}
+                                onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Escape") setEditando(null);
+                                  if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    void salvarEdicao(aberta.contato, m);
+                                  }
+                                }}
+                                rows={Math.min(6, Math.max(1, editando.texto.split("\n").length))}
+                                className="block w-full resize-none rounded-lg bg-white/15 px-2 py-1 text-[13.5px] leading-snug text-[var(--on-brand)] outline-none ring-1 ring-white/40 focus:ring-white/80"
+                              />
+                              <span className="mt-1 flex items-center justify-end gap-1.5 text-[11px]">
+                                <span className="mr-auto opacity-70">Enter to save · Esc to cancel</span>
+                                <button type="button" onClick={() => setEditando(null)} className="rounded-md px-2 py-0.5 opacity-80 hover:bg-white/15 hover:opacity-100">
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={editando.salvando || !editando.texto.trim()}
+                                  onClick={() => void salvarEdicao(aberta.contato, m)}
+                                  className="rounded-md bg-white px-2 py-0.5 font-semibold text-primary disabled:opacity-50"
+                                >
+                                  {editando.salvando ? "Saving…" : "Save"}
+                                </button>
+                              </span>
+                            </div>
+                          ) : (editadas[m.id] ?? m.texto) && !(m.midiaUrl && SO_ROTULO.has(m.texto ?? "")) && !(m.midiaUrl && m.tipo === "document") ? (
+                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words"><TextoDoWhatsApp texto={editadas[m.id] ?? m.texto ?? ""} /></p>
                           ) : m.midiaUrl ? null : (
                             <p className="min-w-0 flex-1 opacity-70">[{m.tipo}]</p>
                           )}
                           <span className="ml-auto inline-flex shrink-0 translate-y-0.5 items-center gap-1 text-[10.5px] tabular-nums opacity-65">
                             {m.origem === "celular" ? <Smartphone className="h-3 w-3" aria-label="Sent from the phone app" /> : null}
+                            {m.editadaEm || editadas[m.id] ? <span className="italic">Edited</span> : null}
                             {horaCurta(m.criadoEm)}
                             {m.direcao === "saida" ? <Tique status={m.status} /> : null}
                           </span>

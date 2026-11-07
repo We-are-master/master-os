@@ -327,6 +327,10 @@ export function AtendimentoLateral() {
                       ativo={aba}
                       onTroca={setAba}
                       n={{ todas: conversas.length, parceiro: conversas.filter((c) => c.tipo === "parceiro").length, cliente: conversas.filter((c) => DE_CLIENTE.has(c.tipo)).length }}
+                      naoLidas={(() => {
+                        const l = conversas.filter((c) => naoLidas(c) > 0);
+                        return { todas: l.length, parceiro: l.filter((c) => c.tipo === "parceiro").length, cliente: l.filter((c) => DE_CLIENTE.has(c.tipo)).length };
+                      })()}
                     />
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">

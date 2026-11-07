@@ -374,22 +374,25 @@ export const nomeDoAutor = (a: { numero: string | null; nome: string | null }) =
 export type TipoRapido = "todas" | "parceiro" | "cliente";
 
 /**
- * All · Partners · Clients com a contagem, segmentado (como no VOS). A /inbox e o
+ * All · Clients · Partners com a contagem, segmentado (como no VOS). A /inbox e o
  * Atendimento lateral usam o mesmo; Clients junta cliente, conta e lead.
  */
 export function SeletorDeTipo({
   ativo,
   onTroca,
   n,
+  naoLidas,
 }: {
   ativo: TipoRapido | null;
   onTroca: (t: TipoRapido) => void;
   n: Record<TipoRapido, number>;
+  /** Conversas com mensagem não lida em cada aba: laranja, antes do total. */
+  naoLidas?: Record<TipoRapido, number>;
 }) {
   const opcoes: [TipoRapido, string, LucideIcon | null][] = [
     ["todas", "All", null],
-    ["parceiro", "Partners", Wrench],
     ["cliente", "Clients", Home],
+    ["parceiro", "Partners", Wrench],
   ];
   return (
     <div role="tablist" aria-label="Contact type" className="flex rounded-lg bg-surface-tertiary p-0.5">
@@ -408,6 +411,15 @@ export function SeletorDeTipo({
         >
           {Icone ? <Icone className="h-3 w-3 shrink-0" /> : null}
           {t}
+          {naoLidas?.[k] ? (
+            <span
+              className="grid h-4 min-w-4 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums leading-none text-white"
+              aria-label={`${naoLidas[k]} unread`}
+              title={`${naoLidas[k]} unread`}
+            >
+              {naoLidas[k]}
+            </span>
+          ) : null}
           <span className="text-[11px] tabular-nums text-text-tertiary">{n[k]}</span>
         </button>
       ))}

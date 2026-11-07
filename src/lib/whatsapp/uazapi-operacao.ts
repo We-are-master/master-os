@@ -191,8 +191,41 @@ export async function gravarEventoUazapi(sb: SupabaseClient, payload: unknown): 
     if (error) console.error("[uazapi-operacao] recibo", error.message);
     return `recibo ${recibo.status} (${recibo.ids.length})`;
   }
+  const edicao = extrairEdicaoUazapi(payload);
+  if (edicao) {
+    // Edição (pelo celular ou eco da que saiu da /inbox): reescreve a original, sem balão novo.
+    const { data: original } = await sb
+      .from("wa_mensagens")
+      .select("id, texto, bruto")
+      .eq("phone_number_id", OPS_PHONE_NUMBER_ID())
+      .or(`wamid.eq.${edicao.alvo},wamid.like.%:${edicao.alvo}`)
+      .limit(1)
+      .maybeSingle();
+    if (original) {
+      try {
+        await aplicarEdicao(sb, original as { id: string; texto: string | null; bruto: Record<string, unknown> | null }, edicao.texto, null);
+      } catch (e) {
+        console.error("[uazapi-operacao] edição", e instanceof Error ? e.message : e);
+      }
+      return "edição";
+    }
+  }
   const m = extrairMensagemUazapi(payload);
   if ("pular" in m) return m.pular;
+  if (m.direcao === "saida" && m.texto) {
+    // Eco sem `edited`: mesmo texto de uma mensagem nossa editada há pouco nesta conversa.
+    const { data: eco } = await sb
+      .from("wa_mensagens")
+      .select("id")
+      .eq("phone_number_id", OPS_PHONE_NUMBER_ID())
+      .eq("contato", m.contato)
+      .eq("direcao", "saida")
+      .eq("texto", m.texto)
+      .gte("bruto->>editado_em", new Date(Date.now() - JANELA_DO_ECO_MS).toISOString())
+      .limit(1)
+      .maybeSingle();
+    if (eco) return "eco da edição";
+  }
   // Sem "baixar mídia" ligado na instância o evento chega sem URL: pede uma.
   if (!m.midiaUrl && ["image", "audio", "video", "document", "sticker"].includes(m.tipo)) {
     m.midiaUrl = await urlDaMidia(m.wamid);
@@ -331,6 +364,65 @@ export async function reagirPelaUazapi(para: string, wamid: string, emoji: strin
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
   return { wamid: str(json.messageid) ?? str(json.messageId) ?? str(rec(json.key)?.id) ?? str(json.id) };
+}
+
+/**
+ * Edita para todos uma mensagem que o 7983 mandou (`/message/edit`). Regras do
+ * WhatsApp, que a tela também aplica: só mensagem nossa, só texto, só nos
+ * primeiros 15 minutos. Nada muda no banco antes de a uazapi aceitar.
+ */
+export async function editarPelaUazapi(wamid: string, texto: string): Promise<void> {
+  const token = process.env.UAZAPI_OPS_TOKEN?.trim();
+  if (!token) throw new EnvioOperacaoError("UAZAPI_OPS_TOKEN is not set");
+  const res = await fetch(`${baseUrl()}/message/edit`, {
+    method: "POST",
+    headers: { token, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ id: wamid, text: texto }),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || json.success === false) {
+    throw new EnvioOperacaoError(str(json.error) ?? str(json.message) ?? `uazapi ${res.status}`, res.status);
+  }
+}
+
+/** Quanto depois da edição o eco do webhook ainda é reconhecido como eco. */
+export const JANELA_DO_ECO_MS = 2 * 60_000;
+
+/**
+ * A uazapi devolve uma edição pelo webhook como mensagem NOVA (outro id), com
+ * `edited` apontando a original. Sem este desvio a edição virava um balão a mais
+ * (o mesmo problema que o VOS teve em 27/10). Pura, para ser testável.
+ */
+export function extrairEdicaoUazapi(payload: unknown): { alvo: string; texto: string } | null {
+  const p = rec(payload) ?? {};
+  const m = rec(p.message) ?? rec(p.data) ?? p;
+  const alvo = str(m.edited);
+  const texto = str(m.text) ?? str(m.body) ?? str(rec(m.content)?.text);
+  return alvo && texto ? { alvo: alvo.split(":").pop()!, texto } : null;
+}
+
+/**
+ * Reescreve a mensagem e carimba a edição em `bruto` (sem coluna nova): a tela
+ * mostra "Edited" e o webhook reconhece o eco por `editado_em`.
+ */
+export async function aplicarEdicao(
+  sb: SupabaseClient,
+  linha: { id: string; texto: string | null; bruto: Record<string, unknown> | null },
+  texto: string,
+  quem: string | null,
+): Promise<void> {
+  if ((linha.texto ?? "") === texto) return;
+  const bruto = linha.bruto ?? {};
+  const historico = Array.isArray(bruto.edicoes) ? (bruto.edicoes as unknown[]) : [];
+  const agora = new Date().toISOString();
+  const { error } = await sb
+    .from("wa_mensagens")
+    .update({
+      texto,
+      bruto: { ...bruto, editado_em: agora, edicoes: [...historico, { texto: linha.texto, em: agora, quem }].slice(-10) },
+    })
+    .eq("id", linha.id);
+  if (error) throw new Error(error.message);
 }
 
 /**

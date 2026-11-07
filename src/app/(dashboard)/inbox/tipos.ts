@@ -24,6 +24,8 @@ export type MensagemDaCaixa = {
   citada?: { id: string; texto: string; deNos: boolean; quem: string | null } | null;
   /** Reações no balão: a última de cada pessoa, sem as retiradas. */
   reacoes?: { emoji: string; deNos: boolean; quem: string | null }[];
+  /** Quando foi editada para todos (pela /inbox ou pelo celular). */
+  editadaEm?: string | null;
 };
 
 export type JobDaCaixa = {

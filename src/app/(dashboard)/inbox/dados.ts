@@ -117,7 +117,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   const hoje = hojeEmLondres();
   // Em paralelo com o resto: quem pode assumir conversa.
   const equipeAPromessa = equipeDaInbox(sb);
-  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por, enviado_por_nome, partner_id, criado_em, citada:bruto->>quoted, alvo:bruto->>reaction, alvo_chave:bruto->content->key->>id";
+  const colunasDaMensagem = "id, wamid, contato, contato_nome, direcao, origem, tipo, texto, midia_id, status, erro, enviado_por, enviado_por_nome, partner_id, criado_em, citada:bruto->>quoted, alvo:bruto->>reaction, alvo_chave:bruto->content->key->>id, editado_em:bruto->>editado_em";
   const mensagensDesde = (colunas: string) =>
     sb.from("wa_mensagens").select(colunas).eq("phone_number_id", OPS_PHONE_NUMBER_ID()).gte("criado_em", desde).order("criado_em", { ascending: true }).limit(4000);
   // Sem a 355 aplicada não há autor: a caixa carrega igual, só sem o nome de quem falou no grupo.
@@ -174,6 +174,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       wamid: (l.wamid as string | null) ?? null,
       // Por enquanto o wamid da citada; vira a mensagem logo abaixo, quando ela está na conversa.
       citada: l.citada ? { id: l.citada as string, texto: "", deNos: false, quem: null } : null,
+      editadaEm: (l.editado_em as string | null) ?? null,
     });
     if (l.contato_nome) nomeDoPerfil.set(contato, l.contato_nome as string);
     if (l.partner_id) parceiroDoContato.set(contato, l.partner_id as string);
