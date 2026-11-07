@@ -34,9 +34,12 @@ export function JobActionsMenu({
   groups,
   trigger,
   placement = "down",
+  iconOnly = false,
 }: {
   groups: JobActionGroup[];
   trigger?: ReactNode;
+  /** Só o ⋮, sem texto (topo do job card). */
+  iconOnly?: boolean;
   /** "up" para quando o botão mora num rodapé (gaveta, modal). */
   placement?: "down" | "up";
 }) {
@@ -79,11 +82,12 @@ export function JobActionsMenu({
         size="sm"
         aria-label="Job actions"
         aria-pressed={open}
-        className={cn("h-8 px-2.5 text-xs", open && "bg-surface-hover")}
+        title={iconOnly ? "Actions" : undefined}
+        className={cn(iconOnly ? "h-8 w-8 shrink-0 p-0" : "h-8 px-2.5 text-xs", open && "bg-surface-hover")}
         icon={<MoreVertical className="h-3.5 w-3.5" />}
         onClick={() => setOpen((o) => !o)}
       >
-        {trigger ?? "Actions"}
+        {iconOnly ? null : (trigger ?? "Actions")}
       </Button>
 
       {open ? (
