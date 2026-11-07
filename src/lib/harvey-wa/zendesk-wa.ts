@@ -325,25 +325,19 @@ async function tipoDoTicket(ticket: number): Promise<string> {
 }
 
 /**
- * Enquanto o Harvey atende, o ticket anterior (lead, site, Express) é o lugar de
- * trabalho: nota com o link da conversa, grupo 🤖 Harvey, tag harvey_handling, e
+ * Enquanto o Harvey atende, o ticket anterior (lead, site, Express) fica quieto:
+ * grupo 🤖 Harvey e tag harvey_handling (some da view 🎯 Leads), sem nota, e
  * a pessoa do WhatsApp vira a mesma do lead (o histórico dela mostra os dois
  * tickets: é assim que se vê que é o mesmo lead). Uma vez só.
  */
 async function espelharNoAnterior(ticketWa: number, anterior: number, emailDoCliente?: string | null): Promise<string> {
   const { ticket: t } = await zendeskApi<{ ticket: { status: string; tags: string[]; subject: string; requester_id: number } }>(`tickets/${anterior}.json`);
   if (!t || ["solved", "closed"].includes(t.status) || t.tags.includes("harvey_handling")) return "";
+  // Sem nota (dono, 07/11/2026, #52227): o lead fica quieto e escondido da view 🎯 Leads
+  // (tag harvey_handling); a conversa ao vivo é que aparece lá. O merge na passagem guarda o histórico.
   await zendeskApi(`tickets/${anterior}.json`, {
     method: "PUT",
-    body: {
-      ticket: {
-        group_id: Number(process.env.ZENDESK_GROUP_HARVEY?.trim() || "6395023678879"),
-        comment: {
-          body: `💬 The customer replied on WhatsApp. Harvey is handling it in the conversation ticket #${ticketWa} (read-only while he does). When he hands over, this ticket is merged into that one.`,
-          public: false,
-        },
-      },
-    },
+    body: { ticket: { group_id: Number(process.env.ZENDESK_GROUP_HARVEY?.trim() || "6395023678879") } },
   });
   await zendeskApi(`tickets/${anterior}/tags.json`, { method: "PUT", body: { tags: ["harvey_handling", "harvey_wa"] } });
   // A pessoa do lead (nome e e-mail) e a do WhatsApp (telefone) viram uma só.
@@ -363,7 +357,9 @@ async function espelharNoAnterior(ticketWa: number, anterior: number, emailDoCli
 /**
  * View 🎯 Leads com UMA linha por cliente enquanto o Harvey atende (dono,
  * 14/10/2026). O lead (com a ficha do Checkatrade) e a conversa do WhatsApp
- * apareciam os dois. A conversa "AI agent" recusa assunto, nota e merge, mas
+ * apareciam os dois. Desde 07/11/2026 a linha é a CONVERSA AO VIVO (dono: "to sem
+ * acesso nessas conversas"): a view mostra quem tem `lead_mirrored` e esconde o lead
+ * com harvey_handling (scripts/zendesk-leads-conversa-viva.mts). A conversa "AI agent" recusa assunto, nota e merge, mas
  * aceita tag pela API (auditoria do #51328, 14/10/2026: harvey_ai, harvey_wa,
  * harvey_wa_lead e lead_checkatrade gravados com ela em ai_agent). Ela ganha
  * `lead_mirrored`, e a view esconde quem tem a tag (scripts/zendesk-view-leads-uma-linha.mts).
