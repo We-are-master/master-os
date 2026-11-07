@@ -10,6 +10,7 @@ import {
   type BeaconFilters,
   DEFAULT_BEACON_FILTERS,
   getDateRangeForMode,
+  getBeaconScheduleYmdRange,
   resolveAccountClientIds,
 } from "@/components/beacon/beacon-filters";
 import { getDrivingRouteMulti, type DrivingRoute } from "@/lib/mapbox-directions";
@@ -58,12 +59,13 @@ import {
 import type { CatalogService, Job } from "@/types/database";
 import {
   formatJobScheduleLine,
+  formatLocalYmd,
   jobFinishYmd,
   jobIntersectsLocalMonth,
   jobScheduleYmd,
 } from "@/lib/schedule-calendar";
 import { resolveScheduleJobTypeKey } from "@/lib/schedule-job-type-style";
-import { fetchScheduleCalendarJobsForMonth } from "@/lib/fetch-schedule-calendar-jobs";
+import { fetchScheduleCalendarJobsOverlappingYmdRange } from "@/lib/fetch-schedule-calendar-jobs";
 import { listCatalogServicesForPicker } from "@/services/catalog-services";
 import { formatPartnerPrimaryTradeLabel, partnerTradesForDisplay } from "@/lib/partner-trades-display";
 import { JOB_STATUS_BADGE_VARIANT } from "@/lib/job-status-ui";
@@ -80,9 +82,14 @@ const COVERAGE_PARTNER_SELECT =
 
 const DATE_MODE_LABEL: Record<string, string> = {
   today: "Today",
+  yesterday: "Yesterday",
   tomorrow: "Tomorrow",
   week: "This week",
+  last_week: "Last week",
+  next_week: "Next week",
   month: "This month",
+  last_month: "Last month",
+  next_month: "Next month",
   qtd: "Quarter to date",
   all: "All time",
   custom: "Custom range",
@@ -245,15 +252,23 @@ export default function SchedulePage() {
   const loadJobs = useCallback(async () => {
     setLoading(true);
     try {
+      // Mês corrente (±62 dias) cobre o calendário; se o filtro de data do topo
+      // sair dessa janela (custom distante), busca a união para o mapa não
+      // ficar vazio.
       const d = new Date();
-      const list = await fetchScheduleCalendarJobsForMonth(d.getFullYear(), d.getMonth());
+      const padStart = formatLocalYmd(new Date(d.getFullYear(), d.getMonth(), 1 - 62));
+      const padEnd = formatLocalYmd(new Date(d.getFullYear(), d.getMonth() + 1, 62));
+      const sel = getBeaconScheduleYmdRange(beaconFilters);
+      const from = sel && sel.from < padStart ? sel.from : padStart;
+      const to = sel && sel.to > padEnd ? sel.to : padEnd;
+      const list = await fetchScheduleCalendarJobsOverlappingYmdRange(from, to);
       setJobs(list);
     } catch {
       // non-critical
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [beaconFilters]);
 
   const [liveMapPoints, setLiveMapPoints] = useState<RawLiveMapPoint[]>([]);
   const [loadingLiveMap, setLoadingLiveMap] = useState(false);
