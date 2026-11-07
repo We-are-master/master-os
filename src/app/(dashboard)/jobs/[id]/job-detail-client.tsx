@@ -7329,7 +7329,35 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         ? "final_check"
         : null;
   /** Primary bar: keep cancel out of the strip — it lives under ⋮. */
-  const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled");
+  const inlineStatusActions = statusActions.filter((a) => a.status !== "cancelled" && a.primary);
+  /** On hold, Reopen e afins moram no ⋮ (dono, 07/11/2026): no topo fica só o passo principal. */
+  const menuStatusActions = statusActions.filter((a) => a.status !== "cancelled" && !a.primary);
+  const runStatusAction = (action: (typeof statusActions)[number]) => {
+    if (action.special === "put_on_hold") {
+      setPutOnHoldReason("");
+      setPutOnHoldPreset(null);
+      setPutOnHoldOpen(true);
+      return;
+    }
+    if (action.special === "resume_job") {
+      openResumeJobModal();
+      return;
+    }
+    if (action.special === "send_report_invoice") {
+      openFinalReview();
+      return;
+    }
+    if (job.status === "need_attention" && action.status === "completed") {
+      // Validar um job em atenção começa sem atestado marcado:
+      // é o único caminho em que ninguém ainda revisou nada.
+      setOwnerApprovalChecked(false);
+      setValidateCompleteOpen(true);
+      return;
+    }
+    void handleStatusChange(job, action.status as Job["status"]).then((updated) => {
+      if (updated && action.status === "final_check") setDetailTab(3);
+    });
+  };
   const showCancelInJobMoreMenu = statusActions.some((a) => a.status === "cancelled");
   const phaseCount = normalizeTotalPhases(job.total_phases);
   /** V2 reports progress: counts only the reports the partner has actually
@@ -7837,32 +7865,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                   className={cn(toneClass, "h-8 px-2.5 text-xs")}
                   size="sm"
                   icon={<action.icon className="h-3.5 w-3.5" />}
-                  onClick={() => {
-                    if (action.special === "put_on_hold") {
-                      setPutOnHoldReason("");
-                      setPutOnHoldPreset(null);
-                      setPutOnHoldOpen(true);
-                      return;
-                    }
-                    if (action.special === "resume_job") {
-                      openResumeJobModal();
-                      return;
-                    }
-                    if (action.special === "send_report_invoice") {
-                      openFinalReview();
-                      return;
-                    }
-                    if (job.status === "need_attention" && action.status === "completed") {
-                      // Validar um job em atenção começa sem atestado marcado:
-                      // é o único caminho em que ninguém ainda revisou nada.
-                      setOwnerApprovalChecked(false);
-                      setValidateCompleteOpen(true);
-                      return;
-                    }
-                    void handleStatusChange(job, action.status as Job["status"]).then((updated) => {
-                      if (updated && action.status === "final_check") setDetailTab(3);
-                    });
-                  }}
+                  onClick={() => runStatusAction(action)}
                 >
                   {action.label}
                 </Button>
@@ -7880,6 +7883,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </Button>
             ) : null}
                 <JobActionsMenu
+                  iconOnly
                   groups={[
                     {
                       key: "client",
@@ -8071,6 +8075,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               onSelect: () => openFinalReview(),
                             }]
                           : []),
+                        ...menuStatusActions.map((action) => ({
+                          key: `status_${action.special ?? action.status}`,
+                          label: action.label,
+                          icon: action.icon,
+                          onSelect: () => runStatusAction(action),
+                        })),
                         ...(showCancelInJobMoreMenu
                           ? [{
                               key: "cancel",
