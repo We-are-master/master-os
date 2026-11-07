@@ -11,6 +11,7 @@
  * Grupo, org e campos de usuário são criados na primeira vez (idempotente).
  */
 
+import { ACTION_REQUIRED_FIELD_ID, ACTION_REQUIRED_YES } from "@/lib/fila-de-acao";
 import { createServiceClient } from "@/lib/supabase/service";
 import { responsavel } from "@/lib/responsavel-operacao";
 import { zendeskApi, isZendeskConfigured, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
@@ -357,9 +358,9 @@ async function espelharNoAnterior(ticketWa: number, anterior: number, emailDoCli
 /**
  * View 🎯 Leads com UMA linha por cliente enquanto o Harvey atende (dono,
  * 14/10/2026). O lead (com a ficha do Checkatrade) e a conversa do WhatsApp
- * apareciam os dois. Desde 07/11/2026 a linha é a CONVERSA AO VIVO (dono: "to sem
- * acesso nessas conversas"): a view mostra quem tem `lead_mirrored` e esconde o lead
- * com harvey_handling (scripts/zendesk-leads-conversa-viva.mts). A conversa "AI agent" recusa assunto, nota e merge, mas
+ * apareciam os dois. Desde 07/11/2026 a conversa ao vivo vai para a ⚡ Action Required
+ * com Yes na hora em que o lead responde (dono: "to sem acesso nessas conversas"); quem
+ * põe No tira (scripts/zendesk-leads-conversa-viva.mts). A conversa "AI agent" recusa assunto, nota e merge, mas
  * aceita tag pela API (auditoria do #51328, 14/10/2026: harvey_ai, harvey_wa,
  * harvey_wa_lead e lead_checkatrade gravados com ela em ai_agent). Ela ganha
  * `lead_mirrored`, e a view esconde quem tem a tag (scripts/zendesk-view-leads-uma-linha.mts).
@@ -373,7 +374,11 @@ async function marcarConversaEspelhada(ticketWa: number, anteriores: number[]): 
   if (t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return "";
   // PUT acrescenta (POST substituiria as tags da conversa).
   await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags: [TAG_CONVERSA_ESPELHADA] } });
-  return `, #${ticketWa} fora da view Leads (espelhado)`;
+  // O lead respondeu (dono, 07/11/2026): Action Required Yes na conversa ao vivo, uma vez,
+  // para a equipe acompanhar o Harvey pela ⚡ Action Required. Tirar = pôr No.
+  await zendeskApi(`tickets/${ticketWa}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ACTION_REQUIRED_FIELD_ID, value: ACTION_REQUIRED_YES }] } } });
+  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } }).catch(() => {});
+  return `, #${ticketWa} fora da view Leads, Action Required Yes`;
 }
 
 /**
@@ -523,7 +528,10 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
   const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
   // harvey_ai: o Harvey está atendendo (ticket "AI agent", só leitura). A Action Required
   // ignora essa tag; ela sai quando a conversa passa para a equipe (dono, 08/10/2026).
-  const comHarvey = t.support_type === "ai_agent";
+  // Com Action Required Yes a conversa fica na view para acompanhar (dono, 07/11/2026):
+  // sem harvey_ai. Quem põe No tira da view (o gatilho do Zendesk devolve a tag).
+  const acompanhar = t.custom_fields.find((f) => f.id === ACTION_REQUIRED_FIELD_ID)?.value === ACTION_REQUIRED_YES;
+  const comHarvey = t.support_type === "ai_agent" && !acompanhar;
   if (comHarvey && !t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_ai"] } });
   if (!comHarvey && t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
   const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
