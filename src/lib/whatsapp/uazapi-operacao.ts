@@ -18,7 +18,7 @@
 import { destinoNaUazapi, ehGrupo } from "@/lib/inbox/grupo";
 import { timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { EnvioOperacaoError, OPS_PHONE_NUMBER_ID, finalDoNumero } from "./operacao";
+import { EnvioOperacaoError, OPS_PHONE_NUMBER_ID, filtroDoNumero, finalDoNumero } from "./operacao";
 
 export type ProvedorOperacao = "uazapi" | "meta";
 
@@ -141,7 +141,7 @@ async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<str
   const { data } = await sb
     .from("partners")
     .select("id, whatsapp, phone")
-    .or(`whatsapp.ilike.%${fim.slice(-9)}%,phone.ilike.%${fim.slice(-9)}%`)
+    .or(`${filtroDoNumero("whatsapp", fim)},${filtroDoNumero("phone", fim)}`)
     .limit(10);
   const achado = (data ?? []).find((p) => finalDoNumero(p.whatsapp) === fim || finalDoNumero(p.phone) === fim);
   return (achado?.id as string | undefined) ?? null;
