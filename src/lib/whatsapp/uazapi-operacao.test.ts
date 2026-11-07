@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extrairMensagemUazapi } from "./uazapi-operacao";
+import { extrairEdicaoUazapi, extrairMensagemUazapi } from "./uazapi-operacao";
 
 const evento = (message: Record<string, unknown>) => ({ EventType: "messages", message });
 
@@ -39,5 +39,17 @@ describe("extrairMensagemUazapi", () => {
   it("mídia sem legenda ganha rótulo", () => {
     const m = extrairMensagemUazapi(evento({ messageid: "X4", chatid: "447700900123@s.whatsapp.net", messageType: "ImageMessage", fileURL: "https://x/y.jpg" }));
     expect(m).toMatchObject({ tipo: "image", texto: "Photo", midiaUrl: "https://x/y.jpg" });
+  });
+});
+
+describe("extrairEdicaoUazapi", () => {
+  it("edição aponta a original pelo `edited`, sem o dono do id", () => {
+    const e = extrairEdicaoUazapi(evento({ messageid: "NOVO", chatid: "447700900123@s.whatsapp.net", fromMe: true, text: "No worries", edited: "4477:3EB0ORIG" }));
+    expect(e).toEqual({ alvo: "3EB0ORIG", texto: "No worries" });
+  });
+
+  it("mensagem comum não é edição", () => {
+    expect(extrairEdicaoUazapi(evento({ messageid: "A", chatid: "447700900123@s.whatsapp.net", text: "oi" }))).toBeNull();
+    expect(extrairEdicaoUazapi(evento({ messageid: "A", chatid: "447700900123@s.whatsapp.net", edited: "X" }))).toBeNull();
   });
 });
