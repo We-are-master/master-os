@@ -315,10 +315,8 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
     if (qc) {
       // A cotação mora no ticket da conversa: o lead não é lugar de convite nem de alarme.
       out.pulados.push(`${quem}: ${qc.reference} lives in the conversation ticket #${daConversa} (${qc.status}), nothing to do here`);
-      if (aplicar) {
-        await addTicketTags(t.id, [TAG_FIM]);
-        await nota(t.id, `🤖 Auto-quote: ${qc.reference} is handled in the WhatsApp conversation ticket #${daConversa}. Nothing to do on this lead ticket.`);
-      }
+      // Só a tag (dono, 07/11/2026): nota no lead é barulho, ele entra na conversa pelo merge.
+      if (aplicar) await addTicketTags(t.id, [TAG_FIM]);
       return false;
     }
   }
