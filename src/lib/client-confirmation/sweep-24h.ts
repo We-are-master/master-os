@@ -13,6 +13,7 @@
  * convites reais numa chamada de teste, e a lição foi que o caminho perigoso
  * precisa de gesto explícito, não de descuido.
  */
+import { canalDoLembrete24h, enviarLembretePelaOperacao, operacaoProntaParaLembrete, textoDoLembrete } from "./lembrete-pela-operacao";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canalDoClienteConfigurado, canalDoClienteFaltando, enviarAoCliente } from "@/lib/harvey-wa/template-zendesk";
 import type { EnvioWhatsApp } from "./send";
@@ -335,15 +336,24 @@ export async function varrerLembretesDeVespera(
       const motivo = foraDaJanela
         ? `fora da janela (${LEMBRETE_HORA_INICIO}h-${LEMBRETE_HORA_FIM}h de Londres, agora são ${horaEmLondres(agora)}h)`
         : "dry run";
-      anota("pulado", `${motivo}: ${template()} → ${parametros.join(" | ")} → ${decisao.telefone}`);
+      anota("pulado", `${motivo}: ${!opcoes?.enviar && canalDoLembrete24h() === "operacao" ? "07 ops number (text)" : template()} → ${parametros.join(" | ")} → ${decisao.telefone}`);
       continue;
     }
     if (!mensagensAoClienteLigadas()) {
       anota("pulado", "client messaging is off (CLIENT_MESSAGING_ENABLED)");
       continue;
     }
-    // Sai pelo número do Zendesk desde 08/10/2026 (a Cloud API direta dava #200).
-    if (!canalDoClienteConfigurado()) {
+    // Sai pelo 07 da operação desde 09/11/2026 (o Zendesk fica para venda e cobrança).
+    // LEMBRETE_24H_CANAL=zendesk volta ao template pelo número do Zendesk.
+    // Injetar `enviar` (teste) é o caminho de template.
+    const pelaOperacao = !opcoes?.enviar && canalDoLembrete24h() === "operacao";
+    if (pelaOperacao) {
+      const falta = operacaoProntaParaLembrete();
+      if (falta) {
+        anota("falhou", falta);
+        continue;
+      }
+    } else if (!canalDoClienteConfigurado()) {
       anota("pulado", canalDoClienteFaltando());
       continue;
     }
@@ -362,7 +372,9 @@ export async function varrerLembretesDeVespera(
       const mandarCom = (params: string[]) =>
         manda({ to: decisao.telefone, name: template(), language: idioma(), bodyParams: params });
       let semEndereco = false;
-      try {
+      if (pelaOperacao) {
+        await enviarLembretePelaOperacao(supabase, decisao.telefone, textoDoLembrete({ nome: parametros[0]!, data, janela, endereco }));
+      } else try {
         await mandarCom(parametros);
       } catch (err) {
         /**
@@ -387,13 +399,13 @@ export async function varrerLembretesDeVespera(
       if (ticketDoJob) {
         await updateTicket({
           ticketId: ticketDoJob,
-          commentBody: `📱 Day-before reminder sent on WhatsApp to ${decisao.telefone}: ${data}, arrival ${janela}, ${endereco}.`,
+          commentBody: `📱 Day-before reminder sent on WhatsApp${pelaOperacao ? " from the ops number (07, see /inbox)" : ""} to ${decisao.telefone}: ${data}, arrival ${janela}, ${endereco}.`,
           publicComment: false,
         }).catch((e) => console.warn("[lembrete-24h] nota no ticket:", e instanceof Error ? e.message : e));
       }
       anota(
         "enviado",
-        `${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,
+        `${pelaOperacao ? "07 · " : ""}${decisao.telefone} · ${janela}${semEndereco ? " · sem endereço (template {{4}} ainda pending na Meta)" : ""}`,
       );
     } catch (err) {
       await falhouEnvio(supabase, chaveDoLembreteWa, err).catch(() => undefined);
