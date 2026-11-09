@@ -8,7 +8,9 @@
  *
  * Regra do dono: o código vale por cima do preço que o Harvey deu. Ele não oferece
  * numa resposta normal; aplica quando o cliente fala do e-mail, do código ou dos
- * 10%, e pode lembrar uma vez no follow up de um preço que não fechou. O site
+ * 10%, e pode lembrar uma vez no follow up de um preço que não fechou. Dono,
+ * 09/11/2026: pediu desconto ou achou caro e o Welcome foi enviado = oferece os 10%
+ * (£72 vira £64,80, meia diária £162, diária £296,10), no lugar do check_discount. O site
  * confere a primeira compra pelo e-mail no checkout (master-website, promo.js).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -52,7 +54,9 @@ export async function welcomeDoTelefone(sb: SupabaseClient, telefone: string | n
 export function contextoDoWelcome(w: WelcomeDoLead): string {
   return (
     `We emailed them our "Welcome to Fixfy" offer: code ${w.codigo}, 10% off their first booking, on top of the price you give. ` +
-    `Do not bring it up in a normal reply. If they mention the email, a code or 10% off, say yes, it works, and use it: pass promoCode "${w.codigo}" in get_quote and create_payment_link and give the price with the 10% off. ` +
+    `Do not bring it up in a normal reply. If they mention the email, a code or 10% off, say yes, it works, and use it. ` +
+    `If they ask for a discount or say the price is too much, this is your answer: offer it once, warmly ("as it's your first booking with us, your welcome 10% takes it to £X"), using the price get_quote gives with promoCode "${w.codigo}" (the £72 call out becomes £64.80, the half day £162, the full day £296.10). ` +
+    `Whenever you use it, pass promoCode "${w.codigo}" in get_quote (and create_payment_link if you book) and write in the hand off details "welcome 10% applied, ${w.codigo}" with the new price. ` +
     `It never adds up with check_discount: it is one or the other, and the code is the better one. Never call it "already our best price".`
   );
 }

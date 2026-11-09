@@ -6,6 +6,9 @@
  *   quote     -> 📝 Needs Quote  falta uma pessoa dar o preço (elétrica, gás, fora da tabela)
  *   complaint -> 🚨 Complaint    reclamação, serviço mal feito, reembolso: vai para a operação
  *   booking   -> fica onde está, mas vai para a operação (reserva existente, remarcar, cancelar, transferência)
+ *   close     -> 📞 To Call      lead nutrido (ou job pequeno com preço dado): vez de quem fecha.
+ *                                 No CRM, To Call é o Qualified (crm/espelho-leads.ts). Dono, 09/11/2026:
+ *                                 "nutriu o suficiente ou deu preço, já joga pra nós".
  *   null      -> o ticket fica onde está
  *
  * Dono, 15/10/2026: tudo entra New/Open e alguém classifica, e o Harvey conta como
@@ -14,13 +17,14 @@
  * O Harvey diz o que precisa em `need`. O motivo escrito é a segunda prova: modelo que
  * esquece o campo ainda cai na etapa certa quando o texto é claro.
  */
-export type EtapaDaPassagem = "call" | "quote" | "complaint" | "booking" | null;
+export type EtapaDaPassagem = "call" | "quote" | "complaint" | "booking" | "close" | null;
 
 const PEDE_LIGACAO = /\bcall(?:ed|s)?\s*(?:me\s*)?back\b|\bcallback\b|\b(?:phone|give (?:me|you|them|him|her) a|wants? a|asked for a|needs? a|requested a) call\b|\bring (?:me|them|him|her)\b/i;
 const PEDE_PRECO = /\bquot(?:e|ed|ing)\b|\bprice\b|\bpricing\b|\belectric(?:al|ian)?\b|\bgas\b|outside (?:the )?(?:catalogue|price list)/i;
 const RECLAMACAO = /\bcomplain|\bunhappy|\bnot happy|\brefund|\bpoor (?:job|work|service)|\bdamage(?:d)? (?:by|during)|\bdid(?:n't| not) (?:turn up|show|finish|do)/i;
 const OPERACAO = /\bbank transfer|\bexisting booking|\breschedul|\bcancel|\bwho is coming|\bwhat time (?:is|will)/i;
 const NAO_E_VENDA = /\bconcern/i;
+const PRONTO_PARA_FECHAR = /\bready to (?:close|book)\b|\blead (?:is )?qualified\b/i;
 
 export function etapaDaPassagem(need: unknown, motivo: string | null | undefined): EtapaDaPassagem {
   const texto = String(motivo ?? "");
@@ -28,9 +32,11 @@ export function etapaDaPassagem(need: unknown, motivo: string | null | undefined
   if (need === "quote") return "quote";
   if (need === "complaint") return "complaint";
   if (need === "booking") return "booking";
+  if (need === "close") return "close";
   if (RECLAMACAO.test(texto)) return "complaint";
   if (OPERACAO.test(texto)) return "booking";
   if (need === "other") return null;
+  if (PRONTO_PARA_FECHAR.test(texto)) return "close";
   if (PEDE_LIGACAO.test(texto)) return "call";
   if (NAO_E_VENDA.test(texto)) return null;
   if (PEDE_PRECO.test(texto)) return "quote";
@@ -42,6 +48,7 @@ const PROXIMA_ACAO: Record<string, string> = {
   quote: "price this job",
   complaint: "complaint, operations to handle",
   booking: "existing booking, operations to handle",
+  close: "lead ready: close the sale",
 };
 
 /** A linha da fila de ação (fila-de-acao.ts) quando o Harvey passa: o que fazer e o motivo dele. */
