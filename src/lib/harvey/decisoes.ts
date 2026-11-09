@@ -81,6 +81,7 @@ export const STATUS_DA_CLASSE: Record<string, number[]> = {
 /** A etapa da passagem do WhatsApp (etapa-da-passagem.ts) e o status dela. */
 export const STATUS_DA_ETAPA: Record<string, number[]> = {
   call: [ZD_STATUS_TO_CALL],
+  close: [ZD_STATUS_TO_CALL],
   quote: [ZD_STATUS_NEEDS_QUOTE],
   complaint: [ZD_STATUS_COMPLAINT],
 };
@@ -245,6 +246,7 @@ export const ROTULO: Record<string, string> = {
   codigo_de_acesso: "Access code",
   ruido: "Noise",
   call: "WhatsApp: call",
+  close: "WhatsApp: ready to close",
   quote: "WhatsApp: needs quote",
   complaint: "WhatsApp: complaint",
   booking: "WhatsApp: booking",

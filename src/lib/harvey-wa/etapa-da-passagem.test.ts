@@ -42,3 +42,11 @@ test("a linha da fila de ação diz o que fazer e por quê", () => {
   assert.equal(textoDaPassagem("complaint", "unhappy with the tiling"), "Harvey handed over (complaint, operations to handle): unhappy with the tiling");
   assert.equal(textoDaPassagem(undefined, ""), "Harvey handed over (pick up the chat)");
 });
+
+test("lead nutrido ou com preço dado vai para quem fecha (To Call = Qualified no CRM)", () => {
+  assert.equal(etapaDaPassagem("close", "anything"), "close");
+  assert.equal(etapaDaPassagem(undefined, "Lead ready to close: handyman 1h, curtain rail, E17, £72 an hour given"), "close");
+  assert.equal(etapaDaPassagem(undefined, "ready to book, team to confirm the day"), "close");
+  assert.equal(etapaDaPassagem(undefined, "Customer unhappy, ready to book elsewhere"), "complaint");
+  assert.equal(textoDaPassagem("close", "shelves, SW11, £72 an hour"), "Harvey handed over (lead ready: close the sale): shelves, SW11, £72 an hour");
+});

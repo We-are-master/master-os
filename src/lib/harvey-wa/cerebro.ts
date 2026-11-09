@@ -179,7 +179,7 @@ const FERRAMENTAS_CLIENTE = [
     type: "function",
     function: {
       name: "get_quote",
-      description: "Exact fixed price (the professional's total price, nothing added on top) for a selection of services, straight from the website price table. Also checks the postcode is covered. Call it every time before saying a price.",
+      description: "Exact price (the professional's price, nothing added on top) for a selection of services, straight from the website price table. Also checks the postcode is covered. Call it every time before saying a price. The hour package is the call out: its price (£72 for the handyman) covers the first hour, extra hours are the same price each and only agreed on site. Never call it fixed or say there is no call out fee. Cleaning, certificates and the half or full day are fixed prices.",
       parameters: {
         type: "object",
         properties: {
@@ -250,12 +250,12 @@ const FERRAMENTAS_CLIENTE = [
     function: {
       name: "hand_off_to_team",
       description:
-        "Pass the conversation to a person from the team. Use it only for complaints, changes to existing bookings, an explicit request to speak to a person, paying by bank transfer, business terms (credit, payment terms, contracts), or something you really do not know. Not for pricing work outside the catalogue (use request_quote) and not for electrical, gas or appliance repairs (we do not do them: decline politely). What you write goes into an internal note on the ticket.",
+        "Pass the conversation to a person from the team. Use it with need \"close\" when the lead is ready to close (you gave the price of a small job, or you have nurtured them enough: the job, the postcode and when they want it). Otherwise use it only for complaints, changes to existing bookings, an explicit request to speak to a person, paying by bank transfer, business terms (credit, payment terms, contracts), or something you really do not know. Not for pricing work outside the catalogue (use request_quote) and not for electrical, gas or appliance repairs (we do not do them: decline politely). What you write goes into an internal note on the ticket.",
       parameters: {
         type: "object",
         properties: {
           reason: { type: "string", description: "one line in English: what is needed and why" },
-          need: { type: "string", enum: ["call", "quote", "complaint", "booking", "other"], description: "what the team has to do next. call: the customer asked to be called or to speak to a person. quote: only when request_quote failed and a person has to price the job. complaint: they are unhappy with a job, want a refund, or something went wrong. booking: about an existing booking (reschedule, cancel, who is coming, timing) or paying by bank transfer. other: anything else" },
+          need: { type: "string", enum: ["close", "call", "quote", "complaint", "booking", "other"], description: "what the team has to do next. close: the lead is ready, the team confirms the day and sends the booking. call: the customer asked to be called or to speak to a person. quote: only when request_quote failed and a person has to price the job. complaint: they are unhappy with a job, want a refund, or something went wrong. booking: about an existing booking (reschedule, cancel, who is coming, timing) or paying by bank transfer. other: anything else" },
           details: { type: "string", description: "everything already agreed or known, in English, one per line: service, price, day and window, address and postcode, access, parking, name, email, anything else useful" },
           job: {
             type: "object",

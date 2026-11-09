@@ -647,6 +647,7 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     // Passou por causa de cotação: o ticket vai para a view 💰 Quoting (Bidding).
     // Cotação aberta no OS (request_quote): o ticket vai para a view 💰 Quoting (Bidding), como antes.
     // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
+    // Lead pronto para fechar (need "close") também vai para 📞 To Call, que no CRM é o Qualified.
     let etapaDaMedida: string | null = null;
     if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
       etapaDaMedida = "quote_requested";
@@ -658,7 +659,7 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       if (etapa === "complaint" || etapa === "booking") {
         // Reclamação e operação: do responsável de operação (Needs Attention). Reclamação vira 🚨 Complaint.
         await ticketParaOperacao(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para a operação:", e));
-      } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
+      } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" || etapa === "close" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
     }
     // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).
     const ticketDaPassagem = await ticketPeloTelefone(telefone).catch(() => null);
