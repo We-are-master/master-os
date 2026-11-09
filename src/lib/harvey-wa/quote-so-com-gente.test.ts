@@ -3,7 +3,8 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { conversaVaiParaAFila, TAG_AR_DA_CONVERSA } from "./zendesk-wa";
+import { conversaVaiParaAFila, statusLeadNaConversa, TAG_AR_DA_CONVERSA, TAG_CONVERSA_LEAD } from "./zendesk-wa";
+import { ZD_STATUS_BIDDING, ZD_STATUS_LEAD, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_OPEN, ZD_STATUS_TO_CALL } from "@/lib/zendesk-statuses";
 import { ACTION_REQUIRED_FIELD_ID, ACTION_REQUIRED_NO, ACTION_REQUIRED_YES } from "@/lib/fila-de-acao";
 import { planoDoPedido, planoSoComGente, proximaAcaoDoNeedsQuote } from "@/lib/processo/b2b-humano";
 import { BUSCA_B2B_COTAR } from "@/lib/processo/b2b-cotar";
@@ -55,4 +56,17 @@ describe("pedido de quote só com gente", () => {
     assert.match(BUSCA_B2B_COTAR, /-tags:harvey_wa/);
     assert.match(BUSCA_B2B_COTAR, /-tags:harvey-wa/);
   });
+});
+
+describe("conversa no Action Required fica Lead, não Open", () => {
+  const base = { statusAtual: ZD_STATUS_OPEN, tags: [] as string[], acompanhar: true, valor: "reply_awaiting" as const };
+  it("cliente escreveu e reabriu como Open: volta a Lead", () => assert.equal(statusLeadNaConversa(base), true));
+  it("conversa de lead fora do AR também volta", () => assert.equal(statusLeadNaConversa({ ...base, acompanhar: false, tags: [TAG_CONVERSA_LEAD] }), true));
+  it("conversa sem AR e sem carimbo de lead fica Open", () => assert.equal(statusLeadNaConversa({ ...base, acompanhar: false }), false));
+  it("já está Lead: nada", () => assert.equal(statusLeadNaConversa({ ...base, statusAtual: ZD_STATUS_LEAD }), false));
+  it("To Call, Needs Quote e Bidding ficam", () => {
+    for (const s of [ZD_STATUS_TO_CALL, ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_BIDDING]) assert.equal(statusLeadNaConversa({ ...base, statusAtual: s }), false);
+  });
+  it("mensagem nossa não mexe", () => assert.equal(statusLeadNaConversa({ ...base, valor: "reply_replied" }), false));
+  it("parceiro fica de fora", () => assert.equal(statusLeadNaConversa({ ...base, tags: ["partner"] }), false));
 });
