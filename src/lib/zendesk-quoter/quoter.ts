@@ -39,7 +39,7 @@ import { chamarOpenAI } from "@/lib/openai-com-retry";
 import { modoDe } from "@/lib/harvey/autonomia";
 import { blocoDasRegras } from "@/lib/harvey/regras-do-negocio";
 import { processoDaConta } from "@/lib/processo/conta";
-import { planoDoPedido, proximaAcaoDaRevisao, TAG_REVISAO_HUMANA, type PlanoDoPedido } from "@/lib/processo/b2b-humano";
+import { planoDoPedido, planoSoComGente, proximaAcaoDaRevisao, proximaAcaoDoNeedsQuote, TAG_REVISAO_HUMANA, type PlanoDoPedido } from "@/lib/processo/b2b-humano";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
 
 const MAX_IMAGENS = 6;
@@ -470,6 +470,25 @@ async function sincronizarTicket(
   }
 }
 
+/**
+ * 📝 Needs Quote no pedido que parou para gente (dono, 09/11/2026). Só sai de New/Open (ou
+ * sem status): ticket que alguém já moveu, ou que já anda no funil, fica onde está.
+ */
+async function paraNeedsQuote(ticketId: number): Promise<string> {
+  try {
+    const { zendeskApi } = await import("@/lib/zendesk");
+    const { ZD_STATUS_NEEDS_QUOTE, ZD_STATUS_NEW, ZD_STATUS_OPEN } = await import("@/lib/zendesk-statuses");
+    const { ticket: t } = await zendeskApi<{ ticket: { custom_status_id: number | null } }>(`tickets/${ticketId}.json`);
+    if (t.custom_status_id === ZD_STATUS_NEEDS_QUOTE) return "Already in Needs Quote.";
+    if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, null].includes(t.custom_status_id)) return `Status left as it was (${t.custom_status_id}).`;
+    await zendeskApi(`tickets/${ticketId}.json`, { method: "PUT", body: { ticket: { status: "open", custom_status_id: ZD_STATUS_NEEDS_QUOTE } } });
+    return "Ticket moved to Needs Quote.";
+  } catch (e) {
+    console.error("[quoter] Needs Quote:", e);
+    return `Could not move to Needs Quote: ${e instanceof Error ? e.message.slice(0, 120) : String(e)}`;
+  }
+}
+
 export async function garantirQuoteNoOs(
   ticket: TicketLido,
   pedido: PedidoConsolidado,
@@ -723,7 +742,10 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
    * Required. Fora do v2 o plano é o de sempre.
    */
   const regras = org.ok ? await processoDaConta(createServiceClient(), org.id).catch(() => null) : null;
-  const plano: PlanoDoPedido = planoDoPedido(regras);
+  // Cotação só com gente para todo pedido enquanto a área "cotacao" não está em "on" (dono, 09/11/2026).
+  const soComGente = (await modoDe("cotacao")) !== "on";
+  const planoDaConta = planoDoPedido(regras);
+  const plano: PlanoDoPedido = soComGente && !planoDaConta.revisaoHumana ? planoSoComGente(planoDaConta) : planoDaConta;
 
   /**
    * Conta B2B pedindo trabalho por hora (dono, 19/10/2026): não vai para cotação. Aceita
@@ -802,7 +824,8 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
    * Antes da nota interna porque é a nota que conta ao escritório o que o
    * cliente recebeu.
    */
-  const aviso = await avisarNoTicket({
+  // Só com gente: nenhuma mensagem sai sozinha ao cliente (nem o "working on it", nem o pedido de postcode).
+  const aviso = soComGente && plano.revisaoHumana && !planoDaConta.revisaoHumana ? null : await avisarNoTicket({
     ticketId,
     tags: ticket.tags,
     temEndereco: Boolean(pedido.propertyAddress ?? pedido.postcode),
@@ -848,10 +871,16 @@ export async function cotarTicket(ticketId: number, postarPedido: boolean): Prom
   if (plano.revisaoHumana && org.ok) {
     if (postar) {
       if (!ticket.tags.includes(TAG_REVISAO_HUMANA)) await addTicketTags(ticketId, [TAG_REVISAO_HUMANA]).catch((e) => console.error("[quoter] tag de revisão humana:", e));
-      const r = await precisaDeAcao(ticketId, proximaAcaoDaRevisao(quoteRef));
-      revisao = `── B2B human review ──\n${r.linha}\nNo partner invited, no hourly auto-accept, no missing-info questions: this account is handled by the team.`;
+      if (planoDaConta.revisaoHumana) {
+        const r = await precisaDeAcao(ticketId, proximaAcaoDaRevisao(quoteRef));
+        revisao = `── B2B human review ──\n${r.linha}\nNo partner invited, no hourly auto-accept, no missing-info questions: this account is handled by the team.`;
+      } else {
+        const status = await paraNeedsQuote(ticketId);
+        const r = await precisaDeAcao(ticketId, proximaAcaoDoNeedsQuote(quoteRef));
+        revisao = `── Needs quote (partner quotes are manual) ──\n${status}\n${r.linha}\nNo partner invited and nothing sent to the customer. Use the "Get partner quotes" macro when ready.`;
+      }
     } else {
-      revisao = `── B2B human review (DRY RUN) ──\nWould put the ticket in Action Required: ${proximaAcaoDaRevisao(quoteRef)}`;
+      revisao = `── ${planoDaConta.revisaoHumana ? "B2B human review" : "Needs quote"} (DRY RUN) ──\nWould put the ticket in Action Required: ${planoDaConta.revisaoHumana ? proximaAcaoDaRevisao(quoteRef) : proximaAcaoDoNeedsQuote(quoteRef)}`;
     }
   }
   const nota = [
@@ -913,7 +942,8 @@ export async function cotarComParceirosB2B(
         const antes = Array.isArray(atual.images) ? (atual.images as unknown[]).filter((u): u is string => typeof u === "string") : [];
         const novas = await guardarFotosDoTicket(ticket.id, ticket.imagens, supabase);
         const imagens = [...new Set([...antes, ...novas])];
-        const transmitir = atual.status === "draft" && Boolean(atual.property_address) && (await modoDe("cotacao")) === "on";
+        // A macro é a ordem da pessoa: transmite mesmo com a área "cotacao" fora de "on" (dono, 09/11/2026).
+        const transmitir = atual.status === "draft" && Boolean(atual.property_address);
         const mudou = imagens.length !== antes.length || transmitir;
         if (mudou) {
           await supabase
@@ -924,7 +954,7 @@ export async function cotarComParceirosB2B(
         }
         fotosLinha = `Photos on the quote: ${imagens.length} (${ticket.imagens.length} read from the ticket).`;
       }
-      convite = await calcularOuMandarConvites(ticket, pedido, resultado, criada.reference);
+      convite = await calcularOuMandarConvites(ticket, pedido, resultado, criada.reference, true);
     }
   }
   // A macro também avisa o cliente que estamos cotando (dono, 23/10/2026), com
@@ -1789,6 +1819,8 @@ async function calcularOuMandarConvites(
   pedido: PedidoConsolidado,
   resultado: ResultadoPriceCheck,
   quoteRef: string,
+  /** A macro "Get partner quotes": a pessoa mandou, então convida mesmo com a área "cotacao" fora de "on". */
+  pelaMacro = false,
 ): Promise<{ nota: string; enviados: number } | null> {
   const supabase = createServiceClient();
   const { data: q } = await supabase
@@ -1828,7 +1860,7 @@ async function calcularOuMandarConvites(
   }
   const tradesDaQuote = [...porTrade.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
 
-  const armado = (await modoDe("cotacao")) === "on";
+  const armado = pelaMacro || (await modoDe("cotacao")) === "on";
 
   if (!armado) {
     // Mesma função de casamento do envio real: a lista do ensaio é a lista.

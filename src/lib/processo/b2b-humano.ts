@@ -53,6 +53,24 @@ export function planoDoPedido(regras: Pick<RegrasDoProcesso, "v2" | "conducaoDaQ
   return { revisaoHumana: false, transmitir: true, convidarParceiros: true, aceitarHora: true, pedirInfo: true, avisoSempre: false };
 }
 
+/**
+ * Cotação só com gente para todo pedido (dono, 09/11/2026: "não quero mais que envia pro time
+ * fazer quotes... quero ter mais controle disso agora, até o Harvey aprender mais"). Vale
+ * quando a área "cotacao" do /agents/harvey não está em "on". O pedido é registrado (quote
+ * draft no OS), o ticket vai para 📝 Needs Quote com Action Required Yes, e nada sai sozinho:
+ * nem convite a parceiro, nem aviso ou pergunta ao cliente. A equipe preenche a lateral e
+ * aplica "Get partner quotes", ou cota em casa. Trabalho por hora de conta B2B segue a área
+ * b2b_hora, como antes.
+ */
+export function planoSoComGente(base: PlanoDoPedido): PlanoDoPedido {
+  return { revisaoHumana: true, transmitir: false, convidarParceiros: false, aceitarHora: base.aceitarHora, pedirInfo: false, avisoSempre: false };
+}
+
+/** A linha do Action Required no pedido que parou em Needs Quote. */
+export function proximaAcaoDoNeedsQuote(quoteRef: string | null): string {
+  return `Needs quote: request${quoteRef ? ` registered as ${quoteRef}` : " received"}. Check the sidebar, then use the "Get partner quotes" macro or price it in-house.`;
+}
+
 /** A linha de uma frase que vai no Action Required do ticket. */
 export function proximaAcaoDaRevisao(quoteRef: string | null): string {
   return `${MOTIVO_REVISAO_HUMANA}: B2B request${quoteRef ? ` registered as ${quoteRef}` : " received"}. Review it, then use the "Get partner quotes" macro or price it in-house.`;

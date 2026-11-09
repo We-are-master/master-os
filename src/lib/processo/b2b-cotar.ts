@@ -15,13 +15,15 @@
  * Required, e ninguém tenta de novo sozinho (convites podem ter saído pela
  * metade; gente decide).
  *
- * Só conta v2 (regras.v2 === true). Fora disso a tag é ignorada e nada é escrito.
+ * Desde 09/11/2026 vale para qualquer conta reconhecida (antes só v2): com a cotação só com
+ * gente, a macro é o único jeito de chamar parceiro.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { TAG_B2B_COTADO, TAG_B2B_COTAR } from "./b2b-humano";
 import type { RegrasDoProcesso } from "./conta";
 
-export const BUSCA_B2B_COTAR = `type:ticket status<solved tags:${TAG_B2B_COTAR} -tags:${TAG_B2B_COTADO}`;
+// Conversa do WhatsApp fica com a varredura do WhatsApp (varredura-cotacao-automatica.ts), que lê a conversa.
+export const BUSCA_B2B_COTAR = `type:ticket status<solved tags:${TAG_B2B_COTAR} -tags:${TAG_B2B_COTADO} -tags:harvey_wa -tags:harvey-wa`;
 export const MAX_B2B_COTAR_POR_CICLO = 3;
 
 export const chaveDoB2bCotar = (ticketId: number) => `b2b-cotar:${ticketId}`;
@@ -56,7 +58,7 @@ export async function varrerB2bCotar(d: DependenciasDoB2bCotar, opcoes: { max?: 
     out.olhados++;
     const conta = await d.regrasDoTicket(t).catch(() => null);
     if (!conta) { out.pulados.push(`#${t.id}: organization not recognised`); continue; }
-    if (conta.regras?.v2 !== true) { out.pulados.push(`#${t.id}: account not on the v2 process, macro ignored`); continue; }
+    // Qualquer conta (dono, 09/11/2026): a macro é a pessoa pedindo, não precisa do processo v2.
 
     const chave = chaveDoB2bCotar(t.id);
     const r = await d.reservar(chave, t.id);

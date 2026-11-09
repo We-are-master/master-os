@@ -7,6 +7,7 @@
  *    Mora aqui e não no poll do Railway porque lá não há a chave da Sunshine.
  *  - cotação automática por parceiro: 📝 Needs Quote → convite aos 3-5 melhores, lembrete 6h,
  *    aviso ao cliente 24h, lance vira quote (cotacao-automatica.ts). Chave HARVEY_AUTO_QUOTE=1.
+ *  - macros da equipe: "Get partner quotes" no WhatsApp e "Harvey: create job in OS" (macro-criar-job.ts).
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
  *
@@ -22,7 +23,8 @@ import { varrerChases } from "@/lib/harvey-wa/chase";
 import { varrerTransferencias } from "@/lib/harvey-wa/transferencia";
 import { fecharLeadsParados, varrerFollowupDeLeads } from "@/lib/harvey-wa/followup-leads";
 import { varrerCobrancaDeQuotes } from "@/lib/harvey-wa/followup-quotes";
-import { varrerCotacaoAutomatica } from "@/lib/harvey-wa/varredura-cotacao-automatica";
+import { varrerCotacaoAutomatica, varrerMacroNoWhatsApp } from "@/lib/harvey-wa/varredura-cotacao-automatica";
+import { varrerMacroCriarJob } from "@/lib/harvey-wa/macro-criar-job";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,7 +60,11 @@ export async function GET(req: NextRequest) {
     // Needs Quote → parceiros → preço → cliente. Chave HARVEY_AUTO_QUOTE=1; no ensaio só lista.
     const autoQuote = process.env.HARVEY_AUTO_QUOTE?.trim() === "1" && (await modoDe("cotacao")) === "on";
     const cotacao = autoQuote || ensaio ? await varrerCotacaoAutomatica(sb, { aplicar: !ensaio && autoQuote }) : null;
-    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao });
+    // Macro "Get partner quotes" numa conversa do WhatsApp (dono, 09/11/2026): sempre, porque é a pessoa pedindo.
+    const macro = await varrerMacroNoWhatsApp(sb, { aplicar: !ensaio }).catch((e) => ({ falhou: e instanceof Error ? e.message : String(e) }));
+    // Macro "Harvey: create job in OS" (dono, 09/11/2026): lê a conversa e sobe o job. Nada vai ao cliente.
+    const criarJob = await varrerMacroCriarJob(sb, { aplicar: !ensaio }).catch((e) => ({ falhou: e instanceof Error ? e.message : String(e) }));
+    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao, macro, criarJob });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });

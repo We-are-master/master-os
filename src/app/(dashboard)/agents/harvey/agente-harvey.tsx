@@ -514,7 +514,7 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
 type AutonomiaNaTela = Autonomia & { atualizado_em: string | null; atualizado_por: string | null; teto: Record<AreaDeAutonomia, ModoDeAutonomia> };
 
 const AREAS_NA_TELA: Array<[AreaDeAutonomia, string, string]> = [
-  ["cotacao", "Classify and invite partners", "A request that needs a quote goes to every partner who covers the trade and postcode."],
+  ["cotacao", "Classify and invite partners", "On: a request that needs a quote goes to every partner who covers the trade and postcode. Dry run or Off: it stops in Needs Quote (Action Required) and partners are invited only with the \"Get partner quotes\" macro."],
   ["lances", "Price partner bids", "Reads bids from the portal and from partner emails and turns the best one into our price."],
   ["envio", "Send the price to the customer", "The priced quote goes out on its own (WhatsApp or email), up to the limit below."],
   ["b2b_hora", "Accept B2B hourly jobs", "Business account asks for hourly work: accepted at the account's own rate, job left unassigned."],

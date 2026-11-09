@@ -374,11 +374,33 @@ async function marcarConversaEspelhada(ticketWa: number, anteriores: number[]): 
   if (t?.tags?.includes(TAG_CONVERSA_ESPELHADA)) return "";
   // PUT acrescenta (POST substituiria as tags da conversa).
   await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "PUT", body: { tags: [TAG_CONVERSA_ESPELHADA] } });
-  // O lead respondeu (dono, 07/11/2026): Action Required Yes na conversa ao vivo, uma vez,
-  // para a equipe acompanhar o Harvey pela ⚡ Action Required. Tirar = pôr No.
-  await zendeskApi(`tickets/${ticketWa}.json`, { method: "PUT", body: { ticket: { custom_fields: [{ id: ACTION_REQUIRED_FIELD_ID, value: ACTION_REQUIRED_YES }] } } });
-  await zendeskApi(`tickets/${ticketWa}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } }).catch(() => {});
-  return `, #${ticketWa} fora da view Leads, Action Required Yes`;
+  // O Action Required Yes da conversa ao vivo mora em conversaNaFilaUmaVez (toda conversa de
+  // cliente, com ou sem lead anterior), chamada pelo Reply Status a cada mensagem.
+  return `, #${ticketWa} fora da view Leads`;
+}
+
+/** Carimbo de "já pus esta conversa no Action Required uma vez". Quem põe No tira para sempre. */
+export const TAG_AR_DA_CONVERSA = "harvey_ar_once";
+
+/**
+ * A conversa do Harvey na ⚡ Action Required (dono, 09/11/2026): "o Harvey manda a primeira
+ * mensagem e a conversa dele fica em Action Required Yes até eu tirar".
+ *
+ * Na primeira mensagem do cliente a conversa ganha Yes, uma vez (tag harvey_ar_once). Fica
+ * lá enquanto o Harvey responde, porque a view só esconde quem tem `harvey_ai`. Quem não
+ * quer mais ver põe No, e ninguém religa: o carimbo fica.
+ *
+ * Antes (07/11/2026) o Yes só entrava em conversa com ticket de lead anterior aberto, e uma
+ * vez só junto com a tag lead_mirrored: conversa que nasceu no WhatsApp nunca entrava, e
+ * quem já tinha a tag ficava de fora (Carolyn, Katy, Eliza e Lydia, 09/11). Agora o campo vai
+ * no mesmo PUT do Reply Status, que a conversa "AI agent" aceita. Parceiro fica de fora.
+ */
+export function conversaVaiParaAFila(t: { tags: string[]; custom_fields?: Array<{ id: number; value: unknown }> }, valor: "reply_awaiting" | "reply_replied"): boolean {
+  if (valor !== "reply_awaiting") return false;
+  if (t.tags.includes(TAG_AR_DA_CONVERSA) || t.tags.includes("partner") || t.tags.includes("harvey_off")) return false;
+  // Campo já com Yes ou No: alguém (ou a regra de 07/11) já decidiu. Quem pôs No não vê a conversa voltar.
+  const ar = t.custom_fields?.find((f) => Number(f.id) === ACTION_REQUIRED_FIELD_ID)?.value;
+  return !(typeof ar === "string" && ar.trim());
 }
 
 /**
@@ -549,13 +571,16 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
   // ignora essa tag; ela sai quando a conversa passa para a equipe (dono, 08/10/2026).
   // Com Action Required Yes a conversa fica na view para acompanhar (dono, 07/11/2026):
   // sem harvey_ai. Quem põe No tira da view (o gatilho do Zendesk devolve a tag).
-  const acompanhar = t.custom_fields.find((f) => f.id === ACTION_REQUIRED_FIELD_ID)?.value === ACTION_REQUIRED_YES;
+  // Primeira mensagem do cliente: a conversa entra na fila uma vez (conversaVaiParaAFila).
+  const naFilaAgora = conversaVaiParaAFila(t, valor);
+  const acompanhar = naFilaAgora || t.custom_fields.find((f) => f.id === ACTION_REQUIRED_FIELD_ID)?.value === ACTION_REQUIRED_YES;
   const comHarvey = t.support_type === "ai_agent" && !acompanhar;
   if (comHarvey && !t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_ai"] } });
   if (!comHarvey && t.tags.includes("harvey_ai")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "DELETE", body: { tags: ["harvey_ai"] } });
   const atual = t.custom_fields.find((f) => f.id === ZENDESK_REPLY_STATUS_FIELD_ID)?.value;
   const campos: Array<{ id: number; value: unknown }> = [];
   if (atual !== valor) campos.push({ id: ZENDESK_REPLY_STATUS_FIELD_ID, value: valor });
+  if (naFilaAgora) campos.push({ id: ACTION_REQUIRED_FIELD_ID, value: ACTION_REQUIRED_YES });
   // Toda conversa com Title (dono, 07/11/2026: "a gente se perde"). A cópia na hora do
   // espelho falhava calada; aqui vai junto com o Reply Status, que a conversa "AI agent" aceita.
   const tituloAtual = t.custom_fields.find((f) => Number(f.id) === TITLE_FIELD_ID)?.value;
@@ -566,7 +591,9 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
   if (campos.length) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: campos } } });
   // PUT acrescenta (POST substituiria as tags da conversa).
   if (!t.tags.includes("harvey_wa")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa"] } });
-  return `ticket ${ticket}: ${valor}`;
+  // O carimbo depois do campo: se o PUT do campo falhar, a próxima mensagem tenta de novo.
+  if (naFilaAgora) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [TAG_AR_DA_CONVERSA] } });
+  return `ticket ${ticket}: ${valor}${naFilaAgora ? ", Action Required Yes" : ""}`;
 }
 
 /**
