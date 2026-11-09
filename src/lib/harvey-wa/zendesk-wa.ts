@@ -84,6 +84,8 @@ async function statusDaConversa(ticket: number, alvo: number) {
   if (t.custom_status_id !== alvo && livre.includes(t.custom_status_id)) {
     await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: alvo } } });
   }
+  // Carimbo de "conversa de lead": a resposta do cliente reabre como Open e o Lead volta (statusLeadNaConversa).
+  if (alvo === ZD_STATUS_LEAD) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [TAG_CONVERSA_LEAD] } });
 }
 
 /** O ticket aberto da conversa de WhatsApp dessa pessoa. */
@@ -382,6 +384,23 @@ async function marcarConversaEspelhada(ticketWa: number, anteriores: number[]): 
 /** Carimbo de "já pus esta conversa no Action Required uma vez". Quem põe No tira para sempre. */
 export const TAG_AR_DA_CONVERSA = "harvey_ar_once";
 
+/** A conversa é de lead (o Harvey pôs 🎯 Lead nela uma vez). */
+export const TAG_CONVERSA_LEAD = "harvey_conversa_lead";
+
+/**
+ * Conversa no Action Required fica 🎯 Lead, não Open (dono, 09/11/2026: "as conversas que estão
+ * no Action Required quero elas não Open e sim como Leads"). A mensagem do cliente reabre o
+ * ticket como Open; aqui o Lead volta. Só troca status genérico (New, Open, antigo In
+ * Conversation, vazio): To Call, Needs Quote, Bidding, job e complaint ficam como estão.
+ * Parceiro e harvey_off ficam de fora.
+ */
+export function statusLeadNaConversa(a: { statusAtual: number | null | undefined; tags: string[]; acompanhar: boolean; valor: "reply_awaiting" | "reply_replied" }): boolean {
+  if (a.valor !== "reply_awaiting") return false;
+  if (a.tags.includes("partner") || a.tags.includes("harvey_off")) return false;
+  if (![ZD_STATUS_NEW, ZD_STATUS_OPEN, ZD_STATUS_WHATSAPP, null, undefined].includes(a.statusAtual as number | null | undefined)) return false;
+  return a.acompanhar || a.tags.includes(TAG_CONVERSA_LEAD);
+}
+
 /**
  * A conversa do Harvey na ⚡ Action Required (dono, 09/11/2026): "o Harvey manda a primeira
  * mensagem e a conversa dele fica em Action Required Yes até eu tirar".
@@ -566,7 +585,7 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
     if (!ticket && esperarTicket) await new Promise((r) => setTimeout(r, 2500));
   }
   if (!ticket) return "sem ticket";
-  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; requester_id: number; subject: string | null; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
+  const { ticket: t } = await zendeskApi<{ ticket: { tags: string[]; support_type?: string; requester_id: number; subject: string | null; custom_status_id?: number | null; custom_fields: Array<{ id: number; value: unknown }> } }>(`tickets/${ticket}.json`);
   // harvey_ai: o Harvey está atendendo (ticket "AI agent", só leitura). A Action Required
   // ignora essa tag; ela sai quando a conversa passa para a equipe (dono, 08/10/2026).
   // Com Action Required Yes a conversa fica na view para acompanhar (dono, 07/11/2026):
@@ -589,11 +608,16 @@ export async function marcarReplyStatusNaConversa(telefone: string, valor: "repl
     if (titulo) campos.push({ id: TITLE_FIELD_ID, value: titulo });
   }
   if (campos.length) await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_fields: campos } } });
+  // Open → 🎯 Lead. PUT à parte: se a conversa "AI agent" recusar o status, o Reply Status já foi.
+  let virouLead = false;
+  if (statusLeadNaConversa({ statusAtual: t.custom_status_id, tags: t.tags, acompanhar, valor })) {
+    virouLead = await zendeskApi(`tickets/${ticket}.json`, { method: "PUT", body: { ticket: { custom_status_id: ZD_STATUS_LEAD } } }).then(() => true, () => false);
+  }
   // PUT acrescenta (POST substituiria as tags da conversa).
   if (!t.tags.includes("harvey_wa")) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: ["harvey_wa"] } });
   // O carimbo depois do campo: se o PUT do campo falhar, a próxima mensagem tenta de novo.
   if (naFilaAgora) await zendeskApi(`tickets/${ticket}/tags.json`, { method: "PUT", body: { tags: [TAG_AR_DA_CONVERSA] } });
-  return `ticket ${ticket}: ${valor}${naFilaAgora ? ", Action Required Yes" : ""}`;
+  return `ticket ${ticket}: ${valor}${naFilaAgora ? ", Action Required Yes" : ""}${virouLead ? ", Lead" : ""}`;
 }
 
 /**
