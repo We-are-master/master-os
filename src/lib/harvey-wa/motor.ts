@@ -649,7 +649,12 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     // Nos outros casos o ticket ganha a etapa do funil: 📞 To Call ou 📝 Needs Quote.
     // Lead pronto para fechar (need "close") também vai para 📞 To Call, que no CRM é o Qualified.
     let etapaDaMedida: string | null = null;
-    if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
+    if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe) && /no professional invited/i.test(r.passarParaEquipe)) {
+      // Sem parceiro convidado (cotação só com gente, dono 09/11/2026): 📝 Needs Quote, na
+      // ⚡ Action Required, até a equipe preencher a lateral e aplicar "Get partner quotes".
+      etapaDaMedida = "quote_requested";
+      await ticketParaEtapa(telefone, ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para Needs Quote:", e));
+    } else if (/^quote requested on WhatsApp/i.test(r.passarParaEquipe)) {
       etapaDaMedida = "quote_requested";
       await ticketParaCotacao(telefone).catch((e) => console.error("[harvey-wa] para cotação:", e));
     } else {

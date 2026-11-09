@@ -18,7 +18,7 @@
  *   3. Só 8h às 20h de Londres para qualquer coisa que fala com alguém.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { zendeskApi, addTicketTags, updateTicket, replyToSideConversation } from "@/lib/zendesk";
+import { zendeskApi, addTicketTags, removeTicketTags, updateTicket, replyToSideConversation } from "@/lib/zendesk";
 import { ZD_STATUS_BIDDING, ZD_STATUS_NEEDS_QUOTE } from "@/lib/zendesk-statuses";
 import { firstName } from "@/lib/agent/sales/lead-brief";
 import { extractUkPostcode } from "@/lib/uk-postcode";
@@ -32,7 +32,7 @@ import { marcaDeEscopo } from "@/lib/quote-lance-escopo";
 import { classificarPedido } from "@/lib/classificar-pedido";
 import { catalogoAtivo } from "@/lib/catalogo-ativo";
 import { precisaDeAcao } from "@/lib/fila-de-acao";
-import { foraDaCotacaoAutomatica } from "@/lib/processo/b2b-humano";
+import { foraDaCotacaoAutomatica, TAG_B2B_COTADO, TAG_B2B_COTAR } from "@/lib/processo/b2b-humano";
 import { processoDaConta } from "@/lib/processo/conta";
 import { sincronizarLeadDaQuote } from "@/lib/crm/lead-servidor";
 import {
@@ -232,7 +232,7 @@ async function falarComCliente(t: Ticket, user: Usuario, conv: Conversa, texto: 
 }
 
 /** Fotos da conversa no bucket público do convite: o parceiro precisa vê-las no bid. */
-async function guardarFotos(sb: SupabaseClient, ticketId: number, fotos: Conversa["fotos"]): Promise<string[]> {
+export async function guardarFotos(sb: SupabaseClient, ticketId: number, fotos: Array<{ url: string; auth?: boolean }>): Promise<string[]> {
   const auth = "Basic " + Buffer.from(`${process.env.ZENDESK_EMAIL}/token:${process.env.ZENDESK_API_TOKEN}`).toString("base64");
   const baixadas = await Promise.all(
     fotos.slice(-6).map(async (f, i) => {
@@ -292,11 +292,20 @@ async function criarOuAbrirQuote(sb: SupabaseClient, t: Ticket, user: Usuario, q
 
 /* ============================== entrada ============================== */
 
-async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, agora: Date, out: ResultadoCotacaoAutomatica): Promise<boolean> {
+/**
+ * `macro`: a equipe aplicou "Get partner quotes" numa conversa do WhatsApp (dono, 09/11/2026).
+ * A pessoa mandou, então as travas de "só com gente" e de "equipe conversando" não valem, e
+ * nada sai para o cliente: faltando dado, a nota diz o quê e o ticket volta ao Action Required.
+ * `reservar` é a trava de uma vez só, chamada logo antes do convite.
+ */
+type OpcoesDaEntrada = { macro?: boolean; reservar?: () => Promise<boolean> };
+
+async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, agora: Date, out: ResultadoCotacaoAutomatica, opcoes: OpcoesDaEntrada = {}): Promise<boolean> {
   const quem = `#${t.id} ${t.subject.slice(0, 50)}`;
+  const macro = opcoes.macro === true;
   if (t.tags.includes(TAG_CONVIDOU) || t.tags.includes(TAG_FIM) || t.tags.includes("harvey_off")) return false;
   // B2B só com gente (processo/b2b-humano.ts): a equipe decide, e os convites só saem pela macro.
-  if (foraDaCotacaoAutomatica(t.tags)) {
+  if (!macro && foraDaCotacaoAutomatica(t.tags)) {
     out.pulados.push(`${quem}: B2B human review, handled by the team`);
     return false;
   }
@@ -305,7 +314,7 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
   const conv = await lerConversa(sb, t, user, desde, agora);
   const q = await quoteDoTicket(sb, t.id);
   // A tag pode não ter sido gravada: a conta da quote também segura.
-  if (q?.source_account_id && foraDaCotacaoAutomatica(t.tags, await processoDaConta(sb, q.source_account_id).catch(() => null))) {
+  if (!macro && q?.source_account_id && foraDaCotacaoAutomatica(t.tags, await processoDaConta(sb, q.source_account_id).catch(() => null))) {
     out.pulados.push(`${quem}: ${q.reference} belongs to a B2B human review account, handled by the team`);
     return false;
   }
@@ -337,7 +346,7 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
    * trava de "equipe conversando" não se aplica; contexto faltando vai para a equipe.
    */
   const emBiddingSemConvite = Number(t.custom_status_id) === Number(ZD_STATUS_BIDDING);
-  if (conv.equipeFalando && !emBiddingSemConvite) {
+  if (!macro && conv.equipeFalando && !emBiddingSemConvite) {
     // No ensaio diz também o que faria sem a trava, para o dono julgar a régua com ticket de verdade.
     let semATrava = "";
     if (!aplicar) {
@@ -363,6 +372,16 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
     return true;
   }
 
+  if (faltando.length && macro) {
+    // A macro não pergunta nada ao cliente: diz à equipe o que falta e solta a tag, para aplicar de novo.
+    out.pulados.push(`${quem}: Get partner quotes, but missing ${faltando.join(", ")}: back to the team`);
+    if (aplicar) {
+      await nota(t.id, `🤖 Get partner quotes: partners NOT invited, missing ${faltando.join(", ")}. Fill it in the sidebar (Type of work, Property address, Scope) and apply the macro again.`);
+      await removeTicketTags(t.id, [TAG_B2B_COTAR]);
+      await precisaDeAcao(t.id, `Get partner quotes: missing ${faltando.join(", ")}. Fill the sidebar and apply the macro again`);
+    }
+    return true;
+  }
   if (faltando.length && emBiddingSemConvite) {
     out.pulados.push(`${quem}: in Bidding with no invites, but missing ${faltando.join(", ")}: needs a person`);
     if (aplicar && !t.tags.includes(TAG_SEM_LANCE)) {
@@ -402,6 +421,10 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
     return true;
   }
 
+  if (opcoes.reservar && !(await opcoes.reservar())) {
+    out.pulados.push(`${quem}: Get partner quotes already handled`);
+    return false;
+  }
   const fotos = await guardarFotos(sb, t.id, conv.fotos);
   const quote = await criarOuAbrirQuote(sb, t, user, q, ctx, fotos);
   // CRM: a quote entra no lead do mesmo ticket e o lead vai para Quoting (nunca derruba a varredura).
@@ -424,10 +447,13 @@ async function tratarEntrada(sb: SupabaseClient, t: Ticket, aplicar: boolean, ag
     customStatusId: ZD_STATUS_BIDDING,
     publicComment: false,
     commentBody:
-      `🤖 Auto-quote: ${quote.reference} sent to ${r.partnerIds.length} partner(s) for prices: ${lista}.` +
+      `🤖 ${macro ? "Get partner quotes" : "Auto-quote"}: ${quote.reference} sent to ${r.partnerIds.length} partner(s) for prices: ${lista}.` +
       (elegiveis < MIN_CONVIDADOS ? ` Only ${elegiveis} partner(s) cover this area.` : "") +
-      `\n\nNext: reminder to them in 6h without a bid; at 24h without a bid the customer hears we're still on it and this comes back to Action Required.`,
-    additionalTags: [TAG_CONVIDOU],
+      (macro
+        ? `\n\nBids land on the quote in the OS. Nothing goes to the customer on its own: you send the price.`
+        : `\n\nNext: reminder to them in 6h without a bid; at 24h without a bid the customer hears we're still on it and this comes back to Action Required.`),
+    // Pela macro, sem TAG_CONVIDOU: a régua automática (lembrete, aviso ao cliente, envio do preço) não pega.
+    additionalTags: macro ? [TAG_B2B_COTADO] : [TAG_CONVIDOU],
   });
   out.acoes.push(`${quem}: ${quote.reference} invited ${r.partnerIds.length} (${lista})`);
   return true;
@@ -530,6 +556,43 @@ export async function varrerCotacaoAutomatica(sb: SupabaseClient, { aplicar }: {
       } catch (e) {
         out.pulados.push(`#${t.id}: ${e instanceof Error ? e.message.slice(0, 140) : "failed"}`);
       }
+    }
+  }
+  return out;
+}
+
+/* ======================= macro no WhatsApp ======================= */
+
+/**
+ * "Get partner quotes" numa conversa do WhatsApp (dono, 09/11/2026: "se eu quiser quote pros
+ * partners eu preencho a lateral ou ele mesmo, eu só jogo a macro"). O Harvey do e-mail
+ * (processo/b2b-cotar.ts) não lê conversa e pula os tickets harvey_wa; aqui a entrada de
+ * sempre roda neste ticket, com a pessoa no comando. Roda a cada ciclo do /api/cron/harvey-wa,
+ * com ou sem a cotação automática ligada, a qualquer hora (só convida parceiro).
+ */
+export async function varrerMacroNoWhatsApp(sb: SupabaseClient, { aplicar }: { aplicar: boolean }, agora = new Date()): Promise<ResultadoCotacaoAutomatica> {
+  const out: ResultadoCotacaoAutomatica = { ensaio: !aplicar, foraDoHorario: false, olhados: 0, acoes: [], pulados: [] };
+  const achados = (await buscar(`type:ticket status<solved tags:${TAG_B2B_COTAR} -tags:${TAG_B2B_COTADO}`)).filter(ehWhatsApp);
+  const { reservarEnvio, confirmarEnvio, falhouEnvio } = await import("@/lib/idempotencia/envio");
+  let feitas = 0;
+  for (const t of achados) {
+    if (t.tags.includes(TAG_B2B_COTADO)) continue;
+    if (feitas >= 3) { out.pulados.push(`#${t.id}: cycle limit, next cycle`); continue; }
+    out.olhados++;
+    const reservar = async () => {
+      const r = await reservarEnvio(sb, { chave: `b2b-cotar:${t.id}`, finalidade: "b2b-cotar", canal: "zendesk_note", ticketId: t.id, motivo: "Get partner quotes macro (WhatsApp)" });
+      if (r.reservado) await addTicketTags(t.id, [TAG_B2B_COTADO]);
+      return r.reservado;
+    };
+    let reservou = false;
+    const reservarUmaVez = async () => (reservou = await reservar());
+    try {
+      if (await tratarEntrada(sb, t, aplicar, agora, out, { macro: true, reservar: aplicar ? reservarUmaVez : undefined })) feitas++;
+      if (reservou) await confirmarEnvio(sb, `b2b-cotar:${t.id}`).catch(() => undefined);
+    } catch (e) {
+      if (reservou) await falhouEnvio(sb, `b2b-cotar:${t.id}`, e).catch(() => undefined);
+      out.pulados.push(`#${t.id}: ${e instanceof Error ? e.message.slice(0, 140) : "failed"}`);
+      if (aplicar) await precisaDeAcao(t.id, `Get partner quotes failed: ${e instanceof Error ? e.message.slice(0, 120) : "error"}. Invite partners from the Quotes screen`).catch(() => undefined);
     }
   }
   return out;

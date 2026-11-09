@@ -4,6 +4,9 @@
  * (`/api/invoices/[id]/chase`): o mesmo e-mail, o mesmo PDF, o mesmo registro.
  */
 import { Resend } from "resend";
+import { getZendeskTicketId, isZendeskConfigured } from "@/lib/zendesk";
+import { acharTicketDoPedido } from "@/lib/um-ticket/achar";
+import { entregarEmailNoTicket } from "@/lib/um-ticket/entregar";
 import type { createServiceClient } from "@/lib/supabase/service";
 import { copiasDaFaturaDaConta } from "@/lib/invoice-account-cc";
 import { loadInvoiceSendContext, renderInvoicePdfBuffer } from "@/lib/invoice-send-email";
@@ -78,24 +81,53 @@ export async function enviarEstagioDeCobranca(
   });
   if (opts.ensaio) return { ok: true, to, subject: copy.subject, enviado: false };
 
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!resendKey || !fromEmail) return { ok: false, motivo: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" };
-
   const ccDaConta = await copiasDaFaturaDaConta(admin, inv.source_account_id ?? ctx.billing.sourceAccountId ?? null, [to]);
   const pdf = await renderInvoicePdfBuffer(admin, inv.id);
-  const { error } = await new Resend(resendKey).emails.send({
-    from: fromEmail,
-    to: [to],
-    // O financeiro da conta acompanha a cobrança, como acompanha a fatura (mig 324).
-    ...(ccDaConta.length ? { cc: ccDaConta } : {}),
-    replyTo: "hello@getfixfy.com",
-    subject: copy.subject,
-    html: copy.html,
-    text: copy.text,
-    ...("error" in pdf ? {} : { attachments: [{ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" }] }),
-  });
-  if (error) return { ok: false, motivo: "send failed" };
+  const anexos = "error" in pdf ? [] : [{ filename: `${pdf.reference.replace(/[^\w.-]+/g, "_")}.pdf`, content: pdf.buffer, contentType: "application/pdf" }];
+
+  /**
+   * Cobrança só por e-mail, no MESMO ticket do job (dono, 09/11/2026: "cobrança só por
+   * e-mail via Zendesk, mesmo ticket"). Ticket de WhatsApp vira conversa lateral por
+   * e-mail, nunca texto no WhatsApp. Mesma ordem do envio da fatura: ticket do job,
+   * depois o ticket aberto do cliente; a Resend só quando não há ticket nenhum.
+   */
+  let ticketUsado: number | null = null;
+  const ticketDoJob = ctx.job ? getZendeskTicketId(ctx.job) : null;
+  const emailNoTicket = { para: { email: to, nome: ctx.billing.displayName }, cc: ccDaConta, assunto: copy.subject, html: copy.html, anexos, soEmail: true };
+  if (ticketDoJob && isZendeskConfigured()) {
+    try {
+      ticketUsado = (await entregarEmailNoTicket({ ticket: { id: Number(ticketDoJob), origem: "job", canal: null }, ...emailNoTicket })).ticketId;
+    } catch (err) {
+      console.error(`[invoice-chase] ${inv.reference}: ticket do job falhou, tenta o do cliente:`, err);
+    }
+  }
+  if (ticketUsado == null && isZendeskConfigured()) {
+    const achado = await acharTicketDoPedido(admin, { jobId: ctx.job?.id ?? null, clientId: ctx.job?.client_id ?? null, email: to }).catch(() => null);
+    if (achado?.tipo === "ticket") {
+      try {
+        ticketUsado = (await entregarEmailNoTicket({ ticket: achado, ...emailNoTicket })).ticketId;
+      } catch (err) {
+        console.error(`[invoice-chase] ${inv.reference}: ticket do cliente falhou, segue pela Resend:`, err);
+      }
+    }
+  }
+  if (ticketUsado == null) {
+    const resendKey = process.env.RESEND_API_KEY?.trim();
+    const fromEmail = process.env.RESEND_FROM_EMAIL?.trim();
+    if (!resendKey || !fromEmail) return { ok: false, motivo: "no ticket and RESEND_API_KEY / RESEND_FROM_EMAIL not configured" };
+    const { error } = await new Resend(resendKey).emails.send({
+      from: fromEmail,
+      to: [to],
+      // O financeiro da conta acompanha a cobrança, como acompanha a fatura (mig 324).
+      ...(ccDaConta.length ? { cc: ccDaConta } : {}),
+      replyTo: "hello@getfixfy.com",
+      subject: copy.subject,
+      html: copy.html,
+      text: copy.text,
+      ...(anexos.length ? { attachments: anexos } : {}),
+    });
+    if (error) return { ok: false, motivo: "send failed" };
+  }
 
   await admin
     .from("invoices")
@@ -109,7 +141,7 @@ export async function enviarEstagioDeCobranca(
     field_name: "overdue_reminder",
     new_value: String(stage),
     ...(opts.manual ? { user_id: opts.manual.userId, user_name: opts.manual.userName } : {}),
-    metadata: { to, final: copy.final, ...(opts.manual ? { manual: true } : {}) },
+    metadata: { to, final: copy.final, canal: ticketUsado != null ? "zendesk" : "resend", ...(ticketUsado != null ? { ticketId: ticketUsado } : {}), ...(opts.manual ? { manual: true } : {}) },
   });
   return { ok: true, to, subject: copy.subject, enviado: true };
 }

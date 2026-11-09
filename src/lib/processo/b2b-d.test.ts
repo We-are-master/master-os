@@ -123,13 +123,11 @@ describe("macro Get partner quotes (b2b_cotar)", () => {
     assert.deepEqual(m.chamadas.cotar, [501]);
     assert.match(r.pulados[0]!, /already sent/);
   });
-  it("conta fora do v2: tag ignorada, nada escrito", async () => {
+  it("conta fora do v2 (Housekeep, Fixfy): a macro vale igual (dono, 09/11/2026)", async () => {
     const m = mundoDaMacro({ regras: b2bSemV2() });
     const r = await varrerB2bCotar(m.deps);
-    assert.equal(m.chamadas.cotar.length, 0);
-    assert.equal(m.chamadas.carimbos.length, 0);
-    assert.equal(m.reservas.size, 0);
-    assert.match(r.pulados[0]!, /not on the v2/);
+    assert.deepEqual(m.chamadas.cotar, [501]);
+    assert.equal(r.cotados.length, 1);
   });
   it("falha depois da trava: Action Required, e não tenta de novo sozinho", async () => {
     const m = mundoDaMacro({ cotarFalha: true });
