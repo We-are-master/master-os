@@ -7840,7 +7840,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 <JobCardRefusedBadge job={job} size="sm" showHistory />
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
-                {healthMissingPartner ? (
+                {/* O status Unassigned / Auto assigning já diz que falta parceiro: o chip só aparece fora deles (dono, 09/11/2026). */}
+                {healthMissingPartner && job.status !== "unassigned" && job.status !== "auto_assigning" ? (
                   <span className="text-[10px] font-medium rounded-full px-2 py-0.5 border border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-100">
                     {jobPartnerListKind(job) === "auto_assign" ? "⏳ Auto assigning" : "⚠ No partner"}
                   </span>
