@@ -43,6 +43,7 @@ import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { motivoComDono, precoDaEquipeDevolveAConversa, tempoDevolveAConversa } from "./dono";
+import { agenteDaVez, conversaDoAlex, motivoDaPassagemParaAlex, NOME_DO_ALEX } from "./alex";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 import { destinoDaResposta } from "./turno";
 import { processosV2Ligado } from "@/lib/processo/conta";
@@ -75,6 +76,8 @@ export function paraFalas(msgs: MensagemSc[]): Fala[] {
       const texto = m.content.type === "text" ? m.content.text ?? "" : `[${m.content.type} sent${m.content.altText ? `: ${m.content.altText}` : ""}]`;
       if (!texto.trim()) return null;
       if (m.author.type === "user") return { papel: "cliente", texto, ...(m.content.mediaUrl ? { midia: m.content.mediaUrl } : {}) };
+      // Fala do Alex (metadata agente, só com HARVEY_ALEX): o cérebro separa a dele da do Harvey.
+      if (ehDoHarvey(m) && m.metadata?.agente === "alex") return { papel: "harvey", texto, agente: "alex" };
       return { papel: ehDoHarvey(m) ? "harvey" : "equipe", texto };
     })
     .filter((f): f is Fala => f !== null);
@@ -427,7 +430,7 @@ export async function processarEvento(evento: EventoSc): Promise<string> {
  * Só a mensagem do cliente, na conversa que é do Harvey, gera resposta.
  * `refeito`: o turno pensa de novo porque outro turno respondeu enquanto ele pensava (ver `destinoDaResposta`).
  */
-async function processarMensagem(evento: EventoSc, refeito = false): Promise<string> {
+async function processarMensagem(evento: EventoSc, refeito = false, extra: { notaDaTriagem?: string } = {}): Promise<string> {
   if (evento.type !== "conversation:message") return "ignorado: tipo";
   const conversa = evento.payload.conversation;
   const msg = evento.payload.message;
@@ -521,7 +524,9 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   // As fotos que o cliente mandou nesta conversa: o Harvey olha (e vão para a cotação, se houver).
   // Conversa que a equipe começou: o Harvey continua no nome de quem falava e lê
   // a conversa inteira (a sessão cortaria o que a equipe já combinou com o cliente).
-  const voz = vozDaConversa(msgs);
+  // Alex, B2C Sales (HARVEY_ALEX): a conversa é dele, ele fala no nome dele (nunca no de quem da equipe falava).
+  const alex = agenteDaVez(estado, estado?.tipo as string | null | undefined) === "alex";
+  const voz = alex ? null : vozDaConversa(msgs);
   const sessao = voz ? msgs : sessaoAtual(msgs);
   const fotos = await fotosDaConversa(sessao);
   const { quem, contas, sobreQuem: sobreDaPessoa, postcodesConhecidos } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
@@ -536,6 +541,8 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       sobreDaPessoa,
       telefone ? await contextoDoExpress(sb, telefone) : null,
       telefone ? await contextoDaRetomada(sb, telefone) : null,
+      // O Harvey acabou de passar para o Alex: o que ele apurou vai junto neste primeiro turno.
+      alex && extra.notaDaTriagem ? `Harvey (front desk) passed this chat to you just now. What he found out:\n${extra.notaDaTriagem}` : null,
       // O código do Welcome que o lead recebeu por e-mail (dono, 24/10/2026, ticket 51755).
       quem.tipo !== "parceiro" && telefone ? await welcomeDoTelefone(sb, telefone).then((w) => (w ? contextoDoWelcome(w) : null)).catch(() => null) : null,
     ].filter(Boolean).join(" ") || undefined;
@@ -546,7 +553,8 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       // enquanto o Harvey atende é "AI agent", só leitura, e o job ficava sem status nem nota. Aí vale o do lead.
       ticketDaConversa: () => ticketDeTrabalho(telefone ?? "").then((t) => t.editavel[0] ?? t.conversa), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)),
       // book_team_price com o dono por agente: só depois do Give back de uma pessoa (dono.ts).
-      devolvidaPelaEquipe: devolvidaEm(estado?.motivo_passagem as string | null | undefined) !== null },
+      devolvidaPelaEquipe: devolvidaEm(estado?.motivo_passagem as string | null | undefined) !== null,
+      ...(alex && quem.tipo !== "parceiro" ? { perfil: "alex" as const } : {}) },
     chamarSite,
     await catalogo(),
   );
@@ -557,7 +565,9 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   if (r.resposta) {
     // O ritmo de uma pessoa atendendo três clientes (ritmo.ts). O relógio conta da primeira mensagem
     // do cliente sem resposta: três mensagens seguidas não recomeçam a espera a cada uma.
-    const ultimaDoHarvey = [...sessao].reverse().find((m) => ehDoHarvey(m));
+    // Na conversa do Alex só a fala dele conta (a linha de passagem do Harvey não é "outro turno").
+    const ehDaVez = (m: MensagemSc) => ehDoHarvey(m) && (!alex || m.metadata?.agente === "alex");
+    const ultimaDoHarvey = [...sessao].reverse().find(ehDaVez);
     const semResposta = sessao.filter((m) => m.author.type === "user" && (!ultimaDoHarvey || Date.parse(m.received) > Date.parse(ultimaDoHarvey.received)));
     const desde = Date.parse(semResposta[0]?.received ?? msg.received ?? "") || Date.now();
     const quente = !!ultimaDoHarvey && !!semResposta[0] && Date.parse(semResposta[0].received) - Date.parse(ultimaDoHarvey.received) <= 90_000;
@@ -575,7 +585,9 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       await digitando(conversa.id);
       await new Promise((ok) => setTimeout(ok, Math.min(resta, 6_000)));
     }
-    const { data: agora } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    const { data: agora } = await sb.from("harvey_wa_conversas").select("estado, motivo_passagem").eq("conversation_id", conversa.id).maybeSingle();
+    // A conversa passou para o Alex enquanto o Harvey pensava (outro turno): quem responde é o Alex.
+    if (!alex && agora?.estado === "harvey" && agenteDaVez(agora, estado?.tipo as string | null | undefined) === "alex") return `refeito pelo Alex: ${await processarMensagem(evento, true, extra)}`;
     const recentes = await historico(conversa.id, 10).catch(() => []);
     const depois = recentes.filter((m) => Date.parse(m.received) > Date.parse(msg.received ?? ""));
     const equipeEscreveu = depois.some(ehDaEquipe);
@@ -585,13 +597,14 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       resposta: r.resposta,
       comEfeito: !!(r.checkout || r.cotacaoPedida || r.passarParaEquipe),
       clienteEscreveuDeNovo: depois.some((m) => m.author.type === "user" && m.id !== msg.id),
-      outroTurnoRespondeu: depois.some(ehDoHarvey),
+      outroTurnoRespondeu: depois.some(ehDaVez),
       refeito,
-      ultimaDoHarvey: [...recentes].reverse().find(ehDoHarvey)?.content.text ?? null,
+      ultimaDoHarvey: [...recentes].reverse().find(ehDaVez)?.content.text ?? null,
     });
-    if (destino === "repensar") return `refeito: ${await processarMensagem(evento, true)}`;
+    if (destino === "repensar") return `refeito: ${await processarMensagem(evento, true, extra)}`;
     if (destino !== "enviar") return `descartado: ${destino}`;
-    await enviarTexto(conversa.id, r.resposta, voz);
+    if (alex) await enviarTexto(conversa.id, r.resposta, NOME_DO_ALEX, "alex");
+    else await enviarTexto(conversa.id, r.resposta, voz);
   }
 
   // Parceiro não é lead de venda. Cliente com job em andamento também não (morador respondendo o
@@ -689,6 +702,9 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
     Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivoComDono(r.passarParaEquipe, estado?.motivo_passagem as string | null | undefined) });
   }
+  // Harvey (triagem) passou para o Alex (HARVEY_ALEX): a conversa fica com um agente, agora o Alex.
+  const paraOAlex = !!r.passarParaAlex && !r.passarParaEquipe && !alex;
+  if (paraOAlex) Object.assign(mudancas, { motivo_passagem: motivoDaPassagemParaAlex(estado?.motivo_passagem as string | null | undefined), chases: 0 });
   // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Sourcing e nota para a equipe, conversa continua com ele.
   if (r.cotacaoPedida && !r.passarParaEquipe) {
     const feito = await cotacaoPedidaNoTicket(telefone, `🤖 Harvey asked partners to price this on WhatsApp (he stays in the chat).\n\n${r.cotacaoPedida.nota}`).catch((e) => `falhou: ${e instanceof Error ? e.message : e}`);
@@ -708,6 +724,12 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   if (r.cotacao && quem.tipo !== "parceiro")
     await assuntoPadraoNaConversa(telefone, { origem: deAnuncio ? "WhatsApp ad" : "WhatsApp", servico: r.cotacao.servico, nome: quem.tipo === "cliente" ? quem.cliente.full_name : (msg.author.displayName ?? null), postcode: r.cotacao.postcode }).catch((e) => console.error("[harvey-wa] assunto", e));
   if (r.checkout) await mandarEventoWhatsApp(sb, { telefone, evento: "InitiateCheckout", chave: r.checkout.ref, valor: r.checkout.total }).catch((e) => console.error("[harvey-wa] meta checkout", e));
+  if (paraOAlex) {
+    await registrarDecisao({ origem: "whatsapp", ticketId: await ticketPeloTelefone(telefone).catch(() => null), decisao: `Harvey passed the WhatsApp chat to Alex (B2C sales): ${r.passarParaAlex!.resumo.slice(0, 300)}`, regra: "pass_to_alex (owner, 10/11/2026)", pendente: "Alex: price and book" }, sb);
+    console.log("[harvey-wa] passou ao Alex:", conversa.id);
+    // O Alex responde já, no mesmo turno (mesma mensagem do cliente; sem esperar outra).
+    return `passou ao Alex: ${await processarMensagem(evento, true, { notaDaTriagem: r.passarParaAlex!.resumo })}`;
+  }
   return r.passarParaEquipe ? `passou: ${r.passarParaEquipe}` : r.cotacaoPedida ? `cotação ${r.cotacaoPedida.referencia}` : r.checkout ? `${r.checkout.metodo === "bank" ? "transferência" : "link"} ${r.checkout.ref}` : "respondeu";
 }
 
@@ -773,7 +795,7 @@ export async function avisarPagamentoNoWhatsApp(email: string, bookingRef: strin
   const sb = createServiceClient();
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name, motivo_passagem")
     .eq("email", email.toLowerCase())
     .order("atualizado_em", { ascending: false })
     .limit(1)
@@ -793,6 +815,8 @@ type ConversaComCheckout = {
   /** Nome do perfil do WhatsApp: pessoa, então saudação B2C. */
   name?: string | null;
   chases?: number | null;
+  /** Para saber se a conversa é do Alex (HARVEY_ALEX): aí o "payment received" sai no nome dele. */
+  motivo_passagem?: string | null;
 };
 
 /**
@@ -804,7 +828,7 @@ export async function avisarPagamentoNoWhatsAppPelaReferencia(jobReference: stri
   const sb = createServiceClient();
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name, chases")
+    .select("conversation_id, checkout_deposit, checkout_ref, checkout_total, checkout_sinal, phone, name, chases, motivo_passagem")
     .eq("checkout_ref", jobReference)
     .order("atualizado_em", { ascending: false })
     .limit(1)
@@ -835,7 +859,8 @@ async function confirmarPagamentoNaConversa(
     console.error("[harvey-wa] nota de pagamento", e),
   );
   try {
-    await enviarTexto(data.conversation_id as string, texto);
+    if (conversaDoAlex(data.motivo_passagem)) await enviarTexto(data.conversation_id as string, texto, NOME_DO_ALEX, "alex");
+    else await enviarTexto(data.conversation_id as string, texto);
     return true;
   } catch (err) {
     console.error("[harvey-wa] aviso de pagamento", err);

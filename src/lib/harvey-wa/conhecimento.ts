@@ -6,18 +6,19 @@
  * em harvey_wa_config, chave "secao:<perfil>:<id>", valor { texto, anterior }:
  * texto editado vence o padrão, e "Reset to default" apaga a linha. Vale em até
  * 30 segundos, sem deploy. Preço não mora aqui: vem da tabela do site.
+ * O Alex (B2C Sales, HARVEY_ALEX) usa o mesmo esquema com o perfil "alex" (secao:alex:<id>).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
-import { secoesDo, type EdicoesDoPrompt, type PerfilDoHarvey } from "./prompt";
+import { secoesDo, type EdicoesDoPrompt, type PerfilDoPrompt } from "./prompt";
 
-export const chaveDaSecao = (perfil: PerfilDoHarvey, id: string) => `secao:${perfil}:${id}`;
+export const chaveDaSecao = (perfil: PerfilDoPrompt, id: string) => `secao:${perfil}:${id}`;
 
 export type EdicaoSalva = { texto: string; anterior: string | null; atualizado_em: string; atualizado_por: string | null };
 
 /** As edições de um perfil, com quem e quando editou (para a tela). */
-export async function lerEdicoes(sb: SupabaseClient, perfil: PerfilDoHarvey): Promise<Record<string, EdicaoSalva>> {
+export async function lerEdicoes(sb: SupabaseClient, perfil: PerfilDoPrompt): Promise<Record<string, EdicaoSalva>> {
   const { data, error } = await sb.from("harvey_wa_config").select("chave, valor, atualizado_em, atualizado_por").like("chave", `secao:${perfil}:%`);
   if (error) throw new Error(error.message);
   const ids = new Set(secoesDo(perfil).map((s) => s.id));
@@ -31,11 +32,11 @@ export async function lerEdicoes(sb: SupabaseClient, perfil: PerfilDoHarvey): Pr
   return out;
 }
 
-const cache = new Map<PerfilDoHarvey, { em: number; edicoes: EdicoesDoPrompt }>();
+const cache = new Map<PerfilDoPrompt, { em: number; edicoes: EdicoesDoPrompt }>();
 const VALIDADE_MS = 30_000;
 
 /** O que o cérebro usa: só os textos, com cache curto. Falhou a leitura, segue com o padrão. */
-export async function edicoesDoHarvey(perfil: PerfilDoHarvey): Promise<EdicoesDoPrompt> {
+export async function edicoesDoHarvey(perfil: PerfilDoPrompt): Promise<EdicoesDoPrompt> {
   // Bateria contra o texto do código, sem o que está gravado na tela (prompt novo antes de valer).
   if (process.env.HARVEY_SEM_EDICOES === "1") return {};
   const c = cache.get(perfil);

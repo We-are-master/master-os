@@ -20,6 +20,8 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assumirConversa, conversaDoTicket, devolverConversa } from "@/lib/harvey-wa/controle";
+import { alexLigado } from "@/lib/harvey-wa/alex";
+import { agenteDoMotivo } from "@/lib/harvey-wa/dono";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +80,9 @@ export async function GET(req: NextRequest) {
     const ticket = numeroDoTicket(req.nextUrl.searchParams.get("ticket"));
     if (!ticket) return NextResponse.json({ error: "ticket is required" }, { status: 400 });
     const { conversa, pausado } = await situacao(ticket);
-    return NextResponse.json({ encontrada: !!conversa, estado: conversa?.estado ?? null, nome: conversa?.name ?? null, pausado });
+    // Com o Alex ligado, o app diz qual agente atende (ou para quem o Give back devolve). Desligado, a resposta de sempre.
+    const agente = alexLigado() && conversa ? { agente: agenteDoMotivo(conversa.motivo_passagem) } : {};
+    return NextResponse.json({ encontrada: !!conversa, estado: conversa?.estado ?? null, nome: conversa?.name ?? null, pausado, ...agente });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "failed" }, { status: 500 });
   }

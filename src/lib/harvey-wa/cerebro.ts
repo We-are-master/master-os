@@ -11,18 +11,24 @@ import { fichaDaFerramenta, type FichaDoJob } from "./ficha-do-job";
 import { ajustesDoHarvey, catalogoComAjustes, ferramentaLiberada, instrucoesDosAjustes, type AjustesDoHarvey } from "./ajustes";
 import { textoDasRegras } from "./regras";
 import { edicoesDoHarvey } from "./conhecimento";
-import { promptDoHarvey, promptDoParceiro } from "./prompt";
+import { promptDoAlex, promptDoHarvey, promptDoParceiro, TRIAGEM_COM_ALEX } from "./prompt";
 import type { ChamadaAoSite } from "./site";
 import { decidirDesconto } from "./desconto";
 import { faltandoParaCotar, postcodeDaCotacao, precoDoCatalogoJaDado } from "./pedido-de-cotacao";
 import { prometeuAEquipe } from "./turno";
 import { podeFecharPeloPrecoDaEquipe } from "./dono";
+import { alexLigado, FERRAMENTAS_DO_ALEX, FERRAMENTAS_QUE_O_HARVEY_PERDE } from "./alex";
 
 /** book_team_price sem o Give back da equipe (só com HARVEY_DONO_POR_AGENTE=1). */
 export const ERRO_SEM_GIVE_BACK =
   "The team has not handed this chat back to you to close. Do not book it: hand off to the team with need \"close\" and every detail, so they close it.";
 
-export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
+export type Fala = {
+  papel: "cliente" | "harvey" | "equipe";
+  texto: string;
+  /** foto ou PDF que o cliente mandou */ midia?: string;
+  /** Fala de agente que não é o Harvey (metadata agente da Sunshine): o Alex, com HARVEY_ALEX. */ agente?: "alex";
+};
 
 /** O que o Harvey consulta e grava no OS. O motor liga no banco; a bateria usa de mentira. */
 export type Contas = {
@@ -86,6 +92,8 @@ export type Contexto = {
   conversaAnterior?: Fala[];
   /** Uma pessoa da equipe devolveu a conversa (Give back): com HARVEY_DONO_POR_AGENTE=1, só assim o book_team_price fecha (dono.ts). */
   devolvidaPelaEquipe?: boolean;
+  /** "alex": quem responde é o Alex (B2C Sales, alex.ts), com as ferramentas e os blocos dele. Sem isto, o Harvey. */
+  perfil?: "alex";
 };
 
 /** A conversa de antes do corte, em linhas, para o Harvey saber o que já aconteceu. */
@@ -132,6 +140,8 @@ export type Resultado = {
   documentos: unknown[];
   /** Cotação pedida com o Harvey ficando na conversa: o motor põe o ticket em Bidding e a nota para a equipe. */
   cotacaoPedida?: { referencia: string; nota: string } | null;
+  /** O Harvey (triagem) passou a conversa para o Alex (pass_to_alex, só com HARVEY_ALEX). */
+  passarParaAlex?: { resumo: string } | null;
 };
 
 const MODELO = () => process.env.HARVEY_WA_MODEL?.trim() || "gpt-5.4";
@@ -437,6 +447,49 @@ const FERRAMENTAS_PARCEIRO = [
   },
 ] as const;
 
+/** Só o Harvey (triagem) com o Alex ligado: passa o lead que cabe nas regras de preço para o Alex. */
+const PASSAR_PARA_ALEX = {
+  type: "function",
+  function: {
+    name: "pass_to_alex",
+    description:
+      "Passes the chat to Alex from our bookings team, who gives the price, sends the deposit link and books it. Use it as soon as you understand a job that fits our price list (handyman or small repairs by the hour: the £72 call out covers the first hour; the half day £180; the full day £329; or a catalogue package: cleaning, painting, certificates) and they want a price or to book. Not for work outside the price list (request_quote), complaints or existing bookings (hand_off_to_team).",
+    parameters: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "everything you found out, in English, one per line: service, what needs doing, rough size or hours, postcode, when they want it, photos seen, anything they worried about" },
+      },
+      required: ["summary"],
+    },
+  },
+} as const;
+
+type Ferramenta = (typeof FERRAMENTAS_CLIENTE)[number] | (typeof FERRAMENTAS_PARCEIRO)[number] | typeof PASSAR_PARA_ALEX;
+
+/**
+ * As ferramentas de quem responde. Porta do Alex desligada: as de sempre (a mesma lista).
+ * Ligada: o Alex tem só as de venda (FERRAMENTAS_DO_ALEX) e o Harvey perde preço, agenda,
+ * link e accept_quote, e ganha pass_to_alex. Os ajustes da tela filtram depois, como antes.
+ */
+export function ferramentasDoPerfil(a: { parceiro: boolean; perfil?: "alex"; alex: boolean }): readonly Ferramenta[] {
+  if (a.parceiro) return FERRAMENTAS_PARCEIRO;
+  if (!a.alex) return FERRAMENTAS_CLIENTE;
+  // O hand_off_to_team de sempre manda passar com need "close" depois do preço: com o Alex, quem fecha é ele.
+  const passagem = (f: (typeof FERRAMENTAS_CLIENTE)[number], descricao: string) => (f.function.name === "hand_off_to_team" ? { ...f, function: { ...f.function, description: descricao } } : f);
+  if (a.perfil === "alex") return FERRAMENTAS_CLIENTE.filter((f) => (FERRAMENTAS_DO_ALEX as readonly string[]).includes(f.function.name)).map((f) => passagem(f, PASSAGEM_DO_ALEX)) as readonly Ferramenta[];
+  return [...FERRAMENTAS_CLIENTE.filter((f) => !(FERRAMENTAS_QUE_O_HARVEY_PERDE as readonly string[]).includes(f.function.name)).map((f) => passagem(f, PASSAGEM_DA_TRIAGEM)), PASSAR_PARA_ALEX] as readonly Ferramenta[];
+}
+
+const PASSAGEM_DO_ALEX =
+  "Pass the conversation to a person from the team: a job outside our price list (need \"quote\"), no free day, complaints, changes to existing bookings, an explicit request to speak to a person, paying by bank transfer, business terms, or something you really do not know. Never just because you gave a price: you book catalogue jobs yourself with create_payment_link. What you write goes into an internal note on the ticket.";
+const PASSAGEM_DA_TRIAGEM =
+  "Pass the conversation to a person from the team: complaints, changes to existing bookings, an explicit request to speak to a person, paying by bank transfer, business terms (credit, payment terms, contracts), or something you really do not know. A job that fits our price list goes to Alex (pass_to_alex), not here; work outside it is request_quote. Not for electrical, gas or appliance repairs (we do not do them: decline politely). What you write goes into an internal note on the ticket.";
+
+/** A conversa vista pelo Alex: o que o Harvey escreveu vai marcado, para ele não achar que foi ele. */
+export function paraOpenAiDoAlex(conversa: Fala[]): Fala[] {
+  return conversa.map((f) => (f.papel === "harvey" && f.agente !== "alex" ? { ...f, texto: `[Harvey wrote] ${f.texto}` } : f));
+}
+
 /** As palavras de uma frase, sem pontuação nem maiúscula (para comparar frases). */
 function palavras(frase: string): Set<string> {
   return new Set(frase.toLowerCase().replace(/[’']/g, "").split(/[^a-z0-9£.]+/).map((w) => w.replace(/\.$/, "")).filter(Boolean));
@@ -521,10 +574,13 @@ function limparTexto(t: string): string {
 export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSite, catalogo: unknown): Promise<Resultado> {
   const r: Resultado = { resposta: null, passarParaEquipe: null, checkout: null, cotacao: null, ferramentas: [], documentos: [] };
   const parceiro = ctx.quem === "parceiro";
+  // Alex, B2C Sales (dono, 10/11/2026): só com HARVEY_ALEX (e o dono por agente). Desligada, nada muda.
+  const comAlex = !parceiro && alexLigado();
+  const ehAlex = comAlex && ctx.perfil === "alex";
   const midias = conversa.filter((f) => f.papel === "cliente" && f.midia);
   const ajustes = await ajustesDoHarvey();
   // Acesso desligado na tela = ferramenta fora da lista: ele não tem como usar.
-  const ferramentas = (parceiro ? FERRAMENTAS_PARCEIRO : FERRAMENTAS_CLIENTE).filter((f) => ferramentaLiberada(f.function.name, ajustes));
+  const ferramentas = ferramentasDoPerfil({ parceiro, perfil: ctx.perfil, alex: comAlex }).filter((f) => ferramentaLiberada(f.function.name, ajustes));
   // As regras do OS (/rules): o que vale para este público, lido a cada 30 s.
   const regrasDoOs = await textoDasRegras(parceiro ? "parceiro" : "cliente");
   ctx = { ...ctx, ajustes, conversa, textoDoCliente: conversa.filter((f) => f.papel === "cliente").map((f) => f.texto).join(" "), pagamento: escolhaDePagamento(conversa), ultimaMidia: midias[midias.length - 1]?.midia ?? null };
@@ -543,9 +599,10 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
   const n = maxFotosPorResposta();
   const fotos = parceiro || n === 0 ? [] : (ctx.fotos ?? []).slice(-n);
   // O que a equipe editou na tela /agents/harvey (cache de 30 s).
-  const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : "cliente");
+  const edicoes = await edicoesDoHarvey(parceiro ? "parceiro" : ehAlex ? "alex" : "cliente");
   const regras = parceiro ? "" : [await blocoDasRegras(), instrucoesDosAjustes(ajustes)].filter(Boolean).join("\n\n");
-  const msgs: MensagemOpenAi[] = [{ role: "system", content: (parceiro ? promptDoParceiro(new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes)) + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) + (ctx.welcomeNoChase ?? "") : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(conversa)];
+  const base = parceiro ? promptDoParceiro(new Date(), edicoes) : ehAlex ? promptDoAlex(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes) : promptDoHarvey(catalogoComAjustes(catalogo, ajustes), new Date(), edicoes) + (comAlex ? `\n\n${TRIAGEM_COM_ALEX}` : "");
+  const msgs: MensagemOpenAi[] = [{ role: "system", content: base + (regrasDoOs ? `\n\n${regrasDoOs}` : "") + (regras ? `\n\n${regras}` : "") + (sobre ? `\n\n# ${parceiro ? "This partner" : "This customer"}\n\n${sobre}` : "") + (ctx.falaComo && !parceiro ? instrucaoDeVoz(ctx.falaComo) : "") + (ctx.chase ? instrucaoDeChase(ctx.chase, ctx.horasSemResposta ?? 1) + (ctx.welcomeNoChase ?? "") : "") + (ctx.conversaAnterior?.length && !parceiro ? instrucaoDaConversaAnterior(ctx.conversaAnterior) : "") }, ...paraOpenAi(ehAlex ? paraOpenAiDoAlex(conversa) : conversa)];
   // As fotos da conversa entram por último, para o Harvey olhar de verdade.
   if (fotos.length) msgs.push({ role: "user", content: [{ type: "text", text: `[the photos they sent in this conversation, most recent last]` }, ...fotos.map((url) => ({ type: "image_url", image_url: { url } }))] });
 
@@ -560,7 +617,13 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       // ofereciam dia de cabeça). A instrução não bastou: volta uma vez e cobra.
       if (r.resposta && !parceiro && !ctx.chase && !cobrouAgenda && ofereceDia(r.resposta) && !r.ferramentas.includes("get_available_dates") && !r.ferramentas.includes("get_my_bookings")) {
         cobrouAgenda = true;
-        msgs.push({ role: "user", content: "[system] You named a day without calling get_available_dates. Do not send that. If they have the price and are ready for a day, call get_available_dates now and offer only days it returns. If not, rewrite your reply without naming any day." });
+        msgs.push({
+          role: "user",
+          content:
+            comAlex && !ehAlex
+              ? "[system] You named a day. Days and booking are Alex's: rewrite your reply without naming any day."
+              : "[system] You named a day without calling get_available_dates. Do not send that. If they have the price and are ready for a day, call get_available_dates now and offer only days it returns. If not, rewrite your reply without naming any day.",
+        });
         continue;
       }
       if (ctx.chase && (!r.resposta || /\bNO_CHASE\b/.test(r.resposta))) {
@@ -577,12 +640,17 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
       // não fica só na instrução, que o modelo às vezes esquece.
       // Já falou com a pessoa antes do corte de sessão também conta: nada de se apresentar de novo.
       const jaFalou = conversa.some((f) => f.papel !== "cliente") || (ctx.conversaAnterior ?? []).some((f) => f.papel !== "cliente");
+      if (ehAlex) return fecharRespostaDoAlex(r, conversa, ctx);
+      // Primeira resposta já passando para o Alex: só o nome, sem o "I'll be looking after you".
+      if (r.resposta && !jaFalou && r.passarParaAlex && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
+        r.resposta = `Hi there, I'm Harvey from Fixfy. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
+      }
       if (r.resposta && !jaFalou && !/\bI['’]m Harvey\b/i.test(r.resposta)) {
         r.resposta = `Hi there, I'm Harvey and I'll be looking after you. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
       }
       // Disse que vai chamar alguém sem chamar a ferramenta: a passagem acontece do mesmo jeito.
       // Cotação pedida não conta: ali ele fica na conversa e "a person from the team will message you" é o combinado.
-      if (r.resposta && !r.passarParaEquipe && !r.cotacaoPedida && prometeuAEquipe(r.resposta)) {
+      if (r.resposta && !r.passarParaEquipe && !r.cotacaoPedida && !r.passarParaAlex && prometeuAEquipe(r.resposta)) {
         r.passarParaEquipe = "Harvey said he would get the team (no tool call): check the conversation";
       }
       // O que já foi dito não se diz de novo (o "tools included, no call out fee" a cada resposta).
@@ -618,6 +686,25 @@ export async function pensar(conversa: Fala[], ctx: Contexto, site: ChamadaAoSit
 }
 
 /**
+ * O fim da resposta do Alex, no lugar das regras de apresentação do Harvey: se apresenta
+ * uma vez ("I'm Alex, from the Fixfy team"), nunca de novo, e não repete o que ele mesmo
+ * já disse. Prometeu a equipe sem a ferramenta: passa do mesmo jeito.
+ */
+function fecharRespostaDoAlex(r: Resultado, conversa: Fala[], ctx: Contexto): Resultado {
+  if (!r.resposta) return r;
+  const doAlex = conversa.filter((f) => f.papel === "harvey" && f.agente === "alex").map((f) => f.texto);
+  if (!r.passarParaEquipe && prometeuAEquipe(r.resposta)) r.passarParaEquipe = "Alex said he would get the team (no tool call): check the conversation";
+  if (!doAlex.length && !ctx.chase) {
+    if (!/\bI['’]m Alex\b/i.test(r.resposta)) r.resposta = `Hi, I'm Alex, from the Fixfy team. ${r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*/i, "")}`;
+    return r;
+  }
+  if (!ctx.chase) r.resposta = semRepetir(r.resposta, doAlex);
+  const sem = r.resposta.replace(/^(hi|hey|hello)( there)?[,!.]?\s*I['’]m Alex[^.!?]*[.!?]\s*/i, "").trim();
+  if (sem) r.resposta = sem.charAt(0).toUpperCase() + sem.slice(1);
+  return r;
+}
+
+/**
  * O lembrete para quem parou de responder: curto, do que ficou pendente, sem
  * repetir a conversa. Sem nada pendente (já pagou, disse tchau, passou para a
  * equipe), o modelo responde NO_CHASE e nada sai.
@@ -640,6 +727,8 @@ function selecaoLimpa(sel: unknown): Record<string, unknown> {
 }
 
 async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto, site: ChamadaAoSite, r: Resultado): Promise<unknown> {
+  // Com o Alex ligado, cada um só usa a lista dele (o Harvey não vende, o Alex não aceita quote por texto).
+  if (ctx.quem !== "parceiro" && alexLigado() && !ferramentasDoPerfil({ parceiro: false, perfil: ctx.perfil, alex: true }).some((f) => f.function.name === nome)) return { error: `unknown tool ${nome}` };
   if ("selection" in a) a.selection = selecaoLimpa(a.selection);
   if (nome === "get_quote") {
     const { data } = await site({ action: "quote", selection: a.selection, postcode: a.postcode, promoCode: ctx.ajustes?.pagamento.cupons === false ? undefined : a.promoCode });
@@ -801,8 +890,14 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     return d;
   }
   if (nome === "get_available_dates") return (await site({ action: "slots", services: Array.isArray(a.services) ? a.services : [] })).data;
+  if (nome === "pass_to_alex") {
+    // Só o Harvey (triagem) com a porta do Alex ligada; o Alex nunca passa para ele mesmo.
+    if (ctx.perfil === "alex" || ctx.quem === "parceiro" || !alexLigado()) return { error: `unknown tool ${nome}` };
+    r.passarParaAlex = { resumo: String(a.summary ?? "").trim() };
+    return { ok: true, note: "Alex has the chat now. Send one short line in your own words, like \"I'll get Alex from our bookings team to sort this with you.\" No price, no day, no link. Then stop." };
+  }
   if (nome === "hand_off_to_team") {
-    r.passarParaEquipe = String(a.reason || "Harvey asked for a person");
+    r.passarParaEquipe = String(a.reason || (ctx.perfil === "alex" ? "Alex asked for a person" : "Harvey asked for a person"));
     r.precisaDe = typeof a.need === "string" ? a.need : null;
     r.notaParaEquipe = typeof a.details === "string" ? a.details : null;
     r.fichaDoJob = fichaDaFerramenta(a.job);
@@ -830,7 +925,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
       access: a.access,
       accessNote: a.accessNote ?? "",
       parking: a.parking,
-      notes: [a.notes, "Booked on WhatsApp with Harvey."].filter(Boolean).join(" "),
+      notes: [a.notes, ctx.perfil === "alex" ? "Booked on WhatsApp with Alex (B2C sales)." : "Booked on WhatsApp with Harvey."].filter(Boolean).join(" "),
       contact: { firstName: a.firstName, lastName: a.lastName, email: a.email, phone: ukPhone(ctx.telefone) },
       address: { line1: a.addressLine1, line2: a.addressLine2 ?? "" },
       promoCode: ctx.ajustes?.pagamento.cupons === false ? undefined : a.promoCode || undefined,
