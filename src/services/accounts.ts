@@ -244,11 +244,11 @@ export async function updateAccount(id: string, input: Partial<Account>): Promis
 
   // Colunas da fatura por conta (migrations 323 e 324): se o banco ainda não as tem, salva o resto.
   // Só reclama quando alguém realmente preencheu uma delas.
-  const DA_FATURA = ["billing_legal_name", "invoice_fee_vat", "invoice_cc_emails"] as const;
+  const DA_FATURA = ["billing_legal_name", "billing_vat_number", "invoice_fee_vat", "invoice_cc_emails"] as const;
   if (DA_FATURA.some((c) => isSupabaseMissingColumnError(first.error, c))) {
     const p = payload as Record<string, unknown>;
-    const preencheu = Boolean(p.billing_legal_name) || p.invoice_fee_vat === true || (Array.isArray(p.invoice_cc_emails) && p.invoice_cc_emails.length > 0);
-    if (preencheu) throw new Error("This database is missing the invoice columns for accounts. Run migrations 323 and 324, or clear the invoice legal name, copies and VAT option.");
+    const preencheu = Boolean(p.billing_legal_name) || Boolean(p.billing_vat_number) || p.invoice_fee_vat === true || (Array.isArray(p.invoice_cc_emails) && p.invoice_cc_emails.length > 0);
+    if (preencheu) throw new Error("This database is missing the invoice columns for accounts. Run migrations 323, 324 and 361, or clear the invoice legal name, VAT number, copies and VAT option.");
     const rest = { ...p };
     for (const c of DA_FATURA) delete rest[c];
     const retry = await supabase.from("accounts").update(rest).eq("id", id).select().single();

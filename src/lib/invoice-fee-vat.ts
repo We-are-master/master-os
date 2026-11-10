@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { COMMISSION_VAT_RATE_PCT, FIXFY_LEGAL_ENTITY } from "@/lib/agent-model/commission";
 
 export type FeeVatBreakdown = { net: number; vat: number; ratePct: number; vatNumber: string };
-export type InvoiceBillTo = { legalName: string; addressLines: string[]; companyNumber: string | null };
+export type InvoiceBillTo = { legalName: string; addressLines: string[]; companyNumber: string | null; vatNumber?: string | null };
 
 const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -54,6 +54,21 @@ export async function loadAccountInvoiceFormat(
   if (!legalName) return null;
   return {
     feeVat: { ...splitFeeVat(feeGross), ratePct: COMMISSION_VAT_RATE_PCT, vatNumber: FIXFY_LEGAL_ENTITY.vatNumber },
-    billTo: { legalName, addressLines: addressLines(a.address), companyNumber: (a.crn ?? "").trim() || null },
+    billTo: {
+      legalName,
+      addressLines: addressLines(a.address),
+      companyNumber: (a.crn ?? "").trim() || null,
+      vatNumber: await loadClientVatNumber(admin, accountId),
+    },
   };
+}
+
+/**
+ * VAT number do cliente (mig 361). Lido à parte: sem a coluna no banco a fatura
+ * sai como antes, sem a linha, e o formato da conta continua valendo.
+ */
+async function loadClientVatNumber(admin: SupabaseClient, accountId: string): Promise<string | null> {
+  const { data, error } = await admin.from("accounts").select("billing_vat_number").eq("id", accountId).maybeSingle();
+  if (error || !data) return null;
+  return ((data as { billing_vat_number?: string | null }).billing_vat_number ?? "").trim() || null;
 }

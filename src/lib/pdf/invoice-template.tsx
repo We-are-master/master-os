@@ -354,6 +354,12 @@ function LegacyInvoicePDF({ data }: { data: InvoicePdfData }) {
                     <Text style={styles.refVal}>{data.billTo.companyNumber}</Text>
                   </View>
                 ) : null}
+                {data.billTo.vatNumber ? (
+                  <View style={styles.refRow}>
+                    <Text style={styles.refKey}>VAT no.</Text>
+                    <Text style={styles.refVal}>{data.billTo.vatNumber}</Text>
+                  </View>
+                ) : null}
               </>
             ) : null}
             <View style={styles.refRow}>
@@ -631,6 +637,7 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
               <Text key={i} style={sheet.line}>{l}</Text>
             ))}
             {data.billTo?.companyNumber ? <Text style={sheet.line}>Company No. {data.billTo.companyNumber}</Text> : null}
+            {data.billTo?.vatNumber ? <Text style={sheet.line}>VAT No. {data.billTo.vatNumber}</Text> : null}
           </View>
           <View style={sheet.colMeta}>
             <Text style={sheet.metaLabelFirst}>{paid ? "Receipt Date" : "Invoice Date"}</Text>
