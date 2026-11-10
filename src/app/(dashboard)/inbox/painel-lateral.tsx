@@ -22,10 +22,9 @@ import { Midia, SO_ROTULO, Tique, comPendentes, conversaRascunho, diaDaMensagemO
 import { EVENTO_ABRIR_CONVERSA, type PedidoDeConversa } from "@/lib/inbox/abrir-conversa";
 import { tempo } from "./movimento";
 import type { ConversaDaCaixa, MensagemDaCaixa } from "./tipos";
-import { Avatar, rotuloAoLado, SeletorDeTipo, corDoAutor, nomeDoAutor, type TipoRapido } from "./ui";
+import { Avatar, rotuloAoLado, SeletorDeTipo, abaDoTipo, contarPorAba, corDoAutor, nomeDoAutor, type TipoRapido } from "./ui";
 
 /** Clients junta cliente, conta e lead, como na /inbox. */
-const DE_CLIENTE = new Set(["cliente", "conta", "outro"]);
 
 const LARGURA_PADRAO = 400;
 const LARGURA_MIN = 340;
@@ -131,8 +130,7 @@ export function AtendimentoLateral() {
   const comNaoLidas = conversas.filter((c) => naoLidas(c) > 0).length;
   const q = busca.trim().toLowerCase();
   const lista = conversas.filter((c) => {
-    if (aba === "parceiro" && c.tipo !== "parceiro") return false;
-    if (aba === "cliente" && !DE_CLIENTE.has(c.tipo)) return false;
+    if (aba !== "todas" && abaDoTipo(c.tipo) !== aba) return false;
     if (!q) return true;
     return [c.nome, c.contato, c.org?.nome ?? "", ...c.tags].some((v) => v.toLowerCase().includes(q));
   });
@@ -326,11 +324,8 @@ export function AtendimentoLateral() {
                     <SeletorDeTipo
                       ativo={aba}
                       onTroca={setAba}
-                      n={{ todas: conversas.length, parceiro: conversas.filter((c) => c.tipo === "parceiro").length, cliente: conversas.filter((c) => DE_CLIENTE.has(c.tipo)).length }}
-                      naoLidas={(() => {
-                        const l = conversas.filter((c) => naoLidas(c) > 0);
-                        return { todas: l.length, parceiro: l.filter((c) => c.tipo === "parceiro").length, cliente: l.filter((c) => DE_CLIENTE.has(c.tipo)).length };
-                      })()}
+                      n={contarPorAba(conversas)}
+                      naoLidas={contarPorAba(conversas.filter((c) => naoLidas(c) > 0))}
                     />
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto">
