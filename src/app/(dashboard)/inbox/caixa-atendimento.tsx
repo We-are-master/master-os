@@ -930,7 +930,7 @@ export function CaixaAtendimento({
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_300px] overflow-hidden bg-card">
+    <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_392px_minmax(0,1fr)_300px] overflow-hidden bg-card">
       {/* Lateral */}
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
         <p className="px-2.5 pb-2 pt-1.5 text-[17px] font-bold tracking-tight text-text-primary">Inbox</p>
