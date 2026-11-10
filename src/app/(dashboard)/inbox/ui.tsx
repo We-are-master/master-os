@@ -414,7 +414,7 @@ export function SeletorDeTipo({
     ["parceiro", "Partners", Wrench],
   ];
   return (
-    <div role="tablist" aria-label="Contact type" className="@container grid grid-cols-4 gap-0.5 rounded-lg bg-surface-tertiary p-0.5">
+    <div role="tablist" aria-label="Contact type" className="@container grid grid-cols-4 rounded-lg bg-surface-tertiary p-0.5">
       {opcoes.map(([k, t, Icone]) => (
         <button
           key={k}
@@ -424,11 +424,11 @@ export function SeletorDeTipo({
           onClick={() => onTroca(k)}
           className={cn(
             // Quatro abas da mesma largura (dono, 10/11/2026): nada quebra nem vaza; o ícone só entra com espaço.
-            "flex h-7 min-w-0 items-center justify-center gap-[3px] overflow-hidden whitespace-nowrap rounded-md px-0.5 text-[12px] font-medium transition-colors",
+            "flex h-7 min-w-0 items-center justify-center gap-0.5 overflow-hidden whitespace-nowrap rounded-md px-0.5 text-[12px] font-medium transition-colors",
             ativo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
           )}
         >
-          {Icone ? <Icone className="hidden h-3 w-3 shrink-0 @[420px]:block" /> : null}
+          {Icone ? <Icone className="hidden h-3 w-3 shrink-0 @[352px]:block" /> : null}
           <span className="truncate">{t}</span>
           {naoLidas?.[k] ? (
             <span
