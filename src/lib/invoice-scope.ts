@@ -12,8 +12,9 @@
  */
 import { limparScope } from "@/lib/scope-limpo";
 
-const MAX_TAREFAS = 12;
-const MAX_CHARS = 220;
+// Scope completo na fatura (dono, 10/11/2026: "todo invoice com o scope detalhado").
+const MAX_TAREFAS = 40;
+const MAX_CHARS = 600;
 
 const BLOCO = /^(WORK|PROPERTY|ACCESS|MATERIALS|NOTES)$/;
 

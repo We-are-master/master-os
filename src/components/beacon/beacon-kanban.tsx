@@ -12,6 +12,7 @@ import { getSupabase } from "@/services/base";
 import { updateJob } from "@/services/jobs";
 import { FxAvatar, Pill } from "@/components/fx/primitives";
 import { CancelJobModal } from "@/components/jobs/cancel-job-modal";
+import { JobPeekHost, abrirJobNoModal, cliqueAbreModal } from "@/components/jobs/job-peek-modal";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
 import { useFrontendSetup } from "@/hooks/use-frontend-setup";
 import { marginColorClass, type MarginThresholds } from "@/lib/frontend-setup";
@@ -353,6 +354,7 @@ export function BeaconKanban({ filters = DEFAULT_BEACON_FILTERS }: { filters?: B
 
   return (
     <>
+      <JobPeekHost />
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto pb-1 lg:overflow-x-visible">
         {STAGES.map((stage) => {
           const bucket = grouped.get(stage.id) ?? { items: [], revenue: 0 };
@@ -552,8 +554,6 @@ function KanbanCard({
   return (
     <Link
       href={`/jobs/${job.id}`}
-      target="_blank"
-      rel="noopener noreferrer"
       draggable={!pending}
       onMouseEnter={(e) => setHoverRect(e.currentTarget.getBoundingClientRect())}
       onMouseLeave={() => setHoverRect(null)}
@@ -565,7 +565,16 @@ function KanbanCard({
       onClick={(e) => {
         // Block navigation while a status update is mid-flight to avoid a
         // confusing route change before the drop confirms.
-        if (pending) e.preventDefault();
+        if (pending) {
+          e.preventDefault();
+          return;
+        }
+        // Clique simples: o job card num modal grande, sem sair do board (10/11/2026).
+        // Cmd/Ctrl-clique segue abrindo em outra aba.
+        if (cliqueAbreModal(e)) {
+          e.preventDefault();
+          abrirJobNoModal(job.id, job.reference);
+        }
       }}
       className={cn(
         "group relative block bg-card border rounded-lg p-3 hover:shadow-fx-2 transition-shadow",

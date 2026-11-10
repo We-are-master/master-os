@@ -90,7 +90,6 @@ export function MonthHealth() {
   const meta = d?.meta ?? null;
   const receita = d?.receita ?? 0;
   const pct = meta ? Math.min(100, (receita / meta) * 100) : 0;
-  const pctHoje = (dia / ultimoDia) * 100;
   const esperadoHoje = meta ? (meta * dia) / ultimoDia : 0;
   const atras = meta ? esperadoHoje - receita : 0;
   const ticketMedio = d && d.jobs > 0 ? receita / d.jobs : 0;
@@ -108,6 +107,11 @@ export function MonthHealth() {
   const sinalLucro: Sinal | null = !d ? null : resultado >= 0 || bruto >= fixosAteHoje ? "ok" : bruto >= fixosAteHoje * 0.8 ? "watch" : "bad";
 
   const pctLucroBar = meta ? Math.min(pct, (Math.max(0, bruto) / meta) * 100) : 0;
+  // Marca vermelha = custo fixo do mês na escala da meta (dono, 10/11/2026: "a
+  // vermelha tem que ser onde fica o breakeven do custo fixo"). Quando o verde
+  // (lucro bruto) chega nela, o mês pagou os fixos.
+  const pctEmpate = meta && fixos > 0 ? Math.min(100, (fixos / meta) * 100) : null;
+  const faltaEmpate = Math.max(0, fixos - bruto);
 
   // 3. Caixa
   const aberto = r ? r.aguardando.valor + r.vencido.valor : 0;
@@ -155,7 +159,7 @@ export function MonthHealth() {
           titulo="Revenue"
           sinal={sinalVendas}
           rotulo={sinalVendas === "ok" ? "On target" : "Below target"}
-          dica={`Revenue this ${nomeDoMes}: every job with a visit this month that was not cancelled, open jobs included. The marker on the bar is where the month should be today if the target were hit in a straight line.`}
+          dica={`Revenue this ${nomeDoMes}: every job with a visit this month that was not cancelled, open jobs included. Green is gross profit. The red marker is the month's fixed costs (${m(fixos)}): when the green reaches it, the month has broken even.${meta ? ` On a straight line to the target, revenue should be ${m(esperadoHoje)} today.` : ""}`}
         >
           <p className="mt-2 whitespace-nowrap leading-none">
             <span className="text-[24px] font-semibold tracking-[-0.02em] tabular-nums text-text-primary">{d ? m(receita) : "—"}</span>
@@ -171,10 +175,14 @@ export function MonthHealth() {
                 <div className="absolute inset-y-0 left-0 rounded-full bg-fx-navy" style={{ width: `${pct}%` }} />
                 {/* O lucro bruto anda junto da venda, em verde, na mesma escala da meta. */}
                 <div className="absolute inset-y-0 left-0 rounded-full bg-fx-green" style={{ width: `${pctLucroBar}%` }} />
-                <span aria-hidden className="absolute -top-1 h-4 w-0.5 rounded-full bg-fx-red" style={{ left: `${pctHoje}%` }} />
+                {pctEmpate != null ? (
+                  <span aria-hidden title={`Break even: gross profit of ${m(fixos)} covers fixed costs`} className="absolute -top-1 h-4 w-0.5 rounded-full bg-fx-red" style={{ left: `${pctEmpate}%` }} />
+                ) : null}
               </div>
               <p className="mt-2 text-[12px] text-text-tertiary tabular-nums">
-                {Math.round(pct)}% · should be {m(esperadoHoje)} today · {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
+                {Math.round(pct)}% ·{" "}
+                {fixos > 0 ? (faltaEmpate > 0 ? `${m(faltaEmpate)} gross profit to break even` : "break even reached") : `should be ${m(esperadoHoje)} today`} ·{" "}
+                {diasRestantes} day{diasRestantes === 1 ? "" : "s"} left
               </p>
               <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-fx-green tabular-nums">
                 <i aria-hidden className="inline-block h-1.5 w-3 rounded-full bg-fx-green" />

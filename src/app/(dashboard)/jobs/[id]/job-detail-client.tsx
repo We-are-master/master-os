@@ -181,6 +181,7 @@ import {
 } from "@/lib/partner-payout-schedule";
 import { createOrAppendJobInvoice } from "@/services/weekly-account-invoice";
 import { getSupabase } from "@/services/base";
+import { taxasPorHoraDoJob, type TaxasPorHora } from "@/lib/hourly-rates-for-job";
 import { syncJobAfterInvoicePaidToLedger } from "@/lib/sync-job-after-invoice-paid";
 import {
   allConfiguredReportsApproved,
@@ -494,6 +495,72 @@ type JobDetailStatusContext = {
  * Texto da pergunta antes de trocar o modo de cobrança (por hora ↔ preço fechado) ou
  * os valores (dono, 19/10/2026: "tem que ser sempre perguntado").
  */
+/**
+ * A agenda do job nos campos do formulário (data, chegada, janela, término),
+ * igual ao Reschedule. Usado pelo Reschedule e pelo Assign partner.
+ */
+/** Avisa cliente e parceiro que endereço ou cliente do job mudou (antigo riscado). */
+async function avisarDadosNovosDoJob(
+  jobId: string,
+  mudancas: Array<{ campo: "address" | "client"; antes: string | null; depois: string | null }>,
+) {
+  const norm = (v: string | null) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const reais = mudancas.filter((m) => String(m.depois ?? "").trim() && norm(m.antes) !== norm(m.depois));
+  if (!reais.length) return;
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/notify-job-details`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mudancas: reais }),
+    });
+    const body = (await res.json().catch(() => null)) as
+      | { client?: { ok: boolean; error?: string }; partner?: { ok: boolean; error?: string }; error?: string }
+      | null;
+    if (!res.ok) {
+      toast.error(`Saved, but the update email did not go: ${body?.error ?? res.status}`);
+      return;
+    }
+    const lados: string[] = [];
+    if (body?.client?.ok) lados.push("client");
+    if (body?.partner?.ok) lados.push("partner");
+    if (lados.length) toast.success(`Update emailed to the ${lados.join(" and ")}`);
+    for (const [nome, r] of [["client", body?.client], ["partner", body?.partner]] as const) {
+      if (r && !r.ok && r.error) toast.error(`The ${nome} update email failed: ${r.error}`);
+    }
+  } catch {
+    toast.error("Saved, but the update email did not go.");
+  }
+}
+
+function inputsDaAgendaDoJob(
+  job: Pick<Job, "scheduled_date" | "scheduled_start_at" | "scheduled_end_at" | "scheduled_finish_date">,
+  usesSlots: boolean,
+): { date: string; time: string; windowMins: string; finish: string } {
+  let date = "";
+  let time = usesSlots ? "09:00" : "";
+  let windowMins = usesSlots ? "180" : "";
+  if (job.scheduled_start_at) {
+    const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
+    date = ymd;
+    time = hm;
+    windowMins = "";
+    if (job.scheduled_end_at) {
+      const startMs = new Date(job.scheduled_start_at).getTime();
+      const endMs = new Date(job.scheduled_end_at).getTime();
+      windowMins = snapArrivalWindowMinutes(startMs, endMs);
+    }
+    if (usesSlots && time && windowMins) {
+      const canon = canonicalArrivalSlotValues(time, windowMins);
+      time = canon.from;
+      windowMins = canon.mins;
+    }
+  } else if (job.scheduled_date) {
+    date = job.scheduled_date.slice(0, 10);
+  }
+  const finish = usesSlots ? "" : job.scheduled_finish_date?.slice(0, 10) ?? job.scheduled_date?.slice(0, 10) ?? "";
+  return { date, time, windowMins, finish };
+}
+
 function confirmacaoDoModoDeCobranca(a: {
   para: "fixed" | "hourly";
   antes: { client: number; partner: number; hourly: boolean };
@@ -859,6 +926,8 @@ interface JobDetailClientProps {
    * synchronously from this payload.
    */
   initialBundle?: JobDetailBundle | null;
+  /** Abre um job fora da rota /jobs/[id] (o modal do Live operations, 10/11/2026). */
+  jobId?: string;
 }
 
 type InternalJobNote = {
@@ -1301,10 +1370,10 @@ function CompensacaoEditavel({
   );
 }
 
-export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
+export function JobDetailClient({ initialBundle, jobId }: JobDetailClientProps = {}) {
   const params = useParams();
   const router = useRouter();
-  const id = params?.id as string | undefined;
+  const id = jobId ?? (params?.id as string | undefined);
   const { profile } = useProfile();
   const [refundOpen, setRefundOpen] = useState(false);
   const {
@@ -1370,6 +1439,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const [financeHubHourlyDraft, setFinanceHubHourlyDraft] = useState<{ rate?: string; start?: string; end?: string }>({});
   const [financeHubExtraDrafts, setFinanceHubExtraDrafts] = useState<Record<string, { amount?: string; reason?: string }>>({});
   const [savingFinanceHub, setSavingFinanceHub] = useState(false);
+  /** Trocar Hourly/Fixed dentro do Finance summary (o único lugar do preço, 10/11/2026). */
+  const [financeHubMode, setFinanceHubMode] = useState<"fixed" | "hourly" | null>(null);
+  const [financeHubSwitch, setFinanceHubSwitch] = useState<{
+    clientRate: string; partnerRate: string; hours: string; client: string; partner: string; fonte: TaxasPorHora["fonte"] | null;
+  }>({ clientRate: "", partnerRate: "", hours: "", client: "", partner: "", fonte: null });
+  const [financeHubSwitchLoading, setFinanceHubSwitchLoading] = useState(false);
+  /** Avisar cliente/conta e parceiro do preço novo, com o antigo riscado. */
+  const [financeHubNotify, setFinanceHubNotify] = useState(true);
+  /** Extras em edição no modal; o resto aparece como linha (dono, 10/11/2026). */
+  const [financeHubExtrasEditando, setFinanceHubExtrasEditando] = useState<Set<string>>(() => new Set());
   const [moneySubmitting, setMoneySubmitting] = useState(false);
   /** Reports tab: office types the partner's report when he never sends one. */
   const [fillReportOpen, setFillReportOpen] = useState(false);
@@ -1566,6 +1645,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   /** "Date to be confirmed": o job sai da agenda e fica em Action required como Date TBC (18/10/2026). */
   const [qrSemData, setQrSemData] = useState(false);
   const [qrDate, setQrDate] = useState("");
+  // Assign partner também confirma data e chegada (dono, 10/11/2026).
+  const [paDate, setPaDate] = useState("");
+  const [paTime, setPaTime] = useState("");
+  const [paWindowMins, setPaWindowMins] = useState("");
+  const [paFinish, setPaFinish] = useState("");
   const [qrTime, setQrTime] = useState("");
   const [qrWindowMins, setQrWindowMins] = useState("");
   const [qrExpectedFinish, setQrExpectedFinish] = useState("");
@@ -2919,6 +3003,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   }, [canManageJobs]);
 
   useEffect(() => {
+    if (!partnerModalOpen || !job) return;
+    const a = inputsDaAgendaDoJob(job, isOneOffScheduleUi);
+    setPaDate(a.date);
+    setPaTime(a.time);
+    setPaWindowMins(a.windowMins);
+    setPaFinish(a.finish);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partnerModalOpen]);
+
+  useEffect(() => {
     if (!partnerModalOpen) return;
     setLoadingPartners(true);
     listPartners({ pageSize: 200, status: "active" })
@@ -3251,6 +3345,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   const partnerAssignCanConfirm =
     partnerAssignIsUnassign ||
     (!!selectedPartnerId &&
+      !!paDate.trim() &&
       (partnerAssignRateType === "hourly"
         ? !!partnerAssignServiceId &&
           Math.max(0.5, Number(partnerAssignBilledHours) || 0) > 0 &&
@@ -3438,6 +3533,10 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         const prevPid = current?.id === jobId ? (current.partner_id ?? null) : null;
         const newPid = updated.partner_id ?? null;
         const partnerKeyTouched = updates.partner_id !== undefined;
+        const SCHEDULE_KEYS = ["scheduled_date", "scheduled_start_at", "scheduled_end_at", "scheduled_finish_date"] as const;
+        const scheduleChanged = SCHEDULE_KEYS.some(
+          (k) => k in updates && (current?.[k] ?? null) !== (updated[k] ?? null),
+        );
         if (partnerKeyTouched && prevPid && prevPid !== newPid) {
           // Do lado de quem sai, unassign e swap são a mesma notícia: "o job
           // foi cancelado" — sem motivo (dono, 24/08). O que acontece com o
@@ -3474,12 +3573,8 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               skipPush: true, // notifyAssignedPartnerAboutJob already pushed
             });
           } else {
-            // Detect a real reschedule (date/time values changed without
-            // changing the partner). Send the rescheduled email + push.
-            const SCHEDULE_KEYS = ["scheduled_date", "scheduled_start_at", "scheduled_end_at", "scheduled_finish_date"] as const;
-            const scheduleChanged = SCHEDULE_KEYS.some(
-              (k) => k in updates && (current?.[k] ?? null) !== (updated[k] ?? null),
-            );
+            // Real reschedule (date/time changed without changing the partner):
+            // rescheduled email + push to the partner.
             if (scheduleChanged) {
               void notifyPartnerJobChange({
                 jobId,
@@ -3491,15 +3586,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                 newTimeLine: null,
                 skipPush: true, // notifyAssignedPartnerAboutJob already pushed
               });
-              // O cliente também é avisado. Trava e política da conta são
-              // decididas na rota, não aqui.
-              void notifyClientReschedule({
-                jobId,
-                oldDateLine: (current && formatJobScheduleLine(current)) || "Previously scheduled",
-                newDateLine: formatJobScheduleLine(updated) || "New schedule",
-              });
             }
           }
+        }
+        // Remarcação só vira e-mail com parceiro alocado (dono, 10/11/2026):
+        // sem parceiro o job ainda é rascunho nosso e a data troca por dentro.
+        // Com parceiro, cliente (ou conta) e parceiro recebem os dois.
+        if (scheduleChanged && newPid) {
+          void notifyClientReschedule({
+            jobId,
+            oldDateLine: (current && formatJobScheduleLine(current)) || "Previously scheduled",
+            newDateLine: formatJobScheduleLine(updated) || "New schedule",
+          });
         }
       }
       return updated;
@@ -3700,174 +3798,47 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     [],
   );
 
+  /**
+   * "Service and assignment": troca o serviço e o modo de atribuição, e SÓ isso.
+   *
+   * Preço e Hourly/Fixed moram num lugar só, o Finance summary (dono, 10/11/2026:
+   * "pra editar e ficar bom coloca pra editar price e hourly or fixed em um lugar
+   * só ... pra evitar erro e duplicação"). Antes este modal também trocava o modo
+   * e recalculava pelo catálogo puro, sem o Rate card da conta: o JOB-9831 da
+   * Crestview virou £144 (2h a £72) com acordo de £90.
+   */
   const handleSaveJobTypeEdit = useCallback(async () => {
     if (!job) return;
-    const extras = Number(job.extras_amount ?? 0);
-    const deposit = Number(job.customer_deposit ?? 0);
     const prev = job;
     const assignmentChange = jobAssignmentModePatch(job, jobAssignmentEditMode);
-    // Escolher "Auto assign" aqui dentro dispara o mesmo broadcast do botão
-    // rápido, então faz a mesma pergunta — e antes de salvar qualquer campo,
-    // para que desistir do disparo não deixe o job já mexido.
     if (assignmentChange?.dispatchAutoAssign && !(await confirmAutoAssignBroadcast(job.id, job.reference))) return;
 
-    if (jobTypeEditTarget === "hourly") {
+    const patch: Partial<Job> = {};
+    if (job.job_type === "hourly") {
       const service = catalogServicesJobType.find((c) => c.id === jobTypeEditCatalogId);
-      if (!jobTypeEditCatalogId || !service) {
+      if (!service) {
         toast.error("Select a Call Out type from Services.");
         return;
       }
-      const hrs = resolveInitialBilledHours(service.default_hours);
-      const clientRate = Number(service.hourly_rate) || 0;
-      const partnerRate = partnerHourlyRateFromCatalogBundle(service.partner_cost, service.default_hours);
-      const totals = computeHourlyTotals({
-        elapsedSeconds: hrs * 3600,
-        clientHourlyRate: clientRate,
-        partnerHourlyRate: partnerRate,
-      });
-      const customer_final_payment =
-        Math.round(Math.max(0, totals.clientTotal + extras - deposit) * 100) / 100;
-      const titleOut = normalizeTypeOfWork(service.name) || service.name;
-      /**
-       * Trocar o modo de cobrança muda o que o cliente paga e o que o parceiro recebe:
-       * sempre pergunta, com o antes e o depois (dono, 19/10/2026: JOB-9766 virou £90/h
-       * sem ninguém ver e a fatura saiu de £78 para £90).
-       */
-      if (
-        !window.confirm(
-          confirmacaoDoModoDeCobranca({
-            para: "hourly",
-            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
-            depois: { client: totals.clientTotal, partner: totals.partnerTotal },
-            taxas: { client: clientRate, partner: partnerRate, horas: totals.billedHours },
-          }),
-        )
-      ) {
+      patch.catalog_service_id = service.id;
+      patch.title = normalizeTypeOfWork(service.name) || service.name;
+    } else {
+      const titleTrim = jobTypeEditFixedTitle.trim();
+      if (!titleTrim) {
+        toast.error("Select type of work.");
         return;
       }
-      const patch: Partial<Job> = {
-        job_type: "hourly",
-        catalog_service_id: jobTypeEditCatalogId,
-        hourly_client_rate: clientRate,
-        hourly_partner_rate: partnerRate,
-        billed_hours: totals.billedHours,
-        client_price: totals.clientTotal,
-        partner_cost: totals.partnerTotal,
-        title: titleOut,
-        customer_final_payment,
-      };
-      if (assignmentChange) Object.assign(patch, assignmentChange.patch);
-      setSavingJobTypeEdit(true);
-      try {
-        const updated = await handleJobUpdate(job.id, patch, { silent: true });
-        await logFieldChanges(
-          "job",
-          prev.id,
-          prev.reference,
-          prev as unknown as Record<string, unknown>,
-          patch as Record<string, unknown>,
-          profile?.id,
-          profile?.full_name,
-        );
-        if (updated) {
-          await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-          await syncSelfBillAfterJobChange(updated);
-          try {
-            await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
-          } catch {
-            /* non-blocking */
-          }
-          await refreshJobFinance();
-          if (assignmentChange?.dispatchAutoAssign) {
-            try {
-              const res = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`, {
-                method: "POST",
-              });
-              if (res.ok) {
-                toast.success("Auto assign — matched partners invited");
-              } else {
-                const body = (await res.json().catch(() => null)) as { error?: string } | null;
-                toast.error(body?.error ?? "Could not send auto assign invites");
-              }
-            } catch {
-              toast.error("Could not send auto assign invites");
-            }
-          } else if (assignmentChange?.patch.status === "unassigned" && prev.status === "auto_assigning") {
-            toast.success("Switched to manual assign");
-          }
-          setJobTypeEditOpen(false);
-          toast.success("Job is now hourly — amounts and invoice updated.");
-          toast.success(`Rates updated to ${titleOut} pricing`, { duration: 3000 });
-        }
-      } finally {
-        setSavingJobTypeEdit(false);
-      }
-      return;
+      const titleOut = normalizeTypeOfWork(titleTrim) || titleTrim;
+      const matchedService = catalogServicesJobType.find((s) => {
+        const a = (normalizeTypeOfWork(s.name) || s.name || "").trim().toLowerCase();
+        const b = titleOut.trim().toLowerCase();
+        return a === b || a.includes(b) || b.includes(a);
+      });
+      patch.title = titleOut;
+      patch.catalog_service_id = matchedService?.id ?? job.catalog_service_id ?? null;
     }
-
-    const titleTrim = jobTypeEditFixedTitle.trim();
-    if (!titleTrim) {
-      toast.error("Select type of work.");
-      return;
-    }
-    const titleOut = normalizeTypeOfWork(titleTrim) || titleTrim;
-    const clientPriceConfirmed = Math.max(0, Math.round((Number(fixedInlineClientRate) || 0) * 100) / 100);
-    const partnerCostConfirmed = Math.max(0, Math.round((Number(fixedInlinePartnerCost) || 0) * 100) / 100);
-    const matchedService = catalogServicesJobType.find((s) => {
-      const a = (normalizeTypeOfWork(s.name) || s.name || "").trim().toLowerCase();
-      const b = titleOut.trim().toLowerCase();
-      return a === b || a.includes(b) || b.includes(a);
-    });
-    const defaultHours = resolveInitialBilledHours(matchedService?.default_hours);
-    const clientRate = Number(matchedService?.hourly_rate ?? 0) || 0;
-    const partnerRate = matchedService
-      ? partnerHourlyRateFromCatalogBundle(matchedService.partner_cost, matchedService.default_hours)
-      : 0;
-    const matchedTotals = matchedService
-      ? computeHourlyTotals({
-          elapsedSeconds: defaultHours * 3600,
-          clientHourlyRate: clientRate,
-          partnerHourlyRate: partnerRate,
-        })
-      : null;
-    const clientFixo = clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0);
-    const partnerFixo = partnerCostConfirmed > 0 ? partnerCostConfirmed : matchedTotals?.partnerTotal ?? Number(job.partner_cost ?? 0);
-    const mudouValor =
-      Math.abs(clientFixo - Number(job.client_price ?? 0)) >= 0.01 || Math.abs(partnerFixo - Number(job.partner_cost ?? 0)) >= 0.01;
-    if (
-      (job.job_type === "hourly" || mudouValor) &&
-      !window.confirm(
-        confirmacaoDoModoDeCobranca({
-          para: "fixed",
-          antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
-          depois: { client: clientFixo, partner: partnerFixo },
-          taxas: job.job_type === "hourly"
-            ? { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) }
-            : undefined,
-        }),
-      )
-    ) {
-      return;
-    }
-    const patch: Partial<Job> = {
-      job_type: "fixed",
-      catalog_service_id: matchedService?.id ?? null,
-      hourly_client_rate: matchedService ? clientRate : null,
-      hourly_partner_rate: matchedService ? partnerRate : null,
-      billed_hours: null,
-      title: titleOut,
-      client_price: clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0),
-      partner_cost: partnerCostConfirmed > 0 ? partnerCostConfirmed : matchedTotals?.partnerTotal ?? Number(job.partner_cost ?? 0),
-      customer_final_payment: Math.round(
-        Math.max(
-          0,
-          (clientPriceConfirmed > 0 ? clientPriceConfirmed : matchedTotals?.clientTotal ?? Number(job.client_price ?? 0)) +
-            Number(job.extras_amount ?? 0) -
-            Number(job.customer_deposit ?? 0),
-        ) * 100,
-      ) / 100,
-    };
     if (assignmentChange) Object.assign(patch, assignmentChange.patch);
+
     setSavingJobTypeEdit(true);
     try {
       const updated = await handleJobUpdate(job.id, patch, { silent: true });
@@ -3881,21 +3852,13 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         profile?.full_name,
       );
       if (updated) {
-        await bumpLinkedInvoiceAmountsToJobSchedule(updated);
-        await syncSelfBillAfterJobChange(updated);
-        try {
-          await reconcileJobCustomerPaymentFlags(getSupabase(), updated.id);
-        } catch {
-          /* non-blocking */
-        }
-        await refreshJobFinance();
         if (assignmentChange?.dispatchAutoAssign) {
           try {
             const res = await fetch(`/api/jobs/${encodeURIComponent(job.id)}/dispatch-auto-assign-invites`, {
               method: "POST",
             });
             if (res.ok) {
-              toast.success("Auto assign — matched partners invited");
+              toast.success("Auto assign · matched partners invited");
             } else {
               const body = (await res.json().catch(() => null)) as { error?: string } | null;
               toast.error(body?.error ?? "Could not send auto assign invites");
@@ -3907,21 +3870,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           toast.success("Switched to manual assign");
         }
         setJobTypeEditOpen(false);
-        toast.success("Job is now fixed price.");
-        if (matchedService) {
-          toast.success(`Rates updated to ${titleOut} pricing`, { duration: 3000 });
-        }
+        toast.success("Service updated");
       }
     } finally {
       setSavingJobTypeEdit(false);
     }
   }, [
     job,
-    jobTypeEditTarget,
     jobTypeEditCatalogId,
     jobTypeEditFixedTitle,
-    fixedInlineClientRate,
-    fixedInlinePartnerCost,
     catalogServicesJobType,
     jobAssignmentEditMode,
     jobAssignmentModePatch,
@@ -3929,7 +3886,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     handleJobUpdate,
     profile?.id,
     profile?.full_name,
-    refreshJobFinance,
   ]);
 
   const handleSaveHourlyTimeEdit = useCallback(async () => {
@@ -4374,6 +4330,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_final_payment: accessFin.customer_final_payment,
       });
       if (updated) {
+        void avisarDadosNovosDoJob(job.id, [
+          { campo: "address", antes: job.property_address ?? null, depois: trimmed },
+          ...((job.client_id ?? "") !== propertyEdit.client_id
+            ? [{ campo: "client" as const, antes: job.client_name ?? null, depois: canonicalClientName ?? null }]
+            : []),
+        ]);
         if (linkedClient?.id) {
           setJobHeaderLinkedClient({
             id: linkedClient.id,
@@ -4417,6 +4379,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         customer_final_payment: accessFin.customer_final_payment,
       });
       if (updated) {
+        void avisarDadosNovosDoJob(job.id, [{ campo: "address", antes: job.property_address ?? null, depois: trimmed }]);
         await bumpLinkedInvoiceAmountsToJobSchedule(updated);
         try {
           await reconcileJobCustomerPaymentFlags(getSupabase(), job.id);
@@ -5117,43 +5080,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
   const openQuickReschedule = useCallback(() => {
     if (!job) return;
-    const usesSlots = isOneOffScheduleUi;
-    if (job.scheduled_start_at) {
-      const { ymd, hm } = utcIsoToUkWallClock(job.scheduled_start_at);
-      setQrDate(ymd);
-      let time = hm;
-      let wm = "";
-      if (job.scheduled_end_at) {
-        const startMs = new Date(job.scheduled_start_at).getTime();
-        const endMs = new Date(job.scheduled_end_at).getTime();
-        wm = snapArrivalWindowMinutes(startMs, endMs);
-      }
-      if (usesSlots && time && wm) {
-        const canon = canonicalArrivalSlotValues(time, wm);
-        time = canon.from;
-        wm = canon.mins;
-      }
-      setQrTime(time);
-      setQrWindowMins(wm);
-    } else if (job.scheduled_date) {
-      setQrDate(job.scheduled_date.slice(0, 10));
-      if (usesSlots) {
-        setQrTime("09:00");
-        setQrWindowMins("180");
-      } else {
-        setQrTime("");
-        setQrWindowMins("");
-      }
-    } else {
-      setQrDate("");
-      setQrTime(usesSlots ? "09:00" : "");
-      setQrWindowMins(usesSlots ? "180" : "");
-    }
-    setQrExpectedFinish(
-      usesSlots
-        ? ""
-        : job.scheduled_finish_date?.slice(0, 10) ?? job.scheduled_date?.slice(0, 10) ?? "",
-    );
+    const agenda = inputsDaAgendaDoJob(job, isOneOffScheduleUi);
+    setQrDate(agenda.date);
+    setQrTime(agenda.time);
+    setQrWindowMins(agenda.windowMins);
+    setQrExpectedFinish(agenda.finish);
     setQrPartnerId(job.partner_id ?? "");
     setQrCatalogServiceId(job.catalog_service_id ?? "");
     setQrClientPrice(String(job.client_price ?? 0));
@@ -5179,8 +5110,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     );
     if (!schedulePatch) return;
 
-    const clientVal = Math.max(0, Math.round((Number(qrClientPrice) || 0) * 100) / 100);
-    const partnerVal = Math.max(0, Math.round((Number(qrPartnerCost) || 0) * 100) / 100);
 
     const svc = qrCatalogServiceId.trim()
       ? catalogServicesJobType.find((c) => c.id === qrCatalogServiceId.trim())
@@ -5199,8 +5128,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       ...titlePatch,
       partner_id: pid || null,
       partner_name: partnerRow ? (partnerRow.company_name?.trim() || partnerRow.contact_name) : null,
-      client_price: clientVal,
-      partner_cost: partnerVal,
     };
 
     if (job.recurrence_series_id && !job.recurrence_detached_at) {
@@ -5250,7 +5177,11 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       toast.success(
         qrSemData
           ? "Date removed: the job stays in Action required as Date TBC until the customer confirms a day."
-          : qrNotify ? "Booking updated — customer and partner notified." : "Booking updated silently — nobody was notified.",
+          : !pid
+            ? "Booking updated. No partner yet, so nobody was emailed."
+            : qrNotify
+              ? "Booking updated. Customer and partner notified."
+              : "Booking updated silently. Nobody was notified.",
       );
     } finally {
       setQuickRescheduleSaving(false);
@@ -5263,8 +5194,6 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
     qrExpectedFinish,
     qrPartnerId,
     qrCatalogServiceId,
-    qrClientPrice,
-    qrPartnerCost,
     qrNotify,
     qrSemData,
     partners,
@@ -7122,12 +7051,57 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       const reasonChanged = draft.reason != null && draft.reason.trim() !== entry.reason.trim();
       return amountChanged || reasonChanged;
     });
+  const financeHubModoAtual: "fixed" | "hourly" = job.job_type === "hourly" ? "hourly" : "fixed";
+  const financeHubTrocando = financeHubMode != null && financeHubMode !== financeHubModoAtual;
+  /** Totais do modo novo, a partir dos campos da troca. */
+  const financeHubSwitchTotals = (() => {
+    if (!financeHubTrocando) return null;
+    const r2 = (n: number) => Math.round(Math.max(0, n) * 100) / 100;
+    if (financeHubMode === "hourly") {
+      const horas = resolveInitialBilledHours(null, financeHubSwitch.hours);
+      const cr = Number(financeHubSwitch.clientRate) || 0;
+      const pr = Number(financeHubSwitch.partnerRate) || 0;
+      return { client: r2(cr * horas), partner: r2(pr * horas), horas, cr, pr };
+    }
+    return { client: r2(Number(financeHubSwitch.client) || 0), partner: r2(Number(financeHubSwitch.partner) || 0), horas: 0, cr: 0, pr: 0 };
+  })();
+  const financeHubAnyDirty = financeHubDirty || financeHubTrocando;
+  const escolherModoNoHub = async (modo: "fixed" | "hourly") => {
+    if (modo === financeHubModoAtual) {
+      setFinanceHubMode(null);
+      return;
+    }
+    setFinanceHubMode(modo);
+    setFinanceHubBaseDraft(null);
+    setFinanceHubHourlyDraft({});
+    const atualCliente = String(Math.max(0, Number(job.client_price ?? 0)));
+    const atualParceiro = String(Math.max(0, Number(job.partner_cost ?? 0)));
+    if (modo === "fixed") {
+      setFinanceHubSwitch({ clientRate: "", partnerRate: "", hours: "", client: atualCliente, partner: atualParceiro, fonte: null });
+      return;
+    }
+    setFinanceHubSwitchLoading(true);
+    try {
+      const t = await taxasPorHoraDoJob(job);
+      setFinanceHubSwitch({
+        clientRate: String(t.clientRate), partnerRate: String(t.partnerRate), hours: String(t.hours),
+        client: atualCliente, partner: atualParceiro, fonte: t.fonte,
+      });
+    } catch {
+      setFinanceHubSwitch({ clientRate: "", partnerRate: "", hours: "1", client: atualCliente, partner: atualParceiro, fonte: null });
+      toast.error("Could not load the hourly rates. Type them in.");
+    } finally {
+      setFinanceHubSwitchLoading(false);
+    }
+  };
   const setFinanceHubExtraDraft = (entry: ExtraHistoryEntry, patch: { amount?: string; reason?: string }) =>
     setFinanceHubExtraDrafts((prev) => ({ ...prev, [entry.idRaw]: { ...prev[entry.idRaw], ...patch } }));
   const resetFinanceHubDrafts = () => {
     setFinanceHubBaseDraft(null);
     setFinanceHubHourlyDraft({});
     setFinanceHubExtraDrafts({});
+    setFinanceHubMode(null);
+    setFinanceHubNotify(true);
   };
 
   /** Extras as plain fields: no pencil, no edit mode, no second modal. Type it, hit Save. */
@@ -7137,56 +7111,111 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       return <p className="text-xs text-text-tertiary">No extras on this side.</p>;
     }
     return (
-      <div className="max-h-[38vh] space-y-2 overflow-y-auto pr-1">
+      <div className="max-h-[38vh] divide-y divide-border-light overflow-y-auto rounded-xl border border-border-light px-3 dark:divide-[#2f3642] dark:border-[#2f3642]">
         {financeHubEntries.map((entry) => {
           const locked = isFallbackExtraEntry(entry) || !canEdit;
           const value = financeHubExtraValue(entry);
           return (
-            <div key={entry.id} className="flex flex-wrap items-center gap-2">
-              <span className="w-20 shrink-0 truncate text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
-                {entry.extraType}
-              </span>
-              {locked ? (
-                <span className="min-w-0 flex-1 truncate text-xs text-text-tertiary">
-                  {isFallbackExtraEntry(entry) ? "From job totals, not itemized" : value.reason}
-                </span>
-              ) : (
-                <Input
-                  value={value.reason}
-                  onChange={(e) => setFinanceHubExtraDraft(entry, { reason: e.target.value })}
-                  className="h-9 min-w-[8rem] flex-1 text-xs"
-                  placeholder="Reason"
-                  aria-label={`${entry.extraType} reason`}
-                  disabled={savingFinanceHub}
-                />
-              )}
-              {locked ? (
-                <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums">
-                  {formatCurrency(Math.abs(Number(entry.amount)))}
-                </span>
-              ) : (
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={value.amount}
-                  onChange={(e) => setFinanceHubExtraDraft(entry, { amount: e.target.value })}
-                  className="h-9 w-24 shrink-0 text-sm tabular-nums"
-                  aria-label={`${entry.extraType} amount`}
-                  disabled={savingFinanceHub}
-                />
-              )}
-              <button
-                type="button"
-                onClick={() => handleDeleteExtraEntry(entry)}
-                disabled={locked || savingFinanceHub || deletingExtraId === entry.idRaw}
-                className="shrink-0 text-text-tertiary transition-colors hover:text-red-500 disabled:opacity-30"
-                title="Remove this extra"
-                aria-label="Remove extra"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            // Linha por extra (dono, 10/11/2026: "coloca em linha ao invés de
+            // field, se tiver mais fica organizado"). O lápis abre os campos.
+            (() => {
+              const tipoBruto = String(entry.extraType ?? "").trim();
+              const [tipoCurto, ...resto] = tipoBruto.split(/\s*[—–]\s*/);
+              const detalhe = resto.join(": ").trim();
+              const detalheUtil = detalhe && !/^extras?$/i.test(detalhe) ? detalhe : "";
+              const desconto = /discount|refund|credit/i.test(tipoBruto) || Number(entry.amount) < 0;
+              const editando = !locked && financeHubExtrasEditando.has(entry.id);
+              const valorNum = Math.abs(Number(value.amount === "" ? entry.amount : value.amount) || 0);
+              const motivo = isFallbackExtraEntry(entry)
+                ? "From job totals, not itemized"
+                : String(value.reason ?? "").replace(/\s*[—–]\s*/g, ": ").trim() || "No reason";
+              const alternar = (on: boolean) =>
+                setFinanceHubExtrasEditando((prev) => {
+                  const n = new Set(prev);
+                  if (on) n.add(entry.id);
+                  else n.delete(entry.id);
+                  return n;
+                });
+              return (
+                <div key={entry.id} className="py-2.5">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={cn(
+                        "mt-0.5 inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                        desconto
+                          ? "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                          : "bg-surface-hover text-text-secondary",
+                      )}
+                      title={tipoBruto}
+                    >
+                      {tipoCurto || "Extra"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      {editando ? (
+                        <Input
+                          value={value.reason}
+                          onChange={(e) => setFinanceHubExtraDraft(entry, { reason: e.target.value })}
+                          className="h-8 w-full text-sm"
+                          placeholder="Reason"
+                          aria-label={`${entry.extraType} reason`}
+                          disabled={savingFinanceHub}
+                          autoFocus
+                        />
+                      ) : (
+                        <p className="text-sm leading-snug text-text-primary">{motivo}</p>
+                      )}
+                      {detalheUtil ? <p className="mt-0.5 text-[11px] text-text-tertiary">{detalheUtil}</p> : null}
+                    </div>
+                    {editando ? (
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={value.amount}
+                        onChange={(e) => setFinanceHubExtraDraft(entry, { amount: e.target.value })}
+                        className="h-8 w-24 shrink-0 text-right text-sm font-semibold tabular-nums"
+                        aria-label={`${entry.extraType} amount`}
+                        disabled={savingFinanceHub}
+                      />
+                    ) : (
+                      <span
+                        className={cn(
+                          "mt-0.5 shrink-0 text-sm font-semibold tabular-nums",
+                          desconto ? "text-red-600 dark:text-red-400" : "text-text-primary",
+                        )}
+                      >
+                        {desconto ? "−" : "+"}
+                        {formatCurrency(valorNum)}
+                      </span>
+                    )}
+                    <div className="flex shrink-0 items-center">
+                      {!locked ? (
+                        <button
+                          type="button"
+                          onClick={() => alternar(!editando)}
+                          disabled={savingFinanceHub}
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary disabled:opacity-30"
+                          title={editando ? "Done" : "Edit this extra"}
+                          aria-label={editando ? "Done editing" : "Edit extra"}
+                        >
+                          {editando ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteExtraEntry(entry)}
+                        disabled={locked || savingFinanceHub || deletingExtraId === entry.idRaw}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:hover:bg-red-950/40"
+                        title="Remove this extra"
+                        aria-label="Remove extra"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
           );
         })}
       </div>
@@ -7194,6 +7223,52 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
   };
 
   /** The whole modal saves at once: base first, then every extra the user touched. */
+  /** Manda o aviso de preço novo e diz na tela o que saiu e o que não saiu. */
+  const avisarPrecoNovo = async (
+    atual: Job,
+    anterior: Job,
+    antes: { client: number; partner: number },
+    depois: { client: number; partner: number },
+  ) => {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(atual.id)}/notify-price-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          antes,
+          depois,
+          billing: atual.job_type === "hourly" ? "hourly" : "fixed",
+          taxas:
+            atual.job_type === "hourly"
+              ? {
+                  antes: anterior.job_type === "hourly"
+                    ? { client: Number(anterior.hourly_client_rate ?? 0), partner: Number(anterior.hourly_partner_rate ?? 0) }
+                    : null,
+                  depois: { client: Number(atual.hourly_client_rate ?? 0), partner: Number(atual.hourly_partner_rate ?? 0) },
+                  horas: Number(atual.billed_hours ?? 0) || null,
+                }
+              : undefined,
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { client?: { ok: boolean; skipped?: string; error?: string }; partner?: { ok: boolean; skipped?: string; error?: string }; error?: string }
+        | null;
+      if (!res.ok) {
+        toast.error(`Price saved, but the email did not go: ${body?.error ?? res.status}`);
+        return;
+      }
+      const lados: string[] = [];
+      if (body?.client?.ok) lados.push("client");
+      if (body?.partner?.ok) lados.push("partner");
+      if (lados.length) toast.success(`New price emailed to the ${lados.join(" and ")}`);
+      for (const [nome, r] of [["client", body?.client], ["partner", body?.partner]] as const) {
+        if (r && !r.ok && r.error) toast.error(`The ${nome} price email failed: ${r.error}`);
+      }
+    } catch {
+      toast.error("Price saved, but the email did not go.");
+    }
+  };
+
   const saveFinanceHub = async () => {
     if (!job) return;
     const side = financeHubTab;
@@ -7234,15 +7309,59 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       dirtyExtras.push({ entry, amount, reason });
     }
 
-    if (!baseDirty && dirtyExtras.length === 0) {
+    if (!baseDirty && dirtyExtras.length === 0 && !financeHubTrocando) {
       setFinanceHubOpen(false);
       return;
+    }
+
+    /** O que o cliente paga (base + extras) e o que o parceiro recebe, antes e depois. */
+    const valoresDoJob = (j: Job) => ({
+      client: Math.round((Number(j.client_price ?? 0) + Number(j.extras_amount ?? 0)) * 100) / 100,
+      partner: Math.round(Number(j.partner_cost ?? 0) * 100) / 100,
+    });
+    const antes = valoresDoJob(job);
+
+    // Trocar Hourly/Fixed muda o que os dois lados recebem: sempre pergunta, com o antes e o depois.
+    const troca = financeHubTrocando ? financeHubSwitchTotals : null;
+    if (troca) {
+      if (financeHubMode === "hourly" && !(troca.cr > 0)) {
+        toast.error("Set the client rate per hour.");
+        return;
+      }
+      if (
+        !window.confirm(
+          confirmacaoDoModoDeCobranca({
+            para: financeHubMode === "hourly" ? "hourly" : "fixed",
+            antes: { client: Number(job.client_price ?? 0), partner: Number(job.partner_cost ?? 0), hourly: job.job_type === "hourly" },
+            depois: { client: troca.client, partner: troca.partner },
+            taxas: financeHubMode === "hourly"
+              ? { client: troca.cr, partner: troca.pr, horas: troca.horas }
+              : job.job_type === "hourly"
+                ? { client: Number(job.hourly_client_rate ?? 0), partner: Number(job.hourly_partner_rate ?? 0), horas: Number(job.billed_hours ?? 0) }
+                : undefined,
+          }),
+        )
+      ) {
+        return;
+      }
     }
 
     setSavingFinanceHub(true);
     try {
       let current: Job = job;
-      if (horaSujo && financeHubHourly) {
+      if (troca) {
+        const extrasCliente = Number(current.extras_amount ?? 0);
+        const sinal = Number(current.customer_deposit ?? 0);
+        current = await persistFinanceHubBase(current, "client", troca.client, {
+          job_type: financeHubMode === "hourly" ? "hourly" : "fixed",
+          hourly_client_rate: financeHubMode === "hourly" ? troca.cr : current.hourly_client_rate ?? null,
+          hourly_partner_rate: financeHubMode === "hourly" ? troca.pr : current.hourly_partner_rate ?? null,
+          billed_hours: financeHubMode === "hourly" ? troca.horas : null,
+          customer_final_payment: Math.round(Math.max(0, troca.client + extrasCliente - sinal) * 100) / 100,
+          partner_cost: troca.partner,
+          partner_agreed_value: Math.round((troca.partner + Number(current.materials_cost ?? 0)) * 100) / 100,
+        });
+      } else if (horaSujo && financeHubHourly) {
         const h = financeHubHourly;
         if (h.segundos <= 0) {
           toast.error("Leave time must be after arrival.");
@@ -7277,8 +7396,21 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
       setJob(current);
       setFinanceHubBaseDraft(null);
       setFinanceHubExtraDrafts({});
+      setFinanceHubMode(null);
       setFinanceHubOpen(false);
-      toast.success("Finances updated");
+      toast.success(troca ? (financeHubMode === "hourly" ? "Job is now hourly" : "Job is now fixed price") : "Finances updated");
+
+      /**
+       * Preço mudou: avisa cliente (ou a conta) e parceiro, com o antigo riscado,
+       * como a remarcação (dono, 10/11/2026). Cada lado só recebe o próprio valor;
+       * quem não mudou não recebe nada. Sem espera: o valor já está salvo.
+       */
+      const depois = valoresDoJob(current);
+      const mudouCliente = Math.abs(depois.client - antes.client) >= 0.01;
+      const mudouParceiro = Math.abs(depois.partner - antes.partner) >= 0.01;
+      if (financeHubNotify && (mudouCliente || mudouParceiro)) {
+        void avisarPrecoNovo(current, job, antes, depois);
+      }
       /**
        * A recarga do financeiro vem DEPOIS de fechar a modal, e sem espera.
        *
@@ -8313,7 +8445,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                       return job.title?.trim() ? (
                         <div className="flex min-w-0 flex-nowrap items-center gap-1.5 [&>*]:shrink-0 [&>*]:whitespace-nowrap">
                           <p
-                            className={cn("inline-flex min-w-0 !shrink items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold", typePillClass)}
+                            className={cn("inline-flex h-7 min-w-0 !shrink items-center gap-1.5 rounded-md border border-transparent px-2.5 text-xs font-bold leading-none", typePillClass)}
                             title={job.title.trim()}
                           >
                             <JobTypeIcon className="h-[11px] w-[11px] shrink-0" />
@@ -8323,7 +8455,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                             <>
                               <span
                                 className={cn(
-                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 text-xs font-semibold leading-none text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
                                   job.job_type === "hourly" && "border-[#7c3aed]/40 bg-[#f5f3ff] text-[#5b21b6]",
                                 )}
                               >
@@ -8332,18 +8464,18 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                               </span>
                               {/* "Hourly (min 1 hour)" repete o Smart Price (ou contradiz o Fixed): só faixa de verdade (EPC, FRA) vira chip. */}
                               {job.catalog_band_label?.trim() && !/^hourly\b/i.test(job.catalog_band_label.trim()) ? (
-                                <span className={"inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
+                                <span className={"inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 text-xs font-semibold leading-none text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]"}>{job.catalog_band_label.trim()}</span>
                               ) : null}
                               <span
                                 className={cn(
-                                  "inline-flex items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 py-1 text-xs font-semibold text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
+                                  "inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface-hover px-2.5 text-xs font-semibold leading-none text-text-secondary dark:border-[#2f3440] dark:bg-[#1a202a]",
                                   jobScheduleKindLabel === "Recurring" && "border-primary/35 bg-primary/10 text-primary",
                                 )}
                               >
                                 {jobScheduleKindLabel === "Recurring" ? "Recurring" : "One-off"}
                               </span>
                               {jobPartnerListKind(job) === "auto_assign" ? (
-                                <Badge variant="info" dot size="sm" className="h-6 text-[11px] font-semibold normal-case">
+                                <Badge variant="info" dot size="sm" className="h-7 text-[11px] font-semibold normal-case">
                                   Auto assign
                                 </Badge>
                               ) : null}
@@ -8380,7 +8512,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                                   }}
                                 >
                                   <Briefcase className="h-4 w-4 shrink-0 text-text-secondary" />
-                                  Service, price and assignment
+                                  Service and assignment
                                 </button>
                                 <button
                                   type="button"
@@ -9470,7 +9602,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     </p>
                     <p className="text-sky-800/80 dark:text-sky-200/80">
                       Rates: client {formatCurrency(Number(job.hourly_client_rate) || 0)}/h · partner {formatCurrency(Number(job.hourly_partner_rate) || 0)}/h.
-                      Changing Job price or Partner payout below sets the new hourly rate (total ÷ billed hours).
+                      Rates and Hourly or Fixed are edited in Finance summary.
                     </p>
                   </div>
                 )}
@@ -9482,21 +9614,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div>
                       <FinSetupFieldLabel
                         label="Job price"
-                        hint="Main price for the job before any add-ons (same as Base price in Finance summary)."
+                        hint="Edited in Finance summary, the one place for price and Hourly or Fixed."
                       />
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={finForm.client_price}
-                        onChange={(e) => {
-                          const price = parseFloat(e.target.value) || 0;
-                          const extras = parseFloat(finForm.extras_amount) || 0;
-                          const dep = parseFloat(finForm.customer_deposit) || 0;
-                          const autoFinal = String(Math.round(Math.max(0, price + extras - dep) * 100) / 100);
-                          setFinForm((f) => ({ ...f, client_price: e.target.value, customer_final_payment: autoFinal }));
-                        }}
-                      />
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center justify-between rounded-lg border border-border-light bg-surface-hover/40 px-3 text-sm tabular-nums text-text-primary hover:border-primary/40 dark:border-[#2f3642]"
+                        onClick={() => openFinanceHub("client")}
+                      >
+                        {formatCurrency(Number(finForm.client_price) || 0)}
+                        <Pencil className="h-3.5 w-3.5 text-text-tertiary" />
+                      </button>
                     </div>
                     <div>
                       <FinSetupFieldLabel
@@ -9564,15 +9691,16 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     <div>
                       <FinSetupFieldLabel
                         label="Partner payout"
-                        hint="Amount owed to the partner for their work. Extra payouts in Finance summary add on top of this."
+                        hint="Edited in Finance summary, the one place for price and Hourly or Fixed."
                       />
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={finForm.partner_cost}
-                        onChange={(e) => setFinForm((f) => ({ ...f, partner_cost: e.target.value }))}
-                      />
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center justify-between rounded-lg border border-border-light bg-surface-hover/40 px-3 text-sm tabular-nums text-text-primary hover:border-primary/40 dark:border-[#2f3642]"
+                        onClick={() => openFinanceHub("partner")}
+                      >
+                        {formatCurrency(Number(finForm.partner_cost) || 0)}
+                        <Pencil className="h-3.5 w-3.5 text-text-tertiary" />
+                      </button>
                       {suggestedPartnerCost40ForFinForm != null && (
                         <p className="mt-1.5 text-[10px] leading-snug text-text-tertiary">
                           ~{SUGGESTED_PARTNER_MARGIN_HINT_PCT}% margin hint:{" "}
@@ -11171,34 +11299,15 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
           if (savingJobTypeEdit) return;
           setJobTypeEditOpen(false);
         }}
-        title="Billing type"
-        subtitle={job.reference ? `${job.reference} — pricing & partner assignment` : "Switch pricing and assignment mode"}
+        title="Service and assignment"
+        subtitle={job.reference || undefined}
         size="md"
       >
         <div className="p-4 space-y-4">
           <p className="text-xs text-text-tertiary leading-snug">
-            <strong className="text-text-secondary">{pricingModeLabel("hourly")}</strong> uses a Call Out from Services — amounts follow the catalogue with account/partner overrides.{" "}
-            <strong className="text-text-secondary">{pricingModeLabel("fixed")}</strong> keeps labour totals you set here unless you change them in Finance.
+            Price and Hourly or Fixed are edited in one place: the pencil on Finance summary.
           </p>
-          <Select
-            label="Job type"
-            value={jobTypeEditTarget}
-            disabled={savingJobTypeEdit}
-            onChange={(e) => {
-              const v = e.target.value as "fixed" | "hourly";
-              setJobTypeEditTarget(v);
-              if (v === "fixed") {
-                setJobTypeEditFixedTitle(job.title ?? "");
-                setFixedInlineClientRate(String(Math.max(0, Number(job.client_price ?? 0))));
-                setFixedInlinePartnerCost(String(Math.max(0, Number(job.partner_cost ?? 0))));
-              }
-            }}
-            options={[
-              { value: "fixed", label: pricingModeLabel("fixed") },
-              { value: "hourly", label: pricingModeLabel("hourly") },
-            ]}
-          />
-          {jobTypeEditTarget === "hourly" ? (
+          {job.job_type === "hourly" ? (
             <div className={cn(loadingJobTypeCatalog && "opacity-70 pointer-events-none")}>
               <ServiceCatalogSelect
                 label="Call Out type *"
@@ -11210,48 +11319,14 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               />
             </div>
           ) : (
-            <div className="space-y-3">
-              <TypeOfWorkPicker
-                label="Type Of Work *"
-                catalog={catalogServicesJobType}
-                value={jobTypeEditFixedTitle}
-                currentFallback={job?.title}
-                disabled={savingJobTypeEdit}
-                onChange={(name) => setJobTypeEditFixedTitle(name)}
-              />
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Client rate £</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={fixedInlineClientRate}
-                    onChange={(e) => setFixedInlineClientRate(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">Partner Cost £</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={fixedInlinePartnerCost}
-                    onChange={(e) => setFixedInlinePartnerCost(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-              </div>
-              {fixedSwitchPreview ? (
-                <FixedValuesConfirmPreview
-                  clientRate={fixedInlineClientRate}
-                  partnerCost={fixedInlinePartnerCost}
-                  fallbackSale={fixedSwitchPreview.sale}
-                  fallbackCost={fixedSwitchPreview.cost}
-                />
-              ) : null}
-            </div>
+            <TypeOfWorkPicker
+              label="Type Of Work *"
+              catalog={catalogServicesJobType}
+              value={jobTypeEditFixedTitle}
+              currentFallback={job?.title}
+              disabled={savingJobTypeEdit}
+              onChange={(name) => setJobTypeEditFixedTitle(name)}
+            />
           )}
           <div className="flex flex-wrap gap-2 justify-end pt-1">
             <Button
@@ -11291,6 +11366,33 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
         size="md"
       >
         <div className="space-y-4 p-4">
+          {/* Hourly ou Fixed: só aqui (dono, 10/11/2026). */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Billing</span>
+            <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]" role="radiogroup" aria-label="Billing">
+              {(["fixed", "hourly"] as const).map((modo) => {
+                const ativo = (financeHubMode ?? financeHubModoAtual) === modo;
+                return (
+                  <button
+                    key={modo}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    disabled={savingFinanceHub || financeHubSwitchLoading || job.status === "cancelled" || job.status === "deleted"}
+                    onClick={() => void escolherModoNoHub(modo)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-60",
+                      ativo ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
+                    )}
+                  >
+                    {modo === "hourly" ? <Clock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                    {pricingModeLabel(modo)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex rounded-lg border border-border-light bg-surface-hover/30 p-0.5 dark:border-[#2f3642]">
             {(["client", "partner"] as const).map((tab) => (
               <button
@@ -11315,7 +11417,77 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             ))}
           </div>
 
-          {financeHubHourly ? (
+          {financeHubTrocando && financeHubSwitchTotals ? (
+            <div className={cn("space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3", financeHubSwitchLoading && "opacity-60 pointer-events-none")}>
+              <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">
+                Switch to {pricingModeLabel(financeHubMode === "hourly" ? "hourly" : "fixed")}
+              </p>
+              {financeHubMode === "hourly" ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-text-secondary">Client £/h</label>
+                      <Input type="number" min={0} step="0.01" className="h-9 text-sm tabular-nums" value={financeHubSwitch.clientRate}
+                        onChange={(e) => setFinanceHubSwitch((d) => ({ ...d, clientRate: e.target.value }))} disabled={savingFinanceHub} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-text-secondary">Partner £/h</label>
+                      <Input type="number" min={0} step="0.01" className="h-9 text-sm tabular-nums" value={financeHubSwitch.partnerRate}
+                        onChange={(e) => setFinanceHubSwitch((d) => ({ ...d, partnerRate: e.target.value }))} disabled={savingFinanceHub} />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-text-secondary">Hours booked</label>
+                      <Input type="number" min={0.5} step="0.5" className="h-9 text-sm tabular-nums" value={financeHubSwitch.hours}
+                        onChange={(e) => setFinanceHubSwitch((d) => ({ ...d, hours: e.target.value }))} disabled={savingFinanceHub} />
+                    </div>
+                  </div>
+                  <p className="m-0 text-[11px] text-text-tertiary">
+                    {financeHubSwitchLoading
+                      ? "Loading the rates…"
+                      : financeHubSwitch.fonte === "account"
+                        ? "Rates from this account's rate card."
+                        : financeHubSwitch.fonte === "catalog"
+                          ? "Rates from the catalogue. This account has no agreed rate for this service."
+                          : "Type the rates for this job."}{" "}
+                    The final amount follows the time on site.
+                  </p>
+                </>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-text-secondary">Client price £</label>
+                    <Input type="number" min={0} step="0.01" className="h-9 text-sm tabular-nums" value={financeHubSwitch.client}
+                      onChange={(e) => setFinanceHubSwitch((d) => ({ ...d, client: e.target.value }))} disabled={savingFinanceHub} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-text-secondary">Partner pay £</label>
+                    <Input type="number" min={0} step="0.01" className="h-9 text-sm tabular-nums" value={financeHubSwitch.partner}
+                      onChange={(e) => setFinanceHubSwitch((d) => ({ ...d, partner: e.target.value }))} disabled={savingFinanceHub} />
+                  </div>
+                </div>
+              )}
+              <div className="space-y-1 border-t border-border-light pt-2 text-xs dark:border-[#2f3642]">
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">
+                    Client base{financeHubMode === "hourly" ? ` · ${financeHubSwitchTotals.horas}h × ${formatCurrency(financeHubSwitchTotals.cr)}` : ""}
+                  </span>
+                  <span className="tabular-nums">
+                    <span className="mr-2 text-text-tertiary line-through">{formatCurrency(Number(job.client_price ?? 0))}</span>
+                    <strong>{formatCurrency(financeHubSwitchTotals.client)}</strong>
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">
+                    Partner base{financeHubMode === "hourly" ? ` · ${financeHubSwitchTotals.horas}h × ${formatCurrency(financeHubSwitchTotals.pr)}` : ""}
+                  </span>
+                  <span className="tabular-nums">
+                    <span className="mr-2 text-text-tertiary line-through">{formatCurrency(Number(job.partner_cost ?? 0))}</span>
+                    <strong>{formatCurrency(financeHubSwitchTotals.partner)}</strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : financeHubHourly ? (
             <div className="space-y-2 rounded-lg border border-border-light bg-surface-hover/30 p-3 dark:border-[#2f3642]">
               <div className="flex items-baseline justify-between gap-2">
                 <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-text-tertiary">Charged by the hour</p>
@@ -11400,8 +11572,23 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
 
           <div className="flex items-center justify-between gap-2 border-t border-border-light pt-3 dark:border-[#2f3642]">
             <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Total</span>
-            <span className="text-lg font-bold tabular-nums">{formatCurrency(Math.max(0, financeHubTotal))}</span>
+            <span className="text-lg font-bold tabular-nums">{formatCurrency(Math.max(0, financeHubTrocando && financeHubSwitchTotals ? (financeHubTab === "client" ? financeHubSwitchTotals.client + Number(job.extras_amount ?? 0) : financeHubSwitchTotals.partner) : financeHubTotal))}</span>
           </div>
+
+          {financeHubAnyDirty ? (
+            <label className="flex items-start gap-2 rounded-lg border border-border-light bg-surface-hover/30 px-3 py-2 text-xs text-text-secondary dark:border-[#2f3642]">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={financeHubNotify}
+                disabled={savingFinanceHub}
+                onChange={(e) => setFinanceHubNotify(e.target.checked)}
+              />
+              <span>
+                Email the new price, with the old one crossed out, to the client (or account) and to the partner. Each side only sees its own amount.
+              </span>
+            </label>
+          ) : null}
 
           <div className="flex justify-end gap-2">
             <Button
@@ -11415,7 +11602,7 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
             >
               Cancel
             </Button>
-            <Button size="sm" loading={savingFinanceHub} disabled={!financeHubDirty} onClick={() => void saveFinanceHub()}>
+            <Button size="sm" loading={savingFinanceHub} disabled={!financeHubAnyDirty || financeHubSwitchLoading} onClick={() => void saveFinanceHub()}>
               Save
             </Button>
           </div>
@@ -11675,6 +11862,88 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               </div>
             )}
           </div>
+          {selectedPartnerId ? (
+            <div className="space-y-3 border-t border-border-light pt-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-xs font-semibold text-text-primary">Date and arrival</p>
+                {(() => {
+                  const a = inputsDaAgendaDoJob(job, isOneOffScheduleUi);
+                  const mudou =
+                    a.date !== paDate.trim() ||
+                    a.time !== paTime.trim() ||
+                    a.windowMins !== paWindowMins.trim() ||
+                    (!isOneOffScheduleUi && a.finish !== paFinish.trim());
+                  return mudou ? (
+                    <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      Changed. The job card updates on confirm.
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-text-tertiary">Confirm with the partner</span>
+                  );
+                })()}
+              </div>
+              {isOneOffScheduleUi ? (
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+                  <div className="w-full shrink-0 sm:w-[9.5rem]">
+                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">Date *</label>
+                    <Input type="date" className="h-10 w-full" value={paDate} onChange={(e) => setPaDate(e.target.value)} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <ArrivalSlotPicker
+                      rowLayout
+                      arrivalFrom={paTime}
+                      arrivalWindowMins={paWindowMins}
+                      onPick={(from, mins) => {
+                        setPaTime(from);
+                        setPaWindowMins(mins);
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-text-secondary">Arrival date *</label>
+                    <Input
+                      type="date"
+                      className="h-10"
+                      value={paDate}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setPaDate(v);
+                        if (paFinish.trim() && v && paFinish < v) setPaFinish(v);
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-text-secondary">Expected finish</label>
+                    <Input type="date" className="h-10" value={paFinish} min={paDate || undefined} onChange={(e) => setPaFinish(e.target.value)} />
+                  </div>
+                  <div>
+                    <TimeSelect label="Arrival time" value={paTime} onChange={(v) => setPaTime(v)} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-text-secondary">Window</label>
+                    <Select
+                      className="h-10"
+                      value={paWindowMins}
+                      onChange={(e) => setPaWindowMins(e.target.value)}
+                      options={[...ARRIVAL_WINDOW_OPTIONS]}
+                    />
+                  </div>
+                </div>
+              )}
+              {isOneOffScheduleUi
+                ? (() => {
+                    const preview = jobModalClientArrivalPreview(paDate, paTime, paWindowMins, { useArrivalSlots: true });
+                    return preview ? <p className="text-[11px] font-medium text-text-secondary">{preview}</p> : null;
+                  })()
+                : null}
+              {!paDate.trim() ? (
+                <p className="text-[11px] text-text-tertiary">Pick the date to assign.</p>
+              ) : null}
+            </div>
+          ) : null}
           <div ref={partnerCostSectionRef} className="space-y-3 border-t border-border-light pt-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Rate & cost</p>
             <div className="flex gap-2">
@@ -12124,6 +12393,22 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                     partnerPatch.partner_agreed_value = Math.round((Number(partnerPatch.partner_cost ?? 0) + materialsExtra) * 100) / 100;
                   }
                   if (selectedPartnerId) {
+                    // Data e chegada confirmadas aqui: se mudaram, o job card muda junto.
+                    const agendaPatch = buildSchedulePatchForInputs(
+                      { ...job, partner_id: selectedPartnerId } as Job,
+                      paDate,
+                      paTime,
+                      paWindowMins,
+                      isOneOffScheduleUi ? "" : paFinish,
+                      { oneOff: isOneOffScheduleUi },
+                    );
+                    if (!agendaPatch) return;
+                    const AGENDA = ["scheduled_date", "scheduled_start_at", "scheduled_end_at", "scheduled_finish_date"] as const;
+                    for (const k of AGENDA) {
+                      if (k in agendaPatch && (agendaPatch[k] ?? null) !== (job[k] ?? null)) {
+                        (partnerPatch as Record<string, unknown>)[k] = agendaPatch[k] ?? null;
+                      }
+                    }
                     Object.assign(partnerPatch, partnerAssignStatusPatch(job.status));
                   }
                   if (
@@ -12140,6 +12425,12 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
                         ? "Partner removed. Job is back to Unassigned."
                         : "Partner removed.",
                     );
+                  }
+                  if (selectedPartnerId && savedJob) {
+                    setScheduleDate(paDate.trim());
+                    setScheduleTime(paTime.trim());
+                    setScheduleWindowMins(paWindowMins.trim());
+                    setScheduleExpectedFinishDate(isOneOffScheduleUi ? "" : paFinish.trim());
                   }
                   if (selectedPartnerId) {
                     setPartnerExtrasUiValue(extrasCombined);
@@ -12360,32 +12651,9 @@ export function JobDetailClient({ initialBundle }: JobDetailClientProps = {}) {
               onChange={(id) => setQrCatalogServiceId(id)}
             />
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Client Price (£)</label>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                className="h-10"
-                value={qrClientPrice}
-                disabled={quickRescheduleSaving}
-                onChange={(e) => setQrClientPrice(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-text-secondary">Partner Cost (£)</label>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                className="h-10"
-                value={qrPartnerCost}
-                disabled={quickRescheduleSaving}
-                onChange={(e) => setQrPartnerCost(e.target.value)}
-              />
-            </div>
-          </div>
+          <p className="text-[11px] text-text-tertiary">
+            Price is changed on the Finance summary pencil, or when assigning the partner.
+          </p>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-light pt-2">
             <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-text-secondary">
               <input
