@@ -254,6 +254,13 @@ export const ROTULO: Record<string, string> = {
   handoff: "WhatsApp: hand-off",
   request_quote: "WhatsApp: partners asked",
   preco_da_equipe: "WhatsApp: team price",
+  // Cliente no 7983 (harvey/triagem-7983.ts, 10/11/2026).
+  "7983_confirmacao": "07 WhatsApp: ok/thanks",
+  "7983_remarcacao": "07 WhatsApp: reschedule",
+  "7983_horario": "07 WhatsApp: arrival time",
+  "7983_cancelamento": "07 WhatsApp: cancellation",
+  "7983_reclamacao": "07 WhatsApp: complaint",
+  "7983_outro": "07 WhatsApp: other",
   ignorado: "skipped",
   nota_de_triagem: "note",
   reclamacao_hold: "job on hold",
