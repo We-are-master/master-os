@@ -1,7 +1,7 @@
 /** Known former defaults only. User-defined navigation labels are preserved. */
 const LEGACY_LABELS: Readonly<Record<string, readonly string[]>> = {
   "/": ["Pulse"],
-  "/schedule": ["Live view", "Live View"],
+  "/schedule": ["Live view", "Live View", "Live operations"],
   "/leads": ["Leads", "Partner offers"],
   "/school": ["Fixfy School"],
 };

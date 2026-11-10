@@ -14,6 +14,8 @@
  */
 
 import { type SupabaseClient } from "@supabase/supabase-js";
+import { dataLonga, janelaTexto } from "@/lib/emails/fixfy-shell";
+import { valorFinalDoParceiroNoJob } from "@/lib/partner-final-pay";
 import { createSideConversation, replyToSideConversation, zendeskApi } from "@/lib/zendesk";
 import { createPartnerJobAcceptToken, createPartnerOnHoldToken } from "@/lib/quote-response-token";
 import { buildPartnerJobReportUrl } from "@/lib/partner-job-report-url";
@@ -279,8 +281,10 @@ export async function notifyPartnerJobZendesk(
       propertyAddress: job.property_address || "—",
       oldDateLine: input.oldDateLine ?? "Previous schedule",
       oldTimeLine: input.oldTimeLine ?? null,
-      newDateLine: input.newDateLine ?? "New schedule",
-      newTimeLine: input.newTimeLine ?? null,
+      // A agenda nova sai do job gravado (data + chegada), igual ao aviso ao
+      // cliente: a linha que a tela manda pode vir sem a janela.
+      newDateLine: dataLonga(job.scheduled_date ? String(job.scheduled_date).slice(0, 10) : null) ?? input.newDateLine ?? "New schedule",
+      newTimeLine: janelaTexto(job.scheduled_start_at ?? null, job.scheduled_end_at ?? null) ?? input.newTimeLine ?? null,
       jobUrl: resolvePartnerTradePortalBaseUrl(),
     });
   } else if (kind === "on_hold") {
@@ -372,6 +376,11 @@ export async function notifyPartnerJobZendesk(
       newStatusLabel: effectiveStatusLabel,
       reason: effectiveReason,
       reportUrl,
+      // Valor final que ele recebe, pela regra do self-bill (dono, 10/11/2026).
+      finalPay:
+        kind === "completed"
+          ? await valorFinalDoParceiroNoJob(supabase, job, partner.id).catch(() => null)
+          : null,
     });
   }
 

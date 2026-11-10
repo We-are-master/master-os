@@ -5,7 +5,7 @@ import type { NavGroup } from "./constants";
 
 const canonical: NavGroup[] = [{ label: "Overview", items: [
   { label: "Overview", href: "/", icon: "grid-2x2", permission: "dashboard" },
-  { label: "Live operations", href: "/schedule", icon: "calendar", permission: "jobs" },
+  { label: "Live", href: "/schedule", icon: "calendar", permission: "jobs" },
 ]}];
 
 test("updates legacy saved labels without mutating stored navigation", () => {
@@ -14,9 +14,17 @@ test("updates legacy saved labels without mutating stored navigation", () => {
     { label: "Live view", href: "/schedule", icon: "calendar" },
   ] }];
   const result = mergeNewNavItems(stored, canonical);
-  assert.deepEqual(result[0].items.map((i) => i.label), ["Overview", "Live operations"]);
+  assert.deepEqual(result[0].items.map((i) => i.label), ["Overview", "Live"]);
   assert.equal(stored[0].items[0].label, "Pulse");
   assert.equal(result[0].items[1].permission, "jobs");
+});
+
+test("renames the saved \"Live operations\" to \"Live\"", () => {
+  const stored: NavGroup[] = [{ label: "Overview", items: [
+    { label: "Overview", href: "/", icon: "grid-2x2" },
+    { label: "Live operations", href: "/schedule", icon: "calendar" },
+  ] }];
+  assert.deepEqual(mergeNewNavItems(stored, canonical)[0].items.map((i) => i.label), ["Overview", "Live"]);
 });
 
 test("preserves custom names, existing permissions and custom destinations", () => {

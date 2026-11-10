@@ -136,7 +136,8 @@ describe("e-mails ao parceiro", () => {
     regrasComuns(e);
     assert.equal(e.subject, "Booking rescheduled · JOB-9800");
     assert.deepEqual(cabeca(e.html), { chip: "Rescheduled", titulo: "Your booking has been rescheduled", passo: "Accepted" });
-    assert.match(e.html, />13:00-17:00</);
+    assert.match(e.html, />Arrival 13:00-17:00</);
+    assert.match(e.html, /Now<\/p>[\s\S]*Fri 30 Oct 26 · Arrival 13:00-17:00/);
     assert.match(e.html, /line-through[^>]*>Wed 28 Oct 26</);
   });
 
@@ -182,7 +183,9 @@ describe("e-mails ao parceiro", () => {
     });
     regrasComuns(fim);
     assert.equal(fim.subject, "Job marked complete · JOB-9800");
-    assert.deepEqual(cabeca(fim.html), { chip: "Completed", titulo: "Job marked complete", passo: "Report" });
+    // Completed já é aprovado: nenhum passo em andamento, os quatro verdes (10/11/2026).
+    assert.deepEqual(cabeca(fim.html), { chip: "Completed", titulo: "Job marked complete", passo: null });
+    assert.equal((fim.html.match(/border-top:4px solid #22C55E;/g) ?? []).length, 4);
     const pedido = buildPartnerReportRequestEmail({ jobReference: "JOB-9800", jobTitle: "Carpentry", propertyAddress: ENDERECO, reportUrl: "https://os.test/r", jobDate: "2026-10-28" });
     regrasComuns(pedido);
     assert.equal(partnerReportRequestSubject("JOB-9800", "Carpentry", "2026-10-28"), "Submit work report · JOB-9800");

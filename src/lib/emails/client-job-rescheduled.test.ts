@@ -15,10 +15,10 @@ const base = {
 
 test("#6 remarcação ao cliente: assunto, saudação B2C e as duas datas", () => {
   const m = buildClientJobRescheduledEmail({ ...base, iniciadoPelaFixfy: false });
-  assert.equal(m.subject, "Your booking has been rescheduled · Wed 21 Oct 26");
+  assert.equal(m.subject, "Your booking has been rescheduled · Wed 21 Oct 26, 09:00-12:00");
   assert.match(m.text, /^Hi Sarah,$/m);
-  assert.match(m.text, /Previously: Mon 19 Oct 26 · 13:00-16:00/);
-  assert.match(m.text, /Now: Wed 21 Oct 26 · 09:00-12:00/);
+  assert.match(m.text, /Previously: Mon 19 Oct 26 · Arrival 13:00-16:00/);
+  assert.match(m.text, /Now: Wed 21 Oct 26 · Arrival 09:00-12:00/);
   assert.match(m.text, /Thanks for keeping us up to date\./);
   for (const t of [m.subject, m.html, m.text]) {
     assert.doesNotMatch(t, /[–—]/);
