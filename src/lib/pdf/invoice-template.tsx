@@ -354,6 +354,12 @@ function LegacyInvoicePDF({ data }: { data: InvoicePdfData }) {
                     <Text style={styles.refVal}>{data.billTo.companyNumber}</Text>
                   </View>
                 ) : null}
+                {data.billTo.vatNumber ? (
+                  <View style={styles.refRow}>
+                    <Text style={styles.refKey}>VAT no.</Text>
+                    <Text style={styles.refVal}>{data.billTo.vatNumber}</Text>
+                  </View>
+                ) : null}
               </>
             ) : null}
             <View style={styles.refRow}>

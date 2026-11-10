@@ -1092,6 +1092,8 @@ export interface Account {
   email_include_report_on_final?: boolean;
   /** Razão social no "Bill to" da fatura (mig 323). */
   billing_legal_name?: string | null;
+  /** VAT number do cliente no "Bill to" da fatura (mig 361). */
+  billing_vat_number?: string | null;
   /** Fatura com VAT só na taxa da Fixfy (mig 323). */
   invoice_fee_vat?: boolean;
   /** Quem recebe cópia de toda fatura desta conta (mig 324). */
