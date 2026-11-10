@@ -11,7 +11,7 @@
  *   horario       pergunta a hora de chegada
  *   cancelamento  quer cancelar
  *   reclamacao    reclamação ou ninguém apareceu
- *   outro         o resto
+ *   outro         o resto: fica na /inbox, não sobe
  *
  * Regra primeiro (de graça); o modelo barato só quando a regra não decide ou
  * acha duas classes. Tudo que não é `confirmacao` liga o Action Required no
@@ -220,20 +220,6 @@ async function clientesDoContato(sb: SupabaseClient, contato: string): Promise<s
   return ((data ?? []) as Array<{ id: string; phone: string | null }>).filter((c) => finalDoNumero(c.phone) === fim).map((c) => c.id);
 }
 
-/** Alguém da equipe escreveu nesta conversa há pouco (pelo celular ou pela /inbox)? */
-async function equipeNaConversa(sb: SupabaseClient, contato: string, agora: Date): Promise<boolean> {
-  const desde = new Date(agora.getTime() - 2 * 3_600_000).toISOString();
-  const { data } = await sb
-    .from("wa_mensagens")
-    .select("id")
-    .eq("contato", contato)
-    .eq("direcao", "saida")
-    .or("origem.eq.celular,enviado_por.not.is.null")
-    .gte("criado_em", desde)
-    .limit(1);
-  return (data ?? []).length > 0;
-}
-
 // ─── O fluxo ────────────────────────────────────────────────────────────────
 
 /** Mensagem que a triagem lê: entrada, 1 a 1, e não reação (essa pendura em outra). */
@@ -292,10 +278,12 @@ export async function triarMensagemDo7983(sb: SupabaseClient, m: MensagemUazapi,
   }
   const ticketId = Number(job.external_ref);
 
-  // "outro" com a equipe falando com o cliente agora: quem está na conversa já viu.
-  if (classe === "outro" && (await equipeNaConversa(sb, m.contato, agora))) {
-    await registrar(sb, { ...base, ticketId, acao: "ignorado", resultado: "ok", detalhe: `${marca} · team is in the chat · "${frase}"` });
-    return { feito: "equipe na conversa", classe, ticketId };
+  // "outro" não sobe (dono, 10/11/2026): o 7983 é conversa ao vivo e a mensagem já está na
+  // /inbox. Só pedido claro (remarcar, horário, cancelar, reclamação) vira Action Required,
+  // para a fila do dono não encher de "ok, see you" que a regra não reconheceu.
+  if (classe === "outro") {
+    await registrar(sb, { ...base, ticketId, acao: "ignorado", resultado: "ok", detalhe: `${marca} · stays in /inbox · "${frase}"` });
+    return { feito: "fica na /inbox", classe, ticketId };
   }
 
   const subir = deps.precisaDeAcao ?? (await import("@/lib/fila-de-acao")).precisaDeAcao;

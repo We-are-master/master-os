@@ -258,13 +258,14 @@ describe("triarMensagemDo7983", () => {
     const r = await triarMensagemDo7983(fakeSb({ ...cliente, ...jobs }), msg("hi he said 7AM as I need to leave my flat by 9:30"), x.d);
     assert.equal(x.modelo, 1);
     assert.equal(r.classe, "outro");
-    assert.equal(x.acoes.length, 1);
+    // "outro" fica na /inbox: nada no Zendesk.
+    assert.equal(x.acoes.length, 0);
   });
 
-  it("'outro' com a equipe falando na conversa agora: não sobe", async () => {
+  it("'outro' nunca sobe: fica na /inbox, com a medida registrada", async () => {
     const x = deps();
-    const r = await triarMensagemDo7983(fakeSb({ ...cliente, ...jobs, wa_mensagens: [{ id: "m1" }] }), msg("Photo", "image"), x.d);
-    assert.equal(r.feito, "equipe na conversa");
+    const r = await triarMensagemDo7983(fakeSb({ ...cliente, ...jobs }), msg("Photo", "image"), x.d);
+    assert.equal(r.feito, "fica na /inbox");
     assert.deepEqual(x.acoes, []);
     assert.equal(x.medidas[0].acao, "ignorado");
   });
