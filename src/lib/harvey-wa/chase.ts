@@ -22,6 +22,7 @@ import { chamarSite } from "./site";
 import { enviarTexto, historico, vozDaConversa } from "./sunshine";
 import { devolvidaEm, equipeDonaDaConversa, horasDaEquipeDona } from "./equipe-dona";
 import { instrucaoDoWelcomeNoChase, welcomeDoTelefone } from "./welcome-lead";
+import { conversaDoAlex, NOME_DO_ALEX } from "./alex";
 
 const DEGRAUS_H = [1, 4, 20];
 /** Teste: HARVEY_WA_CHASE_ESCALA=0.05 vira 3 min, 12 min e 1h. */
@@ -69,7 +70,9 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
       out.detalhes.push(`${c.conversation_id}: ${dona.quem} owns the chat until ${dona.liberaEm}, no chase`);
       continue;
     }
-    const voz = vozDaConversa(todas);
+    // Conversa do Alex (HARVEY_ALEX): o lembrete é dele, no nome dele.
+    const doAlex = conversaDoAlex(c.motivo_passagem as string | null);
+    const voz = doAlex ? null : vozDaConversa(todas);
     const msgs = voz ? todas : sessaoAtual(todas);
     const ultima = msgs[msgs.length - 1];
     if (!ultima || ultima.author.type === "user") continue; // chegou mensagem e o motor ainda não viu
@@ -77,7 +80,7 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     const { quem, contas, sobreQuem } = await contextoDaPessoa(sb as never, c.phone as string | null);
     // Preço do catálogo que não fechou: o código do Welcome pode entrar uma vez no lembrete (dono, 24/10/2026).
     const welcome = quem.tipo === "parceiro" ? null : await welcomeDoTelefone(sb, c.phone as string | null).catch(() => null);
-    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null, devolvidaPelaEquipe: devolvidaEm(c.motivo_passagem as string | null) !== null }, chamarSite, await catalogo());
+    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null, devolvidaPelaEquipe: devolvidaEm(c.motivo_passagem as string | null) !== null, ...(doAlex && quem.tipo !== "parceiro" ? { perfil: "alex" as const } : {}) }, chamarSite, await catalogo());
 
     if (!r.resposta) {
       out.semNada++;
@@ -88,7 +91,8 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     out.enviados++;
     out.detalhes.push(`${c.conversation_id}: chase ${n} (${horas.toFixed(1)}h): ${r.resposta.slice(0, 120)}`);
     if (!aplicar) continue;
-    await enviarTexto(c.conversation_id as string, r.resposta, voz);
+    if (doAlex) await enviarTexto(c.conversation_id as string, r.resposta, NOME_DO_ALEX, "alex");
+    else await enviarTexto(c.conversation_id as string, r.resposta, voz);
     const agoraIso = new Date().toISOString();
     await sb.from("harvey_wa_conversas").update({ chases: n, chase_em: agoraIso, harvey_em: agoraIso, atualizado_em: agoraIso }).eq("conversation_id", c.conversation_id);
   }

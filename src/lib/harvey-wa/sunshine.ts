@@ -58,11 +58,13 @@ export async function scNotificacao<T>(body: unknown): Promise<T> {
  * `comoNome`: quando a equipe já falou na conversa, o Harvey segue no nome de
  * quem estava falando (dono, 08/10/2026). A metadata `harvey` marca a mensagem
  * como dele mesmo assim, para o motor não achar que a equipe assumiu.
+ * `agente`: o Alex (B2C Sales, HARVEY_ALEX) também marca quem é, para o cérebro saber
+ * quais falas são dele (metadata agente). Sem `agente`, a mensagem sai igual a sempre.
  */
-export async function enviarTexto(conversationId: string, texto: string, comoNome?: string | null) {
+export async function enviarTexto(conversationId: string, texto: string, comoNome?: string | null, agente?: "alex") {
   return sc(`/conversations/${conversationId}/messages`, {
     method: "POST",
-    body: { author: { type: "business", displayName: comoNome || NOME_DO_HARVEY }, content: { type: "text", text: texto }, metadata: { harvey: true } },
+    body: { author: { type: "business", displayName: comoNome || NOME_DO_HARVEY }, content: { type: "text", text: texto }, metadata: agente ? { harvey: true, agente } : { harvey: true } },
   });
 }
 
@@ -78,7 +80,8 @@ export function ehDoHarvey(m: MensagemSc): boolean {
  * 15/10/2026: o motor virava 🔴 três segundos depois de cada mensagem da equipe).
  */
 export function ehOHarveyNoNomeDele(m: MensagemSc): boolean {
-  return ehDoHarvey(m) && (m.author.displayName ?? NOME_DO_HARVEY) === NOME_DO_HARVEY;
+  // O Alex no nome dele conta igual (metadata agente, só existe com HARVEY_ALEX).
+  return ehDoHarvey(m) && ((m.author.displayName ?? NOME_DO_HARVEY) === NOME_DO_HARVEY || m.metadata?.agente === "alex");
 }
 
 /**

@@ -81,7 +81,7 @@ export async function devolverConversa(sb: SupabaseClient, conversationId: strin
   }
 }
 
-export type ConversaDoTicket = { conversation_id: string; estado: string; name: string | null; phone: string | null };
+export type ConversaDoTicket = { conversation_id: string; estado: string; name: string | null; phone: string | null; motivo_passagem?: string | null };
 
 /**
  * A conversa do Harvey por trás de um ticket de WhatsApp do Zendesk: o
@@ -103,7 +103,7 @@ export async function conversaDoTicket(sb: SupabaseClient, ticketId: number): Pr
   if (!telefones.size) return null;
   const { data } = await sb
     .from("harvey_wa_conversas")
-    .select("conversation_id, estado, name, phone")
+    .select("conversation_id, estado, name, phone, motivo_passagem")
     .in("phone", [...telefones])
     .order("atualizado_em", { ascending: false })
     .limit(1)

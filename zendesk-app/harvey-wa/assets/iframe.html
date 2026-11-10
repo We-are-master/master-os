@@ -51,14 +51,16 @@
       mostrar('<div class="estado"><span class="ponto"></span>Not a Harvey chat</div><p class="nota">No Harvey WhatsApp conversation found for this ticket.</p>' + falha);
       return;
     }
+    // Alex (B2C Sales): o OS manda "agente" só com HARVEY_ALEX ligado. Sem ele, Harvey como sempre.
+    var nomeAgente = s.agente === "alex" ? "Alex" : "Harvey";
     if (s.estado === "harvey") {
-      mostrar(pausa + '<div class="estado harvey"><span class="ponto"></span>Harvey is handling this chat</div>' +
-        '<p class="nota">Take over to reply yourself. Harvey stops and the ticket unlocks.</p>' +
+      mostrar(pausa + '<div class="estado harvey"><span class="ponto"></span>' + nomeAgente + ' is handling this chat</div>' +
+        '<p class="nota">Take over to reply yourself. ' + nomeAgente + ' stops and the ticket unlocks.</p>' +
         '<button id="botao" data-acao="assumir">Take over</button>' + falha);
     } else {
       mostrar(pausa + '<div class="estado equipe"><span class="ponto"></span>The team has this chat</div>' +
-        '<p class="nota">Harvey is out of this conversation. Give it back when you are done.</p>' +
-        '<button id="botao" class="secundario" data-acao="devolver">Give back to Harvey</button>' + falha);
+        '<p class="nota">' + nomeAgente + ' is out of this conversation. Give it back when you are done.</p>' +
+        '<button id="botao" class="secundario" data-acao="devolver">Give back to ' + nomeAgente + '</button>' + falha);
     }
     document.getElementById("botao").onclick = agir;
   }
