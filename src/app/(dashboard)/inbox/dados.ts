@@ -13,6 +13,8 @@
 import { equipeDaInbox, type MembroDaEquipe } from "@/lib/inbox/equipe";
 import { ehGrupo } from "@/lib/inbox/grupo";
 import { createServiceClient } from "@/lib/supabase/service";
+import { carregarOrganizacoes } from "@/lib/organizacoes/carregar";
+import { reconhecerOrganizacao } from "@/lib/organizacoes/reconhecer";
 import { OPS_PHONE_NUMBER_ID, filtroDoNumero, finalDoNumero } from "@/lib/whatsapp/operacao";
 import { provedorDaOperacao } from "@/lib/whatsapp/uazapi-operacao";
 import {
@@ -230,12 +232,20 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
   }
   /** A conta de cada contato: a do cliente (source_account_id), senão a do número da conta. */
   const contaDoContato = new Map<string, string>();
+  /**
+   * Aba Accounts (dono, 10/11/2026): o contato da conta, não o cliente dela. É o número da própria
+   * conta (accounts.contact_number), o ligado à mão como conta, ou o cliente cujo e-mail é do
+   * domínio da conta dele (Michelle @kvadrat). Morador de uma conta (Housekeep, Fixfy) fica em Clients.
+   */
+  const numeroDaConta = new Set<string>();
   for (const c of semParceiro) {
     if (parceiroDoContato.has(c)) continue;
     const doCliente = clienteDoContato.get(c)?.source_account_id as string | null | undefined;
     const pelaConta = porTelefone((contasPorTelefone ?? []) as Record<string, unknown>[], c, ["contact_number"])?.id as string | undefined;
-    const id = doCliente ?? pelaConta;
+    // O número é o da própria conta: ela vence a conta de origem do cliente (Mohsen Sayahi, 10/11/2026).
+    const id = pelaConta ?? doCliente;
     if (id) contaDoContato.set(c, id);
+    if (pelaConta) numeroDaConta.add(c);
   }
   // Número ligado à mão (355): vale mais que o telefone do cadastro.
   const vinculos = ((estados ?? []) as Record<string, unknown>[]).filter((e) => e.vinculo_tipo && e.vinculo_id && !ehGrupo(e.contato as string));
@@ -250,10 +260,12 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       parceiroDoContato.set(c, id);
       clienteDoContato.delete(c);
       contaDoContato.delete(c);
+      numeroDaConta.delete(c);
     } else if (v.vinculo_tipo === "cliente") {
       const cl = clientesLigados.find((x) => x.id === id);
       if (!cl) continue;
       parceiroDoContato.delete(c);
+      numeroDaConta.delete(c);
       clienteDoContato.set(c, cl);
       if (cl.source_account_id) contaDoContato.set(c, cl.source_account_id as string);
       else contaDoContato.delete(c);
@@ -261,9 +273,18 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       parceiroDoContato.delete(c);
       clienteDoContato.delete(c);
       contaDoContato.set(c, id);
+      numeroDaConta.add(c);
     }
   }
   // Contas que escreveram sem um cliente por trás: os jobs vêm da conta (jobs.account_id).
+  // Cliente com e-mail do domínio da própria conta é contato dela (e-mail pessoal nunca prova).
+  const organizacoes = await carregarOrganizacoes(sb).catch(() => []);
+  for (const [c, cl] of clienteDoContato) {
+    const conta = cl.source_account_id as string | null | undefined;
+    if (!conta || numeroDaConta.has(c)) continue;
+    const r = reconhecerOrganizacao(cl.email as string | null, organizacoes);
+    if (r.tipo === "organizacao" && r.id === conta) numeroDaConta.add(c);
+  }
   const idsContasDiretas = [...new Set([...contaDoContato.entries()].filter(([c]) => !clienteDoContato.has(c)).map(([, id]) => id))];
   const estadoDoContato = new Map(((estados ?? []) as Record<string, unknown>[]).map((e) => [e.contato as string, e]));
 
@@ -551,7 +572,7 @@ export async function carregarCaixa(): Promise<DadosDaCaixa> {
       const refs = new Set(jobsDoCliente.map((j) => j.ref));
       return {
         ...base,
-        tipo: contaId ? "conta" : jobsDoCliente.length || estado?.vinculo_tipo === "cliente" ? "cliente" : "outro",
+        tipo: contaId && numeroDaConta.has(contato) ? "conta" : jobsDoCliente.length || estado?.vinculo_tipo === "cliente" ? "cliente" : "outro",
         org: contaId ? { nome: nomeDaConta.get(contaId) ?? "Account", logo: logoDaConta.get(contaId) ?? null } : null,
         // O nome dado à mão na caixa (ou o do lead ligado) vence o do cadastro.
         nome:
