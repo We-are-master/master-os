@@ -7,8 +7,9 @@
  *   alocar             Unassigned há mais de 2h e sem esperar sinal do cliente
  *                      (sinal pago, ou conta que não cobra sinal: B2B, plataforma, fatura)
  *   aprovar_report     Final Check há mais de 12h (jobs.final_check_at, migration 283)
- *   parceiro_parado    Scheduled ou Late, início (scheduled_start_at) passou há 30 min
- *                      e o parceiro não começou (sem cronômetro, sem start report)
+ *   parceiro_parado    Scheduled ou Late, o fim da janela de chegada (scheduled_end_at,
+ *                      senão o início) passou há 30 min e o parceiro não começou (sem
+ *                      cronômetro, sem start report)
  *
  * Cada alarme vira UM Action Required no ticket do job (fila-de-acao.ts), uma vez por
  * job, portão e marco (a entrada no status ou o horário marcado). Nunca muda status
@@ -46,6 +47,7 @@ export type JobDoAlarme = {
   quote_id?: string | null;
   partner_id?: string | null;
   scheduled_start_at?: string | null;
+  scheduled_end_at?: string | null;
   final_check_at?: string | null;
   partner_timer_started_at?: string | null;
   start_report_submitted?: boolean | null;
@@ -144,11 +146,14 @@ export function alarmesDosPortoes(jobs: JobDoAlarme[], ctx: ContextoDosAlarmes, 
     } else {
       // Scheduled ou Late (a lista de Jobs passa para Late quando o horário passa).
       // Só data, sem hora: não dá para dizer que atrasou 30 min, fica de fora.
+      // Conta do FIM da janela (dono, 10/11/2026): 89 de 113 jobs têm janela de 3h, e contar do
+      // início acusava às 09:30 o parceiro que ainda estava dentro do 09:00 a 12:00.
       const inicio = job.scheduled_start_at;
+      const fimDaJanela = job.scheduled_end_at && ms(job.scheduled_end_at) > ms(inicio) ? job.scheduled_end_at : inicio;
       const comecou = !!job.partner_timer_started_at || job.start_report_submitted === true;
-      if (!inicio || !job.partner_id || comecou || !Number.isFinite(ms(inicio))) continue;
-      if (t - ms(inicio) > MINUTOS_SEM_COMECAR * 60_000) {
-        empurrar("parceiro_parado", inicio, `Partner has not started: ${ref} was due at ${HORA_LONDRES.format(new Date(inicio))} (London). Call the partner`);
+      if (!inicio || !fimDaJanela || !job.partner_id || comecou || !Number.isFinite(ms(fimDaJanela))) continue;
+      if (t - ms(fimDaJanela) > MINUTOS_SEM_COMECAR * 60_000) {
+        empurrar("parceiro_parado", fimDaJanela, `Partner has not started: ${ref} was due by ${HORA_LONDRES.format(new Date(fimDaJanela))} (London). Call the partner`);
       }
     }
   }
@@ -158,7 +163,7 @@ export function alarmesDosPortoes(jobs: JobDoAlarme[], ctx: ContextoDosAlarmes, 
 // ─── Leitura (só select) ────────────────────────────────────────────────────
 
 const CAMPOS_DO_JOB =
-  "id, reference, status, deleted_at, created_at, updated_at, account_id, quote_id, partner_id, scheduled_start_at, final_check_at, partner_timer_started_at, start_report_submitted, customer_deposit, customer_deposit_paid, finance_status, payment_status, external_source, external_ref";
+  "id, reference, status, deleted_at, created_at, updated_at, account_id, quote_id, partner_id, scheduled_start_at, scheduled_end_at, final_check_at, partner_timer_started_at, start_report_submitted, customer_deposit, customer_deposit_paid, finance_status, payment_status, external_source, external_ref";
 
 /** Lê o que `alarmesDosPortoes` precisa. Só leitura; erro de leitura sobe (a passada falha e a próxima tenta). */
 export async function lerEntradaDosAlarmes(sb: SupabaseClient, agora: Date = new Date()): Promise<{ jobs: JobDoAlarme[]; ctx: ContextoDosAlarmes }> {

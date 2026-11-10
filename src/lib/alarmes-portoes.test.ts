@@ -90,13 +90,26 @@ describe("alarmes dos portões", () => {
     const [a] = alarmesDosPortoes([ag], ctx(), AGORA);
     assert.equal(a.portao, "parceiro_parado");
     // 11:15 UTC = 11:15 em Londres (GMT em novembro).
-    assert.equal(a.acao, "Partner has not started: JOB-1 was due at 10 Nov, 11:15 (London). Call the partner");
+    assert.equal(a.acao, "Partner has not started: JOB-1 was due by 10 Nov, 11:15 (London). Call the partner");
     assert.equal(alarmesDosPortoes([{ ...ag, status: "late" }], ctx(), AGORA).length, 1);
     assert.equal(alarmesDosPortoes([{ ...ag, scheduled_start_at: horasAtras(0.25) }], ctx(), AGORA).length, 0);
     assert.equal(alarmesDosPortoes([{ ...ag, partner_timer_started_at: horasAtras(0.5) }], ctx(), AGORA).length, 0);
     assert.equal(alarmesDosPortoes([{ ...ag, start_report_submitted: true }], ctx(), AGORA).length, 0);
     assert.equal(alarmesDosPortoes([{ ...ag, partner_id: null }], ctx(), AGORA).length, 0);
     assert.equal(alarmesDosPortoes([{ ...ag, scheduled_start_at: null }], ctx(), AGORA).length, 0);
+  });
+
+  it("C conta do fim da janela de chegada: dentro do 09:00 a 12:00 não acusa", () => {
+    // Começou a janela há 2h, ela vai até daqui a 1h: o parceiro ainda está no prazo.
+    const dentro = job({ status: "scheduled", partner_id: "p1", scheduled_start_at: horasAtras(2), scheduled_end_at: horasAtras(-1) });
+    assert.equal(alarmesDosPortoes([dentro], ctx(), AGORA).length, 0);
+    // A janela acabou há 45 min e ninguém começou: acusa, com o fim da janela no texto e na trava.
+    const fora = { ...dentro, scheduled_start_at: horasAtras(3.75), scheduled_end_at: horasAtras(0.75) };
+    const [a] = alarmesDosPortoes([fora], ctx(), AGORA);
+    assert.equal(a.portao, "parceiro_parado");
+    assert.equal(a.desde, fora.scheduled_end_at);
+    // Fim antes do início (dado ruim): vale o início, como antes.
+    assert.equal(alarmesDosPortoes([{ ...dentro, scheduled_start_at: horasAtras(0.75), scheduled_end_at: horasAtras(5) }], ctx(), AGORA).length, 1);
   });
 
   it("ignora apagado, cancelado, outros status e job parado há mais de 7 dias", () => {
