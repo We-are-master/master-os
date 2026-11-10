@@ -11,6 +11,7 @@
  */
 
 import { ehDoHarvey, type MensagemSc } from "./sunshine";
+import { semAgente } from "./dono";
 
 /** Marca no motivo_passagem: a conversa foi para a equipe por esta trava (e volta sozinha). */
 export const MARCA_EQUIPE_DONA = "team owns the chat:";
@@ -26,8 +27,9 @@ export function motivoDaDevolucao(quem: string, agora = new Date()): string {
   return `${MARCA_DEVOLVIDA} ${quem} at ${agora.toISOString()}`;
 }
 
-/** Quando a pessoa devolveu (do motivo_passagem), ou null. */
-export function devolvidaEm(motivo: string | null | undefined): number | null {
+/** Quando a pessoa devolveu (do motivo_passagem), ou null. A marca do agente no fim não atrapalha (dono.ts). */
+export function devolvidaEm(motivoComMarca: string | null | undefined): number | null {
+  const motivo = semAgente(motivoComMarca);
   if (!motivo?.startsWith(MARCA_DEVOLVIDA)) return null;
   const em = Date.parse(motivo.slice(motivo.lastIndexOf(" at ") + 4));
   return Number.isFinite(em) ? em : null;
