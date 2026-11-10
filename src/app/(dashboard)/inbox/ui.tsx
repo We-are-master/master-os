@@ -428,11 +428,29 @@ export function SeletorDeTipo({
             ativo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
           )}
         >
-          {Icone ? <Icone className="hidden h-3 w-3 shrink-0 @[352px]:block" /> : null}
+          {Icone ? (
+            // Com ícone, a bolinha de não lidas fica em cima dele e não ocupa largura (dono, 10/11/2026).
+            <span className="relative hidden shrink-0 @[352px]:block">
+              <Icone className="h-3 w-3" />
+              {naoLidas?.[k] ? (
+                <span
+                  className="absolute -left-1.5 -top-1.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-[var(--accent)] px-[3px] text-[9px] font-semibold tabular-nums leading-none text-white ring-2 ring-surface-tertiary"
+                  aria-label={`${naoLidas[k]} unread`}
+                  title={`${naoLidas[k]} unread`}
+                >
+                  {naoLidas[k]}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
           <span className="truncate">{t}</span>
           {naoLidas?.[k] ? (
             <span
-              className="grid h-4 min-w-4 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums leading-none text-white"
+              className={cn(
+                "grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums leading-none text-white",
+                // Sem espaço para o ícone, a bolinha volta para a linha.
+                Icone && "@[352px]:hidden",
+              )}
               aria-label={`${naoLidas[k]} unread`}
               title={`${naoLidas[k]} unread`}
             >
