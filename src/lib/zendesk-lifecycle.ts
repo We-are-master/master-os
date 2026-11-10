@@ -17,6 +17,7 @@
  */
 
 import { linkDoReportWeb } from "@/lib/fatura-semanal";
+import { confirmaNoNascimento } from "@/lib/confirmacao-no-nascimento";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase/service";
 import { syncAccountToZendesk } from "@/lib/zendesk-account-sync";
@@ -60,7 +61,7 @@ type PartnerEmbed = {
 };
 
 const CLIENT_CONFIRMATION_STATUSES = new Set(["scheduled", "late"]);
-/** Job pago com sinal antes de ter parceiro: a confirmação sai nesses status também. */
+/** Antes do parceiro: confirma no nascimento do job ou com sinal pago. */
 const STATUS_ANTES_DO_PARCEIRO = new Set(["unassigned", "auto_assigning"]);
 
 /**
@@ -147,7 +148,7 @@ export async function dispatchJobCreatedZendesk(args: {
   const { data: job, error } = await supabase
     .from("jobs")
     .select(`
-      id, reference, title, property_address, scope, status,
+      id, reference, title, property_address, scope, status, created_at,
       scheduled_date, scheduled_start_at, scheduled_end_at,
       catalog_service_id,
       external_source, external_ref, partner_id, partner_confirmed_at, client_id,
@@ -172,10 +173,13 @@ export async function dispatchJobCreatedZendesk(args: {
 
   const jobStatus = String((job as { status?: string | null }).status ?? "");
   const dateStr = String(job.scheduled_date ?? "").slice(0, 10);
-  // Uma confirmação só (dono, 25/10/2026): com sinal pago ela sai no pagamento, mesmo sem
-  // parceiro (Unassigned); sem sinal, quando o job é agendado com parceiro (Scheduled).
+  // Uma confirmação só (dono, 25/10/2026). Desde 10/11/2026 ela sai quando o job nasce,
+  // com ou sem parceiro; com sinal pago, também no pagamento; e um Unassigned antigo
+  // confirma quando vira Scheduled.
   const sinalPago = await sinalPagoDoJob(supabase, args.jobId);
-  const confirmaSemParceiro = sinalPago > 0 && STATUS_ANTES_DO_PARCEIRO.has(jobStatus);
+  const confirmaSemParceiro =
+    STATUS_ANTES_DO_PARCEIRO.has(jobStatus) &&
+    (sinalPago > 0 || confirmaNoNascimento({ createdAt: (job as { created_at?: string | null }).created_at, dia: dateStr }));
   if ((!CLIENT_CONFIRMATION_STATUSES.has(jobStatus) && !confirmaSemParceiro) || !dateStr) {
     return { ok: true, skipped: "not_scheduled" };
   }
