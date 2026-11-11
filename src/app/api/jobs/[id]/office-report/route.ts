@@ -13,6 +13,7 @@ import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { aplicarMaterialExtraDoReport, pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
+import { STEFANE_RESUMO_FINAL_ON, runResumoFinalStefane } from "@/lib/stefane/resumo-final-check";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -235,6 +236,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     after(async () => {
       const r = await runFinalCheckAutomatico(admin, job.id, { origem: "report_submitted" });
       console.log(`[final-check-auto] ${job.reference}: ${r.feito}`);
+    });
+  } else if (STEFANE_RESUMO_FINAL_ON() && moveToFinalCheck && !overwrite) {
+    // Resumo da Stefane para o dono aprovar (dono, 10/11/2026), na mesma primeira gravação.
+    after(async () => {
+      const r = await runResumoFinalStefane(admin, job.id, { origem: "report_submitted" });
+      console.log(`[stefane-resumo-final] ${job.reference}: ${r.feito}`);
     });
   }
 
