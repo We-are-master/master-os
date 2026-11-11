@@ -42,6 +42,7 @@ import { pedirCotacao } from "./cotacao";
 import { custoDoParceiroParaCotacao } from "./desconto";
 import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
+import { motivoComDono, precoDaEquipeDevolveAConversa, tempoDevolveAConversa } from "./dono";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 import { destinoDaResposta } from "./turno";
 import { processosV2Ligado } from "@/lib/processo/conta";
@@ -209,6 +210,8 @@ async function ehLeadDoTemplateSemEquipe(conversationId: string, userId: string 
  * pelo preço da equipe com book_team_price). Conversa assumida de outro jeito fica onde está.
  */
 async function equipeLargouAConversa(conversationId: string): Promise<boolean> {
+  // Dono por agente (dono, 10/11/2026): pelo relógio, nunca. Fica com a equipe até o Give back.
+  if (!tempoDevolveAConversa()) return false;
   const sb = createServiceClient();
   const { data: est } = await sb.from("harvey_wa_conversas").select("estado, motivo_passagem").eq("conversation_id", conversationId).maybeSingle();
   if (est?.estado !== "equipe" || !String(est.motivo_passagem ?? "").startsWith(MARCA_EQUIPE_DONA)) return false;
@@ -224,10 +227,10 @@ async function equipeLargouAConversa(conversationId: string): Promise<boolean> {
  * Harvey não fala nada; a conversa vai para a equipe (ticket sai do "AI agent" e fica
  * editável). O Reply Status 🔴 sai em depoisDaMensagem (a última fala é do cliente).
  */
-async function calarPelaEquipe(sb: ReturnType<typeof createServiceClient>, conversationId: string, dona: Extract<DonaDaConversa, { dona: true }>): Promise<string> {
+async function calarPelaEquipe(sb: ReturnType<typeof createServiceClient>, conversationId: string, dona: Extract<DonaDaConversa, { dona: true }>, motivoAntes?: string | null): Promise<string> {
   const motivo = `${MARCA_EQUIPE_DONA} ${dona.quem} wrote at ${dona.em}, Harvey stays out until ${dona.liberaEm}`;
   await passarParaEquipe(conversationId, `${dona.quem} is handling this chat`).catch((e) => console.error("[harvey-wa] trava de dono, passar:", e));
-  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivo, chases: 3 }).eq("conversation_id", conversationId);
+  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivoComDono(motivo, motivoAntes), chases: 3 }).eq("conversation_id", conversationId);
   console.log("[harvey-wa] calado:", motivo);
   return `calado: ${dona.quem} é dono da conversa até ${dona.liberaEm}`;
 }
@@ -404,6 +407,8 @@ async function precoDaEquipeNoChat(conversationId: string, telefone: string, msg
   await registrarMedida(sb, { canal: "whatsapp", ticketId: ticket, classe: "preco_da_equipe", acao: "preco_da_equipe", resultado: "ok", detalhe: linha });
   await registrarDecisao({ origem: "whatsapp", ticketId: ticket, decisao: `${quem} gave £${achado.preco} in the WhatsApp chat: ticket moved to Approval`, regra: "team price in chat → Approval (owner, 15/10/2026)", pendente: "Customer: accept the price" }, sb);
   if (process.env.HARVEY_WA_PRECO_DEVOLVE === "0") return;
+  // Dono por agente (dono, 10/11/2026): a conversa só volta por Give back de uma pessoa. O ticket vai para Approval igual.
+  if (!precoDaEquipeDevolveAConversa()) return;
   const { data: est } = await sb.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversationId).maybeSingle();
   if (est?.estado !== "equipe") return;
   const { devolverConversa } = await import("./controle");
@@ -430,11 +435,11 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   // não responde mais nada ali (dono, 30/09/2026: "como eu assumo sem ele se meter").
   if (conversa?.id && msg && ehDaEquipe(msg)) {
     const sbEquipe = createServiceClient();
-    const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado").eq("conversation_id", conversa.id).maybeSingle();
+    const { data: est } = await sbEquipe.from("harvey_wa_conversas").select("estado, motivo_passagem").eq("conversation_id", conversa.id).maybeSingle();
     if (est?.estado === "harvey") {
       await sbEquipe
         .from("harvey_wa_conversas")
-        .update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: `${msg.author.displayName} took over in Zendesk`, chases: 3 })
+        .update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivoComDono(`${msg.author.displayName} took over in Zendesk`, est.motivo_passagem as string | null), chases: 3 })
         .eq("conversation_id", conversa.id);
       if (conversa.activeSwitchboardIntegration?.name === INTEGRACAO_HARVEY) await passarParaEquipe(conversa.id, `${msg.author.displayName} took over`).catch(() => {});
       return `equipe assumiu: ${msg.author.displayName}`;
@@ -481,7 +486,7 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   const { data: pausa } = await sb.from("harvey_wa_config").select("valor").eq("chave", "pausado").maybeSingle();
   if (pausa?.valor === true || !(await harveyLigado())) {
     await passarParaEquipe(conversa.id, "Harvey is paused");
-    if (estado) await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: "Harvey paused" }).eq("conversation_id", conversa.id);
+    if (estado) await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivoComDono("Harvey paused", estado.motivo_passagem as string | null) }).eq("conversation_id", conversa.id);
     return "pausado: foi para a equipe";
   }
   const lista = listaDeTeste();
@@ -502,7 +507,7 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   // Quem da equipe escreveu é dono da conversa por N horas: nada do Harvey por cima.
   // Give back por uma pessoa vale como ordem: o que a equipe escreveu antes não trava.
   const dona = equipeDonaDaConversa(msgs, Date.now(), horasDaEquipeDona(), devolvidaEm(estado?.motivo_passagem as string | null | undefined));
-  if (dona.dona) return calarPelaEquipe(sb, conversa.id, dona);
+  if (dona.dona) return calarPelaEquipe(sb, conversa.id, dona, estado?.motivo_passagem as string | null | undefined);
 
   // De qual anúncio veio: a mensagem pronta de anúncio mais recente manda (quem já falou com a
   // gente e depois clica num anúncio passa a contar para ele). Sem nenhuma no histórico, vale o lead.
@@ -539,7 +544,9 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     paraFalas(sessao),
     { telefone, nomeNoWhatsApp: msg.author.displayName ?? null, campanha: origem.campanha, quem: quem.tipo, sobreQuem, contas, fotos, falaComo: voz, // O job pago nasce num ticket que dá para editar (dono, 25/10/2026, JOB-9794): o da conversa
       // enquanto o Harvey atende é "AI agent", só leitura, e o job ficava sem status nem nota. Aí vale o do lead.
-      ticketDaConversa: () => ticketDeTrabalho(telefone ?? "").then((t) => t.editavel[0] ?? t.conversa), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)) },
+      ticketDaConversa: () => ticketDeTrabalho(telefone ?? "").then((t) => t.editavel[0] ?? t.conversa), postcodesConhecidos, conversaAnterior: voz ? [] : paraFalas(antesDaSessao(msgs, sessao)),
+      // book_team_price com o dono por agente: só depois do Give back de uma pessoa (dono.ts).
+      devolvidaPelaEquipe: devolvidaEm(estado?.motivo_passagem as string | null | undefined) !== null },
     chamarSite,
     await catalogo(),
   );
@@ -680,7 +687,7 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     });
     const fila = await precisaDeAcao(ticketDaPassagem, textoDaPassagem(r.precisaDe, r.passarParaEquipe), { esperarAgente: true });
     console.log("[harvey-wa] passagem:", feitoNota, "·", fila.linha);
-    Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: r.passarParaEquipe });
+    Object.assign(mudancas, { estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivoComDono(r.passarParaEquipe, estado?.motivo_passagem as string | null | undefined) });
   }
   // Cotação pedida com o Harvey ficando (Fase 1): ticket em 🟤 Sourcing e nota para a equipe, conversa continua com ele.
   if (r.cotacaoPedida && !r.passarParaEquipe) {
