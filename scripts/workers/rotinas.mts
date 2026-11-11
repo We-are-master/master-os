@@ -23,6 +23,7 @@
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
  *   harvey-rede               (sem janela; só nota interna)    a cada 10 min
  *   espelho-zendesk           (sem janela; status, dono, cobrança, leads do CRM) a cada 10 min
+ *   alarmes-portoes           (sem janela; só Action Required; ALARMES_PORTOES=1) a cada 15 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -164,6 +165,18 @@ export const ROTINAS: Rotina[] = [
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 9,
+  },
+  {
+    // Alarmes dos portões do dono (dono, 10/11/2026): Unassigned há 2h sem esperar sinal,
+    // Final Check há 12h e parceiro que não começou ganham Action Required no ticket, uma
+    // vez. Sem ALARMES_PORTOES=1 o script sai sem ler nada.
+    nome: "alarmes-portoes",
+    rotulo: "com.fixfy.alarmes-portoes",
+    agenda: { tipo: "intervalo", minutos: 15 },
+    script: "scripts/alarmes-portoes.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 10,
   },
   {
     // Pagamento recebido (dono, 22/10/2026): job que fechou com saldo recebe o recibo com a

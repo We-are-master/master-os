@@ -36,6 +36,12 @@ localhost. Aqui deve ser `https://partners.getfixfy.com` (ou ficar vazia, que d�
 mesmo). Nunca definir `VERCEL` neste serviço: com ela a Stefane só enfileira e
 nunca envia.
 
+## Alarmes dos portões (10/11/2026)
+
+A rotina `alarmes-portoes` só age com `ALARMES_PORTOES=1` neste serviço. Sem ela, o
+script sai sem ler nada. Ligada, marca Action Required no ticket do job (uma vez por
+job e motivo, até 10 por passada); a trava fica em `/data/state/.alarmes-portoes.json`.
+
 ## Desligar e ligar rotinas
 
 `WORKERS_DESLIGAR` aceita o nome curto (`stefane`), o label do launchd
