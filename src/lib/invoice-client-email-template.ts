@@ -262,20 +262,7 @@ export function buildInvoiceClientEmail(
 
   if (final) {
     // Copy 12: o e-mail final do job com a fatura (ou o recibo, se já está paga).
-    const p1 =
-      reportCount > 0
-        ? "The agreed work is complete, and your report is ready to view. We hope you’re pleased with the result."
-        : "The agreed work is complete. We hope you’re pleased with the result.";
     const pMissing = reportMissing ? "We couldn’t attach the report files to this email. Just reply and we’ll send you a copy." : null;
-    const p2 = paid
-      ? attached
-        ? "Your payment receipt is also attached. Thank you for your payment."
-        : "Thank you for your payment. There is nothing left to pay."
-      : `${attached ? `Your ${docName} is also included. ` : ""}The remaining amount to pay is ${gbp(amountDueNow)}${due ? `, due by ${due}` : ""}.`;
-    const p3 =
-      reportCount > 0
-        ? "Please have a look through the report. If anything needs our attention, just reply and let us know."
-        : "If anything needs our attention, just reply and let us know.";
     subject = reportCount > 0 ? `Your job report and ${docName} · ${jobRef ?? ref}` : `Your ${docName} · ${jobRef ?? ref}`;
     const liberado = paid && options?.certificado === "liberado";
     if (liberado) subject = `Payment received · your certificate · ${jobRef ?? ref}`;
@@ -300,7 +287,8 @@ export function buildInvoiceClientEmail(
             { rotulo: "Due by", valor: due ?? "" },
           ],
       passos: passosAte(PASSOS_FATURA, paid ? 3 : 2),
-      saudacao: greeting,
+      saudacao: liberado || custom || pMissing || (!paid && options?.certificado === "retido") ? greeting : "",
+      painelPrimeiro: true,
       paragrafos: liberado
         ? [
             custom ?? "Thank you, we’ve received your payment in full. Your certificate is attached, together with your final report.",
@@ -308,11 +296,11 @@ export function buildInvoiceClientEmail(
             "If you have any questions about the certificate, just reply and let us know.",
           ]
         : [
-            custom ?? p1,
+            // Sem texto de abertura (dono, 25/10/2026): o quadro e os detalhes já dizem tudo.
+            // Fica só o que o quadro não diz: recado da equipe, report que não anexou, certificado retido.
+            ...(custom ? [custom] : []),
             ...(pMissing ? [pMissing] : []),
-            p2,
             ...(!paid && options?.certificado === "retido" ? [FRASE_CERTIFICADO_RETIDO] : []),
-            p3,
           ],
       linhas: [
         ["Service", service],
