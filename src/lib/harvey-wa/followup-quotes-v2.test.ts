@@ -1,32 +1,28 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  chaveDaCobranca, horasAteFechar, intervencaoManual, lembretesFeitos, motivoParaPararCobranca, proximoPassoDaRegua, REGUAS, respostaPorEmail,
+  chaveDaCobranca, horasAteFechar, rejeitarQuoteDoTicket, intervencaoManual, lembretesFeitos, motivoParaPararCobranca, proximoPassoDaRegua, REGUAS, respostaPorEmail,
 } from "./followup-quotes";
 import { confirmarEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
 import { bancoFalso } from "@/lib/processo/banco-falso-teste";
 
-describe("quote chase schedule (24/10/2026): account one chase, Fixfy customer two", () => {
-  it("account (B2B or platform): one chase at 24h, closes 72h after it", () => {
-    assert.deepEqual(REGUAS.conta, { lembretes: [24], fecha: 96 });
-    assert.equal(horasAteFechar("conta"), 72);
-    assert.equal(proximoPassoDaRegua([], 0, 23, REGUAS.conta), null);
-    assert.equal(proximoPassoDaRegua([], 0, 24, REGUAS.conta), 1);
-    assert.equal(proximoPassoDaRegua([], 1, 71, REGUAS.conta), null);
-    assert.equal(proximoPassoDaRegua([], 1, 72, REGUAS.conta), "fechar");
-  });
-  it("Fixfy customer: chases at 24h and 72h, closes 48h after the second", () => {
-    assert.deepEqual(REGUAS.fixfy, { lembretes: [24, 72], fecha: 120 });
-    assert.equal(proximoPassoDaRegua([], 0, 24, REGUAS.fixfy), 1);
-    assert.equal(proximoPassoDaRegua([], 1, 47, REGUAS.fixfy), null);
-    assert.equal(proximoPassoDaRegua([], 1, 48, REGUAS.fixfy), 2);
-    assert.equal(proximoPassoDaRegua([], 2, 47, REGUAS.fixfy), null);
-    assert.equal(proximoPassoDaRegua([], 2, 48, REGUAS.fixfy), "fechar");
-  });
+describe("quote chase schedule (11/11/2026): two chases, closes on day 4", () => {
+  for (const tipo of ["conta", "fixfy"] as const) {
+    it(`${tipo}: chases at 24h and 48h, closes 48h after the second (day 4)`, () => {
+      assert.deepEqual(REGUAS[tipo], { lembretes: [24, 48], fecha: 96 });
+      assert.equal(horasAteFechar(tipo), 48);
+      assert.equal(proximoPassoDaRegua([], 0, 23, REGUAS[tipo]), null);
+      assert.equal(proximoPassoDaRegua([], 0, 24, REGUAS[tipo]), 1);
+      assert.equal(proximoPassoDaRegua([], 1, 23, REGUAS[tipo]), null);
+      assert.equal(proximoPassoDaRegua([], 1, 24, REGUAS[tipo]), 2);
+      assert.equal(proximoPassoDaRegua([], 2, 47, REGUAS[tipo]), null);
+      assert.equal(proximoPassoDaRegua([], 2, 48, REGUAS[tipo]), "fechar");
+    });
+  }
   it("never a third chase; tickets from the old three-chase schedule only close", () => {
     assert.equal(proximoPassoDaRegua([], 3, 500, REGUAS.fixfy), "fechar");
     assert.equal(proximoPassoDaRegua(["quote_chase_2"], 2, 10, REGUAS.conta), null);
-    assert.equal(proximoPassoDaRegua(["quote_chase_2"], 2, 72, REGUAS.conta), "fechar");
+    assert.equal(proximoPassoDaRegua(["quote_chase_2"], 2, 48, REGUAS.conta), "fechar");
     assert.equal(proximoPassoDaRegua(["quote_closed_no_reply"], 3, 500, REGUAS.fixfy), null);
   });
   it("chases done = the larger of tags and confirmed sends (tag lost after a send)", () => {
@@ -81,5 +77,27 @@ describe("quote chase v2: reserve before sending", () => {
     const depois = await reservarEnvio(sb, pedido, new Date(Date.now() + 3 * 3_600_000));
     assert.equal(depois.reservado, false);
     assert.equal(depois.motivo, "already sent");
+  });
+});
+
+describe("closing the ticket closes the OS quote (bug 09/11: mirror reopened QT-1275/1276/1278)", () => {
+  const base = { external_source: "zendesk", external_ref: "52083", deleted_at: null, customer_accepted: false, customer_deposit_paid: false };
+  it("rejects the open quote of the ticket and leaves accepted ones alone", async () => {
+    const { sb, tabelas } = bancoFalso({
+      quotes: [
+        { ...base, id: "a", reference: "QT-1", status: "awaiting_customer" },
+        { ...base, id: "b", reference: "QT-2", status: "awaiting_payment" },
+        { ...base, id: "c", reference: "QT-3", status: "converted_to_job" },
+        { ...base, id: "d", reference: "QT-4", status: "awaiting_customer", external_ref: "99999" },
+      ],
+    });
+    assert.equal(await rejeitarQuoteDoTicket(sb, 52083, "no_reply"), "QT-1");
+    const st = Object.fromEntries(tabelas.quotes!.map((q) => [q.id, q.status]));
+    assert.deepEqual(st, { a: "rejected", b: "awaiting_payment", c: "converted_to_job", d: "awaiting_customer" });
+    assert.equal(tabelas.quotes!.find((q) => q.id === "a")!.rejection_reason, "auto_close:no_reply");
+  });
+  it("no quote on the ticket: nothing to do, never throws", async () => {
+    const { sb } = bancoFalso({ quotes: [] });
+    assert.equal(await rejeitarQuoteDoTicket(sb, 1, "no_reply"), null);
   });
 });
