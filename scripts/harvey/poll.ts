@@ -457,13 +457,22 @@ async function ciclo(): Promise<void> {
   if (!apiKey) throw new Error("OPENAI_API_KEY missing");
   const { cotarTicket, subirJobBooked, confirmarBookingDeParceiro, postarNotaInterna, CardIlegivel, PASSADAS_ATE_DESISTIR_DO_CARD, rascunhoDePrecoLigado } =
     await import("../../src/lib/zendesk-quoter/quoter");
-  const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem } = await import("../../src/lib/zendesk-triage");
+  const { triarTicket, ACAO_POR_CLASSE, tagDaClasse, notaDeTriagem, semCotacao, acaoSemCotacao, numerosDeJobCitados } =
+    await import("../../src/lib/zendesk-triage");
+  const { precisaDeAcao } = await import("../../src/lib/fila-de-acao");
   // Cada decisão vira uma linha em harvey_decisoes (decisoes.ts): classe, ação, status antes e esperado.
   const { registrarMedida } = await import("../../src/lib/harvey/decisoes");
   const { createServiceClient: servicoDasDecisoes } = await import("../../src/lib/supabase/service");
   const sbDecisoes = servicoDasDecisoes();
   type Registro = Omit<Parameters<typeof registrarMedida>[1], "canal" | "ticketId" | "statusAntes">;
   const decidir = (t: TicketDaBusca, d: Registro) => registrarMedida(sbDecisoes, { canal: "email", ticketId: t.id, statusAntes: t.custom_status_id ?? null, ...d });
+  /** O primeiro número citado no texto que é mesmo um job nosso ("for 9704" → JOB-9704). */
+  const jobCitadoQueExiste = async (texto: string): Promise<string | null> => {
+    const refs = numerosDeJobCitados(texto).map((n) => `JOB-${n}`);
+    if (!refs.length) return null;
+    const { data } = await sbDecisoes.from("jobs").select("reference").in("reference", refs).is("deleted_at", null).limit(1);
+    return (data?.[0] as { reference?: string } | undefined)?.reference ?? null;
+  };
 
   const vistos = lerVistos();
   const triados = lerIds(TRIAGEM_SEEN_PATH);
@@ -765,6 +774,38 @@ async function ciclo(): Promise<void> {
       }
     } catch (err) {
       console.error(`[harvey] confirmacao de parceiro falhou no ${t.id}: ${err}`);
+    }
+
+    /**
+     * SEM COTAÇÃO (dono, 10/11/2026): o que fala de job que já existe, ou que o texto aponta
+     * como reclamação, não chega ao classificador de preço. Antes, "Outstanding Works - Li&
+     * Fung" (sink still blocked) virou quote (#52299), e "Update on Call Out Amount for 9704"
+     * também (#51868). Vai para a equipe: nota + Action Required.
+     *
+     * Vem depois de certificado e de confirmação de parceiro, que citam job e têm ação própria.
+     */
+    let triFinal = tri;
+    if ((tri.classe === "indefinido" || tri.classe === "disponibilidade") && !triados.has(t.id)) {
+      const ref = await jobCitadoQueExiste(`${t.subject}\n${t.description ?? ""}`).catch(() => null);
+      if (ref) triFinal = { classe: "sobre_job_existente", motivo: `o texto cita o ${ref}, que já existe`, fonte: "corpo" };
+    }
+    if (semCotacao(triFinal)) {
+      if (triados.has(t.id)) continue;
+      // Teto do ciclo: sem marcar nada, o ticket volta na próxima rodada.
+      if (notasTriagem >= MAX_NOTAS_TRIAGEM_POR_CICLO) continue;
+      // precisaDeAcao nunca lança. Falhou: volta na próxima rodada; ticket fechado: não volta.
+      const fila = await precisaDeAcao(t.id, acaoSemCotacao(triFinal));
+      if (!fila.ok) {
+        console.error(`[harvey] fila humana falhou no ${t.id}: ${fila.linha}`);
+        if (/fechado/.test(fila.linha)) { triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados); }
+        continue;
+      }
+      try { await adicionarTagNomeada(t.id, tagDaClasse(triFinal.classe)); } catch { /* a nota já saiu; a tag é extra */ }
+      triados.add(t.id); gravarIds(TRIAGEM_SEEN_PATH, triados);
+      notasTriagem++;
+      await decidir(t, { classe: triFinal.classe, acao: "fila_humana", resultado: "nota", detalhe: triFinal.motivo });
+      console.log(`[harvey] ✋ #${t.id} ${triFinal.classe} — sem cotação, Action Required para a equipe`);
+      continue;
     }
 
     let quer = { quote: false, booking: false };
