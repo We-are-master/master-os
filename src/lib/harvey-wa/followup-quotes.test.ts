@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { diaDoFechamento, ehB2B, emailDaCobranca, motivoDeDesistencia, proximoPasso, respostaDeFechamento, resumoDoFechamento, whatsappDaCobranca, type DadosDaCobranca } from "./followup-quotes";
 import { montarEmail } from "./email-do-leo";
 
-describe("quote chase: Fixfy customer two follow-ups, account one", () => {
+describe("quote chase: two follow-ups for everyone, closes on day 4", () => {
   it("first chase 24h after the quote", () => {
     assert.equal(proximoPasso([], 23), null);
     assert.equal(proximoPasso([], 24), 1);
   });
-  it("second 48h after the first (day 3), then closes 48h later (day 5)", () => {
-    assert.equal(proximoPasso(["quote_chase_1"], 47), null);
-    assert.equal(proximoPasso(["quote_chase_1"], 48), 2);
+  it("second 24h after the first (day 2), then closes 48h later (day 4)", () => {
+    assert.equal(proximoPasso(["quote_chase_1"], 23), null);
+    assert.equal(proximoPasso(["quote_chase_1"], 24), 2);
     assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 47), null);
     assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48), "fechar");
   });
@@ -18,14 +18,15 @@ describe("quote chase: Fixfy customer two follow-ups, account one", () => {
     assert.equal(proximoPasso(["quote_closed_no_reply"], 500), null);
     assert.equal(proximoPasso(["quote_closed_by_customer"], 500), null);
   });
-  it("account gets one chase that already warns, then closes 72h later", () => {
+  it("account gets the same two chases, the second warns, then closes 48h later", () => {
     assert.equal(proximoPasso([], 24, "conta"), 1);
-    assert.equal(proximoPasso(["quote_chase_1"], 71, "conta"), null);
-    assert.equal(proximoPasso(["quote_chase_1"], 72, "conta"), "fechar");
+    assert.equal(proximoPasso(["quote_chase_1"], 24, "conta"), 2);
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 47, "conta"), null);
+    assert.equal(proximoPasso(["quote_chase_1", "quote_chase_2"], 48, "conta"), "fechar");
     assert.match(emailDaCobranca(1, true, { ...acme, fechaEm: "Wed 21 Oct 26" }).paragrafos.join(" "), /by Wed 21 Oct 26, we’ll close the enquiry/);
   });
   it("closing summary says what happened, with the reference", () => {
-    assert.equal(resumoDoFechamento("no_reply", "conta", "Q-1"), "Quote Q-1 closed: one follow-up sent, no reply in 72 hours.");
+    assert.equal(resumoDoFechamento("no_reply", "conta", "Q-1"), "Quote Q-1 closed: two follow-ups sent, no reply in 48 hours after the last one.");
     assert.equal(resumoDoFechamento("no_reply", "fixfy", "Q-1"), "Quote Q-1 closed: two follow-ups sent, no reply in 48 hours after the last one.");
     assert.equal(resumoDoFechamento("booked_elsewhere", "fixfy", null), "Quote closed: the customer booked someone else.");
   });
