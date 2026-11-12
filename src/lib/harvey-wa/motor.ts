@@ -664,6 +664,15 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       if (etapa === "complaint" || etapa === "booking") {
         // Reclamação e operação: do responsável de operação (Needs Attention). Reclamação vira 🚨 Complaint.
         await ticketParaOperacao(telefone, etapa === "complaint", r.passarParaEquipe).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] para a operação:", e));
+        if (etapa === "complaint") {
+          // O job também entra em on hold por complaint, como a reclamação por e-mail (dono, 12/11/2026).
+          const { holdDaReclamacaoDoWhatsApp } = await import("@/lib/zendesk-quoter/reclamacoes");
+          const h = await holdDaReclamacaoDoWhatsApp(telefone, r.passarParaEquipe, await ticketPeloTelefone(telefone).catch(() => null)).catch((e): { acao: string; nota: string; reference?: string } => ({ acao: "nota", nota: `Complaint hold failed: ${e instanceof Error ? e.message : e}` }));
+          if (h.acao !== "desligado") {
+            console.log("[harvey-wa] complaint:", h.acao, h.reference ?? "");
+            await notaInternaNaConversa(telefone, h.nota).catch((e) => console.error("[harvey-wa] nota do hold:", e));
+          }
+        }
       } else if (etapa) await ticketParaEtapa(telefone, etapa === "call" || etapa === "close" ? ZD_STATUS_TO_CALL : ZD_STATUS_NEEDS_QUOTE).then((x) => x && console.log("[harvey-wa]", x)).catch((e) => console.error("[harvey-wa] etapa:", e));
     }
     // Fila de ação: a passagem é ação nossa, com o motivo na nota (o ticket acabou de sair do Harvey).

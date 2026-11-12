@@ -88,15 +88,21 @@ export function quoteParaCliente(q: LinhaQuote) {
 }
 
 /** As reservas de quem escreve: pelos clientes com esse telefone e, se ele disser, pelo e-mail. */
-export async function reservasDoCliente(sb: SupabaseClient, a: { telefone: string | null; email?: string | null; clienteId?: string | null }) {
+/** Os clientes com este telefone (a mesma chave dos últimos dígitos que a conversa usa). */
+export async function clientesDoTelefone(sb: SupabaseClient, telefone: string | null): Promise<string[]> {
   const ids = new Set<string>();
-  if (a.clienteId) ids.add(a.clienteId);
-  const chave = chaveDoTelefone(a.telefone);
+  const chave = chaveDoTelefone(telefone);
   if (chave) {
     const fim = chave.slice(-4);
     const { data } = await sb.from("clients").select("id, phone").ilike("phone", `%${fim.slice(0, 2)}%${fim.slice(2)}`).limit(200);
     for (const c of data ?? []) if (chaveDoTelefone(c.phone as string) === chave) ids.add(c.id as string);
   }
+  return [...ids];
+}
+
+export async function reservasDoCliente(sb: SupabaseClient, a: { telefone: string | null; email?: string | null; clienteId?: string | null }) {
+  const ids = new Set<string>(await clientesDoTelefone(sb, a.telefone));
+  if (a.clienteId) ids.add(a.clienteId);
   if (a.email?.includes("@")) {
     const { data } = await sb.from("clients").select("id").ilike("email", a.email.trim()).limit(5);
     for (const c of data ?? []) ids.add(c.id as string);

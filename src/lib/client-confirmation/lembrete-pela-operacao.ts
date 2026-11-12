@@ -41,7 +41,7 @@ export function textoDoLembrete(a: { nome: string; data: string; janela: string;
 }
 
 /** Manda pelo 7983 e grava na conversa do /inbox. Lança se a uazapi recusar. */
-export async function enviarLembretePelaOperacao(sb: SupabaseClient, telefone: string, texto: string): Promise<{ wamid: string }> {
+export async function enviarLembretePelaOperacao(sb: SupabaseClient, telefone: string, texto: string, quem = "Fixfy (24h reminder)"): Promise<{ wamid: string }> {
   const contato = telefone.replace(/\D/g, "");
   const { wamid, corpo } = await enviarPelaUazapi(contato, texto);
   const { error } = await sb.from("wa_mensagens").insert({
@@ -54,7 +54,7 @@ export async function enviarLembretePelaOperacao(sb: SupabaseClient, telefone: s
     texto,
     status: "sent",
     enviado_por: null,
-    enviado_por_nome: "Fixfy (24h reminder)",
+    enviado_por_nome: quem,
     bruto: corpo,
   });
   // Já entregou: falha de gravação não pode virar reenvio.

@@ -23,6 +23,7 @@
  *   pagamento-recebido        (recibo e certificado, job pago) a cada 15 min
  *   harvey-rede               (sem janela; só nota interna)    a cada 10 min
  *   espelho-zendesk           (sem janela; status, dono, cobrança, leads do CRM) a cada 10 min
+ *   john-rascunho             (só com JOHN_RASCUNHO=1; só rascunho)   a cada 10 min
  *
  * Para mudar um horário, é aqui. Para desligar uma rotina sem deploy, é a
  * variável WORKERS_DESLIGAR (ver agendador.mts).
@@ -161,6 +162,18 @@ export const ROTINAS: Rotina[] = [
     rotulo: "com.fixfy.harvey-rede",
     agenda: { tipo: "intervalo", minutos: 10 },
     script: "scripts/harvey-rede-de-seguranca.mts",
+    args: ["--aplicar"],
+    runtime: "tsx",
+    limiteMinutos: 9,
+  },
+  {
+    // John, reclamações (dono, 10/11/2026): só rascunho. Job em on hold por reclamação ganha
+    // rascunho ao parceiro no journal (o parceiro não vê) e ao cliente em nota interna no
+    // ticket. Não manda nada. Sem JOHN_RASCUNHO=1 o script sai sem ler nada.
+    nome: "john-rascunho",
+    rotulo: "com.fixfy.john-rascunho",
+    agenda: { tipo: "intervalo", minutos: 10 },
+    script: "scripts/john-rascunho-reclamacao.mts",
     args: ["--aplicar"],
     runtime: "tsx",
     limiteMinutos: 9,
