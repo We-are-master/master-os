@@ -1127,6 +1127,7 @@ function AccountDetailDrawer({
   const [emailIncludeReportOnFinal, setEmailIncludeReportOnFinal] = useState(true);
   // Fatura desta conta (migrations 323 e 324): razão social, VAT só na taxa e quem recebe cópia.
   const [billingLegalName, setBillingLegalName] = useState("");
+  const [billingVatNumber, setBillingVatNumber] = useState("");
   const [invoiceFeeVat, setInvoiceFeeVat] = useState(false);
   const [invoiceCcEmails, setInvoiceCcEmails] = useState("");
   const [termsModalOpen, setTermsModalOpen] = useState(false);
@@ -1162,6 +1163,7 @@ function AccountDetailDrawer({
     setCollectionMode(a.collection_mode === "card_upfront" ? "card_upfront" : "invoice");
     setEmailIncludeReportOnFinal(a.email_include_report_on_final !== false);
     setBillingLegalName(typeof a.billing_legal_name === "string" ? a.billing_legal_name : "");
+    setBillingVatNumber(typeof a.billing_vat_number === "string" ? a.billing_vat_number : "");
     setInvoiceFeeVat(a.invoice_fee_vat === true);
     setInvoiceCcEmails(Array.isArray(a.invoice_cc_emails) ? (a.invoice_cc_emails as string[]).join(", ") : "");
     setEdit({
@@ -1409,6 +1411,7 @@ function AccountDetailDrawer({
         email_include_invoice_on_final: emailIncludeInvoiceOnFinal,
         email_include_report_on_final: emailIncludeReportOnFinal,
         billing_legal_name: billingLegalName.trim() || null,
+        billing_vat_number: billingVatNumber.trim().toUpperCase() || null,
         invoice_fee_vat: invoiceFeeVat,
         invoice_cc_emails: limparCopias(invoiceCcEmails.split(/[,;\s]+/)),
         default_client_cancel_fee_gbp:
@@ -2075,6 +2078,13 @@ function AccountDetailDrawer({
                       <FixfyHintIcon text="The company the invoice is billed to, e.g. LF Europe Ltd. The address and company number above are printed with it." />
                     </div>
                     <Input value={billingLegalName} onChange={(e) => setBillingLegalName(e.target.value)} placeholder="Company Ltd" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Client VAT number</span>
+                      <FixfyHintIcon text="The client's own VAT number, printed under the legal name on the invoice. Leave empty if they don't ask for it." />
+                    </div>
+                    <Input value={billingVatNumber} onChange={(e) => setBillingVatNumber(e.target.value)} placeholder="GB123456789" />
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 mb-1.5">

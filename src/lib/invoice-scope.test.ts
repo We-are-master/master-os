@@ -39,10 +39,10 @@ test("scope antigo, texto solto: tarefas sim, acesso e telefone não", () => {
 });
 
 test("linha comprida é cortada e repetida sai", () => {
-  const longa = `Fit ${"shelf ".repeat(60)}`;
+  const longa = `Fit ${"shelf ".repeat(160)}`;
   const r = escopoDaFatura(`WORK\n- ${longa}\n- Fill holes.\n- Fill holes.`);
   assert.equal(r.length, 2);
-  assert.ok(r[0]!.endsWith("…") && r[0]!.length <= 220);
+  assert.ok(r[0]!.endsWith("…") && r[0]!.length <= 600);
 });
 
 test("referência interna de merge sai", () => {

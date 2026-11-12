@@ -1,13 +1,18 @@
 /**
  * Cobrança de quote enviada: ticket em 🟠 Awaiting approval esperando o cliente.
  *
- * Régua do dono (24/10/2026, troca a de três lembretes de 14/10 e a B2B de 17/10):
+ * Régua do dono (11/11/2026, troca a de 24/10): a mesma para conta e cliente
+ * da Fixfy. Dois lembretes e fecha no 4º dia.
  *
- *   conta (B2B ou plataforma)   1 lembrete 24h depois da quote, só e-mail,
- *                               e fecha 72h depois dele sem resposta (dia 4)
- *   cliente da Fixfy            2 lembretes, 24h e 72h depois da quote, por UM
- *                               canal (o da conversa: WhatsApp ou e-mail), e fecha
- *                               48h depois do 2º sem resposta (dia 5)
+ *   dia 1  lembrete 1   (24h depois da quote)
+ *   dia 2  lembrete 2   (48h depois da quote, o último, avisa o dia que fecha)
+ *   dia 4  fecha        48h depois do 2º sem resposta
+ *
+ *   conta (B2B ou plataforma)   só e-mail
+ *   cliente da Fixfy            por UM canal (o da conversa: WhatsApp ou e-mail)
+ *
+ * Fechar o ticket também fecha a quote no OS (status rejected). Sem isso o
+ * espelho do OS via a quote ainda "awaiting_customer" e reabria o ticket.
  *
  * Conta é a tag `b2b` no ticket OU a conta da quote com process_type b2b/platform.
  * O último lembrete já avisa o dia em que fecha.
@@ -61,8 +66,8 @@ function horaDeLondres(d: Date): number {
 /** A régua em horas desde a quote: os lembretes e o fechamento. */
 export type ReguaDaCobranca = { lembretes: number[]; fecha: number };
 export const REGUAS: Record<TipoDaCobranca, ReguaDaCobranca> = {
-  conta: { lembretes: [24], fecha: 24 + 72 },
-  fixfy: { lembretes: [24, 72], fecha: 72 + 48 },
+  conta: { lembretes: [24, 48], fecha: 96 },
+  fixfy: { lembretes: [24, 48], fecha: 96 },
 };
 
 /** Horas entre o último lembrete e o fechamento (o "se não responder até..."). */
@@ -340,9 +345,7 @@ async function dadosDaQuoteDoTicket(sb: SupabaseClient, ticketId: number, b2b: b
 export function resumoDoFechamento(motivo: string, tipo: TipoDaCobranca, referencia?: string | null): string {
   const q = referencia?.trim() ? `Quote ${referencia.trim()}` : "Quote";
   if (motivo === "no_reply") {
-    return tipo === "conta"
-      ? `${q} closed: one follow-up sent, no reply in ${horasAteFechar("conta")} hours.`
-      : `${q} closed: two follow-ups sent, no reply in ${horasAteFechar("fixfy")} hours after the last one.`;
+    return `${q} closed: two follow-ups sent, no reply in ${horasAteFechar(tipo)} hours after the last one.`;
   }
   const porque: Record<string, string> = {
     booked_elsewhere: "the customer booked someone else",
@@ -352,7 +355,51 @@ export function resumoDoFechamento(motivo: string, tipo: TipoDaCobranca, referen
   return `${q} closed: ${porque[motivo] ?? "the customer replied that they will not go ahead"}.`;
 }
 
-async function fechar(t: Ticket, motivo: string, tag: string, nota: string, resumo: string) {
+/** Estados em que a quote ainda espera alguém: fechar o ticket fecha a quote junto. */
+const QUOTE_ABERTA = new Set(["draft", "in_survey", "bidding", "quote_ready", "awaiting_customer"]);
+
+/**
+ * Fecha no OS a quote do ticket que a régua acabou de fechar no Zendesk.
+ *
+ * Bug de 09/11/2026 (QT-1275/1276/1278): o ticket ia para solved, a quote ficava
+ * awaiting_customer e o espelho do OS reabria o ticket. Só mexe em quote ainda
+ * aberta (aceita, paga ou já virou job fica como está) e nunca lança: o ticket
+ * já está fechado e a varredura segue.
+ */
+export async function rejeitarQuoteDoTicket(sb: SupabaseClient, ticketId: number, motivo: string): Promise<string | null> {
+  try {
+    const { data } = await sb
+      .from("quotes")
+      .select("id, reference, status, customer_accepted, customer_deposit_paid")
+      .eq("external_source", "zendesk")
+      .eq("external_ref", String(ticketId))
+      .is("deleted_at", null);
+    const abertas = ((data ?? []) as Array<{ id: string; reference: string | null; status: string | null; customer_accepted?: boolean | null; customer_deposit_paid?: boolean | null }>)
+      .filter((q) => QUOTE_ABERTA.has(String(q.status ?? "")) && !q.customer_accepted && !q.customer_deposit_paid);
+    const feitas: string[] = [];
+    for (const q of abertas) {
+      const { data: trocou, error } = await sb
+        .from("quotes")
+        .update({ status: "rejected", rejection_reason: `auto_close:${motivo}`, bidding_started_at: null, updated_at: new Date().toISOString() })
+        .eq("id", q.id)
+        .eq("status", String(q.status))
+        .select("id");
+      if (error || !trocou?.length) continue;
+      void sb.from("audit_logs").insert({
+        entity_type: "quote", entity_id: q.id, entity_ref: q.reference, action: "status_changed",
+        field_name: "status", old_value: q.status, new_value: "rejected", metadata: { origem: "quote_chase_auto_close", motivo, ticket: ticketId },
+      }).then(() => undefined, () => undefined);
+      const { sincronizarLeadDaQuote } = await import("@/lib/crm/lead-servidor");
+      await sincronizarLeadDaQuote(sb, q.id);
+      feitas.push(q.reference ?? q.id);
+    }
+    return feitas.length ? feitas.join(", ") : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fechar(sb: SupabaseClient, t: Ticket, motivo: string, tag: string, nota: string, resumo: string) {
   await zendeskApi(`tickets/${t.id}.json`, {
     method: "PUT",
     body: {
@@ -368,6 +415,7 @@ async function fechar(t: Ticket, motivo: string, tag: string, nota: string, resu
     },
   });
   await addTicketTags(t.id, [tag]);
+  await rejeitarQuoteDoTicket(sb, t.id, motivo);
 }
 
 async function emailDoResend(para: string, e: EmailDeAcompanhamento) {
@@ -466,7 +514,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
         if (!rf.reservado) {
           // A resposta já saiu numa rodada anterior e o fechamento é que falhou: só fecha.
           if (rf.motivo === "already sent") {
-            await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia)).catch(() => null);
+            await fechar(sb, t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia)).catch(() => null);
             out.fechados.push(`${quem}: closed (${motivo}, reply already sent)`);
           } else out.pulados.push(`${quem}: closing reply ${rf.motivo ?? "already reserved"}`);
           continue;
@@ -480,7 +528,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
           await zendeskApi(`tickets/${t.id}.json`, { method: "PUT", body: { ticket: { comment: comentarioDoEmail(resposta.email, (await autorDosEmails()).zendesk_user_id) } } });
         }
         if (chaveFim) await confirmarEnvio(sb, chaveFim);
-        await fechar(t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia));
+        await fechar(sb, t, motivo, "quote_closed_by_customer", `Quote closed automatically: the customer said they no longer need it (${motivo}).`, resumoDoFechamento(motivo, tipo, (await dados()).referencia));
         out.fechados.push(`${quem}: closed (${motivo})`);
       } catch (e) {
         if (chaveFim) await falhouEnvio(sb, chaveFim, e).catch(() => null);
@@ -512,7 +560,7 @@ export async function varrerCobrancaDeQuotes(sb: SupabaseClient, { aplicar }: { 
       if (!aplicar) { out.fechados.push(`${quem}: would close (no_reply, day ${dia})`); continue; }
       try {
         const resumo = resumoDoFechamento("no_reply", tipo, (await dados()).referencia);
-        await fechar(t, "no_reply", "quote_closed_no_reply", `Quote closed automatically on day ${dia}: ${resumo}`, resumo);
+        await fechar(sb, t, "no_reply", "quote_closed_no_reply", `Quote closed automatically on day ${dia}: ${resumo}`, resumo);
         out.fechados.push(`${quem}: closed (no_reply)`);
       } catch (e) {
         out.pulados.push(`${quem}: ${e instanceof Error ? e.message.slice(0, 100) : "failed"}`);

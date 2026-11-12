@@ -26,30 +26,31 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Training", href: "/school", icon: "graduation-cap", badge: "New" },
     ],
   },
+  // Ordem do dono (10/11/2026): Overview e Live ops | CRM e Inbox | Quotes, Jobs e Schedule.
+  // O merge da nav salva tira cada item do grupo antigo e põe aqui; o grupo
+  // "Live" antigo fica vazio e some da barra.
   {
     label: "Overview",
     items: [
       { label: "Overview", href: "/", icon: "grid-2x2", permission: "dashboard" },
-      // Atendimento do WhatsApp de operação (7983), parceiros e equipe (02/11/2026).
-      { label: "Inbox", href: "/inbox", icon: "message-square", permission: "jobs" },
+      { label: "Live", href: "/schedule", icon: "calendar", permission: "jobs" },
     ],
   },
-  // Live operations e Schedule num bloco próprio, embaixo de Overview e Inbox (dono, 03/11/2026).
-  // O merge da nav salva tira os dois do grupo antigo e põe aqui.
   {
-    label: "Live",
+    label: "Sales",
     items: [
-      { label: "Live operations", href: "/schedule", icon: "calendar", permission: "jobs" },
-      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
+      // CRM (06/11/2026): Pipeline e Leads de B2C e B2B em /leads; a tela antiga /crm saiu do menu.
+      { label: "CRM", href: "/leads", icon: "user-circle", permission: "leads" },
+      // Atendimento do WhatsApp de operação (7983), parceiros e equipe (02/11/2026).
+      { label: "Inbox", href: "/inbox", icon: "message-square", permission: "jobs" },
     ],
   },
   {
     label: "Operations",
     items: [
-      // CRM (06/11/2026): Pipeline e Leads de B2C e B2B em /leads; a tela antiga /crm saiu do menu.
-      { label: "CRM", href: "/leads", icon: "user-circle", permission: "leads" },
       { label: "Quotes", href: "/quotes", icon: "file-text", permission: "quotes" },
       { label: "Jobs", href: "/jobs", icon: "briefcase", permission: "jobs" },
+      { label: "Schedule", href: "/operations/schedule", icon: "calendar-clock", permission: "jobs" },
     ],
   },
   {

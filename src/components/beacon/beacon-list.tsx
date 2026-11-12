@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { JobPeekHost, abrirJobNoModal, cliqueAbreModal } from "@/components/jobs/job-peek-modal";
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { ChevronRight } from "lucide-react";
@@ -120,6 +121,7 @@ export function BeaconList({ filters = DEFAULT_BEACON_FILTERS }: { filters?: Bea
 
   return (
     <div className="bg-card border border-fx-line rounded-xl shadow-fx-1 overflow-hidden">
+      <JobPeekHost />
       <div className="overflow-x-auto">
         <div className="min-w-[920px]">
           {GROUPS.map((g) => {
@@ -183,6 +185,13 @@ function ListRow({ job, accent }: { job: ListJob; accent: string }) {
   return (
     <Link
       href={`/jobs/${job.id}`}
+      onClick={(e) => {
+        // Mesmo modal do Kanban: confere o job sem sair da lista (10/11/2026).
+        if (cliqueAbreModal(e)) {
+          e.preventDefault();
+          abrirJobNoModal(job.id, job.reference);
+        }
+      }}
       className={cn(
         "grid grid-cols-[6px_140px_1fr_180px_160px_120px_110px_36px] gap-3 items-center bg-card border-b border-fx-line hover:bg-fx-paper transition-colors h-11 group",
         isRisk && "bg-gradient-to-r from-fx-red-50/40 to-transparent",

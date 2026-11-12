@@ -48,7 +48,9 @@ export function buildClientJobRescheduledEmail(data: ClientRescheduleData): {
   const publico: Publico = data.publico ?? { tipo: "b2c", primeiroNome: data.clientFirstName };
   const motivo = data.reason?.trim() || null;
 
-  const subject = novo.data ? `Your booking has been rescheduled · ${novo.data}` : "Your booking has been rescheduled";
+  const subject = novo.data
+    ? `Your booking has been rescheduled · ${novo.data}${novo.janela ? `, ${novo.janela}` : ""}`
+    : "Your booking has been rescheduled";
   const primeiro = novo.data
     ? novo.janela
       ? `Your booking has been moved to ${novo.data}, with arrival ${novo.janela}. We’ve included the previous and new details below.`
@@ -77,8 +79,8 @@ export function buildClientJobRescheduledEmail(data: ClientRescheduleData): {
       ...(fecho ? [fecho] : []),
     ],
     linhas: [
-      ["Previously", juntar(antes.data, antes.janela)],
-      ["Now", juntar(novo.data, novo.janela)],
+      ["Previously", juntar(antes.data, antes.janela ? `Arrival ${antes.janela}` : null)],
+      ["Now", juntar(novo.data, novo.janela ? `Arrival ${novo.janela}` : "Arrival time to be confirmed")],
       ["Service", data.jobTitle],
       ["Property", data.propertyAddress],
       ["Booking", data.jobReference],

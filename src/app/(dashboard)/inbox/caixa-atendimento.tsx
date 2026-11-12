@@ -82,7 +82,7 @@ import { ETAPAS_DE_JOB, ETAPAS_DE_QUOTE, type ConversaDaCaixa, type JobParaOfere
 import { useSomDeChegada } from "./sons";
 import { SeletorDeSom } from "./seletor-de-som";
 import { FILTROS_VAZIOS, FiltrosAtivos, PainelDeFiltros, passaNosFiltros, quantosFiltros, SEM_DONO, type Filtros } from "./filtros";
-import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, SeletorDeTipo, type TipoRapido, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
+import { Acao, Avatar, Chip, JOB_FEITO, rotuloAoLado, SeletorDeTipo, contarPorAba, type TipoRapido, ChipDaEtapa, chegada, corDoAutor, nomeDoAutor, PONTO, iconeDaEtapa, presencaAgora, type Tom } from "./ui";
 
 /** A visão da lateral. Uma por vez, como no VOS. */
 type Visao =
@@ -98,8 +98,8 @@ type Visao =
   | { k: "sem_dono" }
   | { k: "etapa"; grupo: "quote" | "job"; status: string };
 type Tipo = "todas" | "conta" | "parceiro" | "cliente" | "outro" | "grupo";
-/** "Clients" no seletor rápido: cliente, conta e lead juntos (só parceiro e grupo ficam de fora). */
-const TIPOS_CLIENTE = ["cliente", "conta", "outro"] as const;
+/** "Clients" no seletor rápido: cliente e lead juntos. Conta tem a aba Accounts (dono, 10/11/2026). */
+const TIPOS_CLIENTE = ["cliente", "outro"] as const;
 type Gaveta = { k: "criar"; tipo: TipoDoPrefill } | { k: "oferecer" } | null;
 
 const JANELA_MS = 24 * 60 * 60 * 1000;
@@ -643,14 +643,15 @@ export function CaixaAtendimento({
     ? "todas"
     : filtros.tipos.length === 1 && filtros.tipos[0] === "parceiro"
       ? "parceiro"
-      : filtros.tipos.length === TIPOS_CLIENTE.length && TIPOS_CLIENTE.every((t) => filtros.tipos.includes(t))
+      : filtros.tipos.length === 1 && filtros.tipos[0] === "conta"
+        ? "conta"
+        : filtros.tipos.length === TIPOS_CLIENTE.length && TIPOS_CLIENTE.every((t) => filtros.tipos.includes(t))
         ? "cliente"
         : null;
   const nRapido = useMemo(() => {
     const naView = conversas.filter((c) => passa(c, visao));
-    const conta = (l: ConversaDaCaixa[]) => ({ todas: l.length, parceiro: l.filter((c) => c.tipo === "parceiro").length, cliente: l.filter((c) => (TIPOS_CLIENTE as readonly string[]).includes(c.tipo)).length });
     // Não lida como na lista: resolvida não conta.
-    return { total: conta(naView), naoLidas: conta(naView.filter((c) => !resolvida(c) && naoLidas(c) > 0)) };
+    return { total: contarPorAba(naView), naoLidas: contarPorAba(naView.filter((c) => !resolvida(c) && naoLidas(c) > 0)) };
   }, [conversas, visao]);
 
   const aberta =
@@ -929,7 +930,7 @@ export function CaixaAtendimento({
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_330px_minmax(0,1fr)_300px] overflow-hidden bg-card">
+    <div className="cx grid h-screen min-h-[560px] grid-cols-[216px_392px_minmax(0,1fr)_300px] overflow-hidden bg-card">
       {/* Lateral */}
       <aside className="flex min-h-0 flex-col overflow-y-auto border-r border-border-light bg-surface-secondary/40 p-2.5">
         <p className="px-2.5 pb-2 pt-1.5 text-[17px] font-bold tracking-tight text-text-primary">Inbox</p>
@@ -1176,11 +1177,11 @@ export function CaixaAtendimento({
             onEnviado={() => router.refresh()}
           />
         </div>
-        {/* All · Clients · Partners com a contagem da view: o mesmo filtro de Contacts da lateral. */}
+        {/* All · Accounts · Clients · Partners com a contagem da view: o mesmo filtro de Contacts da lateral. */}
         <div className="shrink-0 px-4 py-3">
           <SeletorDeTipo
             ativo={tipoRapido}
-            onTroca={(t) => setFiltros((f) => ({ ...f, tipos: t === "todas" ? [] : t === "parceiro" ? ["parceiro"] : [...TIPOS_CLIENTE] }))}
+            onTroca={(t) => setFiltros((f) => ({ ...f, tipos: t === "todas" ? [] : t === "cliente" ? [...TIPOS_CLIENTE] : [t] }))}
             n={nRapido.total}
             naoLidas={nRapido.naoLidas}
           />

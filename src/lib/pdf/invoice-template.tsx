@@ -354,6 +354,12 @@ function LegacyInvoicePDF({ data }: { data: InvoicePdfData }) {
                     <Text style={styles.refVal}>{data.billTo.companyNumber}</Text>
                   </View>
                 ) : null}
+                {data.billTo.vatNumber ? (
+                  <View style={styles.refRow}>
+                    <Text style={styles.refKey}>VAT no.</Text>
+                    <Text style={styles.refVal}>{data.billTo.vatNumber}</Text>
+                  </View>
+                ) : null}
               </>
             ) : null}
             <View style={styles.refRow}>
@@ -549,7 +555,7 @@ const sheet = StyleSheet.create({
   dueRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, borderTopWidth: 1, borderTopColor: NAVY, borderBottomWidth: 1, borderBottomColor: NAVY, marginTop: 2 },
   dueLabel: { fontSize: 11, fontFamily: "Helvetica-Bold", color: NAVY },
   dueValue: { fontSize: 11, fontFamily: "Helvetica-Bold", color: ORANGE },
-  payWrap: { marginTop: 30 },
+  payWrap: { marginTop: 18 },
   payTitle: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 6 },
   payBox: { flexDirection: "row", borderTopWidth: 0.5, borderTopColor: BORDER, paddingTop: 8 },
   payCol: { width: "50%", paddingRight: 14 },
@@ -557,7 +563,13 @@ const sheet = StyleSheet.create({
   payKeyFirst: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY },
   payVal: { fontSize: 9, color: MUTED, marginTop: 1 },
   note: { fontSize: 8, color: LABEL, lineHeight: 1.45, marginTop: 14 },
-  scopeWrap: { marginTop: 18 },
+  scopeWrap: { marginTop: 14 },
+  explainWrap: { flexDirection: "row", marginTop: 10, paddingTop: 8, borderTopWidth: 0.5, borderTopColor: BORDER },
+  explainCol: { flex: 1, paddingRight: 14 },
+  explainTitle: { fontSize: 7, fontFamily: "Helvetica-Bold", color: NAVY, letterSpacing: 0.4, marginBottom: 4 },
+  explainText: { fontSize: 7, color: MUTED, lineHeight: 1.4, marginBottom: 2 },
+  explainRow: { flexDirection: "row", marginBottom: 1 },
+  explainItem: { flex: 1, fontSize: 7, color: MUTED, lineHeight: 1.4 },
   scopeTitle: { fontSize: 8, fontFamily: "Helvetica-Bold", color: NAVY, letterSpacing: 0.4, borderBottomWidth: 1, borderBottomColor: NAVY, paddingBottom: 5, marginBottom: 6 },
   scopeRow: { flexDirection: "row", marginBottom: 3 },
   scopeBullet: { width: 10, fontSize: 9, color: LABEL },
@@ -625,6 +637,7 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
               <Text key={i} style={sheet.line}>{l}</Text>
             ))}
             {data.billTo?.companyNumber ? <Text style={sheet.line}>Company No. {data.billTo.companyNumber}</Text> : null}
+            {data.billTo?.vatNumber ? <Text style={sheet.line}>VAT No. {data.billTo.vatNumber}</Text> : null}
           </View>
           <View style={sheet.colMeta}>
             <Text style={sheet.metaLabelFirst}>{paid ? "Receipt Date" : "Invoice Date"}</Text>
@@ -718,7 +731,7 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
         </View>
 
         {data.scopeOfWork?.length ? (
-          <View style={sheet.scopeWrap} wrap={false}>
+          <View style={sheet.scopeWrap}>
             <Text style={sheet.scopeTitle}>SCOPE OF WORK</Text>
             {data.scopeOfWork.map((t, i) => (
               <View key={i} style={sheet.scopeRow}>
@@ -726,15 +739,8 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
                 <Text style={sheet.scopeText}>{t}</Text>
               </View>
             ))}
-            <Text style={sheet.scopeMeta}>
-              {[
-                data.propertyAddress ? `Property: ${data.propertyAddress}` : "",
-                data.completionDate ? `Completed: ${data.completionDate}` : "",
-                data.hoursCharged ? `Time charged: ${data.hoursCharged}` : "",
-              ]
-                .filter(Boolean)
-                .join("  ·  ")}
-            </Text>
+            {/* Data e horas já estão na linha do serviço (dono, 10/11/2026): aqui só o imóvel. */}
+            {data.propertyAddress ? <Text style={sheet.scopeMeta}>Property: {data.propertyAddress}</Text> : null}
           </View>
         ) : null}
 
@@ -783,12 +789,54 @@ function InvoiceSheetPDF({ data }: { data: InvoicePdfData }) {
           </View>
         )}
 
-        <Text style={sheet.note}>
-          {comVat || data.feeVat
-            ? "VAT is charged on the Fixfy management fee only. Trade services are passed through at cost, with no VAT added by Fixfy."
-            : "Prices include VAT where it applies. Need a VAT invoice? Reply to the email this came with, or write to support@getfixfy.com."}
-          {partialRequest && data.requestPercent ? ` This request is for ${Math.round(data.requestPercent)}% of the invoice.` : ""}
-        </Text>
+        {/* VAT e taxa explicados em toda fatura (dono, 10/11/2026). */}
+        <View style={sheet.explainWrap} wrap={false}>
+          <View style={sheet.explainCol}>
+            <Text style={sheet.explainTitle}>HOW VAT WORKS ON THIS INVOICE</Text>
+            {data.feeVat ? (
+              <>
+                <Text style={sheet.explainText}>
+                  Fixfy arranges the work as agent for the independent tradesperson who carries it out, in line with HMRC VAT
+                  Notice 700 (sections 22 and 23, agents and intermediaries).
+                </Text>
+                <Text style={sheet.explainText}>
+                  The trade services are the tradesperson&apos;s own supply and are passed to you at cost. Fixfy adds no VAT to them.
+                </Text>
+                <Text style={sheet.explainText}>
+                  VAT at {data.feeVat.ratePct}% is charged only on the Fixfy management fee, shown on its own line above, under VAT
+                  No. {data.feeVat.vatNumber}. The total you pay is the same either way.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={sheet.explainText}>
+                  All prices on this invoice include VAT at 20% where it applies. Getfixfy Ltd, VAT No. {f.vatNumber}.
+                </Text>
+                <Text style={sheet.explainText}>
+                  Need the VAT shown line by line? Reply to the email this came with, or write to support@getfixfy.com.
+                </Text>
+              </>
+            )}
+          </View>
+          <View style={sheet.explainCol}>
+            <Text style={sheet.explainTitle}>WHAT THE FIXFY MANAGEMENT FEE COVERS</Text>
+            {[
+              "Finding and booking a vetted tradesperson (ID, insurance and trade registration checked)",
+              "Scheduling, the arrival window and updates up to the day of the visit",
+              "Managing the job: scope, photos and a report when the work is done",
+              "Quality check of the work and follow-up if something is not right",
+              "Customer support, invoicing and payment handling",
+            ].map((t) => (
+              <View key={t} style={sheet.explainRow}>
+                <Text style={sheet.scopeBullet}>•</Text>
+                <Text style={sheet.explainItem}>{t}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+        {partialRequest && data.requestPercent ? (
+          <Text style={sheet.note}>This request is for {Math.round(data.requestPercent)}% of the invoice.</Text>
+        ) : null}
 
         <View style={sheet.footer} fixed>
           <Text style={sheet.footerText}>

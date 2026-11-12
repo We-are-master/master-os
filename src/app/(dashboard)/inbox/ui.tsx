@@ -371,11 +371,29 @@ export function corDoAutor(chave: string) {
 /** Rótulo de quem mandou no grupo: o nome do WhatsApp, senão o número. */
 export const nomeDoAutor = (a: { numero: string | null; nome: string | null }) => a.nome || (a.numero ? `+${a.numero}` : "Member");
 
-export type TipoRapido = "todas" | "parceiro" | "cliente";
+export type TipoRapido = "todas" | "conta" | "cliente" | "parceiro";
+
+/** Em que aba rápida a conversa cai: conta é Accounts; cliente e lead (outro) são Clients. Grupo só em All. */
+export function abaDoTipo(tipo: string): Exclude<TipoRapido, "todas"> | null {
+  if (tipo === "conta") return "conta";
+  if (tipo === "parceiro") return "parceiro";
+  if (tipo === "cliente" || tipo === "outro") return "cliente";
+  return null;
+}
+
+/** Contagem por aba (All, Accounts, Clients, Partners) para o SeletorDeTipo. */
+export function contarPorAba(lista: { tipo: string }[]): Record<TipoRapido, number> {
+  const n: Record<TipoRapido, number> = { todas: lista.length, conta: 0, cliente: 0, parceiro: 0 };
+  for (const c of lista) {
+    const a = abaDoTipo(c.tipo);
+    if (a) n[a]++;
+  }
+  return n;
+}
 
 /**
- * All · Clients · Partners com a contagem, segmentado (como no VOS). A /inbox e o
- * Atendimento lateral usam o mesmo; Clients junta cliente, conta e lead.
+ * All · Accounts · Clients · Partners com a contagem, segmentado (como no VOS). A /inbox e o
+ * Atendimento lateral usam o mesmo. Accounts (dono, 10/11/2026) é conta B2B; Clients junta cliente e lead.
  */
 export function SeletorDeTipo({
   ativo,
@@ -391,11 +409,12 @@ export function SeletorDeTipo({
 }) {
   const opcoes: [TipoRapido, string, LucideIcon | null][] = [
     ["todas", "All", null],
+    ["conta", "Accounts", Building2],
     ["cliente", "Clients", Home],
     ["parceiro", "Partners", Wrench],
   ];
   return (
-    <div role="tablist" aria-label="Contact type" className="flex rounded-lg bg-surface-tertiary p-0.5">
+    <div role="tablist" aria-label="Contact type" className="@container grid grid-cols-4 rounded-lg bg-surface-tertiary p-0.5">
       {opcoes.map(([k, t, Icone]) => (
         <button
           key={k}
@@ -404,23 +423,25 @@ export function SeletorDeTipo({
           aria-selected={ativo === k}
           onClick={() => onTroca(k)}
           className={cn(
-            // Largura do conteúdo (sem cortar "Partners"); o espaço que sobra divide igual.
-            "flex h-7 flex-auto items-center justify-center gap-1 whitespace-nowrap rounded-md px-2 text-[12px] font-medium transition-colors",
+            // Quatro abas da mesma largura (dono, 10/11/2026): nada quebra nem vaza; o ícone só entra com espaço.
+            "flex h-7 min-w-0 items-center justify-center gap-0.5 overflow-hidden whitespace-nowrap rounded-md px-0.5 text-[12px] font-medium transition-colors",
             ativo === k ? "bg-card text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary",
           )}
         >
-          {Icone ? <Icone className="h-3 w-3 shrink-0" /> : null}
-          {t}
+          {Icone ? <Icone className="hidden h-3 w-3 shrink-0 @[352px]:block" /> : null}
+          <span className="truncate">{t}</span>
+          {/* Com não lidas, a bolinha laranja ocupa o lugar do total (dono, 10/11/2026): mesma largura, nada corta nem cobre. */}
           {naoLidas?.[k] ? (
             <span
-              className="grid h-4 min-w-4 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums leading-none text-white"
-              aria-label={`${naoLidas[k]} unread`}
-              title={`${naoLidas[k]} unread`}
+              className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold tabular-nums leading-none text-white"
+              aria-label={`${naoLidas[k]} unread of ${n[k]}`}
+              title={`${naoLidas[k]} unread of ${n[k]}`}
             >
               {naoLidas[k]}
             </span>
-          ) : null}
-          <span className="text-[11px] tabular-nums text-text-tertiary">{n[k]}</span>
+          ) : (
+            <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">{n[k]}</span>
+          )}
         </button>
       ))}
     </div>

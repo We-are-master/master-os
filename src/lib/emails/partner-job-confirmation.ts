@@ -12,13 +12,13 @@
  */
 
 import { linkParaBaixarFotos } from "@/lib/fotos-zip";
-import { dataLonga, type Metrica } from "@/lib/emails/fixfy-shell";
+import { dataLonga, gbp, type Metrica } from "@/lib/emails/fixfy-shell";
 import { buildPartnerComplaintEmailAntigo } from "@/lib/emails/partner-complaint-email-antigo";
 import {
   CHIP_PARCEIRO,
   PASSO_ACEITO,
   PASSO_NO_DIA,
-  PASSO_RELATORIO,
+  PASSOS_JOB_PARCEIRO,
   agendaDaLinha,
   ajudaDoParceiro,
   saudacaoDoParceiro,
@@ -261,6 +261,11 @@ export interface PartnerJobStatusUpdateData {
   reportUrl: string;
   supportEmail?: string;
   supportPhone?: string;
+  /**
+   * Só no `completed`: o que ele recebe por este job, pela regra do self-bill
+   * (mão de obra de todas as visitas dele + material). Sem isto, o e-mail sai sem valor.
+   */
+  finalPay?: { total: number; labour: number; materials: number; extraVisits: number } | null;
 }
 
 
@@ -306,18 +311,30 @@ export function buildPartnerJobStatusUpdateEmail(data: PartnerJobStatusUpdateDat
   }
 
   if (data.kind === "completed") {
+    const pago = data.finalPay && data.finalPay.total > 0 ? data.finalPay : null;
     const { html, text } = emailParceiro({
       preheader: semTravessao(`Job marked complete · ${data.jobReference}`),
       estado: { texto: "Completed", cor: "green", chip: true },
       titulo: "Job marked complete",
       saudacao: saudacaoDoParceiro(data.partnerFirstName),
-      paragrafos: ["This job has been marked as complete."],
-      passos: passosDoJob(PASSO_RELATORIO),
-      metricas: dia ? [{ rotulo: "Date", valor: dia }] : null,
+      paragrafos: pago
+        ? [
+            "This job has been marked as complete.",
+            `Your final pay for this job is ${gbp(pago.total)}. It goes into your next self-bill.`,
+          ]
+        : ["This job has been marked as complete."],
+      // Completed = já aprovado (dono, 10/11/2026): os quatro passos cheios e verdes.
+      passos: PASSOS_JOB_PARCEIRO.map((nome) => ({ nome, estado: "aprovado" as const })),
+      metricas: [
+        ...(pago ? [{ rotulo: "Your final pay", valor: gbp(pago.total), sub: "Goes into your next self-bill" }] : []),
+        ...(dia ? [{ rotulo: "Date", valor: dia }] : []),
+      ],
       linhas: [
         ["Job", `#${data.jobReference}`],
         ["Type of work", tipo],
         ["Address", enderecoOuNada(data.propertyAddress)],
+        ["Labour", pago && (pago.materials > 0 || pago.extraVisits > 0) ? gbp(pago.labour) + (pago.extraVisits > 0 ? ` · includes ${pago.extraVisits} extra ${pago.extraVisits === 1 ? "visit" : "visits"}` : "") : null],
+        ["Materials", pago && pago.materials > 0 ? gbp(pago.materials) : null],
       ],
       avisos: [ajudaDoParceiro("Reply to this email. We'll respond as soon as we can.")],
       cta: { label: "Open job in app", url: data.reportUrl },
@@ -372,7 +389,7 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
 } {
   const nova = agendaDaLinha(data.newDateLine, data.newTimeLine);
   const antiga = agendaDaLinha(data.oldDateLine, data.oldTimeLine);
-  const novaTexto = [nova.data, nova.chegada].filter(Boolean).join(", ");
+  const novaTexto = [nova.data, nova.chegada ? `arrival ${nova.chegada}` : null].filter(Boolean).join(", ");
   // Assunto e copy da versão antiga (dono, 23/10/2026).
   const subject = assunto("Booking rescheduled", data.jobReference);
 
@@ -383,11 +400,15 @@ export function buildJobRescheduledEmail(data: PartnerJobRescheduledData): {
     saudacao: saudacaoDoParceiro(data.recipientFirstName),
     paragrafos: ["Quick heads up: this job has moved. Please update your calendar."],
     passos: passosDoJob(PASSO_NO_DIA),
+    // Data e chegada sempre juntas (dono, 10/11/2026: "sempre que mudar data e
+    // hora, manda completo com o arrival time sempre junto").
     metricas: [
-      { rotulo: "New schedule", valor: nova.data || "TBC", sub: nova.chegada ?? null },
-      { rotulo: "Was", valor: antiga.data || "", sub: antiga.data && antiga.chegada ? antiga.chegada : null, riscado: true },
+      { rotulo: "New schedule", valor: nova.data || "TBC", sub: nova.chegada ? `Arrival ${nova.chegada}` : "Arrival time to be confirmed" },
+      { rotulo: "Was", valor: antiga.data || "", sub: antiga.data && antiga.chegada ? `Arrival ${antiga.chegada}` : null, riscado: true },
     ],
     linhas: [
+      ["Previously", [antiga.data, antiga.chegada ? `Arrival ${antiga.chegada}` : null].filter(Boolean).join(" · ") || null],
+      ["Now", [nova.data || "TBC", nova.chegada ? `Arrival ${nova.chegada}` : "Arrival time to be confirmed"].join(" · ")],
       ["Booking", `#${data.jobReference}`],
       ["Type of work", data.jobTitle?.trim() || null],
       ["Address", enderecoOuNada(data.propertyAddress)],
