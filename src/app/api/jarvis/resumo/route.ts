@@ -5,7 +5,8 @@
  * A chave é separada das de escrita (jobs, quotes) de propósito: quem tem esta
  * só consegue ler este resumo. Sem a variável configurada, a rota fica fechada.
  *
- * As contas moram em `@/lib/jarvis-resumo`.
+ * As contas moram em `@/lib/jarvis-resumo`. O bloco `home` traz os números da home do OS
+ * (mês de Londres, em GBP), montados pelas mesmas funções da tela (`@/lib/jarvis-home`).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
@@ -13,6 +14,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { montarResumoJarvis } from "@/lib/jarvis-resumo";
 
 export const dynamic = "force-dynamic";
+/** O bloco `home` roda as mesmas buscas da home do OS (o /api/pulse/ceo também pede 60s). */
+export const maxDuration = 60;
 
 function autorizado(req: NextRequest): boolean {
   const esperada = process.env.JARVIS_READ_API_KEY?.trim();
