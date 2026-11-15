@@ -23,6 +23,7 @@ import {
 import { invoiceDueYmd } from "@/lib/billing-standalone-period";
 import { isLegacyMisclassifiedCustomerPayment } from "@/lib/job-payment-ledger";
 import type { Invoice } from "@/types/database";
+import { buscarHomeJarvis } from "@/lib/jarvis-home";
 
 const TZ = "Europe/London";
 const CHUNK = 100;
@@ -91,6 +92,15 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
   /** Fim do dia consultado: com `?dia=` no passado, nada depois dele entra na conta. */
   const fim = inicioDoDiaLondres(amanha);
   const desde = (iso: string | null | undefined, inicio: string) => !!iso && iso >= inicio && iso < fim;
+
+  /**
+   * `home`: os números da home do OS, do mês corrente (sempre agora, mesmo com `?dia=`).
+   * Corre junto com o resto; se falhar, o resumo sai igual com `home: null`.
+   */
+  const homeP = buscarHomeJarvis(supabase, agora).catch((err) => {
+    console.error("[jarvis/resumo] home", err);
+    return null;
+  });
 
   const [conversasRes, pagamentosRes, jobsRes, emCampoRes, quotesRes, leadsRes, vendidosRes, emitidasRes] = await Promise.all([
     supabase
@@ -276,6 +286,7 @@ export async function montarResumoJarvis(supabase: SupabaseClient, agora = new D
         novos_sem_contato_na_semana: leads.filter((l) => l.status === "new").length,
       },
     },
+    home: await homeP,
   };
 }
 

@@ -24,6 +24,7 @@ import { pulseMoney } from "@/lib/pulse-money-display";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { AssignPartnerModal } from "@/components/jobs/assign-partner-modal";
+import { buscarJobsDasAcoes, separarAcoes, valorDoJobDaAcao } from "@/lib/pulse-action-required";
 
 type JobLinha = {
   id: string;
@@ -52,7 +53,7 @@ function jaSaiu(stage: number): string {
   if (stage >= FINAL) return "Final chase sent";
   return `${["1st", "2nd", "3rd"][stage - 1]} chase sent`;
 }
-const valor = (j: JobLinha) => (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0);
+const valor = (j: JobLinha) => valorDoJobDaAcao(j);
 const dataCurta = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" });
 
 function useEstado() {
@@ -61,12 +62,7 @@ function useEstado() {
   useEffect(() => {
     let vivo = true;
     void Promise.all([
-      getSupabase()
-        .from("jobs")
-        .select("id, reference, title, client_name, partner_name, status, client_price, extras_amount, final_report_submitted, final_report_approved_at, report_1_uploaded")
-        .in("status", ["final_check", "scheduled", "late", "in_progress", "unassigned", "auto_assigning"])
-        .is("deleted_at", null)
-        .limit(5000),
+      buscarJobsDasAcoes(getSupabase()),
       fetch("/api/invoices/overdue")
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null) as Promise<{ invoices: Vencida[] } | null>,
@@ -236,16 +232,14 @@ export function NeedsYouToday() {
   const [atribuir, setAtribuir] = useState<JobLinha | null>(null);
 
   const jobs = d?.jobs ?? [];
-  const revisao = jobs.filter((j) => j.status === "final_check");
-  const semParceiro = jobs.filter((j) => j.status === "unassigned" || j.status === "auto_assigning");
-  const agendados = jobs.filter((j) => j.status === "scheduled" || j.status === "late").length;
-  const emAndamento = jobs.filter((j) => j.status === "in_progress").length;
+  // Mesma separação que o JARVIS lê (`@/lib/pulse-action-required`).
+  const { revisao, valorDaRevisao, semParceiro, agendados, emAndamento } = separarAcoes(jobs);
   const vencidas = d?.vencidas ?? [];
   const totalVencido = vencidas.reduce((t, f) => t + f.balance, 0);
 
   const itens: Array<{ chave: string; titulo: string; sub: string; alerta: boolean; abrir?: () => void; href?: string }> = d
     ? [
-        { chave: "revisao", titulo: `${revisao.length} in final review`, sub: `${pulseMoney(revisao.reduce((t, j) => t + valor(j), 0))} waiting to invoice`, alerta: revisao.length > 0, abrir: () => setAberto("revisao") },
+        { chave: "revisao", titulo: `${revisao.length} in final review`, sub: `${pulseMoney(valorDaRevisao)} waiting to invoice`, alerta: revisao.length > 0, abrir: () => setAberto("revisao") },
         { chave: "vencidas", titulo: `${vencidas.length} overdue invoice${vencidas.length === 1 ? "" : "s"}`, sub: `${pulseMoney(totalVencido)} to chase`, alerta: vencidas.length > 0, abrir: () => setAberto("vencidas") },
         { chave: "parceiro", titulo: `${semParceiro.length} without a partner`, sub: "Need assigning", alerta: semParceiro.length > 0, abrir: () => setAberto("parceiro") },
         { chave: "agenda", titulo: `${agendados} scheduled`, sub: `${emAndamento} in progress now`, alerta: false, href: "/schedule" },

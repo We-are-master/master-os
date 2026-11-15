@@ -23,83 +23,23 @@ import Link from "next/link";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
 import { getSupabase } from "@/services/base";
 import { pulseMoney } from "@/lib/pulse-money-display";
-import { parseFrontendSetup } from "@/lib/frontend-setup";
-import { computeMonthlyBillsBurn, computeWorkforceMonthlyBurn, type PulseBillRow } from "@/lib/pulse-fixed-costs";
-import { computeBreakevenMonthly } from "@/lib/pulse-revenue-goal";
-import { WORKFORCE_COST_ACTIVE_OR_FILTER } from "@/lib/workforce-lifecycle";
-import { resolvePulseMonthlyRevenueGoal } from "@/lib/pulse-revenue-goal";
+import { buscarDadosDaMeta, type DadosDaMeta } from "@/lib/pulse-month-goal";
 import { ukTodayYmd } from "@/lib/uk-schedule-range";
 import { usePulseCeo } from "./pulse-ceo-data";
-import { ukWallClockToUtcIso } from "@/lib/utils/uk-time";
 
-const FORA = new Set(["cancelled", "deleted"]);
-const ENTREGUE = new Set(["final_check", "awaiting_payment", "completed"]);
+export type Dados = DadosDaMeta;
 
-type Linha = {
-  status: string;
-  client_price: number | null;
-  extras_amount: number | null;
-  partner_cost: number | null;
-  materials_cost: number | null;
-};
-
-export type Dados = { receita: number; custo: number; lucro: number; estimados: number; entregue: number; jobs: number; jobsEntregues: number; meta: number | null; fixos: number; empate: number | null; margemAlvo: number };
-
-/** Os números do mês corrente de Londres (meta, faturamento, custo, lucro, fixos). Também usado pelo MonthHealth. */
+/**
+ * Os números do mês corrente de Londres (meta, faturamento, custo, lucro, fixos). Também usado
+ * pelo MonthHealth. As contas moram em `@/lib/pulse-month-goal`, as mesmas do JARVIS.
+ */
 export function useMonthGoalData(): Dados | null {
   const [d, setD] = useState<Dados | null>(null);
   useEffect(() => {
     let vivo = true;
-    void (async () => {
-      const sb = getSupabase();
-      const hoje = ukTodayYmd();
-      const inicio = `${hoje.slice(0, 8)}01`;
-      const [ano, mes] = hoje.split("-").map(Number);
-      const proximo = mes === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
-      const deIso = ukWallClockToUtcIso(inicio, "00:00");
-      const ateIso = ukWallClockToUtcIso(proximo, "00:00");
-      const cols = "status, client_price, extras_amount, partner_cost, materials_cost";
-      // Job com horário marcado entra pelo horário; job só com o dia entra pelo dia.
-      const [comHora, soDia, cfg, folha, bills] = await Promise.all([
-        deIso && ateIso
-          ? sb.from("jobs").select(cols).is("deleted_at", null).gte("scheduled_start_at", deIso).lt("scheduled_start_at", ateIso).limit(5000)
-          : Promise.resolve({ data: [] as Linha[] }),
-        sb.from("jobs").select(cols).is("deleted_at", null).is("scheduled_start_at", null).gte("scheduled_date", inicio).lt("scheduled_date", proximo).limit(5000),
-        sb.from("company_settings").select("frontend_setup").limit(1).maybeSingle(),
-        sb.from("payroll_internal_costs").select("amount, lifecycle_stage").or(WORKFORCE_COST_ACTIVE_OR_FILTER),
-        sb
-          .from("bills")
-          .select("id, amount, is_recurring, recurrence_interval, recurring_series_id, recurring_series_end_date, status, due_date, description, category")
-          .is("archived_at", null)
-          .neq("status", "rejected"),
-      ]);
-      if (!vivo) return;
-      const linhas = [...((comHora.data ?? []) as Linha[]), ...((soDia.data ?? []) as Linha[])].filter((j) => !FORA.has(j.status));
-      const v = (j: Linha) => (Number(j.client_price) || 0) + (Number(j.extras_amount) || 0);
-      const c = (j: Linha) => (Number(j.partner_cost) || 0) + (Number(j.materials_cost) || 0);
-      const entregues = linhas.filter((j) => ENTREGUE.has(j.status));
-      const setup = parseFrontendSetup((cfg.data as { frontend_setup?: unknown } | null)?.frontend_setup);
-      const fixos =
-        computeWorkforceMonthlyBurn((folha.data ?? []) as Array<{ amount: number | null; lifecycle_stage: string | null }>) +
-        computeMonthlyBillsBurn((bills.data ?? []) as PulseBillRow[]);
-      const margemAlvo = setup.target_margin_pct ?? 0;
-      // Job ainda sem custo (sem parceiro) contaria 100% de lucro; entra pela margem alvo.
-      const semCusto = linhas.filter((j) => c(j) === 0 && !ENTREGUE.has(j.status));
-      const lucro = linhas.reduce((t, j) => t + (c(j) === 0 && !ENTREGUE.has(j.status) ? (v(j) * margemAlvo) / 100 : v(j) - c(j)), 0);
-      setD({
-        lucro,
-        estimados: semCusto.length,
-        receita: linhas.reduce((t, j) => t + v(j), 0),
-        custo: linhas.reduce((t, j) => t + c(j), 0),
-        entregue: entregues.reduce((t, j) => t + v(j), 0),
-        jobs: linhas.length,
-        jobsEntregues: entregues.length,
-        meta: resolvePulseMonthlyRevenueGoal(setup, 0).monthlyGoal,
-        fixos,
-        empate: computeBreakevenMonthly(fixos, margemAlvo),
-        margemAlvo,
-      });
-    })();
+    void buscarDadosDaMeta(getSupabase(), ukTodayYmd()).then((x) => {
+      if (vivo) setD(x);
+    }).catch(() => {});
     return () => {
       vivo = false;
     };

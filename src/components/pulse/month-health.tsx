@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 import { pulseMoney } from "@/lib/pulse-money-display";
 import { ukTodayYmd } from "@/lib/uk-schedule-range";
 import { FixfyHintIcon } from "@/components/ui/fixfy-hint-icon";
+import { saudeDoMes, type DadosDaMeta } from "@/lib/pulse-month-goal";
 import { useMonthGoalData } from "./month-goal";
+
+const DADOS_VAZIOS: DadosDaMeta = { receita: 0, custo: 0, lucro: 0, estimados: 0, entregue: 0, jobs: 0, jobsEntregues: 0, meta: null, fixos: 0, empate: null, margemAlvo: 0 };
 
 type Soma = { n: number; valor: number };
 type Receber = { aguardando: Soma; vencido: Soma; pago: Soma };
@@ -81,37 +84,19 @@ export function MonthHealth() {
   const m = pulseMoney;
 
   const hoje = ukTodayYmd();
-  const [ano, mes, dia] = hoje.split("-").map(Number);
-  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
-  const diasRestantes = Math.max(1, ultimoDia - dia + 1);
   const nomeDoMes = new Date(`${hoje}T12:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
 
-  // 1. Vendas
-  const meta = d?.meta ?? null;
-  const receita = d?.receita ?? 0;
-  const pct = meta ? Math.min(100, (receita / meta) * 100) : 0;
-  const esperadoHoje = meta ? (meta * dia) / ultimoDia : 0;
-  const atras = meta ? esperadoHoje - receita : 0;
-  const ticketMedio = d && d.jobs > 0 ? receita / d.jobs : 0;
-  const sinalVendas: Sinal | null = !d || !meta ? null : atras <= 0 ? "ok" : atras <= esperadoHoje * 0.15 ? "watch" : "bad";
-
-  // 2. Lucro: a mesma conta da barra da meta.
-  const bruto = d?.lucro ?? 0;
-  const custoJobs = receita - bruto;
-  const margem = receita > 0 ? (bruto / receita) * 100 : 0;
-  const fixos = d?.fixos ?? 0;
-  const resultado = bruto - fixos;
-  // Ritmo, não o mês inteiro: no dia 5 o lucro bruto ainda não pagou o mês todo de fixos e
-  // isso não é prejuízo. Compara com a fração dos fixos que já correu até hoje.
-  const fixosAteHoje = (fixos * dia) / ultimoDia;
-  const sinalLucro: Sinal | null = !d ? null : resultado >= 0 || bruto >= fixosAteHoje ? "ok" : bruto >= fixosAteHoje * 0.8 ? "watch" : "bad";
+  // Revenue e Net profit: as contas moram em `saudeDoMes`, as mesmas que o JARVIS lê.
+  const s = saudeDoMes(d ?? DADOS_VAZIOS, hoje);
+  const { diasRestantes, meta, receita, pct, esperadoHoje, atras, ticketMedio, bruto, custoJobs, margem, fixos, resultado, fixosAteHoje, faltaEmpate } = s;
+  const sinalVendas: Sinal | null = d ? s.sinalVendas : null;
+  const sinalLucro: Sinal | null = d ? s.sinalLucro : null;
 
   const pctLucroBar = meta ? Math.min(pct, (Math.max(0, bruto) / meta) * 100) : 0;
   // Marca vermelha = custo fixo do mês na escala da meta (dono, 10/11/2026: "a
   // vermelha tem que ser onde fica o breakeven do custo fixo"). Quando o verde
   // (lucro bruto) chega nela, o mês pagou os fixos.
   const pctEmpate = meta && fixos > 0 ? Math.min(100, (fixos / meta) * 100) : null;
-  const faltaEmpate = Math.max(0, fixos - bruto);
 
   // 3. Caixa
   const aberto = r ? r.aguardando.valor + r.vencido.valor : 0;
