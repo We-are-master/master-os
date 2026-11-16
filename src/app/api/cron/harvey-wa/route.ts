@@ -9,6 +9,7 @@
  *    aviso ao cliente 24h, lance vira quote (cotacao-automatica.ts). Chave HARVEY_AUTO_QUOTE=1.
  *  - macros da equipe: "Get partner quotes" no WhatsApp e "Harvey: create job in OS" (macro-criar-job.ts).
  *  - job B2C concluído resolve a conversa do cliente na /inbox (inbox/resolver-ao-concluir.ts).
+ *  - lead do formulário da Meta que pagou vira Purchase na Meta (meta/compra-do-formulario.ts).
  *
  * Esta rota EXECUTA: manda mensagem no WhatsApp de cliente. Para olhar sem mexer:
  *
@@ -27,6 +28,7 @@ import { varrerCobrancaDeQuotes } from "@/lib/harvey-wa/followup-quotes";
 import { varrerCotacaoAutomatica, varrerMacroNoWhatsApp } from "@/lib/harvey-wa/varredura-cotacao-automatica";
 import { varrerMacroCriarJob } from "@/lib/harvey-wa/macro-criar-job";
 import { resolverConversasDeJobsConcluidos } from "@/lib/inbox/resolver-ao-concluir";
+import { varrerComprasDoFormulario } from "@/lib/meta/compra-do-formulario";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -68,7 +70,9 @@ export async function GET(req: NextRequest) {
     const criarJob = await varrerMacroCriarJob(sb, { aplicar: !ensaio }).catch((e) => ({ falhou: e instanceof Error ? e.message : String(e) }));
     // Job B2C concluído resolve a conversa do cliente na /inbox (dono, 10/11/2026).
     const inbox = await resolverConversasDeJobsConcluidos(sb, { aplicar: !ensaio }).catch((e) => ({ falhou: e instanceof Error ? e.message : String(e) }));
-    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao, macro, criarJob, inbox });
+    // Lead do formulário da Meta que pagou (Stripe ou transferência, tanto faz: job_payments) → Purchase à Meta.
+    const metaForm = await varrerComprasDoFormulario(sb, { aplicar: !ensaio }).catch((e) => ({ falhou: e instanceof Error ? e.message : String(e) }));
+    return NextResponse.json({ ok: true, chase, transferencias, leads, quotes, cotacao, macro, criarJob, inbox, metaForm });
   } catch (err) {
     console.error("[harvey-wa chase] falhou:", err);
     return NextResponse.json({ ok: false, reason: err instanceof Error ? err.message : "falhou" }, { status: 500 });

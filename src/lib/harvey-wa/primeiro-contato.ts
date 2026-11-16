@@ -296,6 +296,8 @@ const TEXTO_DOS_TEMPLATES: Record<string, { corpo: string; rodape?: string }> = 
 
 /** O external_id do ticket do lead: o mesmo marcador das notas do OS. */
 export function externalIdDoLead(leadExterno: string): string {
+  // Lead do formulário da Meta (meta/formulario.ts) grava "meta:<leadgen_id>".
+  if (leadExterno.startsWith("meta:")) return `meta-lead:${leadExterno.slice(5)}`;
   return `checkatrade-lead:${leadExterno}`;
 }
 
