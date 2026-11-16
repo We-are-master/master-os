@@ -11,6 +11,7 @@
  * Grupo, org e campos de usuário são criados na primeira vez (idempotente).
  */
 
+import { externalIdDoLead } from "./primeiro-contato";
 import { ACTION_REQUIRED_FIELD_ID, ACTION_REQUIRED_YES } from "@/lib/fila-de-acao";
 import { createServiceClient } from "@/lib/supabase/service";
 import { responsavel } from "@/lib/responsavel-operacao";
@@ -214,7 +215,9 @@ export async function juntarTicketDoLead(ticketWa: number, externalId: string): 
   // O ticket da conversa vira o do lead (dono, 08/10/2026: "abre um completamente
   // novo"): o Zendesk sempre cria um ticket para a conversa do WhatsApp, com o nome
   // do perfil do WhatsApp. Ele herda o assunto, a prioridade, as tags e a pessoa do lead.
-  await herdarDoLead(ticketWa, lead).catch((e) => console.error("[harvey-wa] herdar do lead:", e));
+  // Lead do formulário da Meta leva a tag da origem dele, não a do Checkatrade.
+  const tagsDoLead = externalId.startsWith("meta-lead:") ? ["harvey_wa_lead", "lead_meta_form"] : undefined;
+  await herdarDoLead(ticketWa, lead, tagsDoLead).catch((e) => console.error("[harvey-wa] herdar do lead:", e));
   // O pedido do Checkatrade vai na nota do merge (dono, 14/10/2026): quem abre o
   // ticket que fica vê o serviço, o postcode e o que o cliente pediu, sem caçar o lead fechado.
   const notaDoAlvo = umTicketNotaDoMerge()
@@ -748,7 +751,7 @@ async function ticketsDoLeadPeloTelefone(telefone: string): Promise<number[]> {
   if (!lw) return [];
   const ids: number[] = [];
   if (lw.lead_externo && lw.origem !== "site") {
-    const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(`checkatrade-lead:${lw.lead_externo}`)}`);
+    const { tickets } = await zendeskApi<{ tickets: Array<{ id: number; status: string }> }>(`tickets.json?external_id=${encodeURIComponent(externalIdDoLead(lw.lead_externo))}`);
     ids.push(...(tickets ?? []).filter((t) => !["solved", "closed"].includes(t.status)).map((t) => t.id));
   }
   if (lw.ticket_id) ids.push(Number(lw.ticket_id));
