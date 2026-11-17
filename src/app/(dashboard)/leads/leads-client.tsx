@@ -220,6 +220,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [quotingLead, setQuotingLead] = useState<Lead | null>(null);
   /** Card solto em Lost: motivo e data de volta. */
   const [lostLead, setLostLead] = useState<Lead | null>(null);
+  /** Ação em grupo: cards marcados no board. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [lostMany, setLostMany] = useState<Lead[] | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [lostDefault, setLostDefault] = useState<LeadLostReason | undefined>(undefined);
   const router = useRouter();
   const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
@@ -405,6 +409,97 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     [quotesByLead, openLead, router, loadCounts, STAGE_LABEL],
   );
 
+  // ─── Ação em grupo (dono, 17/11/2026): marcar vários e excluir ou mudar a etapa ───
+  const allBoardLeads = useMemo(() => Object.values(boardColumns).flat(), [boardColumns]);
+  const selectedLeads = useMemo(() => allBoardLeads.filter((l) => selectedIds.has(l.id)), [allBoardLeads, selectedIds]);
+  const toggleSelect = useCallback((l: Lead) => {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(l.id)) next.delete(l.id);
+      else next.add(l.id);
+      return next;
+    });
+  }, []);
+  const selectMany = useCallback((ls: Lead[]) => {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      const todos = ls.every((l) => next.has(l.id));
+      for (const l of ls) {
+        if (todos) next.delete(l.id);
+        else next.add(l.id);
+      }
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  useEffect(() => {
+    if (!selectedIds.size) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && clearSelection();
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [selectedIds.size, clearSelection]);
+
+  const bulkMove = useCallback(
+    async (to: "new" | "qualified") => {
+      const podem: Lead[] = [];
+      const pulados: string[] = [];
+      for (const l of selectedLeads) {
+        const from = l.stage ?? "new";
+        const q = quotesByLead[l.id];
+        const quoteViva = q && q.status !== "rejected" && q.status !== "converted_to_job";
+        if (from === to) continue;
+        // As mesmas travas do arrastar: Won é job, quote andando move o card sozinha.
+        if (from === "won" || (quoteViva && (from === "quoting" || from === "quoted"))) pulados.push(l.name || l.reference);
+        else podem.push(l);
+      }
+      if (!podem.length) {
+        toast.info(pulados.length ? "None of these can move: they are jobs or have a quote in progress." : "Already there.");
+        return;
+      }
+      setBulkBusy(true);
+      let falhas = 0;
+      for (const l of podem) {
+        try {
+          await changeLeadStage(l.id, to, { summary: "Moved on the board (bulk)" });
+        } catch {
+          falhas++;
+        }
+      }
+      setBulkBusy(false);
+      toast.success(`${podem.length - falhas} moved to ${STAGE_LABEL[to]}`);
+      if (pulados.length) toast.info(`${pulados.length} skipped: job or quote in progress`);
+      if (falhas) toast.error(`${falhas} could not be moved`);
+      clearSelection();
+      refreshSilent();
+      void loadCounts();
+    },
+    [selectedLeads, quotesByLead, STAGE_LABEL, clearSelection, loadCounts, refreshSilent],
+  );
+
+  const bulkDelete = useCallback(async () => {
+    const ls = selectedLeads;
+    if (!ls.length) return;
+    if (!confirm(`Delete ${ls.length} card${ls.length === 1 ? "" : "s"} from the CRM? They disappear from the board. Quotes, tickets and client contacts are kept.`)) return;
+    setBulkBusy(true);
+    let falhas = 0;
+    for (const l of ls) {
+      try {
+        await deleteLead(l.id, profile?.id);
+      } catch {
+        falhas++;
+      }
+    }
+    setBulkBusy(false);
+    const apagados = new Set(ls.map((l) => l.id));
+    setBoardColumns((cols) => Object.fromEntries(Object.entries(cols).map(([st, rows]) => [st, rows.filter((l) => !apagados.has(l.id))])));
+    setSelectedLead((cur) => (cur && apagados.has(cur.id) ? null : cur));
+    toast.success(`${ls.length - falhas} card${ls.length - falhas === 1 ? "" : "s"} deleted`);
+    if (falhas) toast.error(`${falhas} could not be deleted`);
+    clearSelection();
+    refreshSilent();
+    void loadCounts();
+  }, [selectedLeads, profile?.id, clearSelection, loadCounts, refreshSilent]);
+
   // Link de outra tela (quote, Atendimento): /leads?leadId=... abre o card.
   const searchParams = useSearchParams();
   const leadIdDoLink = searchParams.get("leadId");
@@ -433,7 +528,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       const label = lead.reference?.trim() || lead.name?.trim() || "this lead";
       if (
         !confirm(
-          `Delete ${label}? It will be removed from Partner offers, Overview and the Trade Portal. The linked Fixfy client contact is kept.`,
+          `Delete ${label} from the CRM? The card disappears from the board. Its quote, ticket and the client contact are kept.`,
         )
       ) {
         return;
@@ -441,8 +536,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       setDeletingId(lead.id);
       try {
         await deleteLead(lead.id, profile?.id);
-        toast.success("Lead deleted");
+        toast.success("Card deleted");
         setSelectedLead((current) => (current?.id === lead.id ? null : current));
+        // Sai do board na hora; o refresh abaixo confirma.
+        setBoardColumns((cols) => Object.fromEntries(Object.entries(cols).map(([st, ls]) => [st, ls.filter((l) => l.id !== lead.id)])));
         await refresh();
         await loadCounts();
       } catch (err) {
@@ -853,6 +950,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               setLostDefault("no_reply");
               setLostLead(l);
             }}
+            onDelete={(l) => void handleDelete(l)}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onSelectMany={selectMany}
             loading={sideLoading}
             onOpen={openLead}
           />
@@ -893,6 +994,54 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             void loadCounts();
             // A quote nasceu: o card já está em Quoting, o drawer aberto também.
             void getLead(id).then((l) => l && setSelectedLead((cur) => (cur?.id === l.id ? l : cur)));
+          }}
+        />
+      ) : null}
+      {selectedLeads.length ? (
+        <div
+          role="toolbar"
+          aria-label="Bulk actions"
+          className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-[min(100vw-2rem,44rem)] flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-lg"
+        >
+          <span className="text-sm font-semibold text-text-primary">{selectedLeads.length} selected</span>
+          <span className="mx-1 hidden h-5 w-px bg-border-light sm:block" aria-hidden />
+          <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => void bulkMove("new")}>
+            Move to {STAGE_LABEL.new}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => void bulkMove("qualified")}>
+            Move to {STAGE_LABEL.qualified}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={bulkBusy}
+            onClick={() => {
+              const podem = selectedLeads.filter((l) => (l.stage ?? "new") !== "won" && (l.stage ?? "new") !== "lost");
+              if (!podem.length) return void toast.info("None of these can be marked lost: already lost or a job.");
+              setLostMany(podem);
+            }}
+          >
+            Mark lost
+          </Button>
+          <Button size="sm" variant="danger" disabled={bulkBusy} onClick={() => void bulkDelete()}>
+            {bulkBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+          </Button>
+          <button type="button" onClick={clearSelection} className="ml-auto text-xs font-medium text-text-secondary hover:text-text-primary">
+            Clear · Esc
+          </button>
+        </div>
+      ) : null}
+      {lostMany?.length ? (
+        <LeadLostModal
+          lead={lostMany[0]!}
+          leads={lostMany}
+          open
+          onClose={() => setLostMany(null)}
+          onDone={() => {
+            setLostMany(null);
+            clearSelection();
+            refreshSilent();
+            void loadCounts();
           }}
         />
       ) : null}

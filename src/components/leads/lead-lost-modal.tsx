@@ -21,8 +21,11 @@ export function LeadLostModal({
   onClose,
   onDone,
   defaultReason,
+  leads,
 }: {
   lead: Lead;
+  /** Ação em grupo: marca todos com o mesmo motivo (lead = o primeiro, para o texto e a data). */
+  leads?: Lead[];
   open: boolean;
   onClose: () => void;
   onDone: (l: Lead) => void;
@@ -40,12 +43,25 @@ export function LeadLostModal({
     if (!reason) return toast.error("Pick a reason to mark this lead as lost");
     setSaving(true);
     try {
-      const updated = await changeLeadStage(lead.id, "lost", {
-        lostReason: reason,
-        lostNote: note,
-        nurtureUntil: comeBack ? comeBackOn : null,
-      });
-      toast.success(comeBack ? `Lead lost. It comes back on ${comeBackOn.split("-").reverse().join("/")}.` : "Lead marked as lost");
+      const todos = leads?.length ? leads : [lead];
+      let updated: Lead = lead;
+      let falhas = 0;
+      for (const l of todos) {
+        try {
+          updated = await changeLeadStage(l.id, "lost", {
+            lostReason: reason,
+            lostNote: note,
+            nurtureUntil: comeBack ? comeBackOn : null,
+          });
+        } catch {
+          falhas++;
+        }
+      }
+      const n = todos.length - falhas;
+      if (falhas && !n) throw new Error("Could not mark the leads as lost");
+      const quem = todos.length > 1 ? `${n} leads lost` : "Lead lost";
+      toast.success(comeBack ? `${quem}. Back on ${comeBackOn.split("-").reverse().join("/")}.` : todos.length > 1 ? `${n} leads marked as lost` : "Lead marked as lost");
+      if (falhas) toast.error(`${falhas} could not be marked as lost`);
       setReason("");
       setNote("");
       onDone(updated);
@@ -57,7 +73,7 @@ export function LeadLostModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Mark lost" subtitle={`${lead.reference} · ${lead.name}. Stops the follow-ups.`} size="sm">
+    <Modal open={open} onClose={onClose} title="Mark lost" subtitle={leads && leads.length > 1 ? `${leads.length} leads. Stops the follow-ups.` : `${lead.reference} · ${lead.name}. Stops the follow-ups.`} size="sm">
       <div className="px-4 pb-4 pt-4 space-y-3 sm:px-5 sm:pb-5">
         <fieldset className="space-y-1.5">
           <legend className="text-xs font-medium text-text-secondary mb-1.5">Reason</legend>
