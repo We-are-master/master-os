@@ -13,6 +13,7 @@ import {
   PoundSterling,
   RotateCcw,
   Send,
+  Trash2,
   UserRound,
   XCircle,
   type LucideIcon,
@@ -74,11 +75,14 @@ function BoardCard({
   onDragState,
   onOpen,
   onLose,
+  onDelete,
   stageLabel,
 }: {
   lead: Lead;
   stageLabel: string;
   onLose?: (l: Lead) => void;
+  /** Tira o card do CRM (some do board; dá para desfazer pelo banco). */
+  onDelete?: (l: Lead) => void;
   quote?: LeadQuote | null;
   accountName?: string | null;
   semEntrada: boolean;
@@ -177,6 +181,22 @@ function BoardCard({
           >
             <XCircle className="h-3 w-3" aria-hidden />
             Lost
+          </button>
+        ) : null}
+        {onDelete ? (
+          <button
+            type="button"
+            draggable={false}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(lead);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            aria-label={`Delete ${lead.name || "lead"}`}
+            title="Delete this card"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-md text-text-tertiary opacity-0 transition hover:bg-danger-light hover:text-danger focus:opacity-100 group-hover/card:opacity-100"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden />
           </button>
         ) : null}
         <span
@@ -394,6 +414,7 @@ export function LeadBoard({
   onMove,
   canRename = false,
   onLose,
+  onDelete,
 }: {
   columns: Record<string, Lead[]>;
   counts: Record<string, number>;
@@ -408,6 +429,7 @@ export function LeadBoard({
   canRename?: boolean;
   /** Botão Lost do card: tira do pipeline (sem resposta, preço...). */
   onLose?: (l: Lead) => void;
+  onDelete?: (l: Lead) => void;
 }) {
   const STAGE_LABEL = useStageLabels();
   const [dragId, setDragId] = useState<string | null>(null);
@@ -488,6 +510,7 @@ export function LeadBoard({
                       lead={l}
                       stageLabel={STAGE_LABEL[l.stage ?? "new"]}
                       onLose={onLose}
+                      onDelete={onDelete}
                       quote={quotes[l.id]}
                       accountName={
                         l.account_id ? accountNames[l.account_id] : null

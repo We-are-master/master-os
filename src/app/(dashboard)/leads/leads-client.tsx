@@ -433,7 +433,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       const label = lead.reference?.trim() || lead.name?.trim() || "this lead";
       if (
         !confirm(
-          `Delete ${label}? It will be removed from Partner offers, Overview and the Trade Portal. The linked Fixfy client contact is kept.`,
+          `Delete ${label} from the CRM? The card disappears from the board. Its quote, ticket and the client contact are kept.`,
         )
       ) {
         return;
@@ -441,8 +441,10 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
       setDeletingId(lead.id);
       try {
         await deleteLead(lead.id, profile?.id);
-        toast.success("Lead deleted");
+        toast.success("Card deleted");
         setSelectedLead((current) => (current?.id === lead.id ? null : current));
+        // Sai do board na hora; o refresh abaixo confirma.
+        setBoardColumns((cols) => Object.fromEntries(Object.entries(cols).map(([st, ls]) => [st, ls.filter((l) => l.id !== lead.id)])));
         await refresh();
         await loadCounts();
       } catch (err) {
@@ -853,6 +855,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
               setLostDefault("no_reply");
               setLostLead(l);
             }}
+            onDelete={(l) => void handleDelete(l)}
             loading={sideLoading}
             onOpen={openLead}
           />
