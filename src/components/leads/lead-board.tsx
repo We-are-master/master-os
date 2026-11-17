@@ -178,7 +178,7 @@ function BoardCard({
       }}
       aria-pressed={onToggleSelect ? selected : undefined}
       className={cn(
-        "group/card w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
+        "group/card relative w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
         selected
           ? "border-primary ring-2 ring-primary/30"
           : readyToSend
@@ -189,32 +189,36 @@ function BoardCard({
         dragging && "opacity-40",
       )}
     >
+      {onToggleSelect ? (
+        <button
+          type="button"
+          draggable={false}
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={`Select ${lead.name || "lead"}`}
+          title={selected ? "Unselect" : "Select for bulk actions"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect(lead);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          className={cn(
+            "absolute -top-2 left-2.5 z-10 inline-flex h-4 items-center gap-1 rounded-full border px-1.5 text-[10px] font-semibold leading-none transition",
+            selected
+              ? "border-primary bg-primary text-white"
+              : cn(
+                  "border-border bg-card text-text-secondary hover:border-primary hover:text-primary",
+                  selecting ? "opacity-100" : "opacity-0 focus:opacity-100 group-hover/card:opacity-100",
+                ),
+          )}
+        >
+          <Check className="h-2.5 w-2.5" aria-hidden />
+          {selected ? "Selected" : "Select"}
+        </button>
+      ) : null}
       <div className="flex items-start justify-between gap-2">
         <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary">
-          {onToggleSelect ? (
-            <button
-              type="button"
-              draggable={false}
-              role="checkbox"
-              aria-checked={selected}
-              aria-label={`Select ${lead.name || "lead"}`}
-              title={selected ? "Unselect" : "Select (for bulk actions)"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleSelect(lead);
-              }}
-              onKeyDown={(e) => e.stopPropagation()}
-              className={cn(
-                "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
-                selected
-                  ? "border-primary bg-primary text-white"
-                  : cn("border-border bg-card text-transparent hover:border-primary", selecting ? "opacity-100" : "opacity-0 focus:opacity-100 group-hover/card:opacity-100"),
-              )}
-            >
-              <Check className="h-3 w-3" aria-hidden />
-            </button>
-          ) : null}
-          {onToggleSelect && (selecting || selected) ? null : fresh ? (
+          {fresh ? (
             <span
               className="relative flex h-2 w-2 shrink-0"
               aria-label="Just arrived"
@@ -299,7 +303,17 @@ function BoardCard({
         {lead.email?.trim() ? <CopyLine icon={Mail} value={lead.email.trim()} label="email" /> : null}
       </div>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
+        <ZendeskTicketLink
+          className="order-last ml-auto"
+          compact
+          ticketId={
+            lead.external_source === "zendesk" || !lead.external_source
+              ? lead.external_ref
+              : null
+          }
+          fallbackQuery={lead.email || lead.phone}
+        />
           {/* Com a etiqueta da quote, a da etapa sai: a coluna já diz a etapa. */}
           {chip ? null : (
             <span
@@ -329,19 +343,6 @@ function BoardCard({
               back {lead.nurture_until.slice(8, 10)}/{lead.nurture_until.slice(5, 7)}
             </span>
           ) : null}
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
-        <ZendeskTicketLink
-          className="order-last ml-auto"
-          compact
-          ticketId={
-            lead.external_source === "zendesk" || !lead.external_source
-              ? lead.external_ref
-              : null
-          }
-          fallbackQuery={lead.email || lead.phone}
-        />
         <span
           className="inline-flex items-center gap-1 text-[11px] text-text-secondary"
           title={`Arrived ${arrived}`}
@@ -582,7 +583,7 @@ export function LeadBoard({
                     </span>
                   </span>
                 </header>
-                <div className="space-y-1.5">
+                <div className="space-y-2.5 pt-1">
                   {loading && !rows.length ? (
                     <p className="px-1 text-[11px] text-text-tertiary">
                       Loading…
