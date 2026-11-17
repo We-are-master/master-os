@@ -21,6 +21,12 @@ export type AjustesDoHarvey = {
   /** Pedido de transferência bancária: passa para a equipe, ou só cartão. */
   transferencia: "equipe" | "so_cartao";
   /**
+   * Quem fecha a venda de preço do catálogo (dono, 17/11/2026): a equipe (o Harvey
+   * passa com need "close") ou o próprio Harvey (dia, endereço e link de pagamento),
+   * que só chama a equipe quando não consegue fechar.
+   */
+  fechamento: "equipe" | "harvey";
+  /**
    * O que ele pode usar do OS. Cada acesso é uma ferramenta: desligado, a
    * ferramenta some e ele passa para a equipe quando precisar daquilo.
    */
@@ -34,6 +40,7 @@ export const PADRAO: AjustesDoHarvey = {
   janelaFim: 20,
   cincoQuartos: "equipe",
   transferencia: "equipe",
+  fechamento: "equipe",
   acessos: { precos: true, agenda: true, reservas: true, cotacao: true, parceiro: true },
   pagamento: { link: true, modo: "deposito", cupons: true },
 };
@@ -77,6 +84,7 @@ export function validarAjustes(v: unknown): AjustesDoHarvey {
     janelaFim,
     cincoQuartos: o.cincoQuartos === "tabela" ? "tabela" : "equipe",
     transferencia: o.transferencia === "so_cartao" ? "so_cartao" : "equipe",
+    fechamento: o.fechamento === "harvey" ? "harvey" : "equipe",
     acessos: {
       precos: lig(ac.precos, true),
       agenda: lig(ac.agenda, true),
@@ -136,6 +144,15 @@ export function instrucoesDosAjustes(a: AjustesDoHarvey): string {
   if (a.transferencia === "so_cartao") {
     linhas.push(
       'Bank transfer: we only take payment by the secure card link. If they ask to pay by bank transfer, say kindly in one line that payment is by card link only (50% now, 50% after the job) and carry on. Do not pass to the team for this.',
+    );
+  }
+  if (a.fechamento === "harvey" && a.pagamento.link && a.acessos.precos && a.acessos.agenda) {
+    linhas.push(
+      [
+        "Closing: you close the sale yourself. This replaces step 3 of The conversation and the first paragraph of Booking.",
+        'When they accept a price from get_quote (an ok, a day, "let\'s book", a question about booking), do not hand off: carry on with the Booking steps, one question per message (two free days from get_available_dates, the full address, access, parking, first and last name and email), then send the card link with create_payment_link in the same reply as the one-line read back. If their name or email is already known (their form, the chat), do not ask for it: use it. Vary how you start each message: never open two in a row with "Thank you".',
+        "Hand off to the team only when you cannot close it yourself: the job needs a written quote or is bespoke, get_quote has no price for it, no free day suits them, they want to pay by bank transfer, they ask for a person, they still push back on the price after your one answer, or create_payment_link keeps failing. Then use the matching need (close only if they are ready but you cannot finish the booking) and put every detail in.",
+      ].join(" "),
     );
   }
   if (!a.acessos.precos) linhas.push("You cannot see prices right now: do not quote. Take the details and pass to the team for a price.");

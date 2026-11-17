@@ -367,6 +367,7 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
     janelaFim: inicial.janelaFim,
     cincoQuartos: inicial.cincoQuartos,
     transferencia: inicial.transferencia,
+    fechamento: inicial.fechamento,
     acessos: { ...inicial.acessos },
     pagamento: { ...inicial.pagamento },
   });
@@ -493,6 +494,15 @@ function CartaoDeAjustes({ inicial, onSalvo }: { inicial: Ajustes; onSalvo: () =
           <select className={`${SELECT} w-full`} value={a.transferencia} onChange={(e) => setA({ ...a, transferencia: e.target.value as AjustesDoHarvey["transferencia"] })}>
             <option value="equipe">Pass to the team with the booking details</option>
             <option value="so_cartao">Card only: explain kindly and carry on</option>
+          </select>
+        </label>
+
+        <label className="space-y-1.5">
+          <span className="block text-sm font-medium text-text-primary">Who closes the sale</span>
+          <span className="block text-xs text-text-tertiary">For prices from the price list. Needs prices, diary and payment links on.</span>
+          <select className={`${SELECT} w-full`} value={a.fechamento} onChange={(e) => setA({ ...a, fechamento: e.target.value as AjustesDoHarvey["fechamento"] })}>
+            <option value="equipe">The team: Harvey passes the ready lead</option>
+            <option value="harvey">Harvey: books and sends the payment link, team only if he can&apos;t</option>
           </select>
         </label>
       </div>
@@ -778,6 +788,8 @@ function podeENaoPode(a: AjustesDoHarvey): { pode: string[]; naoPode: string[] }
   (a.acessos.reservas ? pode : naoPode).push("Tell customers about their bookings");
   (a.acessos.cotacao ? pode : naoPode).push("Ask the team for a photo quote");
   (a.acessos.parceiro ? pode : naoPode).push("Check and approve partner documents");
+  if (a.fechamento === "harvey" && a.pagamento.link && a.acessos.precos && a.acessos.agenda) pode.push("Close the sale himself: day, address and payment link");
+  else naoPode.push("Close the sale (the team confirms the day and sends the booking)");
   if (a.transferencia === "equipe") pode.push("Pass bank transfer requests to the team");
   else naoPode.push("Take bank transfers (card only)");
   (a.pagamento.cupons ? pode : naoPode).push(a.pagamento.cupons ? "Apply discount codes the customer gives" : "Apply discount codes");
