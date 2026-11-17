@@ -23,12 +23,15 @@ export function ZendeskTicketLink({
   fallbackQuery,
   className,
   compact,
+  iconOnly,
 }: {
   ticketId?: string | number | null;
   fallbackQuery?: string | null;
   className?: string;
   /** Card estreito: sem ticket vira só a lupa, sem o texto. */
   compact?: boolean;
+  /** Só o ícone; o número aparece no hover. */
+  iconOnly?: boolean;
 }) {
   const id = ticketId != null && String(ticketId).trim() ? String(ticketId).trim() : null;
   const query = fallbackQuery?.trim() || null;
@@ -51,8 +54,8 @@ export function ZendeskTicketLink({
       )}
     >
       {id ? <Ticket className="h-3 w-3" aria-hidden /> : <Search className="h-3 w-3" aria-hidden />}
-      {id ? `#${id}` : compact ? null : "Find in Zendesk"}
-      {compact && !id ? null : <ExternalLink className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden />}
+      {iconOnly ? null : id ? `#${id}` : compact ? null : "Find in Zendesk"}
+      {iconOnly || (compact && !id) ? null : <ExternalLink className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-70" aria-hidden />}
     </a>
   );
 }

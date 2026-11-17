@@ -303,16 +303,16 @@ function BoardCard({
         {lead.email?.trim() ? <CopyLine icon={Mail} value={lead.email.trim()} label="email" /> : null}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
+      <div className="mt-2 flex flex-nowrap items-center gap-x-2.5 border-t border-dashed border-border-light pt-1.5">
         <span
-          className="inline-flex items-center gap-1 text-[11px] text-text-secondary"
+          className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-text-secondary"
           title={`Arrived ${arrived}`}
         >
           <Clock className="h-3 w-3 text-text-tertiary" aria-hidden />
           {formatAgo(lead.created_at, now)}
         </span>
         {value ? (
-          <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums text-text-primary">
+          <span className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11px] font-semibold tabular-nums text-text-primary">
             <PoundSterling className="h-3 w-3" aria-hidden />
             {gbp(value).replace("£", "")}
           </span>
@@ -320,7 +320,7 @@ function BoardCard({
         {lead.next_action_at && isOpenStage(stage) ? (
           <span
             className={cn(
-              "inline-flex items-center gap-1 text-[11px]",
+              "inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px]",
               overdue ? "font-semibold text-danger" : "text-text-secondary",
             )}
           >
@@ -334,38 +334,45 @@ function BoardCard({
             {formatWhen(lead.next_action_at)}
           </span>
         ) : null}
-        <span className="order-last ml-auto flex flex-wrap items-center justify-end gap-1.5">
+        <span className="order-last ml-auto flex min-w-0 flex-nowrap items-center justify-end gap-1.5">
           {/* Com a etiqueta da quote, a da etapa sai: a coluna já diz a etapa. */}
           {chip ? null : (
             <span
-              className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
-              title="Status"
+              className="inline-flex min-w-0 items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+              title={stageLabel}
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-              {stageLabel}
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+              <span className="truncate">{stageLabel}</span>
             </span>
           )}
           {chip ? (
-            <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}>
-              {readyToSend ? <Send className="h-3 w-3" aria-hidden /> : <FileText className="h-3 w-3" aria-hidden />}
-              {chip.label}
-              {quote?.reference ? <span className="font-normal opacity-75">· {quote.reference}</span> : null}
+            <span
+              className={cn("inline-flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}
+              title={quote?.reference ? `${chip.label} · ${quote.reference}` : chip.label}
+            >
+              {readyToSend ? <Send className="h-3 w-3 shrink-0" aria-hidden /> : <FileText className="h-3 w-3 shrink-0" aria-hidden />}
+              <span className="truncate">{chip.label}</span>
             </span>
           ) : null}
           {stage === "lost" && lead.lost_reason ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-danger-light px-1.5 py-0.5 text-[10.5px] font-medium text-danger">
-              <XCircle className="h-3 w-3" aria-hidden />
-              {LOST_REASON_LABEL[lead.lost_reason]}
+            <span
+              className="inline-flex min-w-0 items-center gap-1 rounded-md bg-danger-light px-1.5 py-0.5 text-[10.5px] font-medium text-danger"
+              title={LOST_REASON_LABEL[lead.lost_reason]}
+            >
+              <XCircle className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="truncate">{LOST_REASON_LABEL[lead.lost_reason]}</span>
             </span>
           ) : null}
           {stage === "lost" && lead.nurture_until ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] font-medium text-text-secondary">
+            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] font-medium text-text-secondary">
               <RotateCcw className="h-3 w-3" aria-hidden />
               back {lead.nurture_until.slice(8, 10)}/{lead.nurture_until.slice(5, 7)}
             </span>
           ) : null}
+        <span className="shrink-0">
         <ZendeskTicketLink
           compact
+          iconOnly
           ticketId={
             lead.external_source === "zendesk" || !lead.external_source
               ? lead.external_ref
@@ -374,10 +381,11 @@ function BoardCard({
           fallbackQuery={lead.email || lead.phone}
         />
         </span>
+        </span>
         {ready ? (
           <Badge
             variant={ready.pronto ? "success" : "warning"}
-            className="text-[10px] px-1.5 py-0"
+            className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0"
           >
             {ready.pronto ? "ready" : `${ready.faltam} missing`}
           </Badge>
