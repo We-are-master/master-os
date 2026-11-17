@@ -1,6 +1,6 @@
 /**
  * Submete à Meta o template de boas-vindas do lead do formulário instantâneo
- * (fixfy_form_welcome), na WABA do 020 4538 4668.
+ * (fixfy_form_welcome_v2, texto do dono 17/11), na WABA do 020 4538 4668.
  *
  *   npx tsx scripts/whatsapp-template-formulario.mts           # mostra o que iria
  *   npx tsx scripts/whatsapp-template-formulario.mts --enviar  # submete à revisão da Meta
@@ -23,8 +23,7 @@ const template = {
   language: "en_GB",
   category: "UTILITY",
   components: [
-    { type: "BODY", text: TEXTO_DO_TEMPLATE, example: { body_text: [["Sarah", "end of tenancy clean"]] } },
-    { type: "FOOTER", text: "Fixfy · London" },
+    { type: "BODY", text: TEXTO_DO_TEMPLATE, example: { body_text: [["Sarah"]] } },
   ],
 };
 
