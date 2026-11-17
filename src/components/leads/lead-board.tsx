@@ -304,45 +304,6 @@ function BoardCard({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-dashed border-border-light pt-1.5">
-        <ZendeskTicketLink
-          className="order-last ml-auto"
-          compact
-          ticketId={
-            lead.external_source === "zendesk" || !lead.external_source
-              ? lead.external_ref
-              : null
-          }
-          fallbackQuery={lead.email || lead.phone}
-        />
-          {/* Com a etiqueta da quote, a da etapa sai: a coluna já diz a etapa. */}
-          {chip ? null : (
-            <span
-              className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
-              title="Status"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
-              {stageLabel}
-            </span>
-          )}
-          {chip ? (
-            <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}>
-              {readyToSend ? <Send className="h-3 w-3" aria-hidden /> : <FileText className="h-3 w-3" aria-hidden />}
-              {chip.label}
-              {quote?.reference ? <span className="font-normal opacity-75">· {quote.reference}</span> : null}
-            </span>
-          ) : null}
-          {stage === "lost" && lead.lost_reason ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-danger-light px-1.5 py-0.5 text-[10.5px] font-medium text-danger">
-              <XCircle className="h-3 w-3" aria-hidden />
-              {LOST_REASON_LABEL[lead.lost_reason]}
-            </span>
-          ) : null}
-          {stage === "lost" && lead.nurture_until ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] font-medium text-text-secondary">
-              <RotateCcw className="h-3 w-3" aria-hidden />
-              back {lead.nurture_until.slice(8, 10)}/{lead.nurture_until.slice(5, 7)}
-            </span>
-          ) : null}
         <span
           className="inline-flex items-center gap-1 text-[11px] text-text-secondary"
           title={`Arrived ${arrived}`}
@@ -373,6 +334,46 @@ function BoardCard({
             {formatWhen(lead.next_action_at)}
           </span>
         ) : null}
+        <span className="order-last ml-auto flex flex-wrap items-center justify-end gap-1.5">
+          {/* Com a etiqueta da quote, a da etapa sai: a coluna já diz a etapa. */}
+          {chip ? null : (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-primary-light px-1.5 py-0.5 text-[10.5px] font-semibold text-primary"
+              title="Status"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+              {stageLabel}
+            </span>
+          )}
+          {chip ? (
+            <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold", chip.cls)}>
+              {readyToSend ? <Send className="h-3 w-3" aria-hidden /> : <FileText className="h-3 w-3" aria-hidden />}
+              {chip.label}
+              {quote?.reference ? <span className="font-normal opacity-75">· {quote.reference}</span> : null}
+            </span>
+          ) : null}
+          {stage === "lost" && lead.lost_reason ? (
+            <span className="inline-flex items-center gap-1 rounded-md bg-danger-light px-1.5 py-0.5 text-[10.5px] font-medium text-danger">
+              <XCircle className="h-3 w-3" aria-hidden />
+              {LOST_REASON_LABEL[lead.lost_reason]}
+            </span>
+          ) : null}
+          {stage === "lost" && lead.nurture_until ? (
+            <span className="inline-flex items-center gap-1 rounded-md bg-surface-tertiary px-1.5 py-0.5 text-[10.5px] font-medium text-text-secondary">
+              <RotateCcw className="h-3 w-3" aria-hidden />
+              back {lead.nurture_until.slice(8, 10)}/{lead.nurture_until.slice(5, 7)}
+            </span>
+          ) : null}
+        <ZendeskTicketLink
+          compact
+          ticketId={
+            lead.external_source === "zendesk" || !lead.external_source
+              ? lead.external_ref
+              : null
+          }
+          fallbackQuery={lead.email || lead.phone}
+        />
+        </span>
         {ready ? (
           <Badge
             variant={ready.pronto ? "success" : "warning"}
