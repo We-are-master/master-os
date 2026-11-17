@@ -851,7 +851,7 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
     // Link curto (dono, 25/10/2026): o cliente recebe /pay/<ref>, que redireciona para o checkout
     // da Stripe guardado na conversa (rota /pay/[reference]). O URL da Stripe tinha ~600 caracteres.
     const curto = linkCurtoDoCheckout(String(data.ref));
-    return { url: curto, ref: data.ref, total, payNow: sinal, payLater: data.payLater ?? 0, note: "Send this exact link, nothing else. It works for 1 hour; if they need longer, create a new one." };
+    return { url: curto, ref: data.ref, total, payNow: sinal, payLater: data.payLater ?? 0, note: "Send this exact link, nothing else. It works for 24 hours; if it has expired, create a new one." };
   }
   return { error: `unknown tool ${nome}` };
 }
