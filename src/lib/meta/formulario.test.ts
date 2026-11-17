@@ -47,7 +47,7 @@ test("ficha leva a mensagem enviada e o anúncio", () => {
     formId: null, plataforma: "ig", nome: "Sarah Jones", telefone: "07700900123", email: null, postcode: null, servico: "deep clean", extras: [],
   };
   const f = fichaDoFormulario(lead, "+447700900123", "enviado", null);
-  assert.match(f, /Hi Sarah, thanks for your Fixfy request for deep clean/);
+  assert.match(f, /Hi Sarah, thanks for getting in touch with Fixfy, I'm Harvey/);
   assert.match(f, /Ad: EoT video/);
   assert.match(f, /wa\.me\/447700900123/);
 });

@@ -17,12 +17,13 @@
  *
  * Ambiente:
  *   META_PAGE_TOKEN              token da página com leads_retrieval (obrigatório)
- *   META_LEAD_TEMPLATE           template de boas-vindas (padrão fixfy_form_welcome)
+ *   META_LEAD_TEMPLATE           template de boas-vindas (padrão fixfy_form_welcome_v2)
  *   META_LEAD_TEMPLATE_LANG      idioma (padrão en_GB)
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { chaveDoTelefone } from "@/lib/harvey-wa/identidade";
+import { nomeProprio } from "@/lib/nome-proprio";
 import { assuntoDoLead, externalIdDoLead, jaFalamosComEle, telefoneE164 } from "@/lib/harvey-wa/primeiro-contato";
 import { enviarTemplatePeloZendesk } from "@/lib/harvey-wa/template-zendesk";
 import { chaveDeEnvio, confirmarEnvio, falhouEnvio, reservarEnvio } from "@/lib/idempotencia/envio";
@@ -30,11 +31,11 @@ import { zendeskApi, ZENDESK_REPLY_STATUS_FIELD_ID } from "@/lib/zendesk";
 
 const GRAPH = "https://graph.facebook.com/v23.0";
 
-export const templateDoFormulario = () => process.env.META_LEAD_TEMPLATE?.trim() || "fixfy_form_welcome";
+export const templateDoFormulario = () => process.env.META_LEAD_TEMPLATE?.trim() || "fixfy_form_welcome_v2";
 
 /** O texto do template como o cliente lê (para a nota do ticket). Igual ao submetido em scripts/whatsapp-template-formulario.mts. */
 export const TEXTO_DO_TEMPLATE =
-  "Hi {{1}}, thanks for your Fixfy request for {{2}}. How can we help? Reply here with a few photos or a short description and we'll get you a price today.";
+  "Hi {{1}}, thanks for getting in touch with Fixfy, I'm Harvey and I'll be looking after you.\n\nCould you tell me a bit more about what needs doing? A photo or two really helps us get the price right.\n\nThank you";
 
 export type CampoDaMeta = { name?: string; values?: string[] };
 
@@ -131,7 +132,7 @@ export type ResultadoDoFormulario =
   | { kind: "repetido"; leadId: string }
   | { kind: "ok"; leadId: string | null; ticket: number | null; whatsapp: "enviado" | "ja_falamos" | "sem telefone" | "falhou"; motivo?: string };
 
-const primeiroNome = (nome: string) => nome.trim().split(/\s+/)[0] || "there";
+const primeiroNome = (nome: string) => nomeProprio(nome.trim().split(/\s+/)[0] ?? "") || "there";
 
 /** Entrada completa de UM lead do formulário. Idempotente pelo leadgen_id. */
 export async function receberLeadDoFormulario(sb: SupabaseClient, lead: LeadDaMeta): Promise<ResultadoDoFormulario> {
@@ -159,7 +160,7 @@ export async function receberLeadDoFormulario(sb: SupabaseClient, lead: LeadDaMe
               to: destino,
               name: templateDoFormulario(),
               language: process.env.META_LEAD_TEMPLATE_LANG?.trim() || "en_GB",
-              bodyParams: [primeiroNome(lead.nome), lead.servico],
+              bodyParams: [primeiroNome(lead.nome)],
             });
             notificacao = r.messageId || null;
             await confirmarEnvio(sb, chave, notificacao);
@@ -226,14 +227,14 @@ export function textoDoFormulario(l: {
   const servico = l.servico && l.servico !== "your job" ? l.servico : null;
   const respostas = l.respostas.filter(([, v]) => v && !/^<test lead/i.test(v)).map(([k, v]) => `${k}: ${v}`);
   return [
-    `This person filled in our Facebook/Instagram instant form${l.quando ? ` on ${new Date(l.quando).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short" })}` : ""} and our welcome template was the first message in this chat (it already thanked them by name and asked how we can help).`,
+    `This person filled in our Facebook/Instagram instant form${l.quando ? ` on ${new Date(l.quando).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short" })}` : ""} and our welcome template was the first message in this chat, sent in your name: it already greeted them by name, introduced you as Harvey and asked what needs doing with a photo or two. Do not greet them again, do not introduce yourself and do not use their name: go straight to what they wrote.`,
     "What they already told us in the form, so never ask for it again:",
     servico ? `service: ${servico};` : null,
     l.nome ? `name: ${l.nome};` : null,
     l.postcode ? `postcode: ${l.postcode};` : null,
     l.email ? `email: ${l.email} (use it for the payment link);` : null,
     ...respostas.map((r) => `${r};`),
-    `Your first reply introduces you once, briefly, and moves the job on from what they chose${servico ? ` (${servico})` : ""}: ask only what is still missing to price it, such as what exactly needs doing, a photo, or the day.`,
+    `Move the job on from what they chose${servico ? ` (${servico})` : ""}: ask only what is still missing to price it, such as what exactly needs doing, a photo, or the day.`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -300,7 +301,7 @@ async function acharOuCriarCliente(sb: SupabaseClient, lead: LeadDaMeta, destino
 }
 
 export function fichaDoFormulario(lead: LeadDaMeta, destino: string | null, whatsapp: string, clienteId: string | null): string {
-  const mensagem = TEXTO_DO_TEMPLATE.replace("{{1}}", primeiroNome(lead.nome)).replace("{{2}}", lead.servico);
+  const mensagem = TEXTO_DO_TEMPLATE.replace("{{1}}", primeiroNome(lead.nome));
   const proximo =
     whatsapp === "enviado"
       ? "Next action: awaiting reply on WhatsApp. Harvey answers, and this ticket is merged into that conversation."
