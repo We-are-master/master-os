@@ -243,7 +243,12 @@ export function textoDoFormulario(l: {
   const servico = l.servico && l.servico !== "your job" ? l.servico : null;
   const respostas = l.respostas.filter(([, v]) => v && !/^<test lead/i.test(v)).map(([k, v]) => `${k}: ${v}`);
   return [
-    `This person filled in our Facebook/Instagram instant form${l.quando ? ` on ${new Date(l.quando).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short" })}` : ""} and our welcome template was the first message in this chat, sent in your name: it already greeted them by name, introduced you as Harvey and asked what needs doing with a photo or two. Do not greet them again, do not introduce yourself and do not use their name: go straight to what they wrote.`,
+    `This person filled in our Facebook/Instagram instant form${l.quando ? ` on ${new Date(l.quando).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short" })}` : ""} and our welcome template was the first message in this chat, sent in your name: it already introduced you as Harvey and asked what needs doing with a photo or two, so do not introduce yourself again.`,
+    // O botão do formulário manda um texto pronto ("I filled in your form and would like to know more about
+    // your business", na língua do Facebook da pessoa). Era lido como pergunta e o Harvey explicava o modelo
+    // de agente. O dono (17/11/2026): responder como uma pessoa que recebeu a mensagem, "oi, como podemos ajudar".
+    `If their message is the form's automatic text (something like "I filled in your form and would like to know more about your business", in any language, usually followed by their form answers), they did not ask anything yet: it is just them saying hello. Reply like a person who just saw their message: one or two short, warm lines${l.nome ? ` using their first name (${l.nome.split(/\s+/)[0]})` : ""}, thank them for getting in touch and ask how you can help, for example "Hi Daryl, thanks for your message! How can we help? Tell me what needs doing and I'll sort a price for you." Do not explain how Fixfy works, do not mention professionals, agents or payment, and do not list the form answers back to them.`,
+    "If they wrote something else, go straight to what they wrote.",
     "What they already told us in the form, so never ask for it again:",
     servico ? `service: ${servico};` : null,
     l.nome ? `name: ${l.nome};` : null,
