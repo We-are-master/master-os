@@ -206,7 +206,65 @@ export async function receberLeadDoFormulario(sb: SupabaseClient, lead: LeadDaMe
     console.error("[meta-form] CRM", lead.leadgenId, e);
     return null;
   });
+  // A conversa do WhatsApp acha o lead do CRM pela linha do Harvey (fontes-servidor.ts).
+  if (leadId && destino && whatsapp === "enviado") {
+    const { error } = await sb.from("harvey_wa_leads").update({ lead_id: leadId }).eq("chave", chaveDoTelefone(destino));
+    if (error) console.warn("[meta-form] harvey_wa_leads.lead_id", error.message);
+  }
   return { kind: "ok", leadId, ticket, whatsapp, ...(motivo ? { motivo } : {}) };
+}
+
+/** O que a pessoa já respondeu no formulário, como o Harvey lê. Puro. */
+export function textoDoFormulario(l: {
+  nome: string | null;
+  email: string | null;
+  postcode: string | null;
+  servico: string | null;
+  respostas: Array<[string, string]>;
+  quando: string | null;
+}): string {
+  const servico = l.servico && l.servico !== "your job" ? l.servico : null;
+  const respostas = l.respostas.filter(([, v]) => v && !/^<test lead/i.test(v)).map(([k, v]) => `${k}: ${v}`);
+  return [
+    `This person filled in our Facebook/Instagram instant form${l.quando ? ` on ${new Date(l.quando).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short" })}` : ""} and our welcome template was the first message in this chat (it already thanked them by name and asked how we can help).`,
+    "What they already told us in the form, so never ask for it again:",
+    servico ? `service: ${servico};` : null,
+    l.nome ? `name: ${l.nome};` : null,
+    l.postcode ? `postcode: ${l.postcode};` : null,
+    l.email ? `email: ${l.email} (use it for the payment link);` : null,
+    ...respostas.map((r) => `${r};`),
+    `Your first reply introduces you once, briefly, and moves the job on from what they chose${servico ? ` (${servico})` : ""}: ask only what is still missing to price it, such as what exactly needs doing, a photo, or the day.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Lead do formulário dos últimos 14 dias com este telefone: o contexto para o Harvey, ou null. */
+export async function contextoDoFormulario(sb: SupabaseClient, telefone: string): Promise<string | null> {
+  const e164 = telefoneE164(telefone);
+  if (!e164) return null;
+  const desde = new Date(Date.now() - 14 * 24 * 3600_000).toISOString();
+  const { data } = await sb
+    .from("leads")
+    .select("name, email, postcode, raw, created_at")
+    .eq("source", "meta_form")
+    .eq("phone", e164)
+    .gte("created_at", desde)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const l = data?.[0] as { name: string | null; email: string | null; postcode: string | null; raw: Record<string, unknown> | null; created_at: string } | undefined;
+  if (!l) return null;
+  const raw = l.raw ?? {};
+  const respostas = Array.isArray(raw.respostas) ? (raw.respostas as Array<[string, string]>).filter((r) => Array.isArray(r) && r.length === 2) : [];
+  return textoDoFormulario({
+    nome: l.name && l.name !== "Meta lead" ? l.name : null,
+    email: l.email,
+    postcode: l.postcode,
+    servico: typeof raw.servico === "string" ? raw.servico : null,
+    respostas,
+    quando: l.created_at,
+  });
 }
 
 async function acharOuCriarCliente(sb: SupabaseClient, lead: LeadDaMeta, destino: string | null): Promise<string | null> {
@@ -323,6 +381,9 @@ async function registrarNoCrm(sb: SupabaseClient, lead: LeadDaMeta, clienteId: s
         form_id: lead.formId,
         platform: lead.plataforma,
         created_time: lead.criadoEm,
+        // O que a pessoa respondeu no formulário: o Harvey lê para não perguntar de novo.
+        servico: lead.servico,
+        respostas: lead.extras,
       },
       ...(ticket ? { external_source: "zendesk", external_ref: String(ticket) } : {}),
     })

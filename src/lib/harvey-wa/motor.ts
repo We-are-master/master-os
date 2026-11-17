@@ -29,6 +29,7 @@ import { espelharMensagemNoJob, jobPeloTelefone } from "./espelho-no-job";
 import { ticketDoJobAtivo } from "./job-ativo";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
+import { contextoDoFormulario } from "@/lib/meta/formulario";
 import { contextoDoWelcome, welcomeDoTelefone } from "./welcome-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
@@ -531,6 +532,8 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
       sobreDaPessoa,
       telefone ? await contextoDoExpress(sb, telefone) : null,
       telefone ? await contextoDaRetomada(sb, telefone) : null,
+      // Lead do formulário instantâneo da Meta: o que já escolheu no form (dono, 17/11/2026).
+      quem.tipo !== "parceiro" && telefone ? await contextoDoFormulario(sb, telefone).catch(() => null) : null,
       // O código do Welcome que o lead recebeu por e-mail (dono, 24/10/2026, ticket 51755).
       quem.tipo !== "parceiro" && telefone ? await welcomeDoTelefone(sb, telefone).then((w) => (w ? contextoDoWelcome(w) : null)).catch(() => null) : null,
     ].filter(Boolean).join(" ") || undefined;

@@ -63,3 +63,22 @@ test("compra vai com lead_id, valor e o event_id do site", () => {
   assert.equal(e.custom_data.value, 223);
   assert.equal(e.custom_data.currency, "GBP");
 });
+
+test("Harvey lê o que a pessoa já respondeu no formulário", async () => {
+  const { textoDoFormulario } = await import("./formulario");
+  const t = textoDoFormulario({
+    nome: "Sarah Jones", email: "sarah@example.com", postcode: "SW11 2AB",
+    servico: "handyman (small repairs & odd jobs)", respostas: [["when", "this week"], ["notes", "<test lead: dummy>"]], quando: "2026-11-17T16:00:00Z",
+  });
+  assert.match(t, /service: handyman \(small repairs & odd jobs\)/);
+  assert.match(t, /postcode: SW11 2AB/);
+  assert.match(t, /when: this week/);
+  assert.doesNotMatch(t, /test lead/);
+  assert.match(t, /never ask for it again/);
+});
+
+test("sem serviço escolhido, não inventa", async () => {
+  const { textoDoFormulario } = await import("./formulario");
+  const t = textoDoFormulario({ nome: null, email: null, postcode: null, servico: "your job", respostas: [], quando: null });
+  assert.doesNotMatch(t, /service:/);
+});
