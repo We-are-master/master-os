@@ -29,7 +29,7 @@ const JANELA_DIAS = 90;
 
 const sha = (v: string) => createHash("sha256").update(v.trim().toLowerCase()).digest("hex");
 
-type LeadDoFormulario = { id: string; client_id: string | null; email: string | null; phone: string | null; raw: Record<string, unknown> | null };
+type LeadDoFormulario = { id: string; client_id: string | null; email: string | null; phone: string | null; raw: Record<string, unknown> | null; created_at: string };
 
 /** O corpo do evento de compra de um lead do formulário. */
 export function eventoDeCompra(a: { leadgenId: string; referencia: string; valor: number; telefone?: string | null; email?: string | null; quando?: Date }): Record<string, unknown> {
@@ -53,6 +53,21 @@ export function eventoDeCompra(a: { leadgenId: string; referencia: string; valor
   };
 }
 
+/** O cliente do lead e os outros cadastros com o mesmo telefone (9 últimos dígitos) ou e-mail. */
+async function clientesDaPessoa(sb: SupabaseClient, l: LeadDoFormulario): Promise<string[]> {
+  const ids = new Set<string>(l.client_id ? [l.client_id] : []);
+  const digitos = String(l.phone ?? "").replace(/\D/g, "").slice(-9);
+  if (digitos.length === 9) {
+    const { data } = await sb.from("clients").select("id, phone").ilike("phone", `%${digitos.slice(-4)}`).is("deleted_at", null).limit(200);
+    for (const c of data ?? []) if (String(c.phone ?? "").replace(/\D/g, "").endsWith(digitos)) ids.add(c.id as string);
+  }
+  if (l.email) {
+    const { data } = await sb.from("clients").select("id").ilike("email", l.email.trim()).is("deleted_at", null).limit(10);
+    for (const c of data ?? []) ids.add(c.id as string);
+  }
+  return [...ids];
+}
+
 export type ResultadoDaCompra = { olhados: number; enviados: number; detalhes: string[] };
 
 export async function varrerComprasDoFormulario(
@@ -63,7 +78,7 @@ export async function varrerComprasDoFormulario(
   const desde = new Date(agora.getTime() - JANELA_DIAS * 24 * 3600_000).toISOString();
   const { data, error } = await sb
     .from("leads")
-    .select("id, client_id, email, phone, raw")
+    .select("id, client_id, email, phone, raw, created_at")
     .eq("source", "meta_form")
     .not("client_id", "is", null)
     .is("raw->>compra_enviada", null)
@@ -76,10 +91,15 @@ export async function varrerComprasDoFormulario(
   for (const l of leads) {
     const leadgenId = String(l.raw?.leadgen_id ?? "");
     if (!leadgenId || !l.client_id) continue;
+    // O checkout do site ou do Harvey pode ter criado outro cadastro da mesma pessoa:
+    // vale qualquer cliente com o mesmo telefone ou e-mail do lead.
+    const clientes = await clientesDaPessoa(sb, l);
     const { data: jobs } = await sb
       .from("jobs")
       .select("id, reference, client_price, total_client_price, extras_amount")
-      .eq("client_id", l.client_id)
+      .in("client_id", clientes)
+      // Só job que nasceu depois do formulário: compra antiga do mesmo cliente não conta para o anúncio.
+      .gte("created_at", l.created_at)
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
       .limit(20);
