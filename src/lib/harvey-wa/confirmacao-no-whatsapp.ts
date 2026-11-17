@@ -40,6 +40,31 @@ export function textoDaConfirmacao(a: {
   return `${oi}\n\n${corpo}`;
 }
 
+export type TipoDeServico = "handyman" | "limpeza" | "pintura" | "certificado";
+
+/** O tipo do serviço pelo título do job (o que a pessoa comprou). */
+export function tipoDoServico(titulo: string | null | undefined): TipoDeServico {
+  const t = String(titulo ?? "").toLowerCase();
+  if (/gas safety|cp12|eicr|electrical (safety|report)|\bepc\b|energy performance|fire (risk|alarm|door|extinguisher)|emergency light|\bpat\b|portable appliance|asbestos|legionella|boiler service|certificate/.test(t)) return "certificado";
+  if (/clean/.test(t)) return "limpeza";
+  if (/paint|decorat/.test(t)) return "pintura";
+  return "handyman";
+}
+
+/**
+ * Linha de "também fazemos" depois do pagamento (dono, 17/11/2026): uma vez, na primeira
+ * compra, sem preço nem link, nunca o que a pessoa acabou de comprar.
+ */
+export function linhaDeOutrosServicos(tipo: TipoDeServico): string {
+  const outros: Record<TipoDeServico, string> = {
+    handyman: "cleaning and property certificates such as gas safety and EICRs",
+    limpeza: "handyman jobs, painting and property certificates",
+    pintura: "cleaning, handyman jobs and property certificates",
+    certificado: "cleaning, repairs and painting",
+  };
+  return `Just so you know, we also take care of ${outros[tipo]}, so if there’s anything else you need, do get in touch.`;
+}
+
 /**
  * "Payment received" no WhatsApp (copy aprovada 20/10/2026, id 8). Texto livre
  * na conversa aberta, nunca template. Os valores saem do checkout gravado; sem
@@ -52,7 +77,10 @@ export function textoDePagamentoRecebido(a: {
   deposito: boolean;
   total: number | null | undefined;
   sinal: number | null | undefined;
+  /** Primeira compra: o tipo do que comprou, para a linha de outros serviços. Sem ele, nada a mais. */
+  outrosServicos?: TipoDeServico | null;
 }): string {
+  const extra = a.outrosServicos ? `\n\n${linhaDeOutrosServicos(a.outrosServicos)}` : "";
   const r2 = (n: number) => Math.round(n * 100) / 100;
   const libras = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const oi = saudacao({ tipo: "b2c", primeiroNome: a.nome });
@@ -63,15 +91,15 @@ export function textoDePagamentoRecebido(a: {
     const temSinal = Number.isFinite(sinal) && sinal > 0.02;
     const saldo = temSinal && Number.isFinite(total) ? r2(total - sinal) : 0;
     return `${oi}\n\n${[
-      `Thank you, we’ve received your ${temSinal ? `${libras(r2(sinal))} ` : ""}deposit${booking}.`,
+      `Thank you, we’ve received your ${temSinal ? `${libras(r2(sinal))} ` : ""}deposit${booking}, and your booking has been created.`,
       saldo > 0.02 ? `The remaining ${libras(saldo)} is due after the work is complete.` : "",
       "We’ll keep you updated on the booking arrangements here.",
-    ].filter(Boolean).join(" ")}`;
+    ].filter(Boolean).join(" ")}${extra}`;
   }
   // Pagamento total: o que se cobrou (payNow gravado como sinal), senão o total.
   const valor = Number.isFinite(sinal) && sinal > 0.02 ? sinal : total;
   const pago = Number.isFinite(valor) && valor > 0.02 ? ` of ${libras(r2(valor))}` : "";
-  return `${oi}\n\nThank you, we’ve received your payment${pago}${booking}. We’ll keep you updated on the booking arrangements here. If you have a question, just reply.`;
+  return `${oi}\n\nThank you, we’ve received your payment${pago}${booking}, and your booking has been created. We’ll keep you updated on the booking arrangements here. If you have a question, just reply.${extra}`;
 }
 
 export async function confirmarJobNoWhatsApp(

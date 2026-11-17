@@ -30,12 +30,13 @@ import { ticketDoJobAtivo } from "./job-ativo";
 import { contextoDoExpress } from "./express";
 import { contextoDaRetomada } from "./site-lead";
 import { contextoDoFormulario } from "@/lib/meta/formulario";
+import { comAudiosTranscritos } from "./audio";
 import { contextoDoWelcome, welcomeDoTelefone } from "./welcome-lead";
 import { perguntarAoParceiro, reservasDoCliente, situacaoDoParceiro, statusDasCotacoes } from "./contas";
 import { salvarDocumento, TIPOS_DE_DOC, type TipoDeDoc } from "./documento";
 import { anotarContextoDoEnvio, anotarPagamentoNaConversa, assuntoPadraoNaConversa, classificarNoZendesk, cotacaoPedidaNoTicket, encerrarLeadPerdido, ticketParaAprovacao, grupoDaConversa, juntarTicketsDaConversa, marcarReplyStatusNaConversa, notaInternaNaConversa, notaNoTicketDeTrabalho, ticketDeTrabalho, ticketParaCotacao, ticketParaEtapa, ticketParaOperacao, ticketDoProprioCliente, ticketPeloTelefone, type DadosDoCliente } from "./zendesk-wa";
 import { mandarEventoWhatsApp } from "@/lib/meta/eventos-whatsapp";
-import { textoDePagamentoRecebido } from "./confirmacao-no-whatsapp";
+import { textoDePagamentoRecebido, tipoDoServico, type TipoDeServico } from "./confirmacao-no-whatsapp";
 import { parseLeadBrief } from "@/lib/agent/sales/lead-brief";
 import { ORIGEM_PADRAO, origemDoLead, origemMaisRecente, type Origem } from "./origem";
 import { chamarSite } from "./site";
@@ -518,7 +519,8 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
   // Conversa que a equipe começou: o Harvey continua no nome de quem falava e lê
   // a conversa inteira (a sessão cortaria o que a equipe já combinou com o cliente).
   const voz = vozDaConversa(msgs);
-  const sessao = voz ? msgs : sessaoAtual(msgs);
+  // Nota de voz vira texto ("[voice note] ..."): o Harvey ouve o áudio (dono, 17/11/2026).
+  const sessao = await comAudiosTranscritos(voz ? msgs : sessaoAtual(msgs));
   const fotos = await fotosDaConversa(sessao);
   const { quem, contas, sobreQuem: sobreDaPessoa, postcodesConhecidos } = await contextoDaPessoa(sb, telefone, { nomeNoWhatsApp: msg.author.displayName ?? null, fotos, falaComo: voz });
   // O lead do site/WhatsApp também pode ter o postcode (da cotação do site ou de uma cotação anterior).
@@ -825,6 +827,7 @@ async function confirmarPagamentoNaConversa(
     deposito: Boolean(data.checkout_deposit),
     total: data.checkout_total,
     sinal: data.checkout_sinal,
+    outrosServicos: await primeiraCompraDoTelefone(sb, data.phone).catch(() => null),
   });
   // O job pago nasce neste mesmo ticket (dono, 07/10/2026): a conversa fica aberta, só a nota.
   await anotarPagamentoNaConversa(data.phone as string | null, `Paid online by card${bookingRef ? `: booking ${bookingRef}` : ""}. The job is on this ticket.`).catch((e) =>
@@ -837,6 +840,25 @@ async function confirmarPagamentoNaConversa(
     console.error("[harvey-wa] aviso de pagamento", err);
     return false;
   }
+}
+
+/**
+ * Primeira compra deste telefone: o tipo do job (para a linha "também fazemos"). Cliente
+ * que já tinha job antes desta reserva recebe só o "Payment received" (uma vez por pessoa).
+ * Uma reserva pode ter mais de um job, então vale "nenhum job com mais de 2 h de idade".
+ */
+async function primeiraCompraDoTelefone(sb: ReturnType<typeof createServiceClient>, telefone: string | null): Promise<TipoDeServico | null> {
+  const chave = chaveDoTelefone(telefone);
+  if (!chave) return null;
+  const { data: clientes } = await sb.from("clients").select("id, phone").ilike("phone", `%${chave.slice(-4)}`).is("deleted_at", null).limit(200);
+  const ids = ((clientes ?? []) as Array<{ id: string; phone: string | null }>).filter((c) => chaveDoTelefone(c.phone) === chave).map((c) => c.id);
+  if (!ids.length) return null;
+  const { data: jobs } = await sb.from("jobs").select("title, created_at").in("client_id", ids).is("deleted_at", null).neq("status", "cancelled").order("created_at", { ascending: false }).limit(20);
+  const lista = (jobs ?? []) as Array<{ title: string | null; created_at: string }>;
+  if (!lista.length) return null;
+  const limite = Date.now() - 2 * 3600_000;
+  if (lista.some((j) => Date.parse(j.created_at) < limite)) return null;
+  return tipoDoServico(lista[0].title);
 }
 
 /** Tira o que veio vazio, para o nome do WhatsApp só valer quando o Harvey não tem o nome completo. */

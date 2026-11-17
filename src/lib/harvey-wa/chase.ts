@@ -20,6 +20,7 @@ import { maxChases, pensar, type Fala } from "./cerebro";
 import { contextoDaPessoa, catalogo, paraFalas, sessaoAtual } from "./motor";
 import { chamarSite } from "./site";
 import { enviarTexto, historico, vozDaConversa } from "./sunshine";
+import { comAudiosTranscritos } from "./audio";
 import { devolvidaEm, equipeDonaDaConversa, horasDaEquipeDona } from "./equipe-dona";
 import { instrucaoDoWelcomeNoChase, welcomeDoTelefone } from "./welcome-lead";
 
@@ -73,12 +74,15 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     const msgs = voz ? todas : sessaoAtual(todas);
     const ultima = msgs[msgs.length - 1];
     if (!ultima || ultima.author.type === "user") continue; // chegou mensagem e o motor ainda não viu
-    const conversa: Fala[] = paraFalas(msgs);
+    const conversa: Fala[] = paraFalas(await comAudiosTranscritos(msgs));
     const { quem, contas, sobreQuem } = await contextoDaPessoa(sb as never, c.phone as string | null);
     // Preço do catálogo que não fechou: o código do Welcome pode entrar uma vez no lembrete (dono, 24/10/2026).
     const welcome = quem.tipo === "parceiro" ? null : await welcomeDoTelefone(sb, c.phone as string | null).catch(() => null);
     const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null }, chamarSite, await catalogo());
 
+    // Lembrete nunca passa para a equipe (17/11/2026: o chase mandava "let me get someone from
+    // the team" sem passar de verdade, na conversa de teste do dono). Quis passar: nada sai.
+    if (r.passarParaEquipe || r.ferramentas.includes("hand_off_to_team")) r.resposta = null;
     if (!r.resposta) {
       out.semNada++;
       out.detalhes.push(`${c.conversation_id}: nada pendente, para de cobrar`);

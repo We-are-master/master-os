@@ -26,16 +26,28 @@ test("sem janela não diz 'between To be confirmed'", () => {
 
 test("pagamento total: valor pago e referência, sem prometer profissional", () => {
   const t = textoDePagamentoRecebido({ nome: "Sarah Jones", referencia: "JOB-9800", deposito: false, total: 180, sinal: 180 });
-  assert.equal(t, "Hi Sarah,\n\nThank you, we’ve received your payment of £180.00 for booking JOB-9800. We’ll keep you updated on the booking arrangements here. If you have a question, just reply.");
+  assert.equal(t, "Hi Sarah,\n\nThank you, we’ve received your payment of £180.00 for booking JOB-9800, and your booking has been created. We’ll keep you updated on the booking arrangements here. If you have a question, just reply.");
 });
 
 test("sinal: valor do sinal e o saldo calculado", () => {
   const t = textoDePagamentoRecebido({ nome: null, referencia: "JOB-9800", deposito: true, total: 180, sinal: 90 });
-  assert.equal(t, "Hi there,\n\nThank you, we’ve received your £90.00 deposit for booking JOB-9800. The remaining £90.00 is due after the work is complete. We’ll keep you updated on the booking arrangements here.");
+  assert.equal(t, "Hi there,\n\nThank you, we’ve received your £90.00 deposit for booking JOB-9800, and your booking has been created. The remaining £90.00 is due after the work is complete. We’ll keep you updated on the booking arrangements here.");
 });
 
 test("sinal sem valor gravado não inventa número", () => {
   const t = textoDePagamentoRecebido({ nome: "Sarah", referencia: null, deposito: true, total: 180, sinal: null });
   assert.doesNotMatch(t, /£/);
+  assert.doesNotMatch(t, SEM_TRAVESSAO);
+});
+
+test("primeira compra: linha de outros serviços, nunca o que comprou", async () => {
+  const { tipoDoServico } = await import("./confirmacao-no-whatsapp");
+  const t = textoDePagamentoRecebido({ nome: "Sarah", referencia: "FX-K7Q2M9", deposito: true, total: 144, sinal: 72, outrosServicos: tipoDoServico("Handyman: TV mounting and 2 shelves") });
+  assert.match(t, /\n\nJust so you know, we also take care of cleaning and property certificates such as gas safety and EICRs, so if there’s anything else you need, do get in touch\.$/);
+  assert.equal(tipoDoServico("End of Tenancy Clean, 2 bed"), "limpeza");
+  assert.equal(tipoDoServico("Gas Safety Certificate (CP12)"), "certificado");
+  assert.equal(tipoDoServico("Painting: living room"), "pintura");
+  assert.doesNotMatch(textoDePagamentoRecebido({ nome: null, referencia: null, deposito: false, total: 200, sinal: 200, outrosServicos: "limpeza" }), /cleaning/);
+  assert.doesNotMatch(textoDePagamentoRecebido({ nome: null, referencia: null, deposito: false, total: 200, sinal: 200 }), /Just so you know/);
   assert.doesNotMatch(t, SEM_TRAVESSAO);
 });
