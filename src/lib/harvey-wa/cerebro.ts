@@ -135,7 +135,7 @@ const MODELO = () => process.env.HARVEY_WA_MODEL?.trim() || "gpt-5.4";
  * resposta (eram 4). A quote que vai para a equipe continua levando todas as fotos.
  */
 export const maxChases = () => Math.min(3, Math.max(0, Math.floor(Number(process.env.HARVEY_WA_MAX_CHASES ?? "1")) || 0));
-const maxFotosPorResposta = () => Math.min(4, Math.max(0, Math.floor(Number(process.env.HARVEY_WA_MAX_FOTOS ?? "2")) || 0));
+const maxFotosPorResposta = () => Math.min(4, Math.max(0, Math.floor(Number(process.env.HARVEY_WA_MAX_FOTOS ?? "3")) || 0));
 
 /** O formato que o site entende. Tipado para o modelo não mandar `services: "clean"` (virava total £0). */
 const SELECAO = {
@@ -620,8 +620,8 @@ function instrucaoDeChase(n: number, horas: number): string {
 
 # Follow up (this is not a reply)
 
-They have not replied for about ${Math.max(1, Math.round(horas))} hour${horas >= 1.5 ? "s" : ""}. Write follow up ${n} of ${Math.max(n, maxChases())}${n >= maxChases() ? " (the last one: leave the door open, no pressure)" : ""}: one short, friendly line about what is still pending, the way a person would nudge a mate. Pick up exactly where the conversation stopped (the question you asked, the price, the day you are holding, the payment link) and make it easy to answer. If a payment link was sent, it expires after an hour: offer a fresh one, or create it if you have everything. Do not restate the price or anything already said, and do not quote again: ask the pending question again in fresh words ("Still keen on Thursday or Friday morning?"). Never pressure, never invent urgency.${n === 3 ? " This is the last one: say you'll leave it with them and they can message any time." : ""}
-If nothing is pending (they said thanks or goodbye, already paid, said no, asked to stop, or it was handed to the team), reply exactly NO_CHASE.`;
+They have not replied for about ${Math.max(1, Math.round(horas))} hour${horas >= 1.5 ? "s" : ""}. Write follow up ${n} of ${Math.max(n, maxChases())}${n >= maxChases() ? " (the last one)" : ""}: a short, warm and genuinely polite check in, the way a courteous person at a good family firm would write. One or two short sentences. Open gently, never with "just following up" or "as I said" (for example "No rush at all,", "Hope your day's going well.", "Whenever you have a moment,"), then pick up exactly where the conversation stopped (the question you asked, the price, the day you are holding, the payment link) and make it easy to answer. Ask the pending question again in fresh, kind words; never restate the price or anything already said, never quote again. No pressure, no urgency, no guilt, no exclamation marks. If a payment link was sent and may have expired, offer a fresh one, or create it if you have everything.${n >= maxChases() ? " As this is the last one, say there is no rush and you'll be here whenever they're ready." : ""}
+A follow up never passes the chat to the team: never call hand_off_to_team and never say someone from the team will pick this up. If the next step needs the team, or nothing is pending (they said thanks or goodbye, already paid, said no, asked to stop, or it was already handed to the team), reply exactly NO_CHASE.`;
 }
 
 /** Mesmo com o esquema, o modelo às vezes manda um serviço solto: vira lista. */
