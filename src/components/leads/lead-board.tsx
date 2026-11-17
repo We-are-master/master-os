@@ -8,6 +8,8 @@ import {
   Clock,
   FileText,
   Home,
+  Mail,
+  Phone,
   MapPin,
   Pencil,
   PoundSterling,
@@ -63,6 +65,30 @@ function Line({
       <Icon className={cn("h-3.5 w-3.5 shrink-0", tone)} aria-hidden />
       <span className="truncate">{children}</span>
     </p>
+  );
+}
+
+/** Linha do card que copia ao clicar (telefone, e-mail, endereço): não abre o card. */
+function CopyLine({ icon: Icon, value, label }: { icon: LucideIcon; value: string; label: string }) {
+  return (
+    <button
+      type="button"
+      draggable={false}
+      title={`Copy ${label}`}
+      aria-label={`Copy ${label}: ${value}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard
+          .writeText(value)
+          .then(() => toast.success(`${label.charAt(0).toUpperCase()}${label.slice(1)} copied`))
+          .catch(() => toast.error("Could not copy"));
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className="-mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-1.5 rounded px-1 text-left text-[11.5px] text-text-secondary transition hover:bg-surface-secondary hover:text-text-primary"
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+      <span className="truncate">{value}</span>
+    </button>
   );
 }
 
@@ -262,11 +288,15 @@ function BoardCard({
             <span className="font-medium text-text-primary">{accountName}</span>
           </Line>
         ) : null}
-        <Line icon={MapPin} tone="text-text-tertiary" title={address || undefined}>
-          {address || (
+        {address ? (
+          <CopyLine icon={MapPin} value={address} label="address" />
+        ) : (
+          <Line icon={MapPin} tone="text-text-tertiary">
             <span className="text-text-tertiary">No address yet</span>
-          )}
-        </Line>
+          </Line>
+        )}
+        {lead.phone?.trim() ? <CopyLine icon={Phone} value={lead.phone.trim()} label="phone" /> : null}
+        {lead.email?.trim() ? <CopyLine icon={Mail} value={lead.email.trim()} label="email" /> : null}
       </div>
 
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
