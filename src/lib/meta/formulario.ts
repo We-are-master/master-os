@@ -12,6 +12,7 @@
  *      responde, o Harvey junta este ticket no da conversa; sem resposta, a
  *      régua de 3 dias (followup-leads.ts) segue sozinha
  *   5. lead no CRM em New lead, origem meta_form, com os ids do anúncio em `raw`
+ *   6. e-mail "Welcome to Fixfy" com WELCOME10 (processo/boas-vindas-lead.ts), como o Checkatrade
  *
  * A venda volta para a Meta em compra-do-formulario.ts.
  *
@@ -183,6 +184,21 @@ export async function receberLeadDoFormulario(sb: SupabaseClient, lead: LeadDaMe
     console.error("[meta-form] ticket", lead.leadgenId, e);
     return null;
   });
+
+  // 2b) "Welcome to Fixfy" com WELCOME10 por e-mail, igual ao lead do Checkatrade (dono, 17/11/2026).
+  // Mesmas travas (conta v2 direct, janela, primeira compra, uma vez por e-mail); com ticket, sai
+  // como conversa lateral nele. O Harvey já lê que o código foi enviado (welcome-lead.ts).
+  if (clienteId && lead.email) {
+    await import("@/lib/processo/boas-vindas-lead")
+      .then(({ mandarBoasVindasDoLead, dependenciasDasBoasVindas }) =>
+        mandarBoasVindasDoLead(
+          { ticketId: ticket, clienteId, telefone: destino, leadExterno: `meta:${lead.leadgenId}`, servico: lead.servico, nome: primeiroNome(lead.nome), email: lead.email },
+          dependenciasDasBoasVindas(sb),
+        ),
+      )
+      .then((bv) => console.log(`[meta-form] welcome ${lead.leadgenId}: ${bv.motivo}`))
+      .catch((e) => console.error("[meta-form] welcome", lead.leadgenId, e));
+  }
 
   // 3) harvey_wa_leads: liga a resposta do cliente a este ticket e põe o lead na régua de 3 dias.
   if (destino && whatsapp === "enviado") {
