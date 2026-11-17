@@ -77,7 +77,7 @@ test("Harvey lê o que a pessoa já respondeu no formulário", async () => {
   assert.match(t, /never ask for it again/);
   // Texto automático do botão do form: responde como gente, sem explicar o modelo (dono, 17/11/2026).
   assert.match(t, /form's automatic text/);
-  assert.match(t, /first name \(Sarah\)/);
+  assert.match(t, /"Hi Sarah, thanks for your message\. How can we help\?"/);
   assert.match(t, /Do not explain how Fixfy works/);
 });
 
