@@ -11,6 +11,7 @@ import {
   MapPin,
   Pencil,
   PoundSterling,
+  Check,
   RotateCcw,
   Send,
   Trash2,
@@ -77,9 +78,17 @@ function BoardCard({
   onLose,
   onDelete,
   stageLabel,
+  selected = false,
+  selecting = false,
+  onToggleSelect,
 }: {
   lead: Lead;
   stageLabel: string;
+  /** Marcado para ação em grupo. */
+  selected?: boolean;
+  /** Já tem card marcado no board: clicar marca em vez de abrir. */
+  selecting?: boolean;
+  onToggleSelect?: (l: Lead) => void;
   onLose?: (l: Lead) => void;
   /** Tira o card do CRM (some do board; dá para desfazer pelo banco). */
   onDelete?: (l: Lead) => void;
@@ -130,16 +139,23 @@ function BoardCard({
         onDragState(lead.id);
       }}
       onDragEnd={() => onDragState(null)}
-      onClick={() => onOpen(lead)}
+      onClick={(e) => {
+        if (onToggleSelect && (selecting || e.metaKey || e.ctrlKey || e.shiftKey)) return onToggleSelect(lead);
+        onOpen(lead);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          if (onToggleSelect && selecting) return onToggleSelect(lead);
           onOpen(lead);
         }
       }}
+      aria-pressed={onToggleSelect ? selected : undefined}
       className={cn(
         "group/card w-full cursor-pointer active:cursor-grabbing text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 border bg-card px-3 py-2.5 transition hover:border-border hover:shadow-sm",
-        readyToSend
+        selected
+          ? "border-primary ring-2 ring-primary/30"
+          : readyToSend
           ? "border-success ring-2 ring-success/15"
           : fresh
             ? "border-fx-coral ring-2 ring-fx-coral/15"
@@ -149,7 +165,30 @@ function BoardCard({
     >
       <div className="flex items-start justify-between gap-2">
         <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-text-primary">
-          {fresh ? (
+          {onToggleSelect ? (
+            <button
+              type="button"
+              draggable={false}
+              role="checkbox"
+              aria-checked={selected}
+              aria-label={`Select ${lead.name || "lead"}`}
+              title={selected ? "Unselect" : "Select (for bulk actions)"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSelect(lead);
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+              className={cn(
+                "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition",
+                selected
+                  ? "border-primary bg-primary text-white"
+                  : cn("border-border bg-card text-transparent hover:border-primary", selecting ? "opacity-100" : "opacity-0 focus:opacity-100 group-hover/card:opacity-100"),
+              )}
+            >
+              <Check className="h-3 w-3" aria-hidden />
+            </button>
+          ) : null}
+          {onToggleSelect && (selecting || selected) ? null : fresh ? (
             <span
               className="relative flex h-2 w-2 shrink-0"
               aria-label="Just arrived"
@@ -415,6 +454,9 @@ export function LeadBoard({
   canRename = false,
   onLose,
   onDelete,
+  selectedIds,
+  onToggleSelect,
+  onSelectMany,
 }: {
   columns: Record<string, Lead[]>;
   counts: Record<string, number>;
@@ -430,8 +472,14 @@ export function LeadBoard({
   /** Botão Lost do card: tira do pipeline (sem resposta, preço...). */
   onLose?: (l: Lead) => void;
   onDelete?: (l: Lead) => void;
+  /** Seleção para ação em grupo (excluir, mover, Lost). */
+  selectedIds?: Set<string>;
+  onToggleSelect?: (l: Lead) => void;
+  /** "Select all" da coluna. */
+  onSelectMany?: (ls: Lead[]) => void;
 }) {
   const STAGE_LABEL = useStageLabels();
+  const selecting = !!selectedIds && selectedIds.size > 0;
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<LeadStage | null>(null);
   const findLead = (id: string) => Object.values(columns).flat().find((l) => l.id === id) ?? null;
@@ -484,13 +532,24 @@ export function LeadBoard({
                     canRename={canRename}
                     suffix={st === "lost" ? "· last 7 days" : null}
                   />
-                  <span
-                    className={cn(
-                      "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
-                      COLUMN.pill,
-                    )}
-                  >
-                    {total}
+                  <span className="flex items-center gap-1.5">
+                    {onSelectMany && selecting && rows.length ? (
+                      <button
+                        type="button"
+                        onClick={() => onSelectMany(rows)}
+                        className="rounded px-1 text-[11px] font-medium text-primary hover:underline"
+                      >
+                        Select all
+                      </button>
+                    ) : null}
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
+                        COLUMN.pill,
+                      )}
+                    >
+                      {total}
+                    </span>
                   </span>
                 </header>
                 <div className="space-y-1.5">
@@ -511,6 +570,9 @@ export function LeadBoard({
                       stageLabel={STAGE_LABEL[l.stage ?? "new"]}
                       onLose={onLose}
                       onDelete={onDelete}
+                      selected={!!selectedIds?.has(l.id)}
+                      selecting={selecting}
+                      onToggleSelect={onToggleSelect}
                       quote={quotes[l.id]}
                       accountName={
                         l.account_id ? accountNames[l.account_id] : null
