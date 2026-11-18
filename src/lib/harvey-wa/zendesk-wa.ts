@@ -785,6 +785,21 @@ export async function notaNoTicketDeTrabalho(telefone: string, texto: string, ta
  * Resolution "cancelled", tag lead_lost. O follow-up para (ele já respondeu) e
  * o ticket reabre sozinho se a pessoa escrever de novo.
  */
+/** Um ticket como perdido (solved, Resolution cancelled, tag lead_lost). true = ficou solved. */
+export async function encerrarTicketPerdido(id: number, texto: string): Promise<boolean> {
+  try {
+    await zendeskApi(`tickets/${id}.json`, {
+      method: "PUT",
+      body: { ticket: { status: "solved", custom_fields: [{ id: 5872761703199, value: "res_cancelled" }, { id: Number(process.env.ZENDESK_WHAT_HAPPENED_FIELD_ID?.trim() || "5687150349343"), value: "other" }, { id: Number(process.env.ZENDESK_CLOSING_SUMMARY_FIELD_ID?.trim() || "6417950403231"), value: "Lead lost on WhatsApp (closed by Harvey)." }], comment: { body: texto, public: false } } },
+    });
+    await zendeskApi(`tickets/${id}/tags.json`, { method: "PUT", body: { tags: ["lead_lost", "harvey_wa"] } });
+    const t = await zendeskApi<{ ticket?: { status?: string } }>(`tickets/${id}.json`);
+    return t.ticket?.status === "solved" || t.ticket?.status === "closed";
+  } catch {
+    return false;
+  }
+}
+
 export async function encerrarLeadPerdido(telefone: string, texto: string): Promise<string> {
   if (!isZendeskConfigured()) return "";
   const { editavel } = await ticketDeTrabalho(telefone);
