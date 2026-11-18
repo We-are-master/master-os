@@ -18,6 +18,24 @@ import { usePulseCeo } from "./pulse-ceo-data";
 
 const CANAL: Record<string, string> = { checkatrade: "Checkatrade", whatsapp: "WhatsApp", website: "Website", phone: "Phone", email: "Email", meta_form: "Meta form", referral: "Referral", walk_in: "Walk-in", other: "Other" };
 
+/** O "!" de Sales: cada job vendido com quem pagou, como e quando (dono, 18/11/2026). */
+const MAX_VENDAS = 15;
+function notaDeVendas(f: PulseCeo["funil"] | undefined, mes: string): string {
+  const base = `Value of the jobs booked (${mes}).`;
+  if (!f) return base;
+  const lista = f.fechados.lista;
+  if (!lista) return `${base}\n\n${f.fechados.n} job${f.fechados.n === 1 ? "" : "s"}`;
+  if (!lista.length) return `${base}\n\nNo jobs booked yet.`;
+  const linhas = lista.slice(0, MAX_VENDAS).map((v) => {
+    const pago = v.pago
+      ? `paid ${pulseMoney(v.pago.valor)} by ${v.pago.como} on ${v.pago.quando}`.replace("by marked paid", "marked paid")
+      : "not paid yet";
+    return `${v.ref} · ${v.cliente} · ${pulseMoney(v.valor)}\n${pago}`;
+  });
+  const resto = lista.length > MAX_VENDAS ? `\n\n+${lista.length - MAX_VENDAS} more` : "";
+  return `${base}\n\n${linhas.join("\n\n")}${resto}`;
+}
+
 export function MonthFunnel() {
   const { data, loading: carregandoMes } = usePulseCeo();
   // Segue o filtro do topo (15/10/2026). Sem período ("All"), fica o funil do mês.
@@ -53,7 +71,7 @@ export function MonthFunnel() {
     { rotulo: "Quoted", valor: f ? String(f.quotes) : "—", nota: `Quotes created (${mes}).`, taxa: f ? (taxa(f.quotes, f.leads) ? `${taxa(f.quotes, f.leads)} of leads` : null) : null },
     { rotulo: "Jobs booked", valor: f ? String(f.fechados.n) : "—", nota: `Jobs created (${mes}).${f ? `\n\n${pulseMoney(f.fechados.valor)}` : ""}` },
     { rotulo: "Delivered", valor: f ? String(f.entregues.n) : "—", nota: `Jobs completed (${mes}).${f ? `\n\n${pulseMoney(f.entregues.valor)}` : ""}`, taxa: f ? (taxa(f.entregues.n, f.fechados.n) ? `${taxa(f.entregues.n, f.fechados.n)} of booked` : null) : null },
-    { rotulo: "Sales", valor: f ? pulseMoney(f.fechados.valor) : "—", nota: `Value of the jobs booked (${mes}). Paid money lives in the Paid card.${f ? `\n\n${f.fechados.n} job${f.fechados.n === 1 ? "" : "s"}` : ""}` },
+    { rotulo: "Sales", valor: f ? pulseMoney(f.fechados.valor) : "—", nota: notaDeVendas(f, mes) },
   ];
   const rotuloCls = "inline-flex items-center gap-[5px] text-[12px] font-semibold";
   return (
