@@ -96,7 +96,14 @@ export async function getStageCounts(segment: SegmentFilter): Promise<Record<str
 export const BOARD_STAGES: LeadStage[] = ["new", "qualified", "quoting", "quoted", "won", "lost"];
 
 /** Até `perColumn` cards por etapa, o mais recente primeiro. Lost: só a última semana. */
-export async function listBoardLeads(segment: SegmentFilter, search: string, perColumn = 30): Promise<Record<string, Lead[]>> {
+export const BOARD_PAGE = 30;
+
+/** Board por coluna. `limits` = quantos cards cada coluna já pediu (rolagem infinita). */
+export async function listBoardLeads(
+  segment: SegmentFilter,
+  search: string,
+  limits: Partial<Record<string, number>> = {},
+): Promise<Record<string, Lead[]>> {
   const supabase = getSupabase();
   const safe = sanitizePostgrestValue(search);
   const cols = await Promise.all(
@@ -106,7 +113,7 @@ export async function listBoardLeads(segment: SegmentFilter, search: string, per
       if (segment !== "all") q = q.eq("segment", segment);
       if (safe) q = q.or(SEARCH_COLUMNS.map((c) => `${c}.ilike.%${safe}%`).join(","));
       q = q.order("created_at", { ascending: false });
-      const { data } = await q.limit(perColumn);
+      const { data } = await q.limit(limits[st] ?? BOARD_PAGE);
       return [st, (data ?? []) as Lead[]] as const;
     }),
   );

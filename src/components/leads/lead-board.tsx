@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   Briefcase,
   Building2,
@@ -19,6 +19,7 @@ import {
   Trash2,
   UserRound,
   XCircle,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -497,8 +498,11 @@ export function LeadBoard({
   selectedIds,
   onToggleSelect,
   onSelectMany,
+  onLoadMore,
 }: {
   columns: Record<string, Lead[]>;
+  /** Rolou até o fim da coluna: a tela busca mais cards dela. */
+  onLoadMore?: (stage: LeadStage) => void;
   counts: Record<string, number>;
   quotes: Record<string, LeadQuote>;
   accountNames: Record<string, string>;
@@ -529,9 +533,30 @@ export function LeadBoard({
     const t = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(t);
   }, []);
+  // O board ocupa a tela até embaixo; quem rola são os cards dentro da coluna.
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [fitBox, setFitBox] = useState<{ h: number; mb: number } | null>(null);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const el = boardRef.current;
+      if (!el) return;
+      const main = el.closest("main");
+      const top = el.getBoundingClientRect().top + (main?.scrollTop ?? window.scrollY);
+      // O padding de baixo do <main> some aqui para a tela do CRM não rolar.
+      const pb = main ? parseFloat(getComputedStyle(main).paddingBottom) || 0 : 0;
+      setFitBox({ h: Math.max(320, window.innerHeight - top - 12), mb: -pb });
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
   return (
-    <div className="min-w-0 overflow-x-auto -mx-1 px-1 pb-2">
-      <div className="flex gap-3 min-w-max">
+    <div
+      ref={boardRef}
+      style={fitBox ? { height: fitBox.h, marginBottom: fitBox.mb } : undefined}
+      className="min-w-0 overflow-x-auto overflow-y-hidden -mx-1 px-1"
+    >
+      <div className="flex h-full gap-3 min-w-max">
         {BOARD_STAGES.map((st: LeadStage) => {
           const rows = columns[st] ?? [];
           const total = st === "lost" ? (counts.lost_week ?? rows.length) : (counts[st] ?? rows.length);
@@ -558,13 +583,13 @@ export function LeadBoard({
                 if (lead && (lead.stage ?? "new") !== st) onMove(lead, st);
               }}
               className={cn(
-                "w-72 shrink-0 overflow-hidden rounded-xl transition",
+                "flex h-full w-72 shrink-0 flex-col overflow-hidden rounded-xl transition",
                 COLUMN.col,
                 overStage === st && dragFrom !== st && "ring-2 ring-offset-2 ring-primary/50",
               )}
             >
-              <div className="p-2">
-                <header className="mb-2 flex items-center justify-between px-1">
+              <div className="flex min-h-0 flex-1 flex-col p-2 pr-1">
+                <header className="mb-2 flex shrink-0 items-center justify-between pl-1 pr-2">
                   <ColumnTitle
                     stage={st}
                     label={STAGE_LABEL[st]}
@@ -592,7 +617,13 @@ export function LeadBoard({
                     </span>
                   </span>
                 </header>
-                <div className="space-y-2.5 pt-1">
+                <div
+                  className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain pb-16 pl-0 pr-1 pt-1.5"
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    if (onLoadMore && total > rows.length && el.scrollHeight - el.scrollTop - el.clientHeight < 240) onLoadMore(st);
+                  }}
+                >
                   {loading && !rows.length ? (
                     <p className="px-1 text-[11px] text-text-tertiary">
                       Loading…
@@ -627,8 +658,9 @@ export function LeadBoard({
                     />
                   ))}
                   {total > rows.length ? (
-                    <p className="px-1 pt-1 text-[11px] text-text-tertiary">
-                      +{total - rows.length} more · use List
+                    <p className="flex items-center justify-center gap-1.5 py-2 text-[11px] text-text-tertiary">
+                      {loading ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+                      {loading ? "Loading more…" : `${total - rows.length} more below`}
                     </p>
                   ) : null}
                 </div>

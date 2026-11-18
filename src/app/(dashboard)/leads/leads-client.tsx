@@ -32,6 +32,7 @@ import {
   getStageCounts,
   leadValue,
   listBoardLeads,
+  BOARD_PAGE,
   listCrmLeads,
   listLatestQuotesForLeads,
   listAccountNames,
@@ -227,6 +228,11 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
   const [lostDefault, setLostDefault] = useState<LeadLostReason | undefined>(undefined);
   const router = useRouter();
   const [boardColumns, setBoardColumns] = useState<Record<string, Lead[]>>({});
+  /** Quantos cards cada coluna já carregou; rolar até o fim pede mais 30. */
+  const [boardLimits, setBoardLimits] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setBoardLimits({});
+  }, [segment, search]);
   const [quotesByLead, setQuotesByLead] = useState<Record<string, LeadQuote>>({});
   const [platformAccounts, setPlatformAccounts] = useState<Set<string>>(new Set());
   const [sideLoading, setSideLoading] = useState(true);
@@ -278,7 +284,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     try {
       const [counts, board] = await Promise.all([
         getStageCounts(segment),
-        view === "board" ? listBoardLeads(segment, search) : Promise.resolve<Record<string, Lead[]>>({}),
+        view === "board" ? listBoardLeads(segment, search, boardLimits) : Promise.resolve<Record<string, Lead[]>>({}),
       ]);
       const boardLeads = Object.values(board).flat();
       const all = [...boardLeads, ...data];
@@ -298,11 +304,21 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
     } finally {
       if (seq === sideSeq.current) setSideLoading(false);
     }
-  }, [segment, view, search, data]);
+  }, [segment, view, search, data, boardLimits]);
 
   useEffect(() => {
     void loadCounts();
   }, [loadCounts]);
+
+  const loadMoreColumn = useCallback(
+    (stage: string) => {
+      const loaded = boardColumns[stage]?.length ?? 0;
+      const asked = boardLimits[stage] ?? BOARD_PAGE;
+      if (sideLoading || loaded < asked) return;
+      setBoardLimits((cur) => ({ ...cur, [stage]: asked + BOARD_PAGE }));
+    },
+    [boardColumns, boardLimits, sideLoading],
+  );
 
   // Tempo real: lead ou quote nova (ou mudada) recarrega o board sem F5. O
   // canal de leads já vem do useSupabaseList; aqui entra o de quotes e uma
@@ -955,6 +971,7 @@ export function LeadsClient({ initialData }: LeadsClientProps = {}) {
             onToggleSelect={toggleSelect}
             onSelectMany={selectMany}
             loading={sideLoading}
+            onLoadMore={loadMoreColumn}
             onOpen={openLead}
           />
         ) : (
