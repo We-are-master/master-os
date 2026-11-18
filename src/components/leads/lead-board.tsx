@@ -550,11 +550,50 @@ export function LeadBoard({
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
   }, []);
+  // Roda do mouse: dentro da lista de cards rola a coluna; fora dela (cabeçalho,
+  // fundo, coluna no fim) anda o board para o lado.
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      const list = (e.target as HTMLElement).closest<HTMLElement>("[data-col-list]");
+      if (list) {
+        const canDown = e.deltaY > 0 && list.scrollTop + list.clientHeight < list.scrollHeight - 1;
+        const canUp = e.deltaY < 0 && list.scrollTop > 0;
+        if (canDown || canUp) return;
+        if (list.scrollHeight > list.clientHeight + 1) return;
+      }
+      if (el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+  // Arrastar o fundo (fora de card e botão) também anda para o lado.
+  const pan = useRef<{ x: number; left: number } | null>(null);
   return (
     <div
       ref={boardRef}
       style={fitBox ? { height: fitBox.h, marginBottom: fitBox.mb } : undefined}
-      className="min-w-0 overflow-x-auto overflow-y-hidden -mx-1 px-1"
+      onPointerDown={(e) => {
+        if (e.button !== 0 || e.pointerType !== "mouse") return;
+        if ((e.target as HTMLElement).closest("[role=button],button,a,input,textarea,[data-col-list] > *")) return;
+        pan.current = { x: e.clientX, left: e.currentTarget.scrollLeft };
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!pan.current) return;
+        e.currentTarget.scrollLeft = pan.current.left - (e.clientX - pan.current.x);
+      }}
+      onPointerUp={() => {
+        pan.current = null;
+      }}
+      onPointerCancel={() => {
+        pan.current = null;
+      }}
+      className="crm-board-scroll min-w-0 overflow-x-scroll overflow-y-hidden px-1 pb-1"
     >
       <div className="flex h-full gap-3 min-w-max">
         {BOARD_STAGES.map((st: LeadStage) => {
@@ -618,6 +657,7 @@ export function LeadBoard({
                   </span>
                 </header>
                 <div
+                  data-col-list
                   className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain pb-16 pl-0 pr-1 pt-1.5"
                   onScroll={(e) => {
                     const el = e.currentTarget;
