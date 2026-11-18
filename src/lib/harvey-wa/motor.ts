@@ -46,6 +46,8 @@ import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 import { destinoDaResposta } from "./turno";
+import { fecharLeadPerdido, marcarLostNoCrm, naoQuerMais } from "./lead-perdido";
+import { telefoneE164 } from "./primeiro-contato";
 import { processosV2Ligado } from "@/lib/processo/conta";
 import { registrarCanalAtivo } from "@/lib/processo/canal-ativo";
 
@@ -300,6 +302,36 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
   await marcarReplyStatusNaConversa(telefone, ultima.author.type === "user" || harveyPassou ? "reply_awaiting" : "reply_replied", msg.author.type === "user");
 }
 
+/** Fecha o lead que não quer mais: ticket do lead, CRM e o ticket da conversa (ver lead-perdido.ts). */
+async function fecharComoPerdido(conversationId: string, telefone: string, frase: string, botao: boolean): Promise<string> {
+  const sb = createServiceClient();
+  return fecharLeadPerdido(
+    { conversationId, telefone, frase, botao },
+    {
+      encerrarLeadPerdido,
+      marcarLostNoCrm: async (tel, f) => {
+        const e164 = telefoneE164(tel);
+        return e164 ? marcarLostNoCrm(sb, e164, f) : 0;
+      },
+      passarParaEquipe,
+      marcarEstadoEquipe: async (id, motivo) => {
+        await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: new Date().toISOString(), motivo_passagem: motivo }).eq("conversation_id", id);
+      },
+      resolverTicketDaConversa: async (tel, nota) => {
+        // Saindo do Harvey o ticket leva uns segundos para deixar de ser "AI agent".
+        for (let i = 0; i < 6; i++) {
+          await new Promise((r) => setTimeout(r, 4000));
+          const id = await ticketPeloTelefone(tel);
+          if (!id) continue;
+          const { encerrarTicketPerdido } = await import("./zendesk-wa");
+          if (await encerrarTicketPerdido(id, nota)) return `conversa #${id} solved`;
+        }
+        return "conversa: ticket não fechou";
+      },
+    },
+  );
+}
+
 /** Botão de resposta rápida do template: vira nota no ticket com o que fazer. */
 const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[]; perdido?: boolean }> = [
   { re: /call me/i, nota: (tel) => `📞 The customer tapped "Call me back" on the WhatsApp template. Call them on ${tel}.`, tags: ["callback_requested"] },
@@ -309,14 +341,14 @@ const BOTOES: Array<{ re: RegExp; nota: (tel: string) => string; tags: string[];
   { re: /no longer needed|not needed|don'?t need/i, nota: () => `Lost: the customer tapped "No longer needed" on the WhatsApp template. Solved as cancelled; it reopens by itself if they write again.`, tags: ["lead_lost"], perdido: true },
 ];
 
-async function anotarBotao(msg: MensagemSc): Promise<void> {
+async function anotarBotao(msg: MensagemSc, conversationId: string): Promise<void> {
   const botao = msg.content.payload?.trim();
   if (!botao || !msg.author.userId) return;
   const telefone = await telefoneDoUsuario(msg.author.userId).catch(() => null);
   if (!telefone) return;
   const b = BOTOES.find((x) => x.re.test(botao));
   if (b?.perdido) {
-    console.log("[harvey-wa] lead perdido:", await encerrarLeadPerdido(telefone, b.nota(telefone)));
+    console.log("[harvey-wa] lead perdido:", await fecharComoPerdido(conversationId, telefone, botao, true));
     return;
   }
   // No ticket de trabalho: com o Harvey atendendo, o da conversa é "AI agent" e não aceita nota.
@@ -360,7 +392,12 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
     // da conversa; com o Harvey (ticket "AI agent", só leitura), vira o lugar de trabalho.
     const telefone = (est?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId).catch(() => null) : null);
     await juntarTicketAnterior(telefone, est?.estado === "equipe").catch((e) => console.error("[harvey-wa] juntar ticket:", e));
-    await anotarBotao(msg).catch((e) => console.error("[harvey-wa] botão:", e));
+    await anotarBotao(msg, conversa.id).catch((e) => console.error("[harvey-wa] botão:", e));
+    // "No longer needed" digitado (dono, 18/11/2026): fecha igual ao botão. Parceiro e cliente com job em andamento ficam de fora.
+    if (!msg.content.payload && msg.content.type === "text" && naoQuerMais(msg.content.text) && telefone && est?.tipo !== "parceiro") {
+      const comJob = await jobPeloTelefone(createServiceClient(), telefone).catch(() => null);
+      if (!comJob) console.log("[harvey-wa] lead perdido (texto):", await fecharComoPerdido(conversa.id, telefone, msg.content.text!.trim(), false).catch((e) => String(e)));
+    }
   } else if (est?.estado === "equipe" && est.phone) {
     // A equipe assumiu: o ticket da conversa deixa de ser "AI agent" e o anterior entra nele.
     await juntarTicketAnterior(est.phone as string, true).catch((e) => console.error("[harvey-wa] juntar ticket:", e));
