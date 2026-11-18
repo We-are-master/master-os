@@ -21,7 +21,7 @@ export type PulseCeo = {
     leads: number;
     porCanal: Array<{ canal: string; n: number }>;
     quotes: number;
-    fechados: { n: number; valor: number };
+    fechados: { n: number; valor: number; lista?: VendaDoPeriodo[] };
     entregues: { n: number; valor: number };
     pagos: { n: number; valor: number };
     conversao: number;
@@ -38,6 +38,71 @@ export type PulseCeo = {
   acumulado: Array<{ dia: number; fechado: number; entregue: number }>;
   origem: Array<{ nome: "B2B accounts" | "Platforms" | "B2C"; valor: number; jobs: number }>;
 };
+
+/** Uma venda do período, para o "!" de Sales (dono, 18/11/2026: "quem pagou, como e quando, sempre"). */
+export type VendaDoPeriodo = {
+  ref: string;
+  cliente: string;
+  valor: number;
+  /** O que entrou do cliente (líquido de refund); null = nada pago ainda. */
+  pago: { valor: number; como: string; quando: string } | null;
+};
+
+type JobVendido = { id: string; reference: string; client_name: string | null; status: string; client_price: number | null; extras_amount: number | null; created_at: string | null };
+
+const COMO: Record<string, string> = { stripe: "card", card: "card", bank_transfer: "bank transfer", bank: "bank transfer", cash: "cash", platform: "platform payout" };
+
+function dataCurta(ymd: string): string {
+  return new Date(`${ymd.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/**
+ * Quem pagou cada job vendido, como e quando. O razão (`job_payments`, cliente) manda;
+ * fatura paga sem linha no razão (repasse de plataforma, baixa manual) entra pela data de pagamento.
+ */
+export function montarVendas(
+  jobs: JobVendido[],
+  pagamentos: Array<{ job_id: string; type: string; amount: number | null; payment_method: string | null; payment_date: string | null; created_at: string | null }>,
+  faturasPagas: Array<{ job_reference: string | null; amount: number | null; amount_paid: number | null; paid_date: string | null }>,
+): VendaDoPeriodo[] {
+  return [...jobs]
+    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
+    .map((j) => {
+      const linhas = pagamentos.filter((p) => p.job_id === j.id && (p.type === "customer_deposit" || p.type === "customer_final"));
+      const liquido = r2(linhas.reduce((t, p) => t + Number(p.amount ?? 0), 0));
+      let pago: VendaDoPeriodo["pago"] = null;
+      if (liquido > 0.02) {
+        const entradas = linhas.filter((p) => Number(p.amount ?? 0) > 0);
+        const ultima = entradas.sort((a, b) => String(b.payment_date ?? b.created_at ?? "").localeCompare(String(a.payment_date ?? a.created_at ?? "")))[0];
+        const metodos = [...new Set(entradas.map((p) => COMO[String(p.payment_method ?? "")] ?? String(p.payment_method ?? "other").replace(/_/g, " ")))];
+        pago = { valor: liquido, como: metodos.join(" + "), quando: dataCurta(String(ultima?.payment_date ?? ultima?.created_at ?? "")) };
+      } else {
+        const fatura = faturasPagas.find((f) => f.job_reference === j.reference && f.paid_date);
+        if (fatura) {
+          const v = Number(fatura.amount_paid ?? 0) > 0 ? Number(fatura.amount_paid) : Number(fatura.amount ?? 0);
+          pago = { valor: r2(v), como: "marked paid", quando: dataCurta(String(fatura.paid_date)) };
+        }
+      }
+      return { ref: j.reference, cliente: (j.client_name ?? "").trim() || "Customer", valor: valor(j), pago };
+    });
+}
+
+async function vendasDosJobs(sb: SupabaseClient, jobs: JobVendido[]): Promise<VendaDoPeriodo[]> {
+  if (!jobs.length) return [];
+  const ids = jobs.map((j) => j.id);
+  const refs = jobs.map((j) => j.reference);
+  const pagamentos: Parameters<typeof montarVendas>[1] = [];
+  const faturas: Parameters<typeof montarVendas>[2] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const [{ data: p }, { data: f }] = await Promise.all([
+      sb.from("job_payments").select("job_id, type, amount, payment_method, payment_date, created_at").in("job_id", ids.slice(i, i + 100)).is("deleted_at", null),
+      sb.from("invoices").select("job_reference, amount, amount_paid, paid_date").in("job_reference", refs.slice(i, i + 100)).not("paid_date", "is", null).is("deleted_at", null),
+    ]);
+    pagamentos.push(...((p ?? []) as typeof pagamentos));
+    faturas.push(...((f ?? []) as typeof faturas));
+  }
+  return montarVendas(jobs, pagamentos, faturas);
+}
 
 type JobDoMes = {
   id: string;
@@ -109,13 +174,14 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
   const [leads, { count: quotes }, { data: fechadosRaw }, { data: pagRaw }, meta, urgentesBase] = await Promise.all([
     leadsDoMes(sb, inicioMes),
     sb.from("quotes").select("id", { count: "exact", head: true }).gte("created_at", inicioIso).is("deleted_at", null),
-    sb.from("jobs").select("status, client_price, extras_amount").is("deleted_at", null).gte("created_at", inicioIso).limit(5000),
+    sb.from("jobs").select("id, reference, client_name, status, client_price, extras_amount, created_at").is("deleted_at", null).gte("created_at", inicioIso).limit(5000),
     // Recebido no mês: faturas que entraram em "paid" com data de pagamento no mês.
     sb.from("invoices").select("amount, amount_paid, paid_date").is("deleted_at", null).gte("paid_date", inicioMes).lte("paid_date", fimMes).limit(5000),
     metaMensal(sb),
     urgentesAgora(sb, agora),
   ]);
-  const fechados = ((fechadosRaw ?? []) as Array<{ status: string; client_price: number | null; extras_amount: number | null }>).filter((j) => j.status !== "cancelled" && j.status !== "deleted");
+  const fechados = ((fechadosRaw ?? []) as JobVendido[]).filter((j) => j.status !== "cancelled" && j.status !== "deleted");
+  const vendas = await vendasDosJobs(sb, fechados).catch(() => undefined);
   const pagos = ((pagRaw ?? []) as Array<{ amount: number | null; amount_paid: number | null }>).map((f) => ({ amount: Number(f.amount_paid ?? 0) > 0 ? Number(f.amount_paid) : Number(f.amount ?? 0) }));
 
   // A receber: vencido de verdade × plataformas.
@@ -172,7 +238,7 @@ export async function montarPulseCeo(sb: SupabaseClient, agora = new Date()): Pr
       leads: leads.total,
       porCanal: leads.porCanal,
       quotes: quotes ?? 0,
-      fechados: { n: fechados.length, valor: r2(fechados.reduce((t, j) => t + valor(j), 0)) },
+      fechados: { n: fechados.length, valor: r2(fechados.reduce((t, j) => t + valor(j), 0)), lista: vendas },
       entregues: { n: entregues.length, valor: r2(entregues.reduce((t, x) => t + valor(x.j), 0)) },
       pagos: { n: pagos.length, valor: r2(pagos.reduce((t, p) => t + Number(p.amount ?? 0), 0)) },
       conversao: leads.taxa,
@@ -198,12 +264,13 @@ export async function montarFunilDoPeriodo(sb: SupabaseClient, deIso: string, at
   const [leads, { count: quotes }, { data: fechadosRaw }, { data: entreguesRaw }, { data: pagRaw }] = await Promise.all([
     leadsDoMes(sb, deIso, ateIso),
     sb.from("quotes").select("id", { count: "exact", head: true }).gte("created_at", deIso).lte("created_at", ateIso).is("deleted_at", null),
-    sb.from("jobs").select("status, client_price, extras_amount").is("deleted_at", null).gte("created_at", deIso).lte("created_at", ateIso).limit(5000),
+    sb.from("jobs").select("id, reference, client_name, status, client_price, extras_amount, created_at").is("deleted_at", null).gte("created_at", deIso).lte("created_at", ateIso).limit(5000),
     sb.from("jobs").select("status, client_price, extras_amount").is("deleted_at", null).in("status", [...STATUS_ENTREGUE]).gte("completed_date", de).lte("completed_date", ate).limit(5000),
     sb.from("invoices").select("amount, amount_paid").is("deleted_at", null).gte("paid_date", de).lte("paid_date", ate).limit(5000),
   ]);
   type J = { status: string; client_price: number | null; extras_amount: number | null };
-  const fechados = ((fechadosRaw ?? []) as J[]).filter((j) => j.status !== "cancelled" && j.status !== "deleted");
+  const fechados = ((fechadosRaw ?? []) as JobVendido[]).filter((j) => j.status !== "cancelled" && j.status !== "deleted");
+  const vendas = await vendasDosJobs(sb, fechados).catch(() => undefined);
   const entregues = (entreguesRaw ?? []) as J[];
   const pagos = ((pagRaw ?? []) as Array<{ amount: number | null; amount_paid: number | null }>).map((f) =>
     Number(f.amount_paid ?? 0) > 0 ? Number(f.amount_paid) : Number(f.amount ?? 0),
@@ -212,7 +279,7 @@ export async function montarFunilDoPeriodo(sb: SupabaseClient, deIso: string, at
     leads: leads.total,
     porCanal: leads.porCanal,
     quotes: quotes ?? 0,
-    fechados: { n: fechados.length, valor: r2(fechados.reduce((t, j) => t + valor(j), 0)) },
+    fechados: { n: fechados.length, valor: r2(fechados.reduce((t, j) => t + valor(j), 0)), lista: vendas },
     entregues: { n: entregues.length, valor: r2(entregues.reduce((t, j) => t + valor(j), 0)) },
     pagos: { n: pagos.length, valor: r2(pagos.reduce((t, v) => t + v, 0)) },
     conversao: leads.taxa,
