@@ -135,7 +135,7 @@ function numeroDoJid(jid: string | null): string | null {
   return d.length >= 10 && d.length <= 15 ? d : null;
 }
 
-async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<string | null> {
+export async function parceiroDoNumero(sb: SupabaseClient, numero: string): Promise<string | null> {
   const fim = finalDoNumero(numero);
   if (fim.length < 10) return null;
   const { data } = await sb

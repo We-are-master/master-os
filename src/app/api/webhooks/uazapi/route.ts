@@ -3,10 +3,14 @@
  * cadastrada na instância é `/api/webhooks/uazapi?k=<UAZAPI_OPS_WEBHOOK_SECRET>`.
  * Sem a chave certa, 403. Com ela, sempre 200, mesmo quando a mensagem é
  * pulada ou o corpo não se lê: senão a uazapi reentrega em laço.
+ *
+ * Com HARVEY_TRIAGEM_7983=1 a mensagem de cliente gravada vai para a triagem do
+ * Harvey depois da resposta (harvey/triagem-7983.ts). Sem a flag, nada muda.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { agendarTriagem7983 } from "@/lib/harvey/triagem-7983";
 import { chaveUazapiOk, gravarEventoUazapi } from "@/lib/whatsapp/uazapi-operacao";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +21,8 @@ export async function POST(req: NextRequest) {
   }
   const payload = await req.json().catch(() => null);
   if (!payload) return NextResponse.json({ ok: true, resultado: "corpo ilegível" });
-  const resultado = await gravarEventoUazapi(createServiceClient(), payload);
+  const sb = createServiceClient();
+  const resultado = await gravarEventoUazapi(sb, payload);
+  await agendarTriagem7983(sb, payload, resultado);
   return NextResponse.json({ ok: true, resultado });
 }
