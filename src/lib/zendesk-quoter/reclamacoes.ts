@@ -213,3 +213,59 @@ export async function ticketDaReclamacaoParaOperacao(ticketId: number): Promise<
   await addTicketTags(ticketId, [TAG_NEEDS_ATTENTION]);
   return `ticket ${ticketId} → Complaint, ${dono.nome}`;
 }
+
+
+/**
+ * Reclamação pelo WhatsApp (dono, 12/11/2026): o job entra em on hold por complaint, igual
+ * à do e-mail. Quem escreve é o cliente, então a prova é o telefone dele: os jobs recentes
+ * (45 dias) dos clientes com esse número. UM job com ticket → hold pela engine oficial
+ * (parceiro avisado, faturas seguram). Zero ou dois+ → nada muda; a nota diz o que achou.
+ * Atrás de HARVEY_WA_RECLAMACAO_HOLD=1.
+ */
+export async function holdDaReclamacaoDoWhatsApp(
+  telefone: string | null,
+  resumo: string,
+  ticketDaConversa: number | null,
+): Promise<{ acao: "hold" | "nota" | "desligado"; nota: string; reference?: string }> {
+  if (process.env.HARVEY_WA_RECLAMACAO_HOLD?.trim() !== "1") return { acao: "desligado", nota: "" };
+  const sb = createServiceClient();
+  const { clientesDoTelefone } = await import("@/lib/harvey-wa/contas");
+  const ids = await clientesDoTelefone(sb, telefone);
+  if (!ids.length) return { acao: "nota", nota: "Complaint on WhatsApp: no client with this number, so no job was put on hold. Find the job and apply the complaint macro." };
+  const corte = new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 10);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const { data } = await sb
+    .from("jobs")
+    .select("id, reference, status, scheduled_date, external_source, external_ref")
+    .in("client_id", ids)
+    .is("deleted_at", null)
+    .not("status", "in", "(cancelled,deleted,unassigned)")
+    .gte("scheduled_date", corte)
+    .lte("scheduled_date", hoje);
+  const jobs = (data ?? []) as Array<{ id: string; reference: string; status: string; external_source: string | null; external_ref: string | null }>;
+  if (jobs.length !== 1) {
+    return {
+      acao: "nota",
+      nota: jobs.length
+        ? `Complaint on WhatsApp: this customer has ${jobs.length} recent jobs (${jobs.map((j) => j.reference).join(", ")}), so none was put on hold. Pick the right one and apply the complaint macro.`
+        : "Complaint on WhatsApp: no job of this customer in the last 45 days, so nothing was put on hold. Find the job and apply the complaint macro.",
+    };
+  }
+  const job = jobs[0]!;
+  if (job.external_source !== "zendesk" || !job.external_ref?.trim()) {
+    return { acao: "nota", reference: job.reference, nota: `Complaint on WhatsApp about ${job.reference}, but that job has no Zendesk ticket, so it was not put on hold.` };
+  }
+  const hold = await putJobOnHoldFromZendesk({
+    ticketId: job.external_ref.trim(),
+    onHoldReasonId: "complaint",
+    onHoldNotes: `${resumo.slice(0, 300)} (raised on WhatsApp${ticketDaConversa ? `, ticket #${ticketDaConversa}` : ""})`,
+  });
+  if (hold.ok && (hold.action === "put_on_hold" || hold.action === "already_on_hold")) {
+    return {
+      acao: "hold",
+      reference: job.reference,
+      nota: `Complaint on WhatsApp matched ${job.reference} by the customer's phone. Job ${hold.action === "put_on_hold" ? "put ON HOLD" : "was already on hold"} (reason: complaint). John will ask the partner for evidence and bring the case here.`,
+    };
+  }
+  return { acao: "nota", reference: job.reference, nota: `Complaint on WhatsApp matched ${job.reference}, but the hold failed (${hold.ok ? hold.action : hold.error}). Apply the complaint macro by hand.` };
+}
