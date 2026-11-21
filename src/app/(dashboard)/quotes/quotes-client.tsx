@@ -5114,7 +5114,7 @@ function QuoteDetailDrawer({
           const canResend = drawerQuoteStatus === "awaiting_customer" || drawerQuoteStatus === "awaiting_payment";
           const canMarkSent =
             overviewActions.some((x) => x.status === "awaiting_customer") &&
-            ["draft", "in_survey", "bidding"].includes(drawerQuoteStatus);
+            ["draft", "in_survey", "bidding", "quote_ready"].includes(drawerQuoteStatus);
           return (
             <div className="flex items-center justify-end gap-2">
               <JobActionsMenu
@@ -7388,6 +7388,14 @@ function getQuoteActions(quote: Quote) {
         { label: "Reject", status: "rejected", icon: XCircle, primary: false },
       ];
     case "bidding":
+      return [
+        { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
+        { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
+        { label: "Reject", status: "rejected", icon: XCircle, primary: false },
+      ];
+    case "quote_ready":
+      // Ready to send (dono, 10/11/2026, QT-2026-1288): sem este caso o drawer não tinha
+      // Send nem Mark as sent, e mudar só o status no Zendesk voltava pelo espelho do OS.
       return [
         { label: "Send to customer", status: "awaiting_customer", icon: Mail, primary: true },
         { label: "Back to new", status: "draft", icon: RotateCcw, primary: false },
