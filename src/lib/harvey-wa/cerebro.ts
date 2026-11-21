@@ -16,6 +16,11 @@ import type { ChamadaAoSite } from "./site";
 import { decidirDesconto } from "./desconto";
 import { faltandoParaCotar, postcodeDaCotacao, precoDoCatalogoJaDado } from "./pedido-de-cotacao";
 import { prometeuAEquipe } from "./turno";
+import { podeFecharPeloPrecoDaEquipe } from "./dono";
+
+/** book_team_price sem o Give back da equipe (só com HARVEY_DONO_POR_AGENTE=1). */
+export const ERRO_SEM_GIVE_BACK =
+  "The team has not handed this chat back to you to close. Do not book it: hand off to the team with need \"close\" and every detail, so they close it.";
 
 export type Fala = { papel: "cliente" | "harvey" | "equipe"; texto: string; /** foto ou PDF que o cliente mandou */ midia?: string };
 
@@ -79,6 +84,8 @@ export type Contexto = {
    * recusado o preço na véspera, se apresentou de novo e passou para a equipe.
    */
   conversaAnterior?: Fala[];
+  /** Uma pessoa da equipe devolveu a conversa (Give back): com HARVEY_DONO_POR_AGENTE=1, só assim o book_team_price fecha (dono.ts). */
+  devolvidaPelaEquipe?: boolean;
 };
 
 /** A conversa de antes do corte, em linhas, para o Harvey saber o que já aconteceu. */
@@ -656,6 +663,8 @@ async function executar(nome: string, a: Record<string, unknown>, ctx: Contexto,
   }
   if (nome === "book_team_price") {
     if (!ctx.contas?.reservarPrecoDaEquipe) return { error: "not available here: hand off to the team" };
+    // Dono por agente (dono, 10/11/2026): trava de 3h vencida não é ordem de fechar. Só fecha depois do Give back.
+    if (!podeFecharPeloPrecoDaEquipe(ctx.devolvidaPelaEquipe)) return { error: ERRO_SEM_GIVE_BACK };
     // O Harvey nunca escolhe o número: tem que ser um valor que alguém da equipe escreveu nesta conversa.
     if (!precoConfere(a.price, ctx.conversa ?? [])) {
       const dados = precosDaEquipe(ctx.conversa ?? []);

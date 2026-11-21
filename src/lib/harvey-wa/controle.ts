@@ -4,6 +4,7 @@
  *
  *   assumir  → a conversa vai para o Agent Workspace (o ticket destrava) e o Harvey sai
  *   devolver → a conversa volta para o Harvey
+ *              (com HARVEY_DONO_POR_AGENTE=1, para o agente que era dono antes do Take over, ver dono.ts)
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -11,11 +12,21 @@ import { zendeskApi } from "@/lib/zendesk";
 import { devolverAoHarvey, historico, INTEGRACAO_HARVEY, passarParaEquipe, type MensagemSc } from "./sunshine";
 import { grupoDaConversa } from "./zendesk-wa";
 import { motivoDaDevolucao } from "./equipe-dona";
+import { donoPorAgenteLigado, motivoComDono } from "./dono";
+
+/** O motivo_passagem de agora (só com a porta do dono ligada: desligada, nem lê). */
+async function motivoAtual(sb: SupabaseClient, conversationId: string): Promise<string | null> {
+  if (!donoPorAgenteLigado()) return null;
+  const { data } = await sb.from("harvey_wa_conversas").select("motivo_passagem").eq("conversation_id", conversationId).maybeSingle();
+  return (data?.motivo_passagem as string | null) ?? null;
+}
 
 export async function assumirConversa(sb: SupabaseClient, conversationId: string, quem: string, onde: string) {
   const agora = new Date().toISOString();
+  // Dono por agente (dono, 10/11/2026): o Take over guarda qual agente era dono, para o Give back voltar a ele.
+  const antes = await motivoAtual(sb, conversationId);
   await passarParaEquipe(conversationId, `${quem} took over from ${onde}`);
-  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: agora, motivo_passagem: `${quem} took over`, chases: 3, atualizado_em: agora }).eq("conversation_id", conversationId);
+  await sb.from("harvey_wa_conversas").update({ estado: "equipe", passou_em: agora, motivo_passagem: motivoComDono(`${quem} took over`, antes), chases: 3, atualizado_em: agora }).eq("conversation_id", conversationId);
   await moverGrupo(sb, conversationId, false);
   // Assumiu pelo botão: o ticket deixa de ser "AI agent" e o do lead entra nele.
   const { data } = await sb.from("harvey_wa_conversas").select("phone").eq("conversation_id", conversationId).maybeSingle();
@@ -39,6 +50,8 @@ async function moverGrupo(sb: SupabaseClient, conversationId: string, comHarvey:
  */
 export async function devolverConversa(sb: SupabaseClient, conversationId: string, opcoes: { pessoa?: string } = {}) {
   const agora = new Date().toISOString();
+  // Dono por agente: volta para o agente marcado no Take over (o Alex volta Alex). Desligada, igual a hoje.
+  const antes = await motivoAtual(sb, conversationId);
   await devolverAoHarvey(conversationId);
   const msgs = await historico(conversationId, 40).catch(() => [] as MensagemSc[]);
   const ultimaDoCliente = [...msgs].reverse().find((m) => m.author.type === "user");
@@ -49,7 +62,7 @@ export async function devolverConversa(sb: SupabaseClient, conversationId: strin
       estado: "harvey",
       passou_em: null,
       // Devolvida por uma pessoa: a trava de dono (equipe-dona.ts) não vale para o que veio antes.
-      motivo_passagem: opcoes.pessoa ? motivoDaDevolucao(opcoes.pessoa) : null,
+      motivo_passagem: motivoComDono(opcoes.pessoa ? motivoDaDevolucao(opcoes.pessoa) : null, antes),
       chases: 0,
       ...(ultimaDoCliente ? { cliente_em: ultimaDoCliente.received } : {}),
       harvey_em: ultimaNossa?.received ?? null,

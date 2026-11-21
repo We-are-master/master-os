@@ -78,7 +78,7 @@ export async function varrerChases(sb: SupabaseClient, { aplicar }: { aplicar: b
     const { quem, contas, sobreQuem } = await contextoDaPessoa(sb as never, c.phone as string | null);
     // Preço do catálogo que não fechou: o código do Welcome pode entrar uma vez no lembrete (dono, 24/10/2026).
     const welcome = quem.tipo === "parceiro" ? null : await welcomeDoTelefone(sb, c.phone as string | null).catch(() => null);
-    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null }, chamarSite, await catalogo());
+    const r = await pensar(conversa, { telefone: c.phone as string | null, nomeNoWhatsApp: null, campanha: "wa_v1", quem: quem.tipo, sobreQuem, contas, chase: n, horasSemResposta: horas, falaComo: voz, welcomeNoChase: welcome ? instrucaoDoWelcomeNoChase(welcome) : null, devolvidaPelaEquipe: devolvidaEm(c.motivo_passagem as string | null) !== null }, chamarSite, await catalogo());
 
     // Lembrete nunca passa para a equipe (17/11/2026: o chase mandava "let me get someone from
     // the team" sem passar de verdade, na conversa de teste do dono). Quis passar: nada sai.
