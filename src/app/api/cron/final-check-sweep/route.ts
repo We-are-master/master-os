@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
 import { entraNaVarredura } from "@/lib/final-check-decisao";
 import { garantirFaturasQueFaltam } from "@/lib/ensure-job-invoice-server";
+import { resumoFinalRoda, runResumoFinalStefane } from "@/lib/stefane/resumo-final-check";
 
 /**
  * Rede de segurança do final check automático (Fase 3, dono 15/10/2026). O gatilho de
@@ -13,6 +14,9 @@ import { garantirFaturasQueFaltam } from "@/lib/ensure-job-invoice-server";
  *
  *   GET /api/cron/final-check-sweep              roda, se FINAL_CHECK_AUTO=1
  *   GET /api/cron/final-check-sweep?dry-run=1    só diz o que faria (funciona desligado)
+ *
+ * Com FINAL_CHECK_AUTO desligado e STEFANE_RESUMO_FINAL=1 (dono, 10/11/2026), a mesma
+ * varredura levanta o resumo da Stefane para o dono aprovar, uma vez por job, sem aprovar.
  *
  * Auth: `Authorization: Bearer CRON_SECRET` (Vercel) ou `x-internal-secret: INTERNAL_SYNC_SECRET` (n8n).
  */
@@ -43,7 +47,9 @@ export async function GET(req: NextRequest) {
   const admin = createServiceClient();
   // Rede da regra "job com preço tem fatura" (dono, 02/11/2026): roda ligado ou não o final check.
   const faturas = ensaio ? [] : await garantirFaturasQueFaltam(admin).catch((e) => [{ reference: null, ok: false, motivo: String(e) }]);
-  if (!ensaio && !FINAL_CHECK_AUTO_ON()) return NextResponse.json({ ok: true, ligado: false, faturas, resultados: [] });
+  // Resumo da Stefane só quando o automático está desligado (resumoFinalRoda olha os dois).
+  const resumoStefane = !ensaio && resumoFinalRoda().roda;
+  if (!ensaio && !FINAL_CHECK_AUTO_ON() && !resumoStefane) return NextResponse.json({ ok: true, ligado: false, faturas, resultados: [] });
 
   const { data, error } = await admin
     .from("jobs")
@@ -63,11 +69,13 @@ export async function GET(req: NextRequest) {
 
   const resultados: { job: string | null; resultado: unknown }[] = [];
   for (const j of candidatos) {
-    const r = await runFinalCheckAutomatico(admin, j.id, { origem: "sweep", ensaio });
+    const r = resumoStefane
+      ? await runResumoFinalStefane(admin, j.id, { origem: "sweep" })
+      : await runFinalCheckAutomatico(admin, j.id, { origem: "sweep", ensaio });
     resultados.push({ job: j.reference, resultado: r });
   }
   console.log(`[final-check-sweep] ${ensaio ? "ensaio" : "rodada"}: ${resultados.length} job(s)`);
-  return NextResponse.json({ ok: true, ligado: FINAL_CHECK_AUTO_ON(), ensaio, faturas, resultados });
+  return NextResponse.json({ ok: true, ligado: FINAL_CHECK_AUTO_ON(), ensaio, ...(resumoStefane ? { resumoStefane } : {}), faturas, resultados });
 }
 
 export const POST = GET;

@@ -18,6 +18,7 @@ import { validarSubmissaoDeReport } from "@/lib/report-health";
 import { fillCertificateExpiry } from "@/lib/certificate-reader";
 import { aplicarMaterialDaVisita, aplicarMaterialExtraDoReport, pendenciasDeMaterial } from "@/lib/report-material-extra";
 import { FINAL_CHECK_AUTO_ON, runFinalCheckAutomatico } from "@/lib/final-check-automatico";
+import { STEFANE_RESUMO_FINAL_ON, runResumoFinalStefane } from "@/lib/stefane/resumo-final-check";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -250,6 +251,13 @@ export async function POST(req: NextRequest) {
     after(async () => {
       const r = await runFinalCheckAutomatico(supabase, job.id, { origem: "report_submitted" });
       console.log(`[final-check-auto] ${job.reference}: ${r.feito}`);
+    });
+  } else if (STEFANE_RESUMO_FINAL_ON()) {
+    // Stefane resume o relatório para o dono aprovar (dono, 10/11/2026): só nota interna e
+    // Action Required, nada sai para cliente nem plataforma.
+    after(async () => {
+      const r = await runResumoFinalStefane(supabase, job.id, { origem: "report_submitted" });
+      console.log(`[stefane-resumo-final] ${job.reference}: ${r.feito}`);
     });
   }
 
