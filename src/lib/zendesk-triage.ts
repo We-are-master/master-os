@@ -51,6 +51,11 @@ export type ClasseDeTicket =
   | "financeiro"
   /** Cliente insatisfeito. Nunca automático. */
   | "reclamacao"
+  /**
+   * Fala de um job que já existe (cita a referência dele) sem formato conhecido.
+   * Nunca vira quote: um "update on JOB-9704" não é pedido de preço (#51868, 27/10/2026).
+   */
+  | "sobre_job_existente"
   /** Ticket que o próprio OS abriu para um job nosso. */
   | "ticket_do_os"
   /** Lembrete diário da plataforma, sem nada a fazer. */
@@ -87,6 +92,7 @@ export const ACAO_POR_CLASSE: Readonly<Record<ClasseDeTicket, AcaoDaClasse>> = {
   disponibilidade: "nota",
   financeiro: "nota",
   reclamacao: "nota",
+  sobre_job_existente: "nota",
   ticket_do_os: "passa",
   lembrete_de_plataforma: "passa",
   codigo_de_acesso: "passa",
@@ -105,6 +111,7 @@ export const ROTULO_DA_CLASSE: Readonly<Record<ClasseDeTicket, string>> = {
   disponibilidade: "pergunta de disponibilidade",
   financeiro: "financeiro",
   reclamacao: "reclamação",
+  sobre_job_existente: "assunto de um job que já existe",
   ticket_do_os: "ticket do próprio OS",
   lembrete_de_plataforma: "lembrete de plataforma",
   codigo_de_acesso: "código de acesso",
@@ -116,7 +123,8 @@ export interface Triagem {
   classe: ClasseDeTicket;
   /** Uma linha dizendo por que, para caber na nota interna sem explicação extra. */
   motivo: string;
-  fonte: "assunto" | "tag_do_zendesk" | "nenhuma";
+  /** `corpo`: a classe saiu do texto do e-mail, não do assunto. Vale menos que o assunto. */
+  fonte: "assunto" | "corpo" | "tag_do_zendesk" | "nenhuma";
 }
 
 export interface TicketParaTriagem {
@@ -134,7 +142,14 @@ export interface TicketParaTriagem {
  */
 const REGRAS: ReadonlyArray<{ re: RegExp; classe: ClasseDeTicket; motivo: string }> = [
   { re: /^\s*JOB-\d+/i, classe: "ticket_do_os", motivo: "o assunto começa com a referência de um job nosso" },
+  // E-mails que nós mandamos ao cliente e viraram ticket (replay de 30 dias, 10/11/2026): sem isto,
+  // o JOB-#### do corpo os mandava para a fila humana como se o cliente tivesse escrito.
+  { re: /^\s*(almost there, [^:]{1,40}: )?confirm your (fixfy )?booking\b/i, classe: "ticket_do_os", motivo: "e-mail nosso pedindo para o cliente confirmar o booking" },
+  { re: /^\s*(your invoice|outstanding invoice) INV-\d/i, classe: "ticket_do_os", motivo: "fatura que nós mandamos" },
   { re: /you have \d+ jobs? on /i, classe: "lembrete_de_plataforma", motivo: "lembrete diário da Housekeep dos jobs de amanhã" },
+  // "Reminder: you have unsubmitted job reports" (Housekeep, todo dia): a tag do Zendesk dizia
+  // financeiro e virava nota; a equipe fechou 12 de 14 na mão (25/10 a 09/11/2026).
+  { re: /\bunsubmitted job reports?\b/i, classe: "lembrete_de_plataforma", motivo: "a Housekeep lembra que faltam reports de ontem" },
   { re: /verification code/i, classe: "codigo_de_acesso", motivo: "código de acesso de plataforma" },
   { re: /\bhas been cancelled\b/i, classe: "cancelamento", motivo: "a plataforma avisa que o job foi cancelado" },
   // Oferta ABERTA: ainda não é nossa, tem preço e postcode no assunto. Não
@@ -194,15 +209,53 @@ const FRASES_DISPONIBILIDADE: readonly RegExp[] = [
   /\bdo you have (anyone|someone|availability)\b/i,
 ];
 
+/**
+ * Reclamação sem a palavra no assunto: o texto fala de um trabalho NOSSO que não resolveu,
+ * de alguém que não apareceu, ou de cobrança que ninguém respondeu.
+ *
+ * Visto ao vivo: "Outstanding Works - Li& Fung" com "the sink is still blocked following the
+ * …" virou quote (#52299, 09/11/2026). Cada frase aqui pede o trabalho anterior junto
+ * ("following the", "no one attended"), para não roubar um pedido novo como "my tap is still
+ * leaking". Quem confirma é o classificador de reclamacoes.ts: se ele discordar, nada vai
+ * para hold, só nota.
+ */
+const FRASES_RECLAMACAO: readonly RegExp[] = [
+  /\bstill (blocked|leaking|dripping|broken|not working|faulty|not fixed|not done)\b.{0,60}\b(following|after|since) (the|your|our)\b/i,
+  /\b(following|after|since) (the|your) (visit|repair|work|works|job|engineer|plumber|handyman|electrician|operative|technician|professional|attendance)\b.{0,80}\bstill\b/i,
+  /\b(no ?one|nobody) (has )?(attended|turned up|showed up|came|arrived)\b/i,
+  // Precisa de uma pessoa: "the individual job emails didn't arrive" não é reclamação (#51531).
+  /\b(engineer|operative|plumber|handyman|electrician|professional|technician|tradesman|contractor|cleaner|decorator|he|she|they)s? (did not|didn't|never|has not|hasn't|have not|haven't) (attend|turn up|show up|arrive|come)\b/i,
+  /\bdespite (several|multiple|many|numerous|repeated)? ?(follow[- ]?ups?|chasers?|e-?mails|reminders|calls)\b/i,
+  /\b(poor|bad|shoddy|unacceptable) (workmanship|quality of work|standard of work)\b/i,
+];
+
+/** Referência de job nosso escrita no texto ("JOB-9704"). Assunto que COMEÇA assim é ticket_do_os. */
+const REF_DE_JOB = /\bJOB-(\d{3,6})\b/i;
+
+/**
+ * Números que o texto cita como job ou quote ("Call Out Amount for 9704", "Job #9695").
+ * Só candidatos: quem confirma é o banco, no worker. Sem o banco, um número solto não diz nada.
+ */
+export function numerosDeJobCitados(texto: string): string[] {
+  const achados = new Set<string>();
+  const re = /\b(?:job|jobs|quote|call[- ]?out|booking|ref(?:erence)?|works?)\b[^\d\n]{0,25}#?\s?(\d{4,5})\b/gi;
+  for (const m of texto.matchAll(re)) achados.add(m[1]);
+  for (const m of texto.matchAll(/\bJOB-(\d{3,6})\b/gi)) achados.add(m[1]);
+  return [...achados];
+}
+
 export function triarTicket(t: TicketParaTriagem): Triagem {
   const assunto = String(t.subject ?? "");
   for (const r of REGRAS) {
     if (r.re.test(assunto)) return { classe: r.classe, motivo: r.motivo, fonte: "assunto" };
   }
 
-  // O corpo só é lido para disponibilidade: é a única classe sem formato de
-  // assunto, e é a pergunta que o dono quer que ele passe a entender.
+  // O corpo é lido depois do assunto, e nunca ganha dele: reclamação e disponibilidade
+  // não têm formato de assunto fixo.
   const corpo = String(t.description ?? "").slice(0, 2000);
+  if (FRASES_RECLAMACAO.some((re) => re.test(corpo) || re.test(assunto))) {
+    return { classe: "reclamacao", motivo: "o texto fala de um trabalho nosso que não resolveu, ou de alguém que não apareceu", fonte: "corpo" };
+  }
   for (const re of FRASES_DISPONIBILIDADE) {
     if (re.test(corpo) || re.test(assunto)) {
       return { classe: "disponibilidade", motivo: "o texto pergunta se atendemos ou se temos data", fonte: "assunto" };
@@ -214,6 +267,12 @@ export function triarTicket(t: TicketParaTriagem): Triagem {
     if (tags.some((g) => g.startsWith(p.marca))) {
       return { classe: p.classe, motivo: p.motivo, fonte: "tag_do_zendesk" };
     }
+  }
+
+  // Depois da tag: a fatura que o Zendesk marcou como financeiro continua financeiro.
+  const ref = REF_DE_JOB.exec(assunto) ?? REF_DE_JOB.exec(corpo);
+  if (ref) {
+    return { classe: "sobre_job_existente", motivo: `o texto cita o JOB-${ref[1]}, que já existe`, fonte: "corpo" };
   }
 
   return { classe: "indefinido", motivo: "nenhum formato conhecido casou", fonte: "nenhuma" };
@@ -237,4 +296,20 @@ export function notaDeTriagem(tri: Triagem): string {
     "",
     "Não agi neste ticket. Classe nova, ainda em observação: por enquanto eu só digo o que acho que é, e a ação continua sendo de vocês.",
   ].join("\n");
+}
+
+/**
+ * Classes que nunca abrem quote pelo e-mail, mesmo que o classificador de preço diga que sim.
+ * Reclamação que só o corpo apontou entra aqui: se o classificador de reclamação discordar,
+ * o ticket vai para gente, não para cotação (#52299).
+ */
+export function semCotacao(tri: Triagem): boolean {
+  return tri.classe === "sobre_job_existente" || (tri.classe === "reclamacao" && tri.fonte === "corpo");
+}
+
+/** A próxima ação que vai no Action Required quando o Harvey não cota. */
+export function acaoSemCotacao(tri: Triagem): string {
+  return tri.classe === "reclamacao"
+    ? `Looks like a complaint about our work (${tri.motivo}). I did not quote it: check the job and reply to the customer`
+    : `About an existing job (${tri.motivo}). I did not quote it: reply to the customer`;
 }

@@ -32,6 +32,8 @@ const ZD_SOLVED = 5679178036383;
 export type AcaoDoHarvey =
   | "ignorado"
   | "nota_de_triagem"
+  /** Não cotou: nota + Action Required para a equipe (zendesk-triage.ts, semCotacao). */
+  | "fila_humana"
   | "reclamacao_hold"
   | "reclamacao_nota"
   | "certificado"
@@ -241,6 +243,7 @@ export const ROTULO: Record<string, string> = {
   disponibilidade: "Availability",
   financeiro: "Finance",
   reclamacao: "Complaint",
+  sobre_job_existente: "About an existing job",
   ticket_do_os: "OS ticket",
   lembrete_de_plataforma: "Platform reminder",
   codigo_de_acesso: "Access code",
@@ -256,6 +259,7 @@ export const ROTULO: Record<string, string> = {
   preco_da_equipe: "WhatsApp: team price",
   ignorado: "skipped",
   nota_de_triagem: "note",
+  fila_humana: "sent to the team",
   reclamacao_hold: "job on hold",
   reclamacao_nota: "note",
   certificado: "certificate",
