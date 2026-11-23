@@ -46,7 +46,7 @@ import { registrarEmpresa } from "./empresa";
 import { devolvidaEm, ehDaEquipe, equipeDonaDaConversa, horasDaEquipeDona, MARCA_EQUIPE_DONA, type DonaDaConversa } from "./equipe-dona";
 import { baixarMidia, devolverAoHarvey, digitando, ehDoHarvey, ehOHarveyNoNomeDele, enviarTexto, historico, INTEGRACAO_HARVEY, vozDaConversa, passarParaEquipe, seguirFluxoPadrao, telefoneDoUsuario, usuarioDaConversa, type MensagemSc } from "./sunshine";
 import { destinoDaResposta } from "./turno";
-import { fecharLeadPerdido, marcarLostNoCrm, naoQuerMais } from "./lead-perdido";
+import { fecharLeadPerdido, marcarLostNoCrm, naoQuerMais, recusaDaOferta } from "./lead-perdido";
 import { telefoneE164 } from "./primeiro-contato";
 import { processosV2Ligado } from "@/lib/processo/conta";
 import { registrarCanalAtivo } from "@/lib/processo/canal-ativo";
@@ -303,6 +303,18 @@ async function atualizarReplyStatus(conversationId: string, msg: MensagemSc): Pr
 }
 
 /** Fecha o lead que não quer mais: ticket do lead, CRM e o ticket da conversa (ver lead-perdido.ts). */
+/**
+ * A mensagem é a primeira do cliente depois do nosso template (lead ou promoção, enviado
+ * nos últimos 14 dias)? Só aí "no thanks", "cancel" e "stop" fecham como perdido.
+ */
+async function primeiraRespostaAoTemplate(conversationId: string, telefone: string): Promise<boolean> {
+  const { data: lead } = await createServiceClient().from("harvey_wa_leads").select("enviado_em").eq("chave", chaveDoTelefone(telefone)).maybeSingle();
+  const enviado = lead?.enviado_em ? new Date(lead.enviado_em as string).getTime() : 0;
+  if (!enviado || Date.now() - enviado > 14 * 864e5) return false;
+  const msgs = await historico(conversationId, 60);
+  return msgs.filter((m) => m.author.type === "user" && new Date(m.received).getTime() >= enviado).length <= 1;
+}
+
 async function fecharComoPerdido(conversationId: string, telefone: string, frase: string, botao: boolean): Promise<string> {
   const sb = createServiceClient();
   return fecharLeadPerdido(
@@ -394,7 +406,9 @@ async function depoisDaMensagem(evento: EventoSc): Promise<void> {
     await juntarTicketAnterior(telefone, est?.estado === "equipe").catch((e) => console.error("[harvey-wa] juntar ticket:", e));
     await anotarBotao(msg, conversa.id).catch((e) => console.error("[harvey-wa] botão:", e));
     // "No longer needed" digitado (dono, 18/11/2026): fecha igual ao botão. Parceiro e cliente com job em andamento ficam de fora.
-    if (!msg.content.payload && msg.content.type === "text" && naoQuerMais(msg.content.text) && telefone && est?.tipo !== "parceiro") {
+    const texto = msg.content.type === "text" ? msg.content.text : null;
+    const recusa = !msg.content.payload && telefone && est?.tipo !== "parceiro" && (naoQuerMais(texto) || (recusaDaOferta(texto) && (await primeiraRespostaAoTemplate(conversa.id, telefone).catch(() => false))));
+    if (recusa && telefone) {
       const comJob = await jobPeloTelefone(createServiceClient(), telefone).catch(() => null);
       if (!comJob) console.log("[harvey-wa] lead perdido (texto):", await fecharComoPerdido(conversa.id, telefone, msg.content.text!.trim(), false).catch((e) => String(e)));
     }

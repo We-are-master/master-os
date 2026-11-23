@@ -21,6 +21,21 @@ export function naoQuerMais(texto: string | null | undefined): boolean {
   return t.length > 0 && t.length <= 80 && NAO_QUER.test(t);
 }
 
+/**
+ * Resposta curta de recusa ao NOSSO template (promoção, lead): "no thanks", "cancel", "stop".
+ * Dono, 23/11/2026: "pediu pra cancelar ou não quer, já marca como closed e perdido". Só vale
+ * como a PRIMEIRA resposta depois do template (ver motor): no meio de uma venda, "no thanks"
+ * responde a outra pergunta e "cancel" de quem tem job é outra conversa.
+ */
+const RECUSA =
+  "(?:no,? thanks?|no,? thank you|no thanks? (?:though|anyway)|cancel(?: it| this| please)?|please cancel|stop(?: it| please| messaging me| sending (?:me )?(?:these|this|messages))?|please stop|unsubscribe|remove me|opt out|not now|not at the moment|not this time|not for now|no need|not interested(?: at the moment| right now)?|(?:please )?(?:don'?t|do not) (?:message|text|contact) me(?: again)?)";
+const RECUSA_SO = new RegExp(`^\\s*(?:${CORTESIA}[,!.\\s]+)*${RECUSA}(?:[,!.\\s]+${CORTESIA})*[,!.\\s]*$`, "i");
+
+export function recusaDaOferta(texto: string | null | undefined): boolean {
+  const t = (texto ?? "").trim();
+  return t.length > 0 && t.length <= 60 && RECUSA_SO.test(t);
+}
+
 type Passos = {
   encerrarLeadPerdido: (telefone: string, nota: string) => Promise<string>;
   marcarLostNoCrm: (telefone: string, frase: string) => Promise<number>;
