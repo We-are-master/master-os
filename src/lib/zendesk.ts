@@ -17,6 +17,19 @@ function authHeader(): string {
   return "Basic " + Buffer.from(`${EMAIL}/token:${API_TOKEN}`).toString("base64");
 }
 
+/**
+ * Login de agente para mudar tags. O Harvey escreve como team@ (Harvey White),
+ * que é Contributor desde 23/11/2026: pode pôr nota, mas o Zendesk ignora em
+ * silêncio a mudança de tag (200, nada muda). A tag ai_job_created nunca
+ * pegava e o Harvey repetia a mesma nota a cada 5 min (#53160, 25/11/2026).
+ * ZENDESK_EDIT_EMAIL = um agente com edição (o token da API é da conta, vale
+ * para qualquer agente). Sem ela, segue o ZENDESK_EMAIL.
+ */
+function authHeaderDeEdicao(): string {
+  const email = process.env.ZENDESK_EDIT_EMAIL?.trim() || EMAIL;
+  return "Basic " + Buffer.from(`${email}/token:${API_TOKEN}`).toString("base64");
+}
+
 function baseUrl(): string {
   return `https://${SUBDOMAIN}.zendesk.com/api/v2`;
 }
@@ -435,12 +448,18 @@ export async function addTicketTags(ticketId: string | number, tags: string[]): 
   const uniao = [...new Set([...atuais, ...tags])];
   const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}.json`, {
     method: "PUT",
-    headers: { "Authorization": authHeader(), "Content-Type": "application/json" },
+    headers: { "Authorization": authHeaderDeEdicao(), "Content-Type": "application/json" },
     body: JSON.stringify({ ticket: { tags: uniao } }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Zendesk add tags failed (${res.status}): ${text}`);
+  }
+  // 200 não prova nada: com um usuário sem edição o Zendesk devolve o ticket sem a tag.
+  const json = (await res.json().catch(() => null)) as { ticket?: { tags?: string[] } } | null;
+  const ficou = json?.ticket?.tags;
+  if (ficou && tags.some((t) => !ficou.includes(t))) {
+    throw new Error(`Zendesk ignored the tag change on #${ticketId} (user without edit rights? set ZENDESK_EDIT_EMAIL)`);
   }
 }
 
@@ -449,7 +468,7 @@ export async function removeTicketTags(ticketId: string | number, tags: string[]
   if (!isZendeskConfigured()) throw new Error("Zendesk not configured");
   const res = await fetch(`${baseUrl()}/tickets/${encodeURIComponent(String(ticketId))}/tags.json`, {
     method: "DELETE",
-    headers: { "Authorization": authHeader(), "Content-Type": "application/json" },
+    headers: { "Authorization": authHeaderDeEdicao(), "Content-Type": "application/json" },
     body: JSON.stringify({ tags }),
   });
   if (!res.ok) {
