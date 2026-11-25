@@ -523,7 +523,17 @@ async function processarMensagem(evento: EventoSc, refeito = false): Promise<str
     const telCanal = (estado?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId).catch(() => null) : null);
     if (telCanal) await registrarCanalAtivo(sb, { telefone: telCanal }, "whatsapp").catch((e) => console.error("[harvey-wa] canal ativo:", e));
   }
-  if (estado && estado.estado !== "harvey") return `ignorado: ${estado.estado}`;
+  if (estado && estado.estado !== "harvey") {
+    // Chegou aqui = o Zendesk ainda tem o Harvey no controle (a linha de cima volta antes
+    // quando é a equipe). Banco "equipe" com o ticket travado como AI agent ninguém responde:
+    // o Harvey fica calado e o Take over nativo fica cinza (Lucy #52598, 24/11/2026).
+    // Passa o controle para a equipe de verdade e atualiza a data para aparecer no painel.
+    if (estado.estado === "equipe") {
+      await passarParaEquipe(conversa.id, "Customer wrote while the chat was with the team").catch((e) => console.error("[harvey-wa] destravar:", e));
+      await sb.from("harvey_wa_conversas").update({ atualizado_em: new Date().toISOString() }).eq("conversation_id", conversa.id);
+    }
+    return `ignorado: ${estado.estado}`;
+  }
 
   const telefone = (estado?.phone as string | null) ?? (msg.author.userId ? await telefoneDoUsuario(msg.author.userId) : null);
   if (process.env.HARVEY_WA_LIGADO !== "1") {
